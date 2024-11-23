@@ -1,0 +1,13 @@
+{
+  "domain": "room_occupancy",
+  "name": "Room Occupancy Detection",
+  "documentation": "https://github.com/yourusername/ha-room-occupancy",
+  "issue_tracker": "https://github.com/yourusername/ha-room-occupancy/issues",
+  "dependencies": ["statistics"],
+  "codeowners": ["@yourusername"],
+  "requirements": [],
+  "iot_class": "calculated",
+  "version": "1.0.0",
+  "config_flow": true,
+  "quality_scale": "internal"
+}

@@ -1,0 +1,29 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Room Occupancy Detection Setup",
+                "description": "Configure room occupancy detection using multiple sensors",
+                "data": {
+                    "name": "Room Name",
+                    "motion_sensors": "Motion Sensors",
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors",
+                    "device_states": "Device States",
+                    "threshold": "Occupancy Threshold",
+                    "history_period": "Historical Data Period",
+                    "decay_enabled": "Enable Sensor Decay",
+                    "decay_window": "Decay Time Window",
+                    "decay_type": "Decay Type"
+                }
+            }
+        },
+        "error": {
+            "unknown": "Unexpected error occurred"
+        },
+        "abort": {
+            "already_configured": "This room is already configured"
+        }
+    }
+}
