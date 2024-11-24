@@ -166,26 +166,6 @@ sensor:
         unit_of_measurement: "%"
         value_template: "{{ states('input_number.mock_humidity_2') | float }}"
 
-      # Composite sensors
-      room_activity_level:
-        friendly_name: "Room Activity Level"
-        unit_of_measurement: "%"
-        value_template: >
-          {% set motion = states('input_boolean.mock_motion_1') == 'on'
-             or states('input_boolean.mock_motion_2') == 'on'
-             or states('input_boolean.mock_motion_3') == 'on' %}
-          {% set devices = states('input_boolean.mock_tv') == 'on'
-             or states('input_boolean.mock_computer') == 'on'
-             or states('input_boolean.mock_game_console') == 'on' %}
-          {% set activity = 0 %}
-          {% if motion %}
-            {% set activity = activity + 60 %}
-          {% endif %}
-          {% if devices %}
-            {% set activity = activity + 40 %}
-          {% endif %}
-          {{ activity }}
-
 # Media Player mock
 media_player:
   - platform: template

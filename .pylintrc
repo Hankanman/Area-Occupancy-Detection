@@ -1,0 +1,15 @@
+[FORMAT]
+max-line-length=125
+
+[MESSAGES CONTROL]
+disable=C0111,unused-argument
+
+
+[MASTER]
+ignore=CVS,.git,tests
+load-plugins=
+persistent=yes
+
+[REPORTS]
+output-format=text
+reports=no
