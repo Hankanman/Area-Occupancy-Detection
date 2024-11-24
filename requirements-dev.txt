@@ -1,29 +1,36 @@
 # Core development dependencies
-homeassistant>=2024.1.0
-pytest>=7.4.0
-pytest-homeassistant-custom-component>=0.13.0
-pytest-cov>=4.1.0
-pytest-asyncio>=0.21.1
-pytest-timeout>=2.1.0
-pre-commit>=3.4.0
-black>=23.7.0
-isort>=5.12.0
-pylint>=2.17.5
-mypy>=1.5.1
-types-all>=1.0.0
+homeassistant
+pytest
+pytest-homeassistant-custom-component
+pytest-cov
+pytest-asyncio
+pytest-timeout
+pre-commit
 
-# Additional testing tools
-asyncmock>=0.4.2
-pytest-mock>=3.11.1
-freezegun>=1.2.2
-coverage>=7.3.0
+# Code quality tools
+black
+isort
+pylint
+mypy
+
+# Type checking (more specific than types-all)
+types-pytz
+types-requests
+types-setuptools
+types-urllib3
+
+# Testing tools
+asyncmock
+pytest-mock
+freezegun
+coverage
 
 # Development utilities
-pip>=23.2.1
-wheel>=0.41.1
-setuptools>=68.1.2
-packaging>=23.1
+pip
+wheel
+setuptools
+packaging
 
-# Optional but recommended
-debugpy>=1.6.7
-ipython>=8.14.0
+# Debugging tools
+debugpy
+ipython
