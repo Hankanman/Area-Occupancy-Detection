@@ -1,4 +1,5 @@
 """Config flow for Room Occupancy Detection integration."""
+
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,6 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
@@ -33,6 +33,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Room Occupancy Detection."""
 
@@ -55,7 +56,7 @@ class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title=user_input[CONF_NAME],
                     data=user_input,
                 )
-            except Exception as error:
+            except (ValueError, KeyError) as error:
                 _LOGGER.exception("Unexpected error occurred: %s", error)
                 errors["base"] = "unknown"
 

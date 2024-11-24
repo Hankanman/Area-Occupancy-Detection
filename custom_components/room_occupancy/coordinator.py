@@ -1,20 +1,18 @@
 """Data coordinator for Room Occupancy Detection integration."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import (
     STATE_ON,
-    STATE_OFF,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, State, callback
-from homeassistant.helpers.entity import Entity
+
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 import numpy as np
@@ -33,6 +31,7 @@ from .const import (
 from .probability import BayesianProbability
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class RoomOccupancyCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Room Occupancy data."""
@@ -60,7 +59,7 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
     def _setup_sensor_tracking(self) -> None:
         """Set up state tracking for all configured sensors."""
         sensors_to_track = []
-        
+
         # Add all configured sensors to tracking
         for sensor_type in [
             CONF_MOTION_SENSORS,
@@ -94,12 +93,24 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
                 self._last_trigger_times[entity_id] = datetime.now()
 
     def _calculate_decay(self, sensor_id: str, last_trigger: datetime) -> float:
-        """Calculate the decay factor for a sensor based on time since last trigger."""
+        """Calculate the decay factor for a sensor based on time since last trigger.
+
+        Args:
+            sensor_id: The entity ID of the sensor
+            last_trigger: The datetime of the last sensor trigger
+
+        Returns:
+            float: Decay factor between 0 and 1
+        """
         if not self.config.get(CONF_DECAY_ENABLED, True):
             return 1.0
 
+        # Get sensor-specific decay window if configured, otherwise use default
+        decay_window = self.config.get(
+            f"decay_window_{sensor_id}", self.config.get(CONF_DECAY_WINDOW, 600)
+        )
+
         time_diff = (datetime.now() - last_trigger).total_seconds()
-        decay_window = self.config.get(CONF_DECAY_WINDOW, 600)  # Default 10 minutes
 
         if time_diff >= decay_window:
             return 0.0
@@ -157,10 +168,10 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
         for sensor_id, state in self._sensor_states.items():
             probability = self._get_sensor_probability(sensor_id, state)
             sensor_probabilities[sensor_id] = probability
-            
+
             if probability > 0.5:  # Consider as active trigger
                 active_triggers.append(sensor_id)
-            
+
             sensor_availability[sensor_id] = state.state not in (
                 STATE_UNAVAILABLE,
                 STATE_UNKNOWN,
@@ -177,7 +188,9 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
         # Calculate confidence score based on sensor availability and diversity
         available_sensors = sum(sensor_availability.values())
         total_sensors = len(sensor_availability)
-        confidence_score = available_sensors / total_sensors if total_sensors > 0 else 0.0
+        confidence_score = (
+            available_sensors / total_sensors if total_sensors > 0 else 0.0
+        )
 
         return {
             "probability": final_probability,
