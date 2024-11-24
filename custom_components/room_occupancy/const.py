@@ -1,4 +1,5 @@
 """Constants for the Room Occupancy Detection integration."""
+
 from typing import Final
 
 DOMAIN: Final = "room_occupancy"
