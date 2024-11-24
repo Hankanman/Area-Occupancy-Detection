@@ -2,8 +2,7 @@
 {
   "image": "mcr.microsoft.com/devcontainers/python:0-3.11",
   "name": "Room Occupancy Development",
-  "initializeCommand": "/bin/mkdir -p ${localWorkspaceFolder}/.haconfig && /bin/cp ${localWorkspaceFolder}/.devcontainer/configuration.yaml ${localWorkspaceFolder}/.haconfig",
-  "containerUser": "1000",
+  "containerUser": "root",
   "remoteUser": "1000",
   "appPort": [
     "9123:8123"
@@ -44,8 +43,8 @@
       ]
     }
   },
-  "postCreateCommand": "scripts/setup",
-  "mounts": [
-    "source=${localWorkspaceFolder}/.haconfig,target=/config,type=bind,consistency=cached"
-  ]
+  "postCreateCommand": "mkdir -p /workspace/.haconfig && cp /workspace/.devcontainer/configuration.yaml /workspace/.haconfig && scripts/setup",
+"mounts": [
+    "type=bind,source=${localWorkspaceFolder},target=/workspace,consistency=cached"
+]
 }
