@@ -1,4 +1,5 @@
 """Sensor platform for Room Occupancy Detection integration."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,7 +18,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
-    DataUpdateCoordinator,
 )
 
 from .const import (
@@ -35,9 +35,11 @@ from .coordinator import RoomOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+
 @dataclass
 class RoomOccupancyEntityDescription(SensorEntityDescription):
     """Class describing Room Occupancy sensor entities."""
+
 
 class RoomOccupancyProbabilitySensor(CoordinatorEntity, SensorEntity):
     """Representation of a Room Occupancy Probability sensor."""
@@ -76,11 +78,16 @@ class RoomOccupancyProbabilitySensor(CoordinatorEntity, SensorEntity):
             ATTR_PROBABILITY: self.coordinator.data.get("probability", 0.0),
             ATTR_PRIOR_PROBABILITY: self.coordinator.data.get("prior_probability", 0.0),
             ATTR_ACTIVE_TRIGGERS: self.coordinator.data.get("active_triggers", []),
-            ATTR_SENSOR_PROBABILITIES: self.coordinator.data.get("sensor_probabilities", {}),
+            ATTR_SENSOR_PROBABILITIES: self.coordinator.data.get(
+                "sensor_probabilities", {}
+            ),
             ATTR_DECAY_STATUS: self.coordinator.data.get("decay_status", {}),
             ATTR_CONFIDENCE_SCORE: self.coordinator.data.get("confidence_score", 0.0),
-            ATTR_SENSOR_AVAILABILITY: self.coordinator.data.get("sensor_availability", {}),
+            ATTR_SENSOR_AVAILABILITY: self.coordinator.data.get(
+                "sensor_availability", {}
+            ),
         }
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -95,10 +102,7 @@ async def async_setup_entry(
             RoomOccupancyProbabilitySensor(
                 coordinator,
                 entry.entry_id,
-                RoomOccupancyEntityDescription(
-                    key="room_occupancy_probability",
-                    name=NAME_PROBABILITY_SENSOR,
-                ),
+                RoomOccupancyEntityDescription(),
             )
         ]
     )

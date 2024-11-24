@@ -1,4 +1,5 @@
 """Binary sensor platform for Room Occupancy Detection integration."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,9 +33,11 @@ from .coordinator import RoomOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+
 @dataclass
 class RoomOccupancyBinaryEntityDescription(BinarySensorEntityDescription):
     """Class describing Room Occupancy binary sensor entities."""
+
 
 class RoomOccupancyBinarySensor(CoordinatorEntity, BinarySensorEntity):
     """Representation of a Room Occupancy binary sensor."""
@@ -74,16 +77,23 @@ class RoomOccupancyBinarySensor(CoordinatorEntity, BinarySensorEntity):
             ATTR_PROBABILITY: self.coordinator.data.get("probability", 0.0),
             ATTR_PRIOR_PROBABILITY: self.coordinator.data.get("prior_probability", 0.0),
             ATTR_ACTIVE_TRIGGERS: self.coordinator.data.get("active_triggers", []),
-            ATTR_SENSOR_PROBABILITIES: self.coordinator.data.get("sensor_probabilities", {}),
+            ATTR_SENSOR_PROBABILITIES: self.coordinator.data.get(
+                "sensor_probabilities", {}
+            ),
             ATTR_DECAY_STATUS: self.coordinator.data.get("decay_status", {}),
             ATTR_CONFIDENCE_SCORE: self.coordinator.data.get("confidence_score", 0.0),
-            ATTR_SENSOR_AVAILABILITY: self.coordinator.data.get("sensor_availability", {}),
+            ATTR_SENSOR_AVAILABILITY: self.coordinator.data.get(
+                "sensor_availability", {}
+            ),
         }
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self.coordinator.last_update_success and self.coordinator.data is not None
+        return (
+            self.coordinator.last_update_success and self.coordinator.data is not None
+        )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -99,11 +109,7 @@ async def async_setup_entry(
             RoomOccupancyBinarySensor(
                 coordinator,
                 entry.entry_id,
-                RoomOccupancyBinaryEntityDescription(
-                    key="room_occupancy_status",
-                    name=NAME_BINARY_SENSOR,
-                    device_class=BinarySensorDeviceClass.OCCUPANCY,
-                ),
+                RoomOccupancyBinaryEntityDescription(),
                 threshold,
             )
         ]

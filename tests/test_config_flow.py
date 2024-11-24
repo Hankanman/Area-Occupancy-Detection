@@ -1,16 +1,17 @@
 """Test the Room Occupancy Detection config flow."""
-from unittest.mock import patch
 
-import pytest
-from homeassistant import config_entries, data_entry_flow
+from unittest.mock import patch
+from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_NAME
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.room_occupancy.const import (
     DOMAIN,
     CONF_MOTION_SENSORS,
     CONF_THRESHOLD,
 )
+
 
 async def test_form(hass: HomeAssistant):
     """Test we get the form."""
@@ -44,6 +45,7 @@ async def test_form(hass: HomeAssistant):
     }
     assert len(mock_setup_entry.mock_calls) == 1
 
+
 async def test_form_invalid_sensor(hass: HomeAssistant):
     """Test we handle invalid sensor."""
     result = await hass.config_entries.flow.async_init(
@@ -61,6 +63,7 @@ async def test_form_invalid_sensor(hass: HomeAssistant):
 
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "invalid_sensors"}
+
 
 async def test_form_duplicate_room(hass: HomeAssistant):
     """Test we handle duplicate room names."""
@@ -88,6 +91,7 @@ async def test_form_duplicate_room(hass: HomeAssistant):
 
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "already_configured"}
+
 
 async def test_form_invalid_threshold(hass: HomeAssistant):
     """Test we handle invalid threshold values."""

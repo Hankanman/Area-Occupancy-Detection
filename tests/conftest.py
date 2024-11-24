@@ -1,11 +1,11 @@
 """Common test fixtures for Room Occupancy Detection integration tests."""
-import pytest
 
+from unittest.mock import patch
+from typing import Generator
+import pytest
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import EntityRegistry
-from homeassistant.setup import async_setup_component
-
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.room_occupancy.const import (
     DOMAIN,
     CONF_MOTION_SENSORS,
@@ -20,11 +20,13 @@ from custom_components.room_occupancy.const import (
     CONF_DECAY_TYPE,
 )
 
+
 @pytest.fixture
-def mock_setup_entry() -> None:
+def mock_setup_entry() -> Generator:
     """Prevent setup entry from running."""
     with patch("custom_components.room_occupancy.async_setup_entry", return_value=True):
         yield
+
 
 @pytest.fixture
 def mock_config_entry():
@@ -43,8 +45,9 @@ def mock_config_entry():
         CONF_DECAY_TYPE: "linear",
     }
 
+
 @pytest.fixture
-async def mock_fully_setup_entry(hass: HomeAssistant, mock_config_entry):
+async def mock_fully_setup_entry(hass: HomeAssistant, mock_config):
     """Create and setup a mock config entry with all test entities."""
     # Create mock entities
     hass.states.async_set("binary_sensor.test_motion", "off")
@@ -53,11 +56,7 @@ async def mock_fully_setup_entry(hass: HomeAssistant, mock_config_entry):
     hass.states.async_set("sensor.test_temperature", "21")
     hass.states.async_set("media_player.test_tv", "off")
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data=mock_config_entry,
-        entry_id="test_entry_id"
-    )
+    entry = MockConfigEntry(domain=DOMAIN, data=mock_config, entry_id="test_entry_id")
     entry.add_to_hass(hass)
 
     await hass.config_entries.async_setup(entry.entry_id)

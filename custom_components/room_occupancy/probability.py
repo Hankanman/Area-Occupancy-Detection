@@ -1,4 +1,5 @@
 """Bayesian probability calculations for Room Occupancy Detection."""
+
 from __future__ import annotations
 
 import logging
@@ -6,6 +7,7 @@ from typing import List
 import numpy as np
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class BayesianProbability:
     """Class to handle Bayesian probability calculations."""
@@ -20,19 +22,19 @@ class BayesianProbability:
 
     def _odds(self, p: float) -> float:
         """Convert probability to odds."""
-        return p / (1 - p) if p != 1 else float('inf')
+        return p / (1 - p) if p != 1 else float("inf")
 
     def _probability(self, o: float) -> float:
         """Convert odds to probability."""
-        return o / (1 + o) if o != float('inf') else 1
+        return o / (1 + o) if o != float("inf") else 1
 
     def calculate_probability(self, probabilities: List[float]) -> float:
         """
         Calculate the combined probability using Bayesian inference.
-        
+
         Args:
             probabilities: List of individual probabilities from different sensors
-            
+
         Returns:
             Combined probability as a float between 0 and 1
         """
@@ -51,22 +53,20 @@ class BayesianProbability:
             # Convert back to probability
             return self._probability(combined_odds)
 
-        except Exception as err:
+        except (ZeroDivisionError, ValueError) as err:
             _LOGGER.error("Error calculating probability: %s", err)
             return self._prior
 
     def calculate_weighted_probability(
-        self,
-        probabilities: List[float],
-        weights: List[float]
+        self, probabilities: List[float], weights: List[float]
     ) -> float:
         """
         Calculate weighted probability using Bayesian inference.
-        
+
         Args:
             probabilities: List of individual probabilities
             weights: List of weights corresponding to each probability
-            
+
         Returns:
             Weighted combined probability as a float between 0 and 1
         """
@@ -86,6 +86,6 @@ class BayesianProbability:
 
             return self._probability(weighted_odds)
 
-        except Exception as err:
+        except (ZeroDivisionError, ValueError) as err:
             _LOGGER.error("Error calculating weighted probability: %s", err)
             return self._prior
