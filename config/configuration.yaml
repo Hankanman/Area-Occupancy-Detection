@@ -1,0 +1,39 @@
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.room_occupancy: debug
+    homeassistant.components.binary_sensor: debug
+    homeassistant.components.sensor: debug
+    homeassistant.core: debug
+
+# Test sensors for development
+binary_sensor:
+  - platform: template
+    sensors:
+      test_motion:
+        friendly_name: "Test Motion Sensor"
+        device_class: motion
+        value_template: "{{ states('input_boolean.mock_motion') }}"
+
+input_boolean:
+  mock_motion:
+    name: Mock Motion
+    initial: off
+
+sensor:
+  - platform: template
+    sensors:
+      test_illuminance:
+        friendly_name: "Test Illuminance Sensor"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        value_template: "{{ states('input_number.mock_illuminance') }}"
+
+input_number:
+  mock_illuminance:
+    name: Mock Illuminance
+    min: 0
+    max: 1000
+    step: 1
