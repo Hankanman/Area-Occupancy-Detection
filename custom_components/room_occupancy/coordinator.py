@@ -53,7 +53,26 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
         self._motion_timestamps = {}
         self._sensor_states = {}
         self._unsubscribe_handlers = []
+        self._initialize_sensor_states()
         self._setup_state_listeners()
+
+    def _initialize_sensor_states(self) -> None:
+        """Initialize states for all configured sensors."""
+        sensors = self._get_all_configured_sensors()
+        for entity_id in sensors:
+            state = self.hass.states.get(entity_id)
+            if state:
+                self._sensor_states[entity_id] = state
+
+    def _get_all_configured_sensors(self) -> list[str]:
+        """Get list of all configured sensor entity IDs."""
+        sensors = []
+        sensors.extend(self.config.get(CONF_MOTION_SENSORS, []))
+        sensors.extend(self.config.get(CONF_ILLUMINANCE_SENSORS, []))
+        sensors.extend(self.config.get(CONF_HUMIDITY_SENSORS, []))
+        sensors.extend(self.config.get(CONF_TEMPERATURE_SENSORS, []))
+        sensors.extend(self.config.get(CONF_DEVICE_STATES, []))
+        return sensors
 
     def unsubscribe(self) -> None:
         """Unsubscribe from all registered events."""
@@ -62,24 +81,25 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
 
     def _setup_state_listeners(self) -> None:
         """Set up state change listeners for all configured sensors."""
-        sensors = []
-        sensors.extend(self.config.get(CONF_MOTION_SENSORS, []))
-        sensors.extend(self.config.get(CONF_ILLUMINANCE_SENSORS, []))
-        sensors.extend(self.config.get(CONF_HUMIDITY_SENSORS, []))
-        sensors.extend(self.config.get(CONF_TEMPERATURE_SENSORS, []))
-        sensors.extend(self.config.get(CONF_DEVICE_STATES, []))
+        sensors = self._get_all_configured_sensors()
 
         @callback
         def async_state_changed(event):
             """Handle sensor state changes."""
-            self._sensor_states[event.data["entity_id"]] = event.data["new_state"]
-            if (
-                event.data["entity_id"] in self.config.get(CONF_MOTION_SENSORS, [])
-                and event.data["new_state"]
-                and event.data["new_state"].state == STATE_ON
-            ):
-                self._motion_timestamps[event.data["entity_id"]] = dt_util.utcnow()
-            self.async_set_updated_data(None)
+            entity_id = event.data["entity_id"]
+            new_state = event.data["new_state"]
+            old_state = event.data["old_state"]
+
+            # Only update if state actually changed
+            if new_state != old_state:
+                self._sensor_states[entity_id] = new_state
+                if (
+                    entity_id in self.config.get(CONF_MOTION_SENSORS, [])
+                    and new_state
+                    and new_state.state == STATE_ON
+                ):
+                    self._motion_timestamps[entity_id] = dt_util.utcnow()
+                self.async_set_updated_data(None)
 
         self.unsubscribe()
         self._unsubscribe_handlers.append(
@@ -88,9 +108,8 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from sensors and calculate occupancy probability."""
-        # Update sensor states
-        for entity_id in self._sensor_states:
-            self._sensor_states[entity_id] = self.hass.states.get(entity_id)
+        # Refresh all sensor states to ensure we have current data
+        self._refresh_sensor_states()
 
         motion_prob = self._calculate_motion_probability()
         env_prob = self._calculate_environmental_probability()
@@ -103,16 +122,7 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
                 if available
             ]
         )
-        total_sensors = sum(
-            len(self.config.get(sensor_type, []))
-            for sensor_type in [
-                CONF_MOTION_SENSORS,
-                CONF_ILLUMINANCE_SENSORS,
-                CONF_HUMIDITY_SENSORS,
-                CONF_TEMPERATURE_SENSORS,
-                CONF_DEVICE_STATES,
-            ]
-        )
+        total_sensors = len(self._get_all_configured_sensors())
 
         return {
             "probability": combined_prob,
@@ -128,6 +138,13 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
             ),
             "sensor_availability": self._get_sensor_availability(),
         }
+
+    def _refresh_sensor_states(self) -> None:
+        """Refresh all sensor states from Home Assistant."""
+        for entity_id in self._get_all_configured_sensors():
+            state = self.hass.states.get(entity_id)
+            if state:
+                self._sensor_states[entity_id] = state
 
     class ProbabilityResult:
         """Class to hold probability calculation results."""
