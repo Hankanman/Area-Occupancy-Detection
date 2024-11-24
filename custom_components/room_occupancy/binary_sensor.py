@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RoomOccupancyCoordinator
 from .const import (
     ATTR_ACTIVE_TRIGGERS,
     ATTR_CONFIDENCE_SCORE,
@@ -30,7 +31,6 @@ from .const import (
     DOMAIN,
     NAME_BINARY_SENSOR,
 )
-from .coordinator import RoomOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
