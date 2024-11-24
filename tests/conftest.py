@@ -16,7 +16,7 @@ from custom_components.room_occupancy.const import (
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=invalid-name
 
 # Test data
 TEST_CONFIG = {
@@ -46,10 +46,10 @@ def mock_config_entry() -> MockConfigEntry:
 @pytest.fixture
 async def init_integration(
     hass: HomeAssistant,
-    config_entry: MockConfigEntry,
+    mock_config_entry: MockConfigEntry,  # pylint: disable=redefined-outer-name
 ) -> MockConfigEntry:
     """Set up the room occupancy integration for testing."""
-    config_entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(config_entry.entry_id)
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
-    return config_entry
+    return mock_config_entry
