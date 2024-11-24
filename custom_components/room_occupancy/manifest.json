@@ -1,10 +1,10 @@
 {
   "domain": "room_occupancy",
   "name": "Room Occupancy Detection",
-  "documentation": "https://github.com/yourusername/ha-room-occupancy",
-  "issue_tracker": "https://github.com/yourusername/ha-room-occupancy/issues",
+  "documentation": "https://github.com/Hankanman/Room-Occupancy-Detection",
+  "issue_tracker": "https://github.com/Hankanman/Room-Occupancy-Detection/issues",
   "dependencies": ["statistics"],
-  "codeowners": ["@yourusername"],
+  "codeowners": ["@Hankanman"],
   "requirements": [],
   "iot_class": "calculated",
   "version": "1.0.0",
