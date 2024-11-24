@@ -12,6 +12,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -38,11 +39,11 @@ _LOGGER = logging.getLogger(__name__)
 class RoomOccupancyBinaryEntityDescription(BinarySensorEntityDescription):
     """Class describing Room Occupancy binary sensor entities."""
 
-    def __init__(self) -> None:
+    def __init__(self, room_name: str) -> None:
         """Initialize the description."""
         super().__init__(
             key="occupancy_status",
-            name=NAME_BINARY_SENSOR,
+            name=f"{room_name} {NAME_BINARY_SENSOR}",
             device_class=BinarySensorDeviceClass.OCCUPANCY,
         )
 
@@ -65,7 +66,6 @@ class RoomOccupancyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry_id}_occupancy"
         self.entity_description = description
-        self._attr_name = NAME_BINARY_SENSOR
         self._threshold = threshold
 
     @property
@@ -81,15 +81,35 @@ class RoomOccupancyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return {}
 
+        def round_percentage(value: float) -> float:
+            """Round percentage values to 2 decimal places."""
+            return round(value * 100, 2)
+
+        def round_decay_status(decay_dict: dict) -> dict:
+            """Round decay status values to 2 decimal places."""
+            return {k: round(v, 2) for k, v in decay_dict.items()}
+
+        def round_sensor_probabilities(prob_dict: dict) -> dict:
+            """Round sensor probability values to 2 decimal places."""
+            return {k: round_percentage(v) for k, v in prob_dict.items()}
+
         return {
-            ATTR_PROBABILITY: self.coordinator.data.get("probability", 0.0),
-            ATTR_PRIOR_PROBABILITY: self.coordinator.data.get("prior_probability", 0.0),
-            ATTR_ACTIVE_TRIGGERS: self.coordinator.data.get("active_triggers", []),
-            ATTR_SENSOR_PROBABILITIES: self.coordinator.data.get(
-                "sensor_probabilities", {}
+            ATTR_PROBABILITY: round_percentage(
+                self.coordinator.data.get("probability", 0.0)
             ),
-            ATTR_DECAY_STATUS: self.coordinator.data.get("decay_status", {}),
-            ATTR_CONFIDENCE_SCORE: self.coordinator.data.get("confidence_score", 0.0),
+            ATTR_PRIOR_PROBABILITY: round_percentage(
+                self.coordinator.data.get("prior_probability", 0.0)
+            ),
+            ATTR_ACTIVE_TRIGGERS: self.coordinator.data.get("active_triggers", []),
+            ATTR_SENSOR_PROBABILITIES: round_sensor_probabilities(
+                self.coordinator.data.get("sensor_probabilities", {})
+            ),
+            ATTR_DECAY_STATUS: round_decay_status(
+                self.coordinator.data.get("decay_status", {})
+            ),
+            ATTR_CONFIDENCE_SCORE: round_percentage(
+                self.coordinator.data.get("confidence_score", 0.0)
+            ),
             ATTR_SENSOR_AVAILABILITY: self.coordinator.data.get(
                 "sensor_availability", {}
             ),
@@ -111,13 +131,14 @@ async def async_setup_entry(
     """Set up Room Occupancy binary sensor based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     threshold = entry.data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+    room_name = entry.data[CONF_NAME]
 
     async_add_entities(
         [
             RoomOccupancyBinarySensor(
                 coordinator,
                 entry.entry_id,
-                RoomOccupancyBinaryEntityDescription(),
+                RoomOccupancyBinaryEntityDescription(room_name),
                 threshold,
             )
         ]
