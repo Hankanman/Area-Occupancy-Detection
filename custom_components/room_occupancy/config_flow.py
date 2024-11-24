@@ -39,6 +39,13 @@ class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def is_matching(self, other_flow: dict[str, Any]) -> bool:
+        """Check if the user input matches the criteria for this config flow."""
+        # Implement the matching logic here
+        return True
+
+    VERSION = 1
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:

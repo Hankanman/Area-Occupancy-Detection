@@ -1,4 +1,5 @@
 """Test fixtures for room_occupancy integration."""
+
 import os
 import sys
 from typing import Generator
@@ -13,7 +14,7 @@ from custom_components.room_occupancy.const import (
 )
 
 # Make parent directory available to tests
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=invalid-name
@@ -27,7 +28,9 @@ TEST_CONFIG = {
 
 
 @pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations) -> Generator[None, None, None]:
+def auto_enable_custom_integrations(
+    enable_custom_integrations,
+) -> Generator[None, None, None]:
     """Enable custom integrations for testing."""
     yield
 
