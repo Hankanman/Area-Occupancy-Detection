@@ -12,7 +12,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -46,65 +46,22 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=10),
+            # Longer update interval since we're event-driven
+            update_interval=timedelta(minutes=5),
         )
         self.entry_id = entry_id
         self.config = config
         self._motion_timestamps = {}
         self._sensor_states = {}
-        self._last_known_states = {}  # Store last known good states
-        self._sensor_availability = {}  # Track availability separately
         self._unsubscribe_handlers = []
-        self._initialize_sensor_states()
-        self._setup_state_listeners()
 
-    def _initialize_sensor_states(self) -> None:
-        """Initialize states for all configured sensors."""
+        # Initialize states
         for entity_id in self._get_all_configured_sensors():
-            self._update_sensor_state(entity_id, self.hass.states.get(entity_id))
+            state = hass.states.get(entity_id)
+            if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                self._sensor_states[entity_id] = state
 
-    def _update_sensor_state(self, entity_id: str, state: State | None) -> None:
-        """Update sensor state and availability tracking."""
-        if state is None:
-            self._sensor_availability[entity_id] = False
-            # Don't update _last_known_states - preserve last known state
-            _LOGGER.debug(
-                "Sensor %s returned None state, marking unavailable", entity_id
-            )
-            return
-
-        self._sensor_states[entity_id] = state
-
-        # Update availability based on state value
-        is_available = state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
-        self._sensor_availability[entity_id] = is_available
-
-        # Update last known good state if current state is valid
-        if is_available:
-            try:
-                # For numeric sensors, verify value can be converted to float
-                if any(
-                    entity_id in self.config.get(sensor_type, [])
-                    for sensor_type in [
-                        CONF_ILLUMINANCE_SENSORS,
-                        CONF_HUMIDITY_SENSORS,
-                        CONF_TEMPERATURE_SENSORS,
-                    ]
-                ):
-                    float(state.state)
-                self._last_known_states[entity_id] = state
-            except ValueError:
-                _LOGGER.debug(
-                    "Sensor %s has invalid numeric state: %s", entity_id, state.state
-                )
-                self._sensor_availability[entity_id] = False
-
-        _LOGGER.debug(
-            "Updated sensor %s - State: %s, Available: %s",
-            entity_id,
-            state.state,
-            self._sensor_availability[entity_id],
-        )
+        self._setup_state_listeners()
 
     def _get_all_configured_sensors(self) -> list[str]:
         """Get list of all configured sensor entity IDs."""
@@ -116,24 +73,6 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
         sensors.extend(self.config.get(CONF_DEVICE_STATES, []))
         return sensors
 
-    def _get_sensor_state(self, entity_id: str) -> State | None:
-        """Get current sensor state with fallback to last known good state."""
-        current_state = self._sensor_states.get(entity_id)
-
-        # If current state is unavailable/unknown, try last known good state
-        if current_state is None or current_state.state in (
-            STATE_UNAVAILABLE,
-            STATE_UNKNOWN,
-        ):
-            last_known = self._last_known_states.get(entity_id)
-            if last_known is not None:
-                _LOGGER.debug(
-                    "Using last known state for %s: %s", entity_id, last_known.state
-                )
-                return last_known
-
-        return current_state
-
     def unsubscribe(self) -> None:
         """Unsubscribe from all registered events."""
         while self._unsubscribe_handlers:
@@ -141,7 +80,6 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
 
     def _setup_state_listeners(self) -> None:
         """Set up state change listeners for all configured sensors."""
-        sensors = self._get_all_configured_sensors()
 
         @callback
         def async_state_changed(event):
@@ -149,40 +87,69 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
             entity_id = event.data["entity_id"]
             new_state = event.data["new_state"]
 
-            self._update_sensor_state(entity_id, new_state)
+            if not new_state:
+                return
 
-            # Handle motion timestamps
-            if (
-                entity_id in self.config.get(CONF_MOTION_SENSORS, [])
-                and new_state
-                and new_state.state == STATE_ON
-            ):
-                self._motion_timestamps[entity_id] = dt_util.utcnow()
+            if new_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                try:
+                    # For numeric sensors, validate the value
+                    if any(
+                        entity_id in self.config.get(sensor_type, [])
+                        for sensor_type in [
+                            CONF_ILLUMINANCE_SENSORS,
+                            CONF_HUMIDITY_SENSORS,
+                            CONF_TEMPERATURE_SENSORS,
+                        ]
+                    ):
+                        float(new_state.state)
 
-            self.async_set_updated_data(None)
+                    # Only update state if validation passed
+                    self._sensor_states[entity_id] = new_state
+
+                    # Update motion timestamps if needed
+                    if (
+                        entity_id in self.config.get(CONF_MOTION_SENSORS, [])
+                        and new_state.state == STATE_ON
+                    ):
+                        self._motion_timestamps[entity_id] = dt_util.utcnow()
+
+                    # Trigger update without full state refresh
+                    self.async_set_updated_data(self._get_calculated_data())
+
+                except ValueError:
+                    _LOGGER.debug(
+                        "Sensor %s provided invalid numeric value: %s",
+                        entity_id,
+                        new_state.state,
+                    )
 
         self.unsubscribe()
+        # Track all configured sensors
         self._unsubscribe_handlers.append(
-            async_track_state_change_event(self.hass, sensors, async_state_changed)
+            async_track_state_change_event(
+                self.hass,
+                self._get_all_configured_sensors(),
+                async_state_changed,
+            )
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from sensors and calculate occupancy probability."""
-        # Refresh all sensor states
-        for entity_id in self._get_all_configured_sensors():
-            self._update_sensor_state(entity_id, self.hass.states.get(entity_id))
+        """Periodic update - used as fallback and for decay updates."""
+        return self._get_calculated_data()
 
+    def _get_calculated_data(self) -> dict[str, Any]:
+        """Calculate current occupancy data from stored states."""
         motion_prob = self._calculate_motion_probability()
         env_prob = self._calculate_environmental_probability()
         combined_prob = (motion_prob.probability * 0.7) + (env_prob.probability * 0.3)
 
-        active_sensors = len(
-            [
-                sensor
-                for sensor, available in self._sensor_availability.items()
-                if available
-            ]
-        )
+        # Get current availability
+        current_availability = {
+            entity_id: state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            for entity_id, state in self._sensor_states.items()
+        }
+
+        active_sensors = len([s for s, v in current_availability.items() if v])
         total_sensors = len(self._get_all_configured_sensors())
 
         return {
@@ -197,7 +164,7 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
             "confidence_score": self._calculate_confidence_score(
                 active_sensors, total_sensors
             ),
-            "sensor_availability": self._sensor_availability.copy(),
+            "sensor_availability": current_availability,
         }
 
     class ProbabilityResult:
@@ -223,12 +190,8 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
             return self.ProbabilityResult(0.0, [])
 
         for entity_id in self.config.get(CONF_MOTION_SENSORS, []):
-            if not self._sensor_availability.get(entity_id, False):
-                total_weight -= 1
-                continue
-
-            state = self._get_sensor_state(entity_id)
-            if not state:
+            state = self._sensor_states.get(entity_id)
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 total_weight -= 1
                 continue
 
@@ -265,11 +228,8 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
 
         # Process illuminance sensors
         for entity_id in self.config.get(CONF_ILLUMINANCE_SENSORS, []):
-            if not self._sensor_availability.get(entity_id, False):
-                continue
-
-            state = self._get_sensor_state(entity_id)
-            if not state:
+            state = self._sensor_states.get(entity_id)
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 continue
 
             try:
@@ -288,11 +248,8 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
         ]:
             changes = []
             for entity_id in self.config.get(sensor_type, []):
-                if not self._sensor_availability.get(entity_id, False):
-                    continue
-
-                state = self._get_sensor_state(entity_id)
-                if not state:
+                state = self._sensor_states.get(entity_id)
+                if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                     continue
 
                 try:
@@ -312,11 +269,8 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator):
 
         # Process device states
         for entity_id in self.config.get(CONF_DEVICE_STATES, []):
-            if not self._sensor_availability.get(entity_id, False):
-                continue
-
-            state = self._get_sensor_state(entity_id)
-            if not state:
+            state = self._sensor_states.get(entity_id)
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 continue
 
             if state.state == STATE_ON:
