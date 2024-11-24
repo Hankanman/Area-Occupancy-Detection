@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -16,20 +16,18 @@ from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ATTR_ACTIVE_TRIGGERS,
+    ATTR_CONFIDENCE_SCORE,
+    ATTR_DECAY_STATUS,
+    ATTR_PRIOR_PROBABILITY,
+    ATTR_PROBABILITY,
+    ATTR_SENSOR_AVAILABILITY,
+    ATTR_SENSOR_PROBABILITIES,
     DOMAIN,
     NAME_PROBABILITY_SENSOR,
-    ATTR_PROBABILITY,
-    ATTR_PRIOR_PROBABILITY,
-    ATTR_ACTIVE_TRIGGERS,
-    ATTR_SENSOR_PROBABILITIES,
-    ATTR_DECAY_STATUS,
-    ATTR_CONFIDENCE_SCORE,
-    ATTR_SENSOR_AVAILABILITY,
 )
 from .coordinator import RoomOccupancyCoordinator
 
@@ -39,6 +37,15 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass
 class RoomOccupancyEntityDescription(SensorEntityDescription):
     """Class describing Room Occupancy sensor entities."""
+
+    def __init__(self) -> None:
+        """Initialize the description."""
+        super().__init__(
+            key="occupancy_probability",
+            name=NAME_PROBABILITY_SENSOR,
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            native_unit_of_measurement=PERCENTAGE,
+        )
 
 
 class RoomOccupancyProbabilitySensor(CoordinatorEntity, SensorEntity):

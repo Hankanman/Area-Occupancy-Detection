@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -17,17 +17,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
-    NAME_BINARY_SENSOR,
+    ATTR_ACTIVE_TRIGGERS,
+    ATTR_CONFIDENCE_SCORE,
+    ATTR_DECAY_STATUS,
+    ATTR_PRIOR_PROBABILITY,
+    ATTR_PROBABILITY,
+    ATTR_SENSOR_AVAILABILITY,
+    ATTR_SENSOR_PROBABILITIES,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
-    ATTR_PROBABILITY,
-    ATTR_PRIOR_PROBABILITY,
-    ATTR_ACTIVE_TRIGGERS,
-    ATTR_SENSOR_PROBABILITIES,
-    ATTR_DECAY_STATUS,
-    ATTR_CONFIDENCE_SCORE,
-    ATTR_SENSOR_AVAILABILITY,
+    DOMAIN,
+    NAME_BINARY_SENSOR,
 )
 from .coordinator import RoomOccupancyCoordinator
 
@@ -37,6 +37,14 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass
 class RoomOccupancyBinaryEntityDescription(BinarySensorEntityDescription):
     """Class describing Room Occupancy binary sensor entities."""
+
+    def __init__(self) -> None:
+        """Initialize the description."""
+        super().__init__(
+            key="occupancy_status",
+            name=NAME_BINARY_SENSOR,
+            device_class=BinarySensorDeviceClass.OCCUPANCY,
+        )
 
 
 class RoomOccupancyBinarySensor(CoordinatorEntity, BinarySensorEntity):
