@@ -5,37 +5,50 @@
                 "title": "Room Occupancy Detection Setup",
                 "description": "Configure room occupancy detection using multiple sensors",
                 "data": {
-                    "name": "Enter a name for this room",
-                    "motion_sensors": "Select motion sensors for this room",
-                    "illuminance_sensors": "Select illuminance sensors (optional)",
-                    "humidity_sensors": "Select humidity sensors (optional)",
-                    "temperature_sensors": "Select temperature sensors (optional)",
-                    "device_states": "Select device states to monitor (optional)",
-                    "threshold": "Probability threshold for occupancy (0-1)",
-                    "history_period": "Number of days of historical data to analyze",
-                    "decay_enabled": "Enable sensor reading decay over time",
-                    "decay_window": "Time window for sensor decay (seconds)",
-                    "decay_type": "Select decay calculation type"
+                    "name": "Room Name",
+                    "motion_sensors": "Motion Sensors",
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors",
+                    "device_states": "Device States",
+                    "threshold": "Occupancy Threshold",
+                    "history_period": "Historical Data Period",
+                    "decay_enabled": "Enable Sensor Decay",
+                    "decay_window": "Decay Time Window",
+                    "decay_type": "Decay Type"
                 }
             }
         },
         "error": {
-            "unknown": "Unexpected error occurred during setup"
+            "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "This room is already configured in Home Assistant"
+            "already_configured": "This room is already configured"
         }
     },
-    "entity": {
-        "sensor": {
-            "room_occupancy_probability": {
-                "name": "Room Occupancy Probability"
+    "options": {
+        "step": {
+            "init": {
+                "title": "Room Occupancy Options",
+                "description": "Modify room occupancy detection settings",
+                "data": {
+                    "motion_sensors": "Motion Sensors",
+                    "illuminance_sensors": "Illuminance Sensors (optional)",
+                    "humidity_sensors": "Humidity Sensors (optional)",
+                    "temperature_sensors": "Temperature Sensors (optional)",
+                    "device_states": "Device States (optional)",
+                    "threshold": "Occupancy Threshold (0-1)",
+                    "history_period": "Historical Data Period (days)",
+                    "decay_enabled": "Enable Sensor Reading Decay",
+                    "decay_window": "Decay Time Window (seconds)",
+                    "decay_type": "Decay Calculation Type"
+                }
             }
         },
-        "binary_sensor": {
-            "room_occupancy_status": {
-                "name": "Room Occupancy Status"
-            }
+        "error": {
+            "invalid_threshold": "Threshold must be between 0 and 1",
+            "invalid_history": "History period must be between 1 and 30 days",
+            "invalid_decay": "Decay window must be between 60 and 3600 seconds"
         }
     }
 }
