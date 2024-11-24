@@ -1,0 +1,208 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+logger:
+  default: CRITICAL
+  logs:
+    custom_components.room_occupancy: debug
+
+debugpy:
+
+# Input controls for testing
+input_boolean:
+  # Motion sensor controls
+  mock_motion_1:
+    name: Mock Motion Sensor 1
+    initial: off
+  mock_motion_2:
+    name: Mock Motion Sensor 2
+    initial: off
+  mock_motion_3:
+    name: Mock Motion Sensor 3
+    initial: off
+
+  # Device state controls
+  mock_tv:
+    name: Mock TV State
+    initial: off
+  mock_computer:
+    name: Mock Computer State
+    initial: off
+  mock_game_console:
+    name: Mock Game Console State
+    initial: off
+  mock_lights:
+    name: Mock Room Lights
+    initial: off
+
+input_number:
+  # Environmental sensor controls
+  mock_illuminance_1:
+    name: Mock Illuminance 1
+    min: 0
+    max: 1000
+    step: 1
+    initial: 100
+  mock_illuminance_2:
+    name: Mock Illuminance 2
+    min: 0
+    max: 1000
+    step: 1
+    initial: 100
+
+  mock_temperature_1:
+    name: Mock Temperature 1
+    min: 15
+    max: 30
+    step: 0.1
+    initial: 21
+  mock_temperature_2:
+    name: Mock Temperature 2
+    min: 15
+    max: 30
+    step: 0.1
+    initial: 21
+
+  mock_humidity_1:
+    name: Mock Humidity 1
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+  mock_humidity_2:
+    name: Mock Humidity 2
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+
+# Template sensors that simulate real devices
+binary_sensor:
+  - platform: template
+    sensors:
+      # Motion sensors
+      motion_sensor_1:
+        friendly_name: "Motion Sensor 1"
+        device_class: motion
+        value_template: "{{ states('input_boolean.mock_motion_1') }}"
+        availability_template: "true"
+
+      motion_sensor_2:
+        friendly_name: "Motion Sensor 2"
+        device_class: motion
+        value_template: "{{ states('input_boolean.mock_motion_2') }}"
+        availability_template: "true"
+
+      motion_sensor_3:
+        friendly_name: "Motion Sensor 3"
+        device_class: motion
+        value_template: "{{ states('input_boolean.mock_motion_3') }}"
+        availability_template: "{{ now().second < 50 }}" # Simulates periodic unavailability
+
+      # Device power states
+      tv_power_sensor:
+        friendly_name: "TV Power State"
+        device_class: power
+        value_template: "{{ states('input_boolean.mock_tv') }}"
+
+      computer_power_sensor:
+        friendly_name: "Computer Power State"
+        device_class: power
+        value_template: "{{ states('input_boolean.mock_computer') }}"
+
+      game_console_power_sensor:
+        friendly_name: "Game Console Power State"
+        device_class: power
+        value_template: "{{ states('input_boolean.mock_game_console') }}"
+
+sensor:
+  - platform: template
+    sensors:
+      # Illuminance sensors
+      illuminance_sensor_1:
+        friendly_name: "Illuminance Sensor 1"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        value_template: "{{ states('input_number.mock_illuminance_1') | float }}"
+
+      illuminance_sensor_2:
+        friendly_name: "Illuminance Sensor 2"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        value_template: "{{ states('input_number.mock_illuminance_2') | float }}"
+        availability_template: "{{ now().minute < 55 }}" # Simulates periodic unavailability
+
+      # Temperature sensors
+      temperature_sensor_1:
+        friendly_name: "Temperature Sensor 1"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        value_template: "{{ states('input_number.mock_temperature_1') | float }}"
+
+      temperature_sensor_2:
+        friendly_name: "Temperature Sensor 2"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        value_template: "{{ states('input_number.mock_temperature_2') | float }}"
+
+      # Humidity sensors
+      humidity_sensor_1:
+        friendly_name: "Humidity Sensor 1"
+        device_class: humidity
+        unit_of_measurement: "%"
+        value_template: "{{ states('input_number.mock_humidity_1') | float }}"
+
+      humidity_sensor_2:
+        friendly_name: "Humidity Sensor 2"
+        device_class: humidity
+        unit_of_measurement: "%"
+        value_template: "{{ states('input_number.mock_humidity_2') | float }}"
+
+      # Composite sensors
+      room_activity_level:
+        friendly_name: "Room Activity Level"
+        unit_of_measurement: "%"
+        value_template: >
+          {% set motion = states('input_boolean.mock_motion_1') == 'on'
+             or states('input_boolean.mock_motion_2') == 'on'
+             or states('input_boolean.mock_motion_3') == 'on' %}
+          {% set devices = states('input_boolean.mock_tv') == 'on'
+             or states('input_boolean.mock_computer') == 'on'
+             or states('input_boolean.mock_game_console') == 'on' %}
+          {% set activity = 0 %}
+          {% if motion %}
+            {% set activity = activity + 60 %}
+          {% endif %}
+          {% if devices %}
+            {% set activity = activity + 40 %}
+          {% endif %}
+          {{ activity }}
+
+# Media Player mock
+media_player:
+  - platform: template
+    media_players:
+      room_tv:
+        friendly_name: "Room TV"
+        value_template: >
+          {% if states('input_boolean.mock_tv') == 'on' %}
+            playing
+          {% else %}
+            off
+          {% endif %}
+        turn_on:
+          service: input_boolean.turn_on
+          data:
+            entity_id: input_boolean.mock_tv
+        turn_off:
+          service: input_boolean.turn_off
+          data:
+            entity_id: input_boolean.mock_tv

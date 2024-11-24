@@ -2,38 +2,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Home Assistant",
-            "type": "python",
+            "name": "HomeAssistant",
+            "type": "debugpy",
             "request": "launch",
             "module": "homeassistant",
             "args": [
-                "--config",
-                "${workspaceFolder}/config",
-                "--debug"
+                "--debug",
+                "-c",
+                "/config"
             ],
             "justMyCode": false,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
+            "console": "internalConsole"
         },
-        {
-            "name": "Python: Current File",
-            "type": "python",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "justMyCode": false
-        },
-        {
-            "name": "Python: Debug Tests",
-            "type": "python",
-            "request": "launch",
-            "module": "pytest",
-            "args": [
-                "-v",
-                "--no-cov"
-            ],
-            "justMyCode": false
-        }
     ]
 }

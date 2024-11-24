@@ -1,23 +1,11 @@
 {
   "python.linting.enabled": true,
-  "python.linting.pylintEnabled": true,
   "python.linting.flake8Enabled": true,
-  "python.formatting.provider": "black",
-  "editor.formatOnSave": true,
-  "editor.rulers": [125],
-  "files.trimTrailingWhitespace": true,
-  "files.insertFinalNewline": true,
-  "python.testing.pytestEnabled": true,
-  "python.testing.unittestEnabled": false,
-  "python.testing.nosetestsEnabled": false,
   "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
   "[python]": {
-    "editor.codeActionsOnSave": {
-      "source.organizeImports": "always"
-    }
+    "editor.defaultFormatter": "ms-python.autopep8"
   },
-  "python.analysis.autoImportCompletions": true,
-  "files.associations": {
-    "*.yaml": "home-assistant"
-  }
+  "python.formatting.provider": "none"
 }
