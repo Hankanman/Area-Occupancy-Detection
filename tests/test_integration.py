@@ -1,4 +1,5 @@
 """Tests for room_occupancy integration."""
+
 from unittest.mock import patch
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.const import STATE_ON, STATE_OFF
@@ -12,7 +13,9 @@ async def test_setup(hass: HomeAssistant, init_integration: MockConfigEntry) -> 
     assert hass.states.get("sensor.room_occupancy_probability") is not None
 
 
-async def test_motion_trigger(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
+async def test_motion_trigger(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
     """Test probability changes with motion detection."""
     # Initial state - no motion
     hass.states.async_set("binary_sensor.motion1", STATE_OFF)
@@ -34,7 +37,9 @@ async def test_motion_trigger(hass: HomeAssistant, init_integration: MockConfigE
     assert new_prob > initial_prob
 
 
-async def test_binary_sensor_threshold(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
+async def test_binary_sensor_threshold(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
     """Test binary sensor state changes based on threshold."""
     # Set high probability with motion
     hass.states.async_set("binary_sensor.motion1", STATE_ON)
@@ -57,7 +62,9 @@ async def test_binary_sensor_threshold(hass: HomeAssistant, init_integration: Mo
     assert binary_state.state == STATE_OFF
 
 
-async def test_coordinator_update(hass: HomeAssistant, mock_config_entry: MockConfigEntry) -> None:
+async def test_coordinator_update(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
     """Test coordinator data updates."""
     mock_data = {
         "probability": 0.75,

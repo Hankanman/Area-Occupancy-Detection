@@ -1,13 +1,13 @@
 {
   "domain": "room_occupancy",
   "name": "Room Occupancy Detection",
-  "documentation": "https://github.com/Hankanman/Room-Occupancy-Detection",
-  "issue_tracker": "https://github.com/Hankanman/Room-Occupancy-Detection/issues",
-  "dependencies": ["statistics", "sensor", "binary_sensor"],
   "codeowners": ["@Hankanman"],
-  "requirements": [],
-  "iot_class": "calculated",
-  "version": "0.0.1-dev",
   "config_flow": true,
-  "quality_scale": "internal"
+  "dependencies": ["statistics", "sensor", "binary_sensor"],
+  "documentation": "https://github.com/Hankanman/Room-Occupancy-Detection",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/Hankanman/Room-Occupancy-Detection/issues",
+  "quality_scale": "internal",
+  "requirements": [],
+  "version": "0.0.1-dev"
 }
