@@ -16,5 +16,8 @@
       "source.organizeImports": "always"
     }
   },
-  "python.analysis.autoImportCompletions": true
+  "python.analysis.autoImportCompletions": true,
+  "files.associations": {
+    "*.yaml": "home-assistant"
+  }
 }
