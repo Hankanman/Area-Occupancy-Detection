@@ -11,9 +11,6 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
-from homeassistant.helpers.schema_config_entry_flow import (
-    SchemaOptionsFlowHandler,
-)
 
 from .const import (
     CONF_DECAY_ENABLED,
@@ -188,25 +185,45 @@ class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return RoomOccupancyOptionsFlow(config_entry)
 
 
-class RoomOccupancyOptionsFlow(SchemaOptionsFlowHandler):
+class RoomOccupancyOptionsFlow(config_entries.OptionsFlow):
     """Handle Room Occupancy options."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        # Initialize with config entry and empty options flow schema
-        super().__init__(config_entry, {})
-        self.options = get_config_schema(config_entry.data)
+        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage Room Occupancy options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            # Preserve the room name from the original config
-            user_input[CONF_NAME] = self.config_entry.data[CONF_NAME]
-            return self.async_create_entry(title="", data=user_input)
+            try:
+                # Validate the threshold
+                threshold = user_input.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+                if not 0 <= threshold <= 1:
+                    errors[CONF_THRESHOLD] = "invalid_threshold"
+                else:
+                    # Preserve the room name from the original config
+                    return self.async_create_entry(
+                        title="",
+                        data={
+                            CONF_NAME: self.config_entry.data[CONF_NAME],
+                            **user_input,
+                        },
+                    )
+            except Exception as error:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected error occurred: %s", error)
+                errors["base"] = "unknown"
+
+        # Remove name from schema as it shouldn't be changed
+        options_schema = get_config_schema(self.config_entry.data)
+        if CONF_NAME in options_schema:
+            del options_schema[CONF_NAME]
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(self.options),
+            data_schema=vol.Schema(options_schema),
+            errors=errors,
         )
