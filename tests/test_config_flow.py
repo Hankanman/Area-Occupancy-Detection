@@ -1,10 +1,10 @@
-"""Test the Room Occupancy Detection config and options flow."""
+"""Test the Area Occupancy Detection config and options flow."""
 
 from unittest.mock import patch
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from custom_components.room_occupancy.const import (
+from custom_components.area_occupancy.const import (
     DOMAIN,
     CONF_MOTION_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
@@ -24,13 +24,13 @@ async def test_form(hass: HomeAssistant) -> None:
     assert result["errors"] == {}
 
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data",
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data",
         return_value={},
     ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
-                CONF_NAME: "Test Room",
+                CONF_NAME: "Test Area",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_THRESHOLD: 0.5,
             },
@@ -38,9 +38,9 @@ async def test_form(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
     assert result2["type"] == "create_entry"
-    assert result2["title"] == "Test Room"
+    assert result2["title"] == "Test Area"
     assert result2["data"] == {
-        CONF_NAME: "Test Room",
+        CONF_NAME: "Test Area",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_THRESHOLD: 0.5,
     }
@@ -83,7 +83,7 @@ async def test_options_flow_update(hass: HomeAssistant, init_integration) -> Non
     }
 
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data"
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data"
     ):
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], user_input=new_options
@@ -133,7 +133,7 @@ async def test_config_entry_update_listener(
     }
 
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data"
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data"
     ):
         hass.config_entries.async_update_entry(
             config_entry, data={CONF_NAME: config_entry.data[CONF_NAME], **new_options}
@@ -149,7 +149,7 @@ async def test_config_entry_update_listener(
 async def test_options_flow_preserve_name(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """Test that room name is preserved when updating options."""
+    """Test that area name is preserved when updating options."""
     config_entry = hass.config_entries.async_entries(DOMAIN)[0]
     original_name = config_entry.data[CONF_NAME]
 
@@ -163,7 +163,7 @@ async def test_options_flow_preserve_name(
     }
 
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data"
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data"
     ):
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], user_input=new_options

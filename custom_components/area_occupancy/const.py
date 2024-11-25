@@ -1,11 +1,11 @@
-"""Constants and types for the Room Occupancy Detection integration."""
+"""Constants and types for the Area Occupancy Detection integration."""
 
 from __future__ import annotations
 
 from typing import Final, TypedDict, NotRequired
 from typing_extensions import TypeAlias
 
-DOMAIN: Final = "room_occupancy"
+DOMAIN: Final = "area_occupancy"
 
 # Configuration constants
 CONF_MOTION_SENSORS: Final = "motion_sensors"
@@ -27,8 +27,8 @@ DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
 
 # Entity naming
-NAME_PROBABILITY_SENSOR: Final = "Room Occupancy Probability"
-NAME_BINARY_SENSOR: Final = "Room Occupancy Status"
+NAME_PROBABILITY_SENSOR: Final = "Area Occupancy Probability"
+NAME_BINARY_SENSOR: Final = "Area Occupancy Status"
 
 # Attribute keys
 ATTR_PROBABILITY: Final = "probability"
@@ -86,8 +86,8 @@ class ProbabilityResult(TypedDict):
     max_probability: NotRequired[float]
 
 
-class RoomOccupancyConfig(TypedDict):
-    """Type for room occupancy configuration."""
+class AreaOccupancyConfig(TypedDict):
+    """Type for area occupancy configuration."""
 
     name: str
     motion_sensors: list[str]

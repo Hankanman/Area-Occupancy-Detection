@@ -1,4 +1,4 @@
-"""Config flow with options for Room Occupancy Detection integration."""
+"""Config flow with options for Area Occupancy Detection integration."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
     DOMAIN,
-    RoomOccupancyConfig,
+    AreaOccupancyConfig,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -139,14 +139,16 @@ def get_config_schema(
     }
 
 
-class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Room Occupancy Detection."""
+class AreaOccupancyConfigFlow(
+    config_entries.ConfigFlow, domain=DOMAIN
+):  # pylint: disable=abstract-method
+    """Handle a config flow for Area Occupancy Detection."""
 
     VERSION = 1
 
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self.config_data: RoomOccupancyConfig = {}
+        self.config_data: AreaOccupancyConfig = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -180,13 +182,13 @@ class RoomOccupancyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> RoomOccupancyOptionsFlow:
+    ) -> AreaOccupancyOptionsFlow:
         """Get the options flow for this handler."""
-        return RoomOccupancyOptionsFlow(config_entry)
+        return AreaOccupancyOptionsFlow(config_entry)
 
 
-class RoomOccupancyOptionsFlow(config_entries.OptionsFlow):
-    """Handle Room Occupancy options."""
+class AreaOccupancyOptionsFlow(config_entries.OptionsFlow):
+    """Handle Area Occupancy options."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
@@ -195,7 +197,7 @@ class RoomOccupancyOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage Room Occupancy options."""
+        """Manage Area Occupancy options."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -205,7 +207,7 @@ class RoomOccupancyOptionsFlow(config_entries.OptionsFlow):
                 if not 0 <= threshold <= 1:
                     errors[CONF_THRESHOLD] = "invalid_threshold"
                 else:
-                    # Preserve the room name from the original config
+                    # Preserve the area name from the original config
                     return self.async_create_entry(
                         title="",
                         data={

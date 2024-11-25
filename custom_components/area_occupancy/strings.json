@@ -2,10 +2,10 @@
     "config": {
         "step": {
             "user": {
-                "title": "Room Occupancy Detection Setup",
-                "description": "Configure room occupancy detection using multiple sensors",
+                "title": "Area Occupancy Detection Setup",
+                "description": "Configure area occupancy detection using multiple sensors",
                 "data": {
-                    "name": "Room Name",
+                    "name": "Area Name",
                     "motion_sensors": "Motion Sensors",
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
@@ -23,7 +23,7 @@
             "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "This room is already configured"
+            "already_configured": "This area is already configured"
         }
     }
 }
