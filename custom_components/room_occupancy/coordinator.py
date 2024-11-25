@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from typing import Any
+from collections import deque
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
@@ -22,6 +23,7 @@ from .const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_MOTION_SENSORS,
     CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_TYPE,
     DEFAULT_DECAY_WINDOW,
@@ -53,6 +55,14 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._sensor_states: SensorStates = {}
         self._unsubscribe_handlers: list[callable] = []
         self._calculator = self._create_calculator()
+
+        # New tracking attributes
+        self._probability_history = deque(maxlen=12)  # 1 hour of 5-minute readings
+        self._last_occupied: datetime | None = None
+        self._last_state_change: datetime | None = None
+        self._occupancy_history = deque(
+            [False] * 288, maxlen=288
+        )  # 24 hours of 5-minute readings
 
         # Initialize states
         for entity_id in self._get_all_configured_sensors():
@@ -160,9 +170,88 @@ class RoomOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Periodic update - used as fallback and for decay updates."""
         return self._get_calculated_data()
 
+    def _update_historical_data(self, probability: float, is_occupied: bool) -> None:
+        """Update historical tracking data."""
+        now = dt_util.utcnow()
+
+        # Update probability history
+        self._probability_history.append(probability)
+
+        # Update occupancy tracking
+        self._occupancy_history.append(is_occupied)
+
+        # Update last occupied time
+        if is_occupied:
+            self._last_occupied = now
+
+        # Update state change time if state changed
+        current_state = is_occupied
+        if not self._last_state_change or (
+            bool(self._occupancy_history[-2]) != current_state
+        ):
+            self._last_state_change = now
+
+    def _get_historical_metrics(self) -> dict[str, float]:
+        """Calculate historical metrics."""
+        now = dt_util.utcnow()
+
+        # Calculate moving average
+        moving_avg = (
+            sum(self._probability_history) / len(self._probability_history)
+            if self._probability_history
+            else 0.0
+        )
+
+        # Calculate rate of change (per hour)
+        rate_of_change = 0.0
+        if len(self._probability_history) >= 2:
+            change = self._probability_history[-1] - self._probability_history[0]
+            time_window = len(self._probability_history) * 5  # 5 minutes per reading
+            rate_of_change = (change / time_window) * 60  # Convert to per hour
+
+        # Calculate occupancy rate
+        occupancy_rate = (
+            sum(1 for x in self._occupancy_history if x) / len(self._occupancy_history)
+            if self._occupancy_history
+            else 0.0
+        )
+
+        # Calculate state duration
+        state_duration = 0.0
+        if self._last_state_change:
+            state_duration = (now - self._last_state_change).total_seconds()
+
+        return {
+            "moving_average": moving_avg,
+            "rate_of_change": rate_of_change,
+            "occupancy_rate": occupancy_rate,
+            "state_duration": state_duration,
+            "min_probability": (
+                min(self._probability_history) if self._probability_history else 0.0
+            ),
+            "max_probability": (
+                max(self._probability_history) if self._probability_history else 0.0
+            ),
+            "last_occupied": (
+                self._last_occupied.isoformat() if self._last_occupied else None
+            ),
+        }
+
     def _get_calculated_data(self) -> ProbabilityResult:
         """Calculate current occupancy data using the probability calculator."""
-        return self._calculator.calculate(
+        base_result = self._calculator.calculate(
             self._sensor_states,
             self._motion_timestamps,
         )
+
+        # Update historical data
+        self._update_historical_data(
+            base_result["probability"],
+            base_result["probability"] >= self.config.get(CONF_THRESHOLD, 0.5),
+        )
+
+        # Add historical metrics to result
+        historical_metrics = self._get_historical_metrics()
+        base_result.update(historical_metrics)
+
+        return base_result

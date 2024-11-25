@@ -38,6 +38,15 @@ ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
 ATTR_DECAY_STATUS: Final = "decay_status"
 ATTR_CONFIDENCE_SCORE: Final = "confidence_score"
 ATTR_SENSOR_AVAILABILITY: Final = "sensor_availability"
+ATTR_LAST_OCCUPIED: Final = "last_occupied"
+ATTR_STATE_DURATION: Final = "state_duration"
+ATTR_OCCUPANCY_RATE: Final = "occupancy_rate"
+ATTR_MOVING_AVERAGE: Final = "moving_average"
+ATTR_RATE_OF_CHANGE: Final = "rate_of_change"
+ATTR_MIN_PROBABILITY: Final = "min_probability"
+ATTR_MAX_PROBABILITY: Final = "max_probability"
+ATTR_THRESHOLD: Final = "threshold"
+ATTR_WINDOW_SIZE: Final = "window_size"
 
 
 # Type definitions
@@ -68,6 +77,13 @@ class ProbabilityResult(TypedDict):
     decay_status: dict[str, float]
     confidence_score: float
     sensor_availability: dict[str, bool]
+    last_occupied: NotRequired[str]
+    state_duration: NotRequired[float]
+    occupancy_rate: NotRequired[float]
+    moving_average: NotRequired[float]
+    rate_of_change: NotRequired[float]
+    min_probability: NotRequired[float]
+    max_probability: NotRequired[float]
 
 
 class RoomOccupancyConfig(TypedDict):
