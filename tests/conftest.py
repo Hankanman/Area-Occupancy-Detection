@@ -1,4 +1,4 @@
-"""Test fixtures for room_occupancy integration."""
+"""Test fixtures for area_occupancy integration."""
 
 import os
 import sys
@@ -7,7 +7,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from custom_components.room_occupancy.const import (
+from custom_components.area_occupancy.const import (
     DOMAIN,
     CONF_MOTION_SENSORS,
     CONF_THRESHOLD,
@@ -21,7 +21,7 @@ pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=inva
 
 # Test data
 TEST_CONFIG = {
-    CONF_NAME: "Test Room",
+    CONF_NAME: "Test Area",
     CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
     CONF_THRESHOLD: 0.5,
 }
@@ -41,7 +41,7 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         data=TEST_CONFIG,
-        title="Test Room",
+        title="Test Area",
         unique_id="uniqueid123",
     )
 
@@ -51,7 +51,7 @@ async def init_integration(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,  # pylint: disable=redefined-outer-name
 ) -> MockConfigEntry:
-    """Set up the room occupancy integration for testing."""
+    """Set up the area occupancy integration for testing."""
     mock_config_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()

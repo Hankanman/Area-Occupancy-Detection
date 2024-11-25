@@ -1,4 +1,4 @@
-"""Coordinator for Room Occupancy Detection."""
+"""Coordinator for Area Occupancy Detection."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-class RoomOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
-    """Class to manage fetching room occupancy data."""
+class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
+    """Class to manage fetching area occupancy data."""
 
     def __init__(
         self, hass: HomeAssistant, entry_id: str, config: dict[str, Any]

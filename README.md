@@ -1,4 +1,4 @@
-# Room Occupancy Integration - Developer Guide
+# Area Occupancy Integration - Developer Guide
 
 ## Table of Contents
 
@@ -50,17 +50,17 @@ pre-commit install
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/ha-room-occupancy.git
+git clone https://github.com/yourusername/ha-area-occupancy.git
 ```
 
 2. Create symbolic link:
 
 ```bash
 # Linux/macOS
-ln -s /path/to/ha-room-occupancy/custom_components/room_occupancy /path/to/homeassistant/config/custom_components/room_occupancy
+ln -s /path/to/ha-area-occupancy/custom_components/area_occupancy /path/to/homeassistant/config/custom_components/area_occupancy
 
 # Windows (as administrator)
-mklink /D C:\path\to\homeassistant\config\custom_components\room_occupancy C:\path\to\ha-room-occupancy\custom_components\room_occupancy
+mklink /D C:\path\to\homeassistant\config\custom_components\area_occupancy C:\path\to\ha-area-occupancy\custom_components\area_occupancy
 ```
 
 3. Restart Home Assistant
@@ -80,7 +80,7 @@ mklink /D C:\path\to\homeassistant\config\custom_components\room_occupancy C:\pa
 ## Project Structure
 
 ```bash
-custom_components/room_occupancy/
+custom_components/area_occupancy/
 ├── __init__.py           # Integration initialization
 ├── manifest.json         # Integration metadata
 ├── const.py             # Constants and configuration
@@ -127,7 +127,7 @@ pytest tests/test_sensor.py
 3. Run with coverage:
 
 ```bash
-pytest tests/ --cov=custom_components.room_occupancy
+pytest tests/ --cov=custom_components.area_occupancy
 ```
 
 ### Test Structure
@@ -153,7 +153,7 @@ async def test_sensor_probability_calculation(hass):
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
-            "name": "Test Room",
+            "name": "Test Area",
             "motion_sensors": ["binary_sensor.motion"],
             "threshold": 0.5,
         },
@@ -167,7 +167,7 @@ async def test_sensor_probability_calculation(hass):
     hass.states.async_set("binary_sensor.motion", "on")
     await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.room_occupancy_probability")
+    state = hass.states.get("sensor.area_occupancy_probability")
     assert state
     assert float(state.state) > 90.0  # High probability when motion detected
 ```
@@ -200,7 +200,7 @@ Add to configuration.yaml:
 logger:
   default: info
   logs:
-    custom_components.room_occupancy: debug
+    custom_components.area_occupancy: debug
 ```
 
 ### Common Debug Points
@@ -249,7 +249,7 @@ debugpy.wait_for_client()
 
 | Option              | Type   | Default  | Description            |
 | ------------------- | ------ | -------- | ---------------------- |
-| name                | string | Required | Room name              |
+| name                | string | Required | Area name              |
 | motion_sensors      | list   | Required | Motion sensor entities |
 | illuminance_sensors | list   | Optional | Light level sensors    |
 | humidity_sensors    | list   | Optional | Humidity sensors       |

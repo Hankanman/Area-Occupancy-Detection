@@ -12,7 +12,7 @@ scene: !include scenes.yaml
 logger:
   default: CRITICAL
   logs:
-    custom_components.room_occupancy: debug
+    custom_components.area_occupancy: debug
 
 debugpy:
 
@@ -40,7 +40,7 @@ input_boolean:
     name: Mock Game Console State
     initial: off
   mock_lights:
-    name: Mock Room Lights
+    name: Mock Area Lights
     initial: off
 
 input_number:
@@ -170,8 +170,8 @@ sensor:
 media_player:
   - platform: template
     media_players:
-      room_tv:
-        friendly_name: "Room TV"
+      area_tv:
+        friendly_name: "Area TV"
         value_template: >
           {% if states('input_boolean.mock_tv') == 'on' %}
             playing

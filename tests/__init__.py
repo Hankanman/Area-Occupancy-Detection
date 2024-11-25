@@ -1,1 +1,1 @@
-"""Tests for room occupancy integration."""
+"""Tests for area occupancy integration."""

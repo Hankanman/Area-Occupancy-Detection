@@ -1,4 +1,4 @@
-"""The Room Occupancy Detection integration."""
+"""The Area Occupancy Detection integration."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN, RoomOccupancyConfig
-from .coordinator import RoomOccupancyCoordinator
+from .const import DOMAIN, AreaOccupancyConfig
+from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,12 +18,12 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Room Occupancy Detection from a config entry."""
+    """Set up Area Occupancy Detection from a config entry."""
     try:
         hass.data.setdefault(DOMAIN, {})
 
-        config: RoomOccupancyConfig = dict(entry.data)
-        coordinator = RoomOccupancyCoordinator(hass, entry.entry_id, config)
+        config: AreaOccupancyConfig = dict(entry.data)
+        coordinator = AreaOccupancyCoordinator(hass, entry.entry_id, config)
 
         await coordinator.async_config_entry_first_refresh()
 
@@ -38,7 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     except Exception as err:
-        _LOGGER.exception("Failed to setup room occupancy integration")
+        _LOGGER.exception("Failed to setup area occupancy integration")
         raise ConfigEntryNotReady from err
 
 
@@ -47,7 +47,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        coordinator: RoomOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+        coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
             "coordinator"
         ]
         coordinator.unsubscribe()
@@ -57,8 +57,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options for existing room occupancy entry."""
-    data: RoomOccupancyConfig = {
+    """Update options for existing area occupancy entry."""
+    data: AreaOccupancyConfig = {
         CONF_NAME: entry.data[CONF_NAME],
         **entry.options,
     }
@@ -82,7 +82,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     #     hass.config_entries.async_update_entry(config_entry, data=new)
 
     _LOGGER.error(
-        "Failed to migrate room occupancy configuration from version %s",
+        "Failed to migrate area occupancy configuration from version %s",
         config_entry.version,
     )
     return False

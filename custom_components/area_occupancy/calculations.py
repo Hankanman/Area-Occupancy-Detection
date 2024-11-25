@@ -1,4 +1,4 @@
-"""Probability calculations for Room Occupancy Detection."""
+"""Probability calculations for Area Occupancy Detection."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class EnvironmentalCalculationResult:
 
 
 class ProbabilityCalculator:
-    """Handles probability calculations for room occupancy."""
+    """Handles probability calculations for area occupancy."""
 
     def __init__(
         self,
@@ -68,7 +68,7 @@ class ProbabilityCalculator:
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
     ) -> ProbabilityResult:
-        """Calculate overall room occupancy probability."""
+        """Calculate overall area occupancy probability."""
         motion_result = self._calculate_motion_probability(
             sensor_states, motion_timestamps
         )

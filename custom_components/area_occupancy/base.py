@@ -1,4 +1,4 @@
-"""Base classes for Room Occupancy sensors with shared attribute logic and enhanced features."""
+"""Base classes for Area Occupancy sensors with shared attribute logic and enhanced features."""
 
 from __future__ import annotations
 
@@ -39,22 +39,22 @@ from .const import (
     NAME_PROBABILITY_SENSOR,
     ProbabilityResult,
 )
-from .coordinator import RoomOccupancyCoordinator
+from .coordinator import AreaOccupancyCoordinator
 
 
-class RoomOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
-    """Base class for room occupancy sensors."""
+class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
+    """Base class for area occupancy sensors."""
 
     def __init__(
         self,
-        coordinator: RoomOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         entry_id: str,
     ) -> None:
         """Initialize the base sensor."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._entry_id = entry_id
-        self._room_name = coordinator.config[CONF_NAME]
+        self._area_name = coordinator.config[CONF_NAME]
 
     @staticmethod
     def _format_float(value: float) -> float:
@@ -64,22 +64,22 @@ class RoomOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
     @callback
     def _format_unique_id(self, sensor_type: str) -> str:
         """Format the unique id consistently."""
-        room_id = self._room_name.lower().replace(" ", "_")
-        return f"{room_id}_{sensor_type}"
+        area_id = self._area_name.lower().replace(" ", "_")
+        return f"{area_id}_{sensor_type}"
 
     @property
     def name(self) -> str:
         """Return the display name of the sensor."""
         sensor_name = (
             NAME_BINARY_SENSOR
-            if isinstance(self, RoomOccupancyBinarySensor)
+            if isinstance(self, AreaOccupancyBinarySensor)
             else NAME_PROBABILITY_SENSOR
         )
-        return f"{self._room_name} {sensor_name}"
+        return f"{self._area_name} {sensor_name}"
 
     @property
     def _shared_attributes(self) -> dict[str, Any]:
-        """Return attributes common to all room occupancy sensors."""
+        """Return attributes common to all area occupancy sensors."""
         if self.coordinator.data is None:
             return {}
 
@@ -132,12 +132,12 @@ class RoomOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
         """Get the current value of the sensor."""
 
 
-class RoomOccupancyBinarySensor(RoomOccupancySensorBase, BinarySensorEntity):
-    """Binary sensor for room occupancy."""
+class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
+    """Binary sensor for area occupancy."""
 
     def __init__(
         self,
-        coordinator: RoomOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         entry_id: str,
         threshold: float,
     ) -> None:
@@ -166,7 +166,7 @@ class RoomOccupancyBinarySensor(RoomOccupancySensorBase, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return true if the room is occupied."""
+        """Return true if the area is occupied."""
         return self.get_value()
 
     def get_value(self) -> bool | None:
@@ -176,12 +176,12 @@ class RoomOccupancyBinarySensor(RoomOccupancySensorBase, BinarySensorEntity):
         return self.coordinator.data.get("probability", 0.0) >= self._threshold
 
 
-class RoomOccupancyProbabilitySensor(RoomOccupancySensorBase, SensorEntity):
-    """Probability sensor for room occupancy."""
+class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
+    """Probability sensor for area occupancy."""
 
     def __init__(
         self,
-        coordinator: RoomOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         entry_id: str,
     ) -> None:
         """Initialize the probability sensor."""
