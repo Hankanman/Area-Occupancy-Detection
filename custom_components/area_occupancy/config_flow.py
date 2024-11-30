@@ -29,11 +29,15 @@ from .const import (
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
     CONF_DECAY_TYPE,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_MINIMUM_CONFIDENCE,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_TYPE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_MINIMUM_CONFIDENCE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -131,6 +135,23 @@ def get_config_schema(
                 step=1,
                 mode="slider",
                 unit_of_measurement="days",
+            ),
+        ),
+        vol.Optional(
+            CONF_HISTORICAL_ANALYSIS_ENABLED,
+            default=defaults.get(
+                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+            ),
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_MINIMUM_CONFIDENCE,
+            default=defaults.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                mode="slider",
             ),
         ),
         # Decay configuration section

@@ -101,6 +101,7 @@ class ProbabilityCalculator:
         self,
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
+        historical_patterns: dict[str, Any] | None = None,
     ) -> ProbabilityResult:
         """Calculate overall area occupancy probability."""
         # Calculate individual probabilities
@@ -111,15 +112,67 @@ class ProbabilityCalculator:
         appliance_result = self._calculate_appliance_probability(sensor_states)
         env_result = self._calculate_environmental_probability(sensor_states)
 
-        # Combine probabilities using weights
+        # Get sensor correlations from historical patterns
+        sensor_correlations = {}
+        if historical_patterns and "sensor_correlations" in historical_patterns:
+            sensor_correlations = historical_patterns["sensor_correlations"]
+
+        # Adjust weights based on correlations
+        motion_weight = self.motion_weight
+        media_weight = self.media_weight
+        appliance_weight = self.appliance_weight
+        env_weight = self.environmental_weight
+
+        if sensor_correlations:
+            # Reduce weights for highly correlated sensors to avoid double-counting
+            for motion_sensor in self.motion_sensors:
+                if motion_sensor in sensor_correlations:
+                    correlations = sensor_correlations[motion_sensor]
+                    max_correlation = max(correlations.values()) if correlations else 0
+                    if max_correlation > 0.8:  # High correlation threshold
+                        motion_weight *= (
+                            1 - max_correlation * 0.5
+                        )  # Reduce weight by up to 50%
+
+        # Calculate base combined probability using weights
         combined_prob = (
-            motion_result.probability * self.motion_weight
-            + media_result.probability * self.media_weight
-            + appliance_result.probability * self.appliance_weight
-            + env_result.probability * self.environmental_weight
+            motion_result.probability * motion_weight
+            + media_result.probability * media_weight
+            + appliance_result.probability * appliance_weight
+            + env_result.probability * env_weight
         )
 
-        # Calculate confidence based on sensor availability
+        # Apply historical pattern adjustments
+        if historical_patterns and "occupancy_patterns" in historical_patterns:
+            occupancy_patterns = historical_patterns["occupancy_patterns"]
+            current_time = dt_util.utcnow()
+            time_slot = current_time.strftime("%H:%M")
+            day_slot = current_time.strftime("%A").lower()
+
+            # Get historical occupancy rates
+            time_slots = occupancy_patterns.get("time_slots", {})
+            day_patterns = occupancy_patterns.get("day_patterns", {})
+
+            typical_occupancy = time_slots.get(time_slot, {}).get("occupied_ratio", 0.0)
+            day_occupancy = day_patterns.get(day_slot, {}).get("occupied_ratio", 0.0)
+
+            # Calculate historical confidence
+            total_slots = len(time_slots)
+            historical_confidence = min(
+                total_slots / 48, 1.0
+            )  # 48 30-minute slots per day
+
+            if historical_confidence > 0.3:  # Minimum confidence threshold
+                # Blend current probability with historical patterns
+                historical_weight = 0.3 * historical_confidence
+                historical_probability = (typical_occupancy + day_occupancy) / 2
+
+                combined_prob = (
+                    combined_prob * (1 - historical_weight)
+                    + historical_probability * historical_weight
+                )
+
+        # Calculate confidence score based on sensor availability
         available_sensors = sum(
             1 for state in sensor_states.values() if state["availability"]
         )
@@ -128,6 +181,7 @@ class ProbabilityCalculator:
             min(available_sensors / total_sensors, 1.0) if total_sensors > 0 else 0.0
         )
 
+        # Compile all results
         return {
             "probability": combined_prob,
             "prior_probability": motion_result.probability,
@@ -153,7 +207,48 @@ class ProbabilityCalculator:
                 sensor_id: state["availability"]
                 for sensor_id, state in sensor_states.items()
             },
+            "historical_patterns": (
+                {
+                    "typical_occupancy_rate": (
+                        typical_occupancy if historical_patterns else 0.0
+                    ),
+                    "day_occupancy_rate": day_occupancy if historical_patterns else 0.0,
+                    "sensor_correlations": sensor_correlations,
+                }
+                if historical_patterns
+                else {}
+            ),
         }
+
+    def _adjust_with_historical_patterns(
+        self, base_result: ProbabilityResult, historical_patterns: dict[str, Any]
+    ) -> ProbabilityResult:
+        """Adjust probability based on historical patterns."""
+        current_probability = base_result["probability"]
+
+        # Get current time slot patterns
+        typical_occupancy = historical_patterns.get("typical_occupancy_rate", 0.0)
+        day_occupancy = historical_patterns.get("day_occupancy_rate", 0.0)
+
+        # Calculate historical weight based on confidence
+        historical_confidence = min(
+            len(historical_patterns.get("time_slots", {})) / 48,  # 48 30-minute slots
+            1.0,
+        )
+
+        if historical_confidence > 0.3:  # Minimum confidence threshold
+            # Blend current probability with historical patterns
+            historical_weight = 0.3 * historical_confidence
+            historical_probability = (typical_occupancy + day_occupancy) / 2
+
+            adjusted_probability = (
+                current_probability * (1 - historical_weight)
+                + historical_probability * historical_weight
+            )
+
+            base_result["probability"] = adjusted_probability
+
+        return base_result
 
     def _calculate_motion_probability(
         self,

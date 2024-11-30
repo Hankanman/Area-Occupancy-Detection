@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
+from .historical_analysis import HistoricalAnalysis
 from .calculations import DecayConfig, ProbabilityCalculator
 from .const import (
     CONF_DECAY_ENABLED,
@@ -31,9 +32,11 @@ from .const import (
     CONF_MOTION_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_TYPE,
     DEFAULT_DECAY_WINDOW,
+    DEFAULT_HISTORY_PERIOD,
     DOMAIN,
     PROBABILITY_CONFIG_FILE,
     HISTORY_STORAGE_FILE,
@@ -65,6 +68,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._motion_timestamps: dict[SensorId, datetime] = {}
         self._sensor_states: SensorStates = {}
         self._unsubscribe_handlers: list[callable] = []
+
+        # Initialize historical analysis
+        self._history_analyzer = HistoricalAnalysis(
+            hass=hass,
+            history_period=config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
+            motion_sensors=config.get(CONF_MOTION_SENSORS, []),
+            media_devices=config.get(CONF_MEDIA_DEVICES, []),
+            environmental_sensors=[
+                *config.get(CONF_ILLUMINANCE_SENSORS, []),
+                *config.get(CONF_HUMIDITY_SENSORS, []),
+                *config.get(CONF_TEMPERATURE_SENSORS, []),
+            ],
+        )
+        self._historical_data: dict[str, Any] = {}
+
         self._calculator = self._create_calculator()
         self._history_data = self._load_history()
 
@@ -88,6 +106,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._setup_state_listeners()
         self._setup_history_update()
+
+    async def async_setup(self) -> None:
+        """Perform setup tasks that require async operations."""
+        try:
+            self._historical_data = await self._history_analyzer.initialize_history()
+            _LOGGER.debug("Historical analysis initialized: %s", self._historical_data)
+        except (HomeAssistantError, ValueError) as err:
+            _LOGGER.error("Failed to initialize historical analysis: %s", err)
 
     def _load_base_config(self) -> dict[str, Any]:
         """Load the base probability configuration."""
@@ -214,6 +240,45 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         # Save updates
         self._save_history()
 
+    def _get_historical_patterns(self) -> dict[str, Any]:
+        """Get relevant historical patterns for current time."""
+        if not self._historical_data:
+            return {}
+
+        current_time = dt_util.utcnow()
+        time_slot = current_time.strftime("%H:%M")
+        day_slot = current_time.strftime("%A").lower()
+
+        patterns = {}
+
+        # Get time-based patterns
+        if "occupancy_patterns" in self._historical_data:
+            time_slots = self._historical_data["occupancy_patterns"].get(
+                "time_slots", {}
+            )
+            day_patterns = self._historical_data["occupancy_patterns"].get(
+                "day_patterns", {}
+            )
+
+            patterns.update(
+                {
+                    "typical_occupancy_rate": time_slots.get(time_slot, {}).get(
+                        "occupied_ratio", 0.0
+                    ),
+                    "day_occupancy_rate": day_patterns.get(day_slot, {}).get(
+                        "occupied_ratio", 0.0
+                    ),
+                }
+            )
+
+        # Get sensor correlations if available
+        if "sensor_correlations" in self._historical_data:
+            patterns["sensor_correlations"] = self._historical_data[
+                "sensor_correlations"
+            ]
+
+        return patterns
+
     def _setup_history_update(self) -> None:
         """Set up periodic history updates."""
         update_interval = timedelta(minutes=15)  # Update every 15 minutes
@@ -323,7 +388,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     async def _async_update_data(self) -> ProbabilityResult:
-        """Periodic update - used as fallback and for decay updates."""
+        """Update data from all sources."""
+        # Update historical analysis periodically
+        try:
+            new_historical_data = await self._history_analyzer.update_analysis()
+            if new_historical_data:
+                self._historical_data.update(new_historical_data)
+        except (HomeAssistantError, ValueError) as err:
+            _LOGGER.error("Failed to update historical analysis: %s", err)
+
         data = self._get_calculated_data()
         self._update_history()
         return data
@@ -402,17 +475,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         base_result = self._calculator.calculate(
             self._sensor_states,
             self._motion_timestamps,
+            historical_patterns=self._historical_data,
         )
 
-        # Update historical data
+        # Update historical data tracking
         self._update_historical_data(
             base_result["probability"],
             base_result["probability"] >= self.config.get(CONF_THRESHOLD, 0.5),
         )
 
-        # Add historical metrics to result
+        # Add historical metrics and patterns
         historical_metrics = self._get_historical_metrics()
+        historical_patterns = self._get_historical_patterns()
+
         base_result.update(historical_metrics)
+        base_result["historical_patterns"] = historical_patterns
 
         # Apply any learned patterns from history
         area_id = self.config["name"].lower().replace(" ", "_")
