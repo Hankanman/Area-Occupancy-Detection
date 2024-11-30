@@ -1,0 +1,233 @@
+blueprint:
+  name: Smart Lighting Control
+  description: Controls room lighting based on occupancy, illuminance, home state, and dimming entity status
+  domain: automation
+  source_url: https://github.com/Hankanman/Area-Occupancy-Detection/blueprints
+  input:
+    enable_automation:
+      name: Enable Automation
+      description: Input boolean to enable/disable this automation
+      selector:
+        entity:
+          domain: input_boolean
+
+    area_lights:
+      name: Area Lights
+      description: Lights to control
+      selector:
+        target:
+          entity:
+            domain: light
+
+    occupancy_sensor:
+      name: Occupancy Sensor
+      description: Binary sensor for room occupancy
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: occupancy
+
+    illuminance_sensor:
+      name: Illuminance Sensor
+      description: Illuminance sensor for the room
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+
+    illuminance_threshold_sensor:
+      name: Illuminance Threshold
+      description: Sensor or number entity for illuminance threshold
+      selector:
+        entity:
+          domain:
+            - sensor
+            - input_number
+
+    sleep_mode_sensor:
+      name: Sleep Mode
+      description: Binary sensor indicating sleep mode
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
+
+    people_home:
+      name: People Home
+      description: Binary sensor indicating if people are home
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
+
+    guest_mode:
+      name: Guest Mode
+      description: Optional guest mode override
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
+
+    dimming_entity:
+      name: Dimming Entity (Optional)
+      description: Entity that triggers dimmed lighting when on (e.g., TV, projector)
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - media_player
+            - switch
+      default: {}
+
+    dim_brightness:
+      name: Dim Brightness
+      description: Brightness percentage when dimming entity is active
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+      default: 30
+
+    max_brightness:
+      name: Maximum Brightness
+      description: Maximum brightness percentage
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+      default: 100
+
+    min_brightness:
+      name: Minimum Brightness (Sleep Mode)
+      description: Minimum brightness percentage when in sleep mode
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+      default: 1
+
+    transition_time:
+      name: Transition Time
+      description: Light transition time in seconds
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 1
+      default: 2
+
+    idle_timeout:
+      name: Idle Timeout
+      description: Time in seconds before turning off lights when unoccupied
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 1
+      default: 180
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input occupancy_sensor
+  - platform: state
+    entity_id: !input sleep_mode_sensor
+  - platform: state
+    entity_id: !input people_home
+  - platform: state
+    entity_id: !input illuminance_sensor
+  - platform: state
+    entity_id: !input guest_mode
+  - platform: state
+    entity_id: !input enable_automation
+  - platform: state
+    entity_id: !input dimming_entity
+
+variables:
+  illuminance_sensor: !input illuminance_sensor
+  illuminance_threshold_sensor: !input illuminance_threshold_sensor
+  sleep_mode_sensor: !input sleep_mode_sensor
+  occupancy_sensor: !input occupancy_sensor
+  people_home_sensor: !input people_home
+  guest_mode_sensor: !input guest_mode
+  dimming_entity: !input dimming_entity
+  illuminance: "{{ states[illuminance_sensor].state | float(0) }}"
+  threshold: "{{ states[illuminance_threshold_sensor].state | float(1000) }}"
+  threshold_on: "{{ [threshold * 0.9, 20] | max }}"
+  threshold_off: "{{ [threshold * 1.1, 100] | min }}"
+  is_dark: "{{ illuminance <= threshold_on }}"
+  is_bright: "{{ illuminance >= threshold_off }}"
+  sleep_mode: "{{ states[sleep_mode_sensor].state == 'on' }}"
+  people_home: "{{ states[people_home_sensor].state == 'on' }}"
+  occupied: "{{ states[occupancy_sensor].state == 'on' }}"
+  guest_mode: "{{ states[guest_mode_sensor].state == 'on' if guest_mode_sensor != {} else false }}"
+  dimming_active: "{{ states[dimming_entity].state in ['on', 'playing'] if dimming_entity != {} else false }}"
+  max_bright: !input max_brightness
+  min_bright: !input min_brightness
+  dim_bright: !input dim_brightness
+  transition: !input transition_time
+
+condition:
+  - condition: state
+    entity_id: !input enable_automation
+    state: "on"
+
+action:
+  - variables:
+      current_brightness: >
+        {% if sleep_mode %}
+          {{ min_bright }}
+        {% elif dimming_active %}
+          {{ dim_bright }}
+        {% else %}
+          {{ max_bright }}
+        {% endif %}
+  - choose:
+      # Turn on lights when occupied and dark
+      - conditions:
+          - condition: template
+            value_template: "{{ occupied }}"
+          - condition: template
+            value_template: "{{ is_dark }}"
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ people_home }}"
+              - condition: template
+                value_template: "{{ guest_mode }}"
+        sequence:
+          - service: light.turn_on
+            target: !input area_lights
+            data:
+              brightness_pct: "{{ current_brightness }}"
+              transition: !input transition_time
+      # Turn off lights when unoccupied
+      - conditions:
+          - condition: template
+            value_template: "{{ not occupied }}"
+        sequence:
+          - delay:
+              seconds: !input idle_timeout
+          - service: light.turn_off
+            target: !input area_lights
+            data:
+              transition: !input transition_time
+    default:
+      - if:
+          - condition: template
+            value_template: "{{ is_bright }}"
+        then:
+          - delay:
+              seconds: !input idle_timeout
+          - service: light.turn_off
+            target: !input area_lights
+            data:
+              transition: !input transition_time

@@ -1,4 +1,4 @@
-"""Tests for room_occupancy integration."""
+"""Tests for area_occupancy integration."""
 
 from unittest.mock import patch
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -9,8 +9,8 @@ from homeassistant.core import HomeAssistant
 async def test_setup(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
     """Test integration setup."""
     # Verify entities were created
-    assert hass.states.get("binary_sensor.room_occupancy_status") is not None
-    assert hass.states.get("sensor.room_occupancy_probability") is not None
+    assert hass.states.get("binary_sensor.area_occupancy_status") is not None
+    assert hass.states.get("sensor.area_occupancy_probability") is not None
 
 
 async def test_motion_trigger(
@@ -22,7 +22,7 @@ async def test_motion_trigger(
     hass.states.async_set("binary_sensor.motion2", STATE_OFF)
     await hass.async_block_till_done()
 
-    initial_state = hass.states.get("sensor.room_occupancy_probability")
+    initial_state = hass.states.get("sensor.area_occupancy_probability")
     assert initial_state is not None
     initial_prob = float(initial_state.state)
 
@@ -31,7 +31,7 @@ async def test_motion_trigger(
     await hass.async_block_till_done()
 
     # Check probability increased
-    new_state = hass.states.get("sensor.room_occupancy_probability")
+    new_state = hass.states.get("sensor.area_occupancy_probability")
     assert new_state is not None
     new_prob = float(new_state.state)
     assert new_prob > initial_prob
@@ -47,7 +47,7 @@ async def test_binary_sensor_threshold(
     await hass.async_block_till_done()
 
     # Check binary sensor is on
-    binary_state = hass.states.get("binary_sensor.room_occupancy_status")
+    binary_state = hass.states.get("binary_sensor.area_occupancy_status")
     assert binary_state is not None
     assert binary_state.state == STATE_ON
 
@@ -57,7 +57,7 @@ async def test_binary_sensor_threshold(
     await hass.async_block_till_done()
 
     # Check binary sensor is off
-    binary_state = hass.states.get("binary_sensor.room_occupancy_status")
+    binary_state = hass.states.get("binary_sensor.area_occupancy_status")
     assert binary_state is not None
     assert binary_state.state == STATE_OFF
 
@@ -77,14 +77,14 @@ async def test_coordinator_update(
     }
 
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data",
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data",
         return_value=mock_data,
     ):
         mock_config_entry.add_to_hass(hass)
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-        prob_state = hass.states.get("sensor.room_occupancy_probability")
+        prob_state = hass.states.get("sensor.area_occupancy_probability")
         assert prob_state is not None
         assert float(prob_state.state) == 75.0
         assert prob_state.attributes["probability"] == 0.75

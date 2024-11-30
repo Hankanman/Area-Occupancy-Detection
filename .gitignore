@@ -9,4 +9,4 @@ venv
 custom_components/hacs
 x_*
 .haconfig
-ha-room-occupancy-code.md
+ha-area-occupancy-code.md

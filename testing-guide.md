@@ -1,4 +1,4 @@
-# Testing Guide for Room Occupancy Integration
+# Testing Guide for Area Occupancy Integration
 
 ## Local Testing Setup
 
@@ -21,9 +21,9 @@ pip install -r requirements_dev.txt
 Create the following directory structure in your project:
 
 ```
-room_occupancy/
+area_occupancy/
 ├── custom_components/
-│   └── room_occupancy/
+│   └── area_occupancy/
 │       ├── __init__.py
 │       ├── manifest.json
 │       └── ... (other component files)
@@ -60,7 +60,7 @@ pytest
 pytest tests/test_sensor.py
 
 # Run with coverage report
-pytest --cov=custom_components.room_occupancy
+pytest --cov=custom_components.area_occupancy
 ```
 
 #### Test Configuration
@@ -104,26 +104,26 @@ async def test_sensor_behavior(hass):
     """Test sensor behavior with mock entities."""
     # Set up mock motion sensor
     hass.states.async_set("binary_sensor.motion", "off")
-    
+
     # Configure integration
     entry = MockConfigEntry(
-        domain="room_occupancy",
+        domain="area_occupancy",
         data={
-            "name": "Test Room",
+            "name": "Test Area",
             "motion_sensors": ["binary_sensor.motion"]
         }
     )
     entry.add_to_hass(hass)
-    
+
     # Initialize integration
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    
+
     # Test sensor behavior
     hass.states.async_set("binary_sensor.motion", "on")
     await hass.async_block_till_done()
-    
-    state = hass.states.get("sensor.test_room_occupancy_probability")
+
+    state = hass.states.get("sensor.test_area_occupancy_probability")
     assert state is not None
     assert float(state.state) > 50  # Probability should be high with motion
 ```
@@ -138,7 +138,7 @@ from unittest.mock import patch
 async def test_coordinator_update(hass):
     """Test coordinator update with mocked data."""
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data",
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data",
         return_value={"probability": 0.75}
     ):
         # Test code here
@@ -155,19 +155,19 @@ async def test_config_flow(hass):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    
+
     assert result["type"] == "form"
     assert result["errors"] == {}
-    
+
     # Test form submission
     result2 = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "name": "Test Room",
+            "name": "Test Area",
             "motion_sensors": ["binary_sensor.motion"]
         }
     )
-    
+
     assert result2["type"] == "create_entry"
 ```
 
@@ -180,13 +180,13 @@ async def test_state_changes(hass):
     """Test response to state changes."""
     # Initial setup
     await setup_integration(hass)
-    
+
     # Change states
     hass.states.async_set("binary_sensor.motion", "on")
     await hass.async_block_till_done()
-    
+
     # Assert expected behavior
-    state = hass.states.get("sensor.room_occupancy_probability")
+    state = hass.states.get("sensor.area_occupancy_probability")
     assert state is not None
 ```
 
@@ -198,18 +198,18 @@ from freezegun import freeze_time
 async def test_decay(hass):
     """Test time-based decay."""
     await setup_integration(hass)
-    
+
     with freeze_time("2024-01-01 12:00:00"):
         # Initial state
         hass.states.async_set("binary_sensor.motion", "on")
         await hass.async_block_till_done()
-        initial_state = hass.states.get("sensor.room_occupancy_probability")
-        
+        initial_state = hass.states.get("sensor.area_occupancy_probability")
+
     with freeze_time("2024-01-01 12:05:00"):
         # 5 minutes later
         await hass.async_block_till_done()
-        later_state = hass.states.get("sensor.room_occupancy_probability")
-        
+        later_state = hass.states.get("sensor.area_occupancy_probability")
+
         assert float(later_state.state) < float(initial_state.state)
 ```
 
@@ -219,7 +219,7 @@ async def test_decay(hass):
 async def test_error_handling(hass):
     """Test error handling."""
     with patch(
-        "custom_components.room_occupancy.coordinator.RoomOccupancyCoordinator._async_update_data",
+        "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._async_update_data",
         side_effect=Exception("Test error")
     ):
         # Test error handling code
@@ -263,7 +263,7 @@ jobs:
         pip install -r requirements_dev.txt
     - name: Run tests
       run: |
-        pytest --cov=custom_components.room_occupancy
+        pytest --cov=custom_components.area_occupancy
     - name: Upload coverage
       uses: codecov/codecov-action@v3
 ```
