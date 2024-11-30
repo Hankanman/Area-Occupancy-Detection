@@ -11,25 +11,29 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
+from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
+from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 
 from .const import (
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_TYPE,
-    CONF_DECAY_WINDOW,
-    CONF_DEVICE_STATES,
-    CONF_HISTORY_PERIOD,
-    CONF_HUMIDITY_SENSORS,
-    CONF_ILLUMINANCE_SENSORS,
+    DOMAIN,
     CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_TYPE,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_HISTORY_PERIOD,
+    CONF_HISTORY_PERIOD,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_WINDOW,
+    CONF_DECAY_TYPE,
     DEFAULT_THRESHOLD,
-    DOMAIN,
-    AreaOccupancyConfig,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_TYPE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,21 +47,44 @@ def get_config_schema(
 
     return {
         vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
+        # Required sensors section
         vol.Required(
             CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain="binary_sensor",
+                domain=BINARY_SENSOR_DOMAIN,
                 device_class="motion",
                 multiple=True,
             ),
         ),
+        # Media devices section
+        vol.Optional(
+            CONF_MEDIA_DEVICES,
+            default=defaults.get(CONF_MEDIA_DEVICES, []),
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=[MEDIA_PLAYER_DOMAIN],
+                multiple=True,
+            ),
+        ),
+        # Appliances section
+        vol.Optional(
+            CONF_APPLIANCES,
+            default=defaults.get(CONF_APPLIANCES, []),
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=[BINARY_SENSOR_DOMAIN, SWITCH_DOMAIN],
+                device_class=["power", "plug", "outlet"],
+                multiple=True,
+            ),
+        ),
+        # Environmental sensors section
         vol.Optional(
             CONF_ILLUMINANCE_SENSORS,
             default=defaults.get(CONF_ILLUMINANCE_SENSORS, []),
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain="sensor",
+                domain=SENSOR_DOMAIN,
                 device_class="illuminance",
                 multiple=True,
             ),
@@ -67,7 +94,7 @@ def get_config_schema(
             default=defaults.get(CONF_HUMIDITY_SENSORS, []),
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain="sensor",
+                domain=SENSOR_DOMAIN,
                 device_class="humidity",
                 multiple=True,
             ),
@@ -77,17 +104,12 @@ def get_config_schema(
             default=defaults.get(CONF_TEMPERATURE_SENSORS, []),
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain="sensor",
+                domain=SENSOR_DOMAIN,
                 device_class="temperature",
                 multiple=True,
             ),
         ),
-        vol.Optional(
-            CONF_DEVICE_STATES,
-            default=defaults.get(CONF_DEVICE_STATES, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(multiple=True),
-        ),
+        # Configuration options section
         vol.Optional(
             CONF_THRESHOLD,
             default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
@@ -111,6 +133,7 @@ def get_config_schema(
                 unit_of_measurement="days",
             ),
         ),
+        # Decay configuration section
         vol.Optional(
             CONF_DECAY_ENABLED,
             default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
@@ -148,7 +171,7 @@ class AreaOccupancyConfigFlow(
 
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self.config_data: AreaOccupancyConfig = {}
+        self.config_data: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -158,15 +181,39 @@ class AreaOccupancyConfigFlow(
 
         if user_input is not None:
             try:
-                # Check for duplicate entries
-                await self.async_set_unique_id(user_input[CONF_NAME])
-                self._abort_if_unique_id_configured()
+                # Validate the configuration
+                if not user_input.get(CONF_MOTION_SENSORS):
+                    errors["base"] = "no_motion_sensors"
+                else:
+                    # Check for duplicate entries
+                    await self.async_set_unique_id(user_input[CONF_NAME])
+                    self._abort_if_unique_id_configured()
 
-                self.config_data = user_input
-                return self.async_create_entry(
-                    title=user_input[CONF_NAME],
-                    data=user_input,
-                )
+                    # Convert any legacy device_states to new categories
+                    if "device_states" in user_input:
+                        # Attempt to categorize legacy device states
+                        media_devices = []
+                        appliances = []
+                        for entity_id in user_input["device_states"]:
+                            if entity_id.startswith(MEDIA_PLAYER_DOMAIN + "."):
+                                media_devices.append(entity_id)
+                            else:
+                                appliances.append(entity_id)
+
+                        # Update configuration with new categories
+                        user_input[CONF_MEDIA_DEVICES] = (
+                            user_input.get(CONF_MEDIA_DEVICES, []) + media_devices
+                        )
+                        user_input[CONF_APPLIANCES] = (
+                            user_input.get(CONF_APPLIANCES, []) + appliances
+                        )
+                        del user_input["device_states"]
+
+                    self.config_data = user_input
+                    return self.async_create_entry(
+                        title=user_input[CONF_NAME],
+                        data=user_input,
+                    )
 
             except Exception as error:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected error occurred: %s", error)
@@ -174,7 +221,7 @@ class AreaOccupancyConfigFlow(
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(get_config_schema()),
+            data_schema=vol.Schema(get_config_schema(self.config_data)),
             errors=errors,
         )
 
@@ -202,12 +249,30 @@ class AreaOccupancyOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
-                # Validate the threshold
-                threshold = user_input.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-                if not 0 <= threshold <= 1:
+                # Validate configurations
+                if not user_input.get(CONF_MOTION_SENSORS):
+                    errors["base"] = "no_motion_sensors"
+                elif not 0 <= user_input.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) <= 1:
                     errors[CONF_THRESHOLD] = "invalid_threshold"
                 else:
-                    # Preserve the area name from the original config
+                    # Handle conversion of legacy configurations
+                    if "device_states" in user_input:
+                        media_devices = []
+                        appliances = []
+                        for entity_id in user_input["device_states"]:
+                            if entity_id.startswith(MEDIA_PLAYER_DOMAIN + "."):
+                                media_devices.append(entity_id)
+                            else:
+                                appliances.append(entity_id)
+
+                        user_input[CONF_MEDIA_DEVICES] = (
+                            user_input.get(CONF_MEDIA_DEVICES, []) + media_devices
+                        )
+                        user_input[CONF_APPLIANCES] = (
+                            user_input.get(CONF_APPLIANCES, []) + appliances
+                        )
+                        del user_input["device_states"]
+
                     return self.async_create_entry(
                         title="",
                         data={
@@ -215,6 +280,7 @@ class AreaOccupancyOptionsFlow(config_entries.OptionsFlow):
                             **user_input,
                         },
                     )
+
             except Exception as error:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected error occurred: %s", error)
                 errors["base"] = "unknown"
