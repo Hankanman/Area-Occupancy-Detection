@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import math
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Any
 
-from homeassistant.const import STATE_ON
+from homeassistant.const import (
+    STATE_ON,
+    STATE_OFF,
+    STATE_PLAYING,
+    STATE_PAUSED,
+    STATE_IDLE,
+)
 from homeassistant.util import dt as dt_util
 
-from .const import (
-    EnvironmentalData,
-    ProbabilityResult,
-    SensorStates,
-)
+from .const import ProbabilityResult, SensorStates
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,6 +41,24 @@ class MotionCalculationResult:
 
 
 @dataclass
+class MediaCalculationResult:
+    """Result of media device probability calculation."""
+
+    probability: float
+    triggers: list[str]
+    states: dict[str, str]
+
+
+@dataclass
+class ApplianceCalculationResult:
+    """Result of appliance probability calculation."""
+
+    probability: float
+    triggers: list[str]
+    states: dict[str, str]
+
+
+@dataclass
 class EnvironmentalCalculationResult:
     """Result of environmental probability calculation."""
 
@@ -48,20 +71,31 @@ class ProbabilityCalculator:
 
     def __init__(
         self,
+        base_config: dict[str, Any],
         motion_sensors: list[str],
+        media_devices: list[str] | None = None,
+        appliances: list[str] | None = None,
         illuminance_sensors: list[str] | None = None,
         humidity_sensors: list[str] | None = None,
         temperature_sensors: list[str] | None = None,
-        device_states: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
         """Initialize the calculator."""
+        self.base_config = base_config
         self.motion_sensors = motion_sensors
+        self.media_devices = media_devices or []
+        self.appliances = appliances or []
         self.illuminance_sensors = illuminance_sensors or []
         self.humidity_sensors = humidity_sensors or []
         self.temperature_sensors = temperature_sensors or []
-        self.device_states = device_states or []
         self.decay_config = decay_config or DecayConfig()
+
+        # Load weights from base config
+        weights = self.base_config.get("weights", {})
+        self.motion_weight = weights.get("motion", 0.4)
+        self.media_weight = weights.get("media", 0.3)
+        self.appliance_weight = weights.get("appliances", 0.2)
+        self.environmental_weight = weights.get("environmental", 0.1)
 
     def calculate(
         self,
@@ -69,14 +103,20 @@ class ProbabilityCalculator:
         motion_timestamps: dict[str, datetime],
     ) -> ProbabilityResult:
         """Calculate overall area occupancy probability."""
+        # Calculate individual probabilities
         motion_result = self._calculate_motion_probability(
             sensor_states, motion_timestamps
         )
+        media_result = self._calculate_media_probability(sensor_states)
+        appliance_result = self._calculate_appliance_probability(sensor_states)
         env_result = self._calculate_environmental_probability(sensor_states)
 
-        # Weight motion more heavily than environmental factors
-        combined_prob = (motion_result.probability * 0.7) + (
-            env_result.probability * 0.3
+        # Combine probabilities using weights
+        combined_prob = (
+            motion_result.probability * self.motion_weight
+            + media_result.probability * self.media_weight
+            + appliance_result.probability * self.appliance_weight
+            + env_result.probability * self.environmental_weight
         )
 
         # Calculate confidence based on sensor availability
@@ -91,10 +131,21 @@ class ProbabilityCalculator:
         return {
             "probability": combined_prob,
             "prior_probability": motion_result.probability,
-            "active_triggers": motion_result.triggers + env_result.triggers,
+            "active_triggers": (
+                motion_result.triggers
+                + media_result.triggers
+                + appliance_result.triggers
+                + env_result.triggers
+            ),
             "sensor_probabilities": {
                 "motion_probability": motion_result.probability,
+                "media_probability": media_result.probability,
+                "appliance_probability": appliance_result.probability,
                 "environmental_probability": env_result.probability,
+            },
+            "device_states": {
+                "media_states": media_result.states,
+                "appliance_states": appliance_result.states,
             },
             "decay_status": motion_result.decay_status,
             "confidence_score": confidence_score,
@@ -114,44 +165,56 @@ class ProbabilityCalculator:
         decay_status: dict[str, float] = {}
         now = dt_util.utcnow()
 
-        motion_probability = 0.0
-        total_weight = len(self.motion_sensors)
+        motion_base = self.base_config["base_probabilities"]["motion"]
+        single_sensor_prob = motion_base["single_sensor"]
+        multiple_sensors_prob = motion_base["multiple_sensors"]
+        decay_factor = motion_base["decay_factor"]
 
-        if total_weight == 0:
+        motion_probability = 0.0
+        active_sensors = 0
+        total_sensors = len(self.motion_sensors)
+
+        if total_sensors == 0:
             return MotionCalculationResult(0.0, [], {})
 
         for entity_id in self.motion_sensors:
             if entity_id not in sensor_states:
-                total_weight -= 1
+                total_sensors -= 1
                 continue
 
             state = sensor_states[entity_id]
             if not state["availability"]:
-                total_weight -= 1
+                total_sensors -= 1
                 continue
 
             if state["state"] == STATE_ON:
-                motion_probability += 1.0
+                active_sensors += 1
                 active_triggers.append(entity_id)
             elif self.decay_config.enabled and entity_id in motion_timestamps:
                 last_motion = motion_timestamps[entity_id]
                 time_diff = (now - last_motion).total_seconds()
 
                 if time_diff < self.decay_config.window:
-                    decay_factor = self._calculate_decay_factor(
+                    current_decay = self._calculate_decay_factor(
                         time_diff,
                         self.decay_config.window,
                         self.decay_config.type,
                     )
-                    motion_probability += decay_factor
+                    motion_probability += current_decay * decay_factor
                     decay_status[entity_id] = time_diff
-                    if decay_factor > 0.1:
+                    if current_decay > 0.1:
                         active_triggers.append(
-                            f"{entity_id} (decay: {decay_factor:.2f})"
+                            f"{entity_id} (decay: {current_decay:.2f})"
                         )
 
+        # Calculate final probability based on number of active sensors
+        if active_sensors > 0:
+            motion_probability = (
+                multiple_sensors_prob if active_sensors > 1 else single_sensor_prob
+            )
+
         final_probability = (
-            motion_probability / total_weight if total_weight > 0 else 0.0
+            motion_probability / total_sensors if total_sensors > 0 else 0.0
         )
 
         return MotionCalculationResult(
@@ -160,80 +223,148 @@ class ProbabilityCalculator:
             decay_status=decay_status,
         )
 
+    def _calculate_media_probability(
+        self,
+        sensor_states: SensorStates,
+    ) -> MediaCalculationResult:
+        """Calculate probability based on media device states."""
+        active_triggers: list[str] = []
+        device_states: dict[str, str] = {}
+        total_probability = 0.0
+        valid_devices = 0
+
+        media_base = self.base_config["base_probabilities"]["media"]
+
+        for entity_id in self.media_devices:
+            state = sensor_states.get(entity_id)
+            if not state or not state["availability"]:
+                continue
+
+            valid_devices += 1
+            current_state = state["state"]
+            device_states[entity_id] = current_state
+
+            # Get probability based on state
+            if current_state == STATE_PLAYING:
+                prob = media_base["playing"]
+                active_triggers.append(f"{entity_id} (playing)")
+            elif current_state == STATE_PAUSED:
+                prob = media_base["paused"]
+                active_triggers.append(f"{entity_id} (paused)")
+            elif current_state == STATE_IDLE:
+                prob = media_base["idle"]
+                active_triggers.append(f"{entity_id} (idle)")
+            elif current_state == STATE_OFF:
+                prob = media_base["off_state"]
+            else:
+                prob = media_base["default_state"]
+
+            total_probability += prob
+
+        final_probability = (
+            total_probability / valid_devices if valid_devices > 0 else 0.0
+        )
+
+        return MediaCalculationResult(
+            probability=final_probability,
+            triggers=active_triggers,
+            states=device_states,
+        )
+
+    def _calculate_appliance_probability(
+        self,
+        sensor_states: SensorStates,
+    ) -> ApplianceCalculationResult:
+        """Calculate probability based on appliance states."""
+        active_triggers: list[str] = []
+        device_states: dict[str, str] = {}
+        total_probability = 0.0
+        valid_devices = 0
+
+        appliance_base = self.base_config["base_probabilities"]["appliances"]
+
+        for entity_id in self.appliances:
+            state = sensor_states.get(entity_id)
+            if not state or not state["availability"]:
+                continue
+
+            valid_devices += 1
+            current_state = state["state"]
+            device_states[entity_id] = current_state
+
+            # Get probability based on state
+            if current_state == STATE_ON:
+                prob = appliance_base["active_state"]
+                active_triggers.append(f"{entity_id} (active)")
+            elif current_state == "standby":
+                prob = appliance_base["standby_state"]
+                active_triggers.append(f"{entity_id} (standby)")
+            elif current_state == STATE_OFF:
+                prob = appliance_base["off_state"]
+            else:
+                prob = appliance_base["default_state"]
+
+            total_probability += prob
+
+        final_probability = (
+            total_probability / valid_devices if valid_devices > 0 else 0.0
+        )
+
+        return ApplianceCalculationResult(
+            probability=final_probability,
+            triggers=active_triggers,
+            states=device_states,
+        )
+
     def _calculate_environmental_probability(
-        self, sensor_states: SensorStates
+        self,
+        sensor_states: SensorStates,
     ) -> EnvironmentalCalculationResult:
         """Calculate probability based on environmental sensors."""
         active_triggers: list[str] = []
         total_probability = 0.0
-        total_sensors = 0
+        valid_components = 0
+
+        env_base = self.base_config["base_probabilities"]["environmental"]
 
         # Process illuminance
         illuminance_prob = self._process_illuminance_sensors(
-            sensor_states, active_triggers
+            sensor_states, active_triggers, env_base["illuminance"]
         )
         if illuminance_prob is not None:
             total_probability += illuminance_prob
-            total_sensors += 1
+            valid_components += 1
 
-        # Process temperature and humidity
-        env_data = [
-            EnvironmentalData(
-                current_value=float(state["state"]),
-                baseline=21.0,  # Temperature baseline
-                threshold=1.5,
-                weight=0.6,
-            )
-            for entity_id in self.temperature_sensors
-            if (state := sensor_states.get(entity_id))
-            and state["availability"]
-            and self._is_valid_number(state["state"])
-        ]
-
+        # Process temperature
         temp_prob = self._process_environmental_sensors(
             self.temperature_sensors,
-            env_data,
-            "°C",
             sensor_states,
             active_triggers,
+            env_base["temperature"]["baseline"],
+            env_base["temperature"]["change_threshold"],
+            env_base["temperature"]["weight"],
+            "°C",
         )
         if temp_prob is not None:
             total_probability += temp_prob
-            total_sensors += 1
+            valid_components += 1
 
         # Process humidity
-        humidity_data = [
-            EnvironmentalData(
-                current_value=float(state["state"]),
-                baseline=50.0,  # Humidity baseline
-                threshold=10.0,
-                weight=0.5,
-            )
-            for entity_id in self.humidity_sensors
-            if (state := sensor_states.get(entity_id))
-            and state["availability"]
-            and self._is_valid_number(state["state"])
-        ]
-
         humidity_prob = self._process_environmental_sensors(
             self.humidity_sensors,
-            humidity_data,
-            "%",
             sensor_states,
             active_triggers,
+            env_base["humidity"]["baseline"],
+            env_base["humidity"]["change_threshold"],
+            env_base["humidity"]["weight"],
+            "%",
         )
         if humidity_prob is not None:
             total_probability += humidity_prob
-            total_sensors += 1
-
-        # Process device states
-        device_prob = self._process_device_states(sensor_states, active_triggers)
-        if device_prob is not None:
-            total_probability += device_prob
-            total_sensors += 1
+            valid_components += 1
 
         final_probability = (
-            total_probability / total_sensors if total_sensors > 0 else 0.0
+            total_probability / valid_components if valid_components > 0 else 0.0
         )
 
         return EnvironmentalCalculationResult(
@@ -245,10 +376,14 @@ class ProbabilityCalculator:
         self,
         sensor_states: SensorStates,
         active_triggers: list[str],
+        config: dict[str, Any],
     ) -> Optional[float]:
         """Process illuminance sensors and update triggers."""
         valid_sensors = 0
         total_prob = 0.0
+        change_threshold = config["change_threshold"]
+        significant_change_prob = config["significant_change"]
+        minor_change_prob = config["minor_change"]
 
         for entity_id in self.illuminance_sensors:
             state = sensor_states.get(entity_id)
@@ -257,9 +392,11 @@ class ProbabilityCalculator:
 
             try:
                 current_value = float(state["state"])
-                if current_value > 50:  # Significant light level
-                    total_prob += 0.7
+                if current_value > change_threshold:
+                    total_prob += significant_change_prob
                     active_triggers.append(f"{entity_id} ({current_value} lx)")
+                else:
+                    total_prob += minor_change_prob
                 valid_sensors += 1
             except (ValueError, TypeError):
                 continue
@@ -269,52 +406,43 @@ class ProbabilityCalculator:
     def _process_environmental_sensors(
         self,
         sensor_list: list[str],
-        sensor_data: list[EnvironmentalData],
-        unit: str,
         sensor_states: SensorStates,
         active_triggers: list[str],
+        baseline: float,
+        threshold: float,
+        weight: float,
+        unit: str,
     ) -> Optional[float]:
         """Process environmental sensors and update triggers."""
-        if not sensor_data:
-            return None
-
+        valid_sensors = 0
         significant_changes = 0
-        weight = 0.0
-        for entity_id, data in zip(sensor_list, sensor_data):
-            if abs(data["current_value"] - data["baseline"]) > data["threshold"]:
-                significant_changes += 1
-                active_triggers.append(f"{entity_id} ({data['current_value']}{unit})")
-                weight = data["weight"]
 
-        return weight if significant_changes > 0 else 0.0
-
-    def _process_device_states(
-        self,
-        sensor_states: SensorStates,
-        active_triggers: list[str],
-    ) -> Optional[float]:
-        """Process device states and update triggers."""
-        valid_devices = 0
-        active_devices = 0
-
-        for entity_id in self.device_states:
+        for entity_id in sensor_list:
             state = sensor_states.get(entity_id)
             if not state or not state["availability"]:
                 continue
 
-            valid_devices += 1
-            if state["state"] == STATE_ON:
-                active_devices += 1
-                active_triggers.append(entity_id)
+            try:
+                current_value = float(state["state"])
+                valid_sensors += 1
+                if abs(current_value - baseline) > threshold:
+                    significant_changes += 1
+                    active_triggers.append(f"{entity_id} ({current_value}{unit})")
+            except (ValueError, TypeError):
+                continue
 
-        return 0.8 * (active_devices / valid_devices) if valid_devices > 0 else None
+        return (
+            weight * (significant_changes / valid_sensors)
+            if valid_sensors > 0
+            else None
+        )
 
     def _calculate_decay_factor(
         self, time_diff: float, window: float, decay_type: str
     ) -> float:
         """Calculate the decay factor based on time difference."""
         if decay_type == "linear":
-            return 1.0 - (time_diff / window)
+            return max(0.0, 1.0 - (time_diff / window))
         # Exponential decay
         return math.exp(-3.0 * time_diff / window)
 
@@ -322,10 +450,11 @@ class ProbabilityCalculator:
         """Get list of all configured sensor entity IDs."""
         return [
             *self.motion_sensors,
+            *self.media_devices,
+            *self.appliances,
             *self.illuminance_sensors,
             *self.humidity_sensors,
             *self.temperature_sensors,
-            *self.device_states,
         ]
 
     @staticmethod
@@ -336,3 +465,8 @@ class ProbabilityCalculator:
             return True
         except (ValueError, TypeError):
             return False
+
+    @staticmethod
+    def _validate_probability(prob: float) -> float:
+        """Validate and clamp probability to valid range."""
+        return max(0.0, min(1.0, prob))
