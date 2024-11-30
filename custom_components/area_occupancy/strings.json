@@ -3,14 +3,15 @@
         "step": {
             "user": {
                 "title": "Area Occupancy Detection Setup",
-                "description": "Configure area occupancy detection using multiple sensors",
+                "description": "Configure area occupancy detection using multiple sensors and devices",
                 "data": {
                     "name": "Area Name",
                     "motion_sensors": "Motion Sensors",
+                    "media_devices": "Media Devices (TV, Speakers, etc.)",
+                    "appliances": "Appliances (Plugs, Switches, etc.)",
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
                     "temperature_sensors": "Temperature Sensors",
-                    "device_states": "Device States",
                     "threshold": "Occupancy Threshold",
                     "history_period": "Historical Data Period",
                     "decay_enabled": "Enable Sensor Decay",
@@ -20,10 +21,33 @@
             }
         },
         "error": {
-            "unknown": "Unexpected error occurred"
+            "unknown": "Unexpected error occurred",
+            "no_motion_sensors": "At least one motion sensor is required",
+            "invalid_threshold": "Threshold must be between 0 and 1"
         },
         "abort": {
             "already_configured": "This area is already configured"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Area Occupancy Options",
+                "description": "Update area occupancy detection configuration",
+                "data": {
+                    "motion_sensors": "Motion Sensors (Required)",
+                    "media_devices": "Media Players (TVs, Speakers)",
+                    "appliances": "Smart Plugs and Appliances",
+                    "illuminance_sensors": "Illuminance Sensors (Optional)",
+                    "humidity_sensors": "Humidity Sensors (Optional)",
+                    "temperature_sensors": "Temperature Sensors (Optional)",
+                    "threshold": "Occupancy Probability Threshold (0-1)",
+                    "history_period": "Historical Data Period (days)",
+                    "decay_enabled": "Enable Sensor Reading Decay",
+                    "decay_window": "Decay Time Window (seconds)",
+                    "decay_type": "Decay Calculation Type"
+                }
+            }
         }
     }
 }
