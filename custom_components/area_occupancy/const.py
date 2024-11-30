@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Final, TypedDict, NotRequired
+from typing import Final, TypedDict, NotRequired, Any
 from typing_extensions import TypeAlias
 
 DOMAIN: Final = "area_occupancy"
 
 # Configuration constants
 CONF_MOTION_SENSORS: Final = "motion_sensors"
+CONF_MEDIA_DEVICES: Final = "media_devices"
+CONF_APPLIANCES: Final = "appliances"
+CONF_DEVICE_STATES: Final = "device_states"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
-CONF_DEVICE_STATES: Final = "device_states"
 CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_DECAY_TYPE: Final = "decay_type"
+
+# File paths and configuration
+PROBABILITY_CONFIG_FILE: Final = "default_probabilities.yaml"
+HISTORY_STORAGE_FILE: Final = "area_occupancy_history.yaml"
+STORAGE_VERSION: Final = 1
 
 # Default values
 DEFAULT_THRESHOLD: Final = 0.5
@@ -35,6 +42,7 @@ ATTR_PROBABILITY: Final = "probability"
 ATTR_PRIOR_PROBABILITY: Final = "prior_probability"
 ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
 ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
+ATTR_DEVICE_STATES: Final = "device_states"
 ATTR_DECAY_STATUS: Final = "decay_status"
 ATTR_CONFIDENCE_SCORE: Final = "confidence_score"
 ATTR_SENSOR_AVAILABILITY: Final = "sensor_availability"
@@ -47,6 +55,8 @@ ATTR_MIN_PROBABILITY: Final = "min_probability"
 ATTR_MAX_PROBABILITY: Final = "max_probability"
 ATTR_THRESHOLD: Final = "threshold"
 ATTR_WINDOW_SIZE: Final = "window_size"
+ATTR_MEDIA_STATES: Final = "media_states"
+ATTR_APPLIANCE_STATES: Final = "appliance_states"
 
 
 # Type definitions
@@ -67,6 +77,23 @@ class EnvironmentalData(TypedDict):
     weight: float
 
 
+class DeviceClassification(TypedDict):
+    """Type for device classification data."""
+
+    type: str
+    states: list[str]
+    probabilities: dict[str, float]
+
+
+class DeviceProbabilities(TypedDict):
+    """Type for device probability data."""
+
+    device_id: str
+    state: str
+    probability: float
+    timestamp: str
+
+
 class ProbabilityResult(TypedDict):
     """Type for probability calculation results."""
 
@@ -74,6 +101,7 @@ class ProbabilityResult(TypedDict):
     prior_probability: float
     active_triggers: list[str]
     sensor_probabilities: dict[str, float]
+    device_states: dict[str, dict[str, str]]
     decay_status: dict[str, float]
     confidence_score: float
     sensor_availability: dict[str, bool]
@@ -86,15 +114,34 @@ class ProbabilityResult(TypedDict):
     max_probability: NotRequired[float]
 
 
+class HistoryStorage(TypedDict):
+    """Type for history storage data."""
+
+    version: int
+    last_updated: str
+    global_data: dict[str, Any]
+    areas: dict[str, AreaHistory]
+
+
+class AreaHistory(TypedDict):
+    """Type for area-specific history data."""
+
+    priors: dict[str, float]
+    patterns: dict[str, list[float]]
+    device_states: dict[str, list[DeviceProbabilities]]
+    environmental_baselines: dict[str, float]
+
+
 class AreaOccupancyConfig(TypedDict):
     """Type for area occupancy configuration."""
 
     name: str
     motion_sensors: list[str]
+    media_devices: NotRequired[list[str]]
+    appliances: NotRequired[list[str]]
     illuminance_sensors: NotRequired[list[str]]
     humidity_sensors: NotRequired[list[str]]
     temperature_sensors: NotRequired[list[str]]
-    device_states: NotRequired[list[str]]
     threshold: NotRequired[float]
     history_period: NotRequired[int]
     decay_enabled: NotRequired[bool]
