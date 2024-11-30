@@ -1,389 +1,206 @@
-# Room Occupancy Integration - Developer Guide
+# Area Occupancy Detection for Home Assistant
 
-## Table of Contents
+This integration provides intelligent room occupancy detection by combining multiple sensor inputs using Bayesian probability calculations. It can detect occupancy more accurately than single motion sensors by considering various environmental factors and device states.
 
-- [Development Environment Setup](#development-environment-setup)
-- [Installation for Development](#installation-for-development)
-- [Project Structure](#project-structure)
-- [Testing](#testing)
-- [Contributing Guidelines](#contributing-guidelines)
-- [Debugging](#debugging)
-- [Configuration Reference](#configuration-reference)
-- [Common Issues](#common-issues)
+![HACS Default][hacs-shield]
+![Project Maintenance][maintenance-shield]
+[![GitHub Release][release-shield]][release]
 
-## Development Environment Setup
+## Features
 
-### Prerequisites
+- **Intelligent Occupancy Detection**: Uses multiple sensors for more accurate presence detection
+- **Probability-Based**: Shows both definitive occupancy state and probability percentage
+- **Multi-Sensor Support**:
+  - Motion sensors (primary detection)
+  - Illuminance sensors (light level changes)
+  - Temperature sensors (environmental changes)
+  - Humidity sensors (environmental changes)
+  - Device states (TV, game consoles, etc.)
+- **Adaptive Learning**: Uses historical data for improved accuracy
+- **Configurable Settings**: Customize thresholds, decay times, and sensor weights
+- **Graceful Degradation**: Continues functioning even if some sensors are unavailable
+- **Real-Time Updates**: Immediate response to sensor changes
 
-- Python 3.10 or higher
-- Home Assistant development environment
-- Git
-- Visual Studio Code (recommended)
-- Docker (optional, for container-based development)
+## Installation
 
-### Setting Up Local Development Environment
+### Option 1: HACS Installation (Recommended)
 
-1. Create a virtual environment:
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection&category=integration)
 
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-.\venv\Scripts\activate   # Windows
-```
+### Option 2: Manual Installation
 
-2. Install development dependencies:
-
-```bash
-pip install -r requirements_dev.txt
-```
-
-3. Install pre-commit hooks:
-
-```bash
-pre-commit install
-```
-
-## Installation for Development
-
-### Method 1: Direct Installation
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/ha-room-occupancy.git
-```
-
-2. Create symbolic link:
-
-```bash
-# Linux/macOS
-ln -s /path/to/ha-room-occupancy/custom_components/room_occupancy /path/to/homeassistant/config/custom_components/room_occupancy
-
-# Windows (as administrator)
-mklink /D C:\path\to\homeassistant\config\custom_components\room_occupancy C:\path\to\ha-room-occupancy\custom_components\room_occupancy
-```
-
+1. Download the latest release
+2. Copy the `custom_components/area_occupancy` folder to your `config/custom_components` directory
 3. Restart Home Assistant
 
-### Method 2: Using HACS for Development
+## Configuration
 
-1. Add repository to HACS as custom repository:
+### Initial Setup
 
-   - Category: Integration
-   - URL: Your repository URL
-   - Branch: dev (or your development branch)
-
-2. Install through HACS interface
-
-3. Restart Home Assistant
-
-## Project Structure
-
-```bash
-custom_components/room_occupancy/
-├── __init__.py           # Integration initialization
-├── manifest.json         # Integration metadata
-├── const.py             # Constants and configuration
-├── config_flow.py       # Configuration UI
-├── coordinator.py       # Data update coordinator
-├── probability.py       # Bayesian calculations
-├── sensor.py           # Probability sensor
-├── binary_sensor.py    # Occupancy sensor
-├── strings.json        # String resources
-└── translations/       # Localization
-    └── en.json        # English translations
-```
-
-## Testing
-
-### Setting Up Test Environment
-
-1. Install test dependencies:
-
-```bash
-pip install -r requirements_test.txt
-```
-
-2. Install pytest-homeassistant-custom-component:
-
-```bash
-pip install pytest-homeassistant-custom-component
-```
-
-### Running Tests
-
-1. Run all tests:
-
-```bash
-pytest tests/
-```
-
-2. Run specific test file:
-
-```bash
-pytest tests/test_sensor.py
-```
-
-3. Run with coverage:
-
-```bash
-pytest tests/ --cov=custom_components.room_occupancy
-```
-
-### Test Structure
-
-```bash
-tests/
-├── conftest.py                  # Test fixtures
-├── test_init.py                # Integration tests
-├── test_config_flow.py         # Configuration tests
-├── test_coordinator.py         # Coordinator tests
-├── test_probability.py         # Probability calculation tests
-├── test_sensor.py             # Probability sensor tests
-└── test_binary_sensor.py      # Binary sensor tests
-```
-
-### Writing Tests
-
-Example test case:
-
-```python
-async def test_sensor_probability_calculation(hass):
-    """Test probability calculation with multiple sensors."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            "name": "Test Room",
-            "motion_sensors": ["binary_sensor.motion"],
-            "threshold": 0.5,
-        },
-    )
-
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    # Test sensor states and calculations
-    hass.states.async_set("binary_sensor.motion", "on")
-    await hass.async_block_till_done()
-
-    state = hass.states.get("sensor.room_occupancy_probability")
-    assert state
-    assert float(state.state) > 90.0  # High probability when motion detected
-```
-
-## Contributing Guidelines
-
-### Code Style
-
-- Follow Home Assistant's code style guidelines
-- Use black for code formatting
-- Use isort for import sorting
-- Maintain pylint score above 9/10
-
-### Pull Request Process
-
-1. Create feature branch from dev
-2. Write tests for new functionality
-3. Update documentation
-4. Submit PR against dev branch
-5. Ensure all checks pass
-6. Request review
-
-## Debugging
-
-### Enable Debug Logging
-
-Add to configuration.yaml:
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.room_occupancy: debug
-```
-
-### Common Debug Points
-
-1. Probability Calculation:
-
-```python
-_LOGGER.debug(
-    "Calculating probability - sensors: %s, values: %s",
-    sensor_probabilities.keys(),
-    sensor_probabilities.values()
-)
-```
-
-2. Sensor Updates:
-
-```python
-_LOGGER.debug(
-    "Sensor update - entity: %s, state: %s",
-    entity_id,
-    new_state.state
-)
-```
-
-### Using Remote Debugger
-
-1. Install debugpy:
-
-```bash
-pip install debugpy
-```
-
-2. Add breakpoint in code:
-
-```python
-import debugpy
-debugpy.listen(5678)
-debugpy.wait_for_client()
-```
-
-3. Connect using VS Code debug configuration
-
-## Configuration Reference
+1. Go to Settings → Devices & Services
+2. Click "+ Add Integration"
+3. Search for "Area Occupancy Detection"
+4. Follow the configuration flow
 
 ### Configuration Options
 
-| Option              | Type   | Default  | Description            |
-| ------------------- | ------ | -------- | ---------------------- |
-| name                | string | Required | Room name              |
-| motion_sensors      | list   | Required | Motion sensor entities |
-| illuminance_sensors | list   | Optional | Light level sensors    |
-| humidity_sensors    | list   | Optional | Humidity sensors       |
-| temperature_sensors | list   | Optional | Temperature sensors    |
-| device_states       | list   | Optional | Device state entities  |
-| threshold           | float  | 0.5      | Occupancy threshold    |
-| history_period      | int    | 7        | Days of history        |
-| decay_enabled       | bool   | true     | Enable sensor decay    |
-| decay_window        | int    | 600      | Decay window (seconds) |
-| decay_type          | string | "linear" | Decay calculation type |
+| Option | Description | Required |
+|--------|-------------|----------|
+| Area Name | Name for the monitored area | Yes |
+| Motion Sensors | One or more motion sensors | Yes |
+| Illuminance Sensors | Light level sensors | No |
+| Humidity Sensors | Humidity sensors | No |
+| Temperature Sensors | Temperature sensors | No |
+| Device States | Media players, TVs, etc. | No |
+| Threshold | Occupancy probability threshold (0.0-1.0) | No |
+| History Period | Days of historical data to use | No |
+| Decay Enabled | Enable sensor reading decay | No |
+| Decay Window | How long before sensor readings decay | No |
+| Decay Type | Linear or exponential decay curve | No |
+
+### Entities Created
+
+The integration creates two entities for each configured area:
+
+1. **Binary Sensor** (`binary_sensor.{area_name}_occupancy_status`)
+   - State: `on` (occupied) or `off` (not occupied)
+   - Indicates definitive occupancy based on probability threshold
+
+2. **Probability Sensor** (`sensor.{area_name}_occupancy_probability`)
+   - State: 0-100 percentage
+   - Shows the calculated likelihood of room occupancy
 
 ### Entity Attributes
 
-```python
-attributes = {
-    "probability": 0.85,          # Current probability
-    "prior_probability": 0.5,     # Prior probability
-    "active_triggers": ["sensor.motion_1"],  # Active sensors
-    "sensor_probabilities": {     # Individual probabilities
-        "sensor.motion_1": 0.95,
-        "sensor.illuminance_1": 0.7
-    },
-    "decay_status": {            # Decay values
-        "sensor.motion_1": 0.8
-    },
-    "confidence_score": 0.9,     # Calculation confidence
-    "sensor_availability": {     # Sensor status
-        "sensor.motion_1": true
-    }
-}
+Both entities provide detailed attributes:
+
+- `probability`: Current calculated probability (0-100%)
+- `prior_probability`: Previous probability calculation
+- `active_triggers`: Currently active sensors/triggers
+- `sensor_probabilities`: Individual probability per sensor
+- `decay_status`: Current decay values for sensors
+- `confidence_score`: Reliability of the calculation
+- `sensor_availability`: Status of each configured sensor
+- `last_occupied`: Last time area was occupied
+- `state_duration`: Time in current state
+- `occupancy_rate`: Percentage of time area is occupied
+- `moving_average`: Average probability over time
+- `rate_of_change`: How quickly probability is changing
+
+## Usage Examples
+
+### Basic Setup with Motion Only
+
+```yaml
+# Example configuration with just motion sensors
+Area Name: Living Room
+Motion Sensors:
+  - binary_sensor.living_room_motion
+  - binary_sensor.living_room_corner
+Threshold: 0.5
 ```
 
-## Common Issues
+### Advanced Multi-Sensor Setup
 
-### Installation Issues
+```yaml
+# Example configuration using all sensor types
+Area Name: Home Office
+Motion Sensors:
+  - binary_sensor.office_motion
+  - binary_sensor.desk_motion
+Illuminance Sensors:
+  - sensor.office_light_level
+Temperature Sensors:
+  - sensor.office_temperature
+Device States:
+  - media_player.office_tv
+  - binary_sensor.computer_power
+Threshold: 0.6
+Decay Window: 300
+Decay Type: exponential
+```
 
-1. **Integration Not Appearing**
+## Automation Examples
 
-   - Check custom_components folder structure
-   - Verify manifest.json contents
-   - Clear browser cache
-   - Restart Home Assistant
+### Turn Off Lights When Area Empty
 
-2. **Configuration Fails**
-   - Verify sensor entity IDs exist
-   - Check sensor permissions
-   - Review Home Assistant logs
+```yaml
+automation:
+  - alias: "Turn off lights when office empty"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.office_occupancy_status
+        to: "off"
+        for:
+          minutes: 5
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.office_lights
+```
 
-### Runtime Issues
+### Adjust Based on Probability
 
-1. **High CPU Usage**
+```yaml
+automation:
+  - alias: "Dim lights on low occupancy probability"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.office_occupancy_probability
+        below: 30
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.office_lights
+        data:
+          brightness_pct: 50
+```
 
-   - Increase update interval
-   - Reduce number of sensors
-   - Check sensor update frequency
+## Troubleshooting
 
-2. **Incorrect Probability**
-   - Verify sensor states
-   - Check decay settings
-   - Review probability calculations
-   - Enable debug logging
+### Occupancy Not Detecting Correctly
 
-### Troubleshooting Steps
+1. Check sensor states in Developer Tools
+2. Verify motion sensors are responding
+3. Lower threshold value if detection is too strict
+4. Increase decay window if state changes too quickly
 
-1. Enable debug logging
-2. Check sensor states
-3. Verify configuration
-4. Review system resources
-5. Check entity availability
-6. Analyze probability calculations
-7. Test with minimal configuration
+### Probability Always Low
 
----
+1. Verify sensor connections and availability
+2. Check sensor placement and coverage
+3. Ensure device states are updating
+4. Review historical data period setting
 
-## Release Process
+### Delayed Response
 
-1. Version Bump
+1. Reduce decay window setting
+2. Check sensor update intervals
+3. Verify automation trigger conditions
 
-   - Update manifest.json version
-   - Update CHANGELOG.md
-   - Create release tag
+### General Issues
 
-2. Testing
+1. Enable debug logging:
+   ```yaml
+   logger:
+     default: info
+     logs:
+       custom_components.area_occupancy: debug
+   ```
+2. Review Home Assistant logs
+3. Check sensor availability attributes
+4. Verify sensor connections and placement
 
-   - Run full test suite
-   - Perform manual testing
-   - Test upgrade path
+## Support
 
-3. Documentation
+- Report issues on [GitHub][issues]
+- Join our [Community Discussion][community]
+- View [Release Notes][releases]
 
-   - Update README.md
-   - Update integration documentation
-   - Update example configurations
-
-4. Release
-   - Create GitHub release
-   - Update HACS repository
-   - Notify users of update
-
-## Performance Optimization
-
-### Memory Usage
-
-- Limit historical data storage
-- Clean up unused state data
-- Optimize data structures
-
-### CPU Usage
-
-- Implement caching where appropriate
-- Optimize calculation frequency
-- Use efficient algorithms
-
-### Network Usage
-
-- Batch sensor updates
-- Implement rate limiting
-- Optimize update intervals
-
-## Security Considerations
-
-1. Data Handling
-
-   - Sanitize user inputs
-   - Validate configuration data
-   - Handle sensitive data appropriately
-
-2. Integration Security
-
-   - Verify sensor permissions
-   - Validate entity access
-   - Handle errors securely
-
-3. Best Practices
-   - Follow OWASP guidelines
-   - Implement proper error handling
-   - Use secure default values
+[hacs-shield]: https://img.shields.io/badge/HACS-Default-orange.svg
+[maintenance-shield]: https://img.shields.io/badge/maintainer-Seb%20Burrell-blue.svg
+[release-shield]: https://img.shields.io/github/release/Hankanman/Area-Occupancy-Detection.svg
+[release]: https://github.com/Hankanman/Area-Occupancy-Detection/releases
+[issues]: https://github.com/Hankanman/Area-Occupancy-Detection/issues
+[community]: https://github.com/Hankanman/Area-Occupancy-Detection/discussions
+[releases]: https://github.com/Hankanman/Area-Occupancy-Detection/releases
