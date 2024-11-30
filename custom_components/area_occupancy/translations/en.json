@@ -3,14 +3,15 @@
         "step": {
             "user": {
                 "title": "Area Occupancy Detection Setup",
-                "description": "Configure area occupancy detection using multiple sensors",
+                "description": "Configure area occupancy detection using multiple sensors and devices",
                 "data": {
                     "name": "Area Name",
                     "motion_sensors": "Motion Sensors",
+                    "media_devices": "Media Devices (TV, Speakers, etc.)",
+                    "appliances": "Appliances (Plugs, Switches, etc.)",
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
                     "temperature_sensors": "Temperature Sensors",
-                    "device_states": "Device States",
                     "threshold": "Occupancy Threshold",
                     "history_period": "Historical Data Period",
                     "decay_enabled": "Enable Sensor Decay",
@@ -20,10 +21,12 @@
             }
         },
         "error": {
-            "unknown": "Unexpected error occurred"
+            "unknown": "Unexpected error occurred",
+            "no_motion_sensors": "At least one motion sensor is required for occupancy detection",
+            "invalid_threshold": "Occupancy threshold must be between 0 and 1"
         },
         "abort": {
-            "already_configured": "This area is already configured"
+            "already_configured": "This area is already configured. Please update using the Options menu"
         }
     },
     "options": {
@@ -32,11 +35,12 @@
                 "title": "Area Occupancy Options",
                 "description": "Modify area occupancy detection settings",
                 "data": {
-                    "motion_sensors": "Motion Sensors",
+                    "motion_sensors": "Motion Sensors (at least one required)",
+                    "media_devices": "Media Players (TVs, Speakers, etc.)",
+                    "appliances": "Smart Plugs and Appliances (power monitoring devices)",
                     "illuminance_sensors": "Illuminance Sensors (optional)",
                     "humidity_sensors": "Humidity Sensors (optional)",
                     "temperature_sensors": "Temperature Sensors (optional)",
-                    "device_states": "Device States (optional)",
                     "threshold": "Occupancy Threshold (0-1)",
                     "history_period": "Historical Data Period (days)",
                     "decay_enabled": "Enable Sensor Reading Decay",
@@ -46,9 +50,10 @@
             }
         },
         "error": {
-            "invalid_threshold": "Threshold must be between 0 and 1",
+            "invalid_threshold": "Occupancy threshold must be between 0 and 1",
             "invalid_history": "History period must be between 1 and 30 days",
-            "invalid_decay": "Decay window must be between 60 and 3600 seconds"
+            "invalid_decay": "Decay window must be between 60 and 3600 seconds",
+            "no_motion_sensors": "At least one motion sensor is required"
         }
     }
 }
