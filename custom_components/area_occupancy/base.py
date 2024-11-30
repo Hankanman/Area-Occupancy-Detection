@@ -35,6 +35,8 @@ from .const import (
     ATTR_MAX_PROBABILITY,
     ATTR_THRESHOLD,
     ATTR_WINDOW_SIZE,
+    ATTR_MEDIA_STATES,
+    ATTR_APPLIANCE_STATES,
     NAME_BINARY_SENSOR,
     NAME_PROBABILITY_SENSOR,
     ProbabilityResult,
@@ -105,6 +107,10 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
             },
             ATTR_CONFIDENCE_SCORE: format_percentage(data.get("confidence_score", 0.0)),
             ATTR_SENSOR_AVAILABILITY: data.get("sensor_availability", {}),
+            ATTR_MEDIA_STATES: data.get("device_states", {}).get("media_states", {}),
+            ATTR_APPLIANCE_STATES: data.get("device_states", {}).get(
+                "appliance_states", {}
+            ),
         }
 
     @abstractmethod
