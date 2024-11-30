@@ -20,6 +20,8 @@ CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_DECAY_TYPE: Final = "decay_type"
+CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
+CONF_MINIMUM_CONFIDENCE = "minimum_confidence"
 
 # File paths and configuration
 PROBABILITY_CONFIG_FILE: Final = "default_probabilities.yaml"
@@ -32,6 +34,8 @@ DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
+DEFAULT_HISTORICAL_ANALYSIS_ENABLED = True
+DEFAULT_MINIMUM_CONFIDENCE = 0.3
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Area Occupancy Probability"
@@ -57,6 +61,10 @@ ATTR_THRESHOLD: Final = "threshold"
 ATTR_WINDOW_SIZE: Final = "window_size"
 ATTR_MEDIA_STATES: Final = "media_states"
 ATTR_APPLIANCE_STATES: Final = "appliance_states"
+ATTR_HISTORICAL_PATTERNS = "historical_patterns"
+ATTR_TYPICAL_OCCUPANCY = "typical_occupancy_rate"
+ATTR_DAY_OCCUPANCY = "day_occupancy_rate"
+ATTR_SENSOR_CORRELATIONS = "sensor_correlations"
 
 
 # Type definitions
