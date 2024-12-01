@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 from collections import deque
-
+import numpy as np
 import yaml
+
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
-from homeassistant.exceptions import HomeAssistantError
 
-from .historical_analysis import HistoricalAnalysis
-from .calculations import DecayConfig, ProbabilityCalculator
 from .const import (
     CONF_DECAY_ENABLED,
     CONF_DECAY_TYPE,
@@ -46,6 +46,9 @@ from .const import (
     SensorStates,
     HistoryStorage,
 )
+from .historical_analysis import HistoricalAnalysis
+from .calculations import DecayConfig, ProbabilityCalculator
+from .pattern_analyzer import OccupancyPatternAnalyzer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,11 +66,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             name=DOMAIN,
             update_interval=timedelta(minutes=5),
         )
+        self._state_lock = asyncio.Lock()
+        self._last_probability: Optional[float] = None
+        self._max_change_rate = 0.3
         self.entry_id = entry_id
         self.config = config
         self._motion_timestamps: dict[SensorId, datetime] = {}
         self._sensor_states: SensorStates = {}
         self._unsubscribe_handlers: list[callable] = []
+        self._pattern_analyzer = OccupancyPatternAnalyzer()
 
         # Initialize historical analysis
         self._history_analyzer = HistoricalAnalysis(
@@ -114,6 +121,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.debug("Historical analysis initialized: %s", self._historical_data)
         except (HomeAssistantError, ValueError) as err:
             _LOGGER.error("Failed to initialize historical analysis: %s", err)
+
+    async def _async_update_sensor_state(self, entity_id: str, state: Any) -> None:
+        """Thread-safe sensor state update."""
+        async with self._state_lock:
+            try:
+                self._sensor_states[entity_id] = {
+                    "state": state.state,
+                    "last_changed": state.last_changed.isoformat(),
+                    "availability": True,
+                }
+            except (KeyError, AttributeError, TypeError) as err:
+                _LOGGER.error("Error updating sensor state: %s", err)
 
     def _load_base_config(self) -> dict[str, Any]:
         """Load the base probability configuration."""
@@ -327,6 +346,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         while self._unsubscribe_handlers:
             self._unsubscribe_handlers.pop()()
 
+    def _limit_probability_change(self, new_probability: float) -> float:
+        """Limit the rate of probability change."""
+        if self._last_probability is None:
+            self._last_probability = new_probability
+            return new_probability
+
+        max_change = self._max_change_rate
+        min_prob = max(0.0, self._last_probability - max_change)
+        max_prob = min(1.0, self._last_probability + max_change)
+
+        limited_prob = max(min_prob, min(new_probability, max_prob))
+        self._last_probability = limited_prob
+        return limited_prob
+
     def _setup_state_listeners(self) -> None:
         """Set up state change listeners for all configured sensors."""
 
@@ -338,8 +371,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
             if not new_state or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 if entity_id in self._sensor_states:
-                    self._sensor_states[entity_id]["availability"] = False
+                    asyncio.create_task(
+                        self._async_update_sensor_state(
+                            entity_id, {"state": None, "availability": False}
+                        )
+                    )
                 return
+
+            asyncio.create_task(self._async_update_sensor_state(entity_id, new_state))
 
             try:
                 # For numeric sensors, validate the value
@@ -471,25 +510,49 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         }
 
     def _get_calculated_data(self) -> ProbabilityResult:
-        """Calculate current occupancy data using the probability calculator."""
+        """Calculate current occupancy data using probability calculator with pattern recognition."""
+        # Get base probability calculation
         base_result = self._calculator.calculate(
             self._sensor_states,
             self._motion_timestamps,
-            historical_patterns=self._historical_data,
+            historical_patterns=self._get_historical_patterns(),
         )
 
         # Update historical data tracking
-        self._update_historical_data(
-            base_result["probability"],
-            base_result["probability"] >= self.config.get(CONF_THRESHOLD, 0.5),
+        current_probability = base_result["probability"]
+        current_threshold = self.config.get(CONF_THRESHOLD, 0.5)
+        is_occupied = current_probability >= current_threshold
+
+        self._update_historical_data(current_probability, is_occupied)
+
+        # Update pattern recognition
+        now = dt_util.utcnow()
+        self._pattern_analyzer.update_pattern(self.config["name"], now, is_occupied)
+
+        # Get pattern-based probability adjustment
+        pattern_prob, pattern_confidence = (
+            self._pattern_analyzer.get_probability_adjustment(self.config["name"], now)
         )
+
+        # Apply pattern adjustment if confidence is sufficient
+        if pattern_confidence >= 0.3:
+            pattern_weight = pattern_confidence * 0.3  # Max 30% influence from patterns
+            final_probability = (
+                current_probability * (1 - pattern_weight)
+                + pattern_prob * pattern_weight
+            )
+            base_result["probability"] = max(0.0, min(1.0, final_probability))
 
         # Add historical metrics and patterns
         historical_metrics = self._get_historical_metrics()
         historical_patterns = self._get_historical_patterns()
+        pattern_summary = self._pattern_analyzer.get_pattern_summary(
+            self.config["name"]
+        )
 
         base_result.update(historical_metrics)
         base_result["historical_patterns"] = historical_patterns
+        base_result["pattern_data"] = pattern_summary
 
         # Apply any learned patterns from history
         area_id = self.config["name"].lower().replace(" ", "_")
@@ -526,7 +589,62 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                     + baseline_avg * baseline_weight
                 )
 
+        # Apply rate limiting to final probability
+        final_prob = self._limit_probability_change(base_result["probability"])
+        base_result["probability"] = final_prob
+
+        # Update decay timestamps
+        self._update_decay_timestamps(base_result.get("decay_status", {}))
+
+        # Calculate confidence metrics
+        confidence_score = self._calculate_confidence_score(
+            base_result["sensor_availability"],
+            pattern_confidence,
+            base_result.get("sensor_probabilities", {}),
+        )
+        base_result["confidence_score"] = confidence_score
+
         return base_result
+
+    def _calculate_confidence_score(
+        self,
+        sensor_availability: dict[str, bool],
+        pattern_confidence: float,
+        sensor_probabilities: dict[str, float],
+    ) -> float:
+        """Calculate overall confidence score."""
+        # Sensor availability weight
+        available_sensors = sum(1 for state in sensor_availability.values() if state)
+        total_sensors = len(sensor_availability)
+        availability_score = (
+            available_sensors / total_sensors if total_sensors > 0 else 0.0
+        )
+
+        # Sensor consistency weight
+        probability_variance = (
+            np.var(list(sensor_probabilities.values())) if sensor_probabilities else 1.0
+        )
+        consistency_score = 1.0 - min(probability_variance, 1.0)
+
+        # Combine scores with weights
+        final_score = (
+            availability_score * 0.4  # 40% weight to sensor availability
+            + pattern_confidence * 0.3  # 30% weight to pattern confidence
+            + consistency_score * 0.3  # 30% weight to sensor consistency
+        )
+
+        return max(0.0, min(1.0, final_score))
+
+    def _update_decay_timestamps(self, decay_status: dict[str, float]) -> None:
+        """Update motion sensor decay timestamps."""
+        now = dt_util.utcnow()
+        for sensor_id, decay_time in decay_status.items():
+            if sensor_id in self._motion_timestamps:
+                # Only update if the new decay time is more recent
+                current_time = self._motion_timestamps[sensor_id]
+                new_time = now - timedelta(seconds=decay_time)
+                if new_time > current_time:
+                    self._motion_timestamps[sensor_id] = new_time
 
     def get_historical_patterns(self) -> dict[str, Any]:
         """Get historical patterns for the current area."""

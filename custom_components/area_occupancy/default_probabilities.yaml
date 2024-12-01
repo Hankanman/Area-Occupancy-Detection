@@ -1,40 +1,40 @@
 # Area Occupancy Detection - Base Configuration
 # This file defines the core probability values and weights used by the integration.
-# All changes require a Home Assistant restart to take effect.
+# All changes require a Home Assistant restart or integration reload to take effect.
 
 # Main category weights - These determine how much each type of detection
 # contributes to the final occupancy probability. Must sum to 1.0 (100%)
 weights:
   # Motion sensors provide the most reliable indication of immediate occupancy
   # Higher values make the system more responsive to motion but potentially more prone to false positives
-  motion: 0.9 # 90% weight - primary factor in occupancy detection
+  motion: 0.4 # 40% weight - primary factor in occupancy detection
 
   # Media devices (TVs, speakers, etc.) indicate intentional user interaction
   # Higher values make the system more sensitive to media device states
-  media: 0.7 # 70% weight - strong indicator of active presence
+  media: 0.3 # 30% weight - strong indicator of active presence
 
   # Appliances (smart plugs, switches) show indirect signs of occupancy
   # Higher values increase sensitivity to appliance usage patterns
-  appliances: 0.4 # 40% weight - moderate indicator of presence
+  appliances: 0.2 # 20% weight - moderate indicator of presence
 
   # Environmental sensors (light, temperature, humidity) show subtle changes
   # Higher values make the system more sensitive to environmental changes
-  environmental: 0.3 # 30% weight - supporting evidence of occupancy
+  environmental: 0.1 # 10% weight - supporting evidence of occupancy
 
 # Base probability values for different sensor types
 base_probabilities:
   motion:
     # Probability when a single motion sensor is triggered
     # Higher value = more sensitive to single sensor triggers
-    single_sensor: 0.6 # 60% chance area is occupied with one sensor
+    single_sensor: 0.85 # 85% chance area is occupied with one sensor
 
     # Probability when multiple motion sensors are triggered
     # Higher value = stronger confidence in true occupancy
-    multiple_sensors: 0.8 # 80% chance with multiple sensors
+    multiple_sensors: 0.9 # 90% chance with multiple sensors
 
     # How quickly motion sensor probability decays over time
     # Higher value = motion triggers remain relevant longer
-    decay_factor: 0.5 # 50% influence from recent motion events
+    decay_factor: 0.7 # 70% influence from recent motion events
 
   media:
     # Probabilities for different media device states

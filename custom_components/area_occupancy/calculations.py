@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Any
 
 from homeassistant.const import (
@@ -80,7 +80,7 @@ class ProbabilityCalculator:
         temperature_sensors: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
-        """Initialize the calculator."""
+        """Initialize the calculator with safety bounds."""
         self.base_config = base_config
         self.motion_sensors = motion_sensors
         self.media_devices = media_devices or []
@@ -90,12 +90,45 @@ class ProbabilityCalculator:
         self.temperature_sensors = temperature_sensors or []
         self.decay_config = decay_config or DecayConfig()
 
-        # Load weights from base config
+        # Safety bounds
+        self._max_compound_decay = 0.8  # Maximum compound decay value
+        self._min_motion_weight = 0.3  # Minimum motion sensor weight
+        self._correlation_limit = 0.7  # Maximum correlation adjustment
+        self._max_env_change = 0.5  # Maximum environmental probability change
+        self._min_confidence = 0.2  # Minimum confidence score
+
+        # Load weights from base config with bounds
         weights = self.base_config.get("weights", {})
-        self.motion_weight = weights.get("motion", 0.4)
-        self.media_weight = weights.get("media", 0.3)
-        self.appliance_weight = weights.get("appliances", 0.2)
-        self.environmental_weight = weights.get("environmental", 0.1)
+        self.motion_weight = min(weights.get("motion", 0.4), 0.9)  # Cap at 90%
+        self.media_weight = min(weights.get("media", 0.3), 0.7)  # Cap at 70%
+        self.appliance_weight = min(weights.get("appliances", 0.2), 0.5)  # Cap at 50%
+        self.environmental_weight = min(
+            weights.get("environmental", 0.1), 0.3
+        )  # Cap at 30%
+
+        # Normalize weights to ensure they sum to 1.0
+        total_weight = (
+            self.motion_weight
+            + self.media_weight
+            + self.appliance_weight
+            + self.environmental_weight
+        )
+        if total_weight > 0:
+            self.motion_weight /= total_weight
+            self.media_weight /= total_weight
+            self.appliance_weight /= total_weight
+            self.environmental_weight /= total_weight
+        else:
+            # Fallback to safe default weights if config is invalid
+            self.motion_weight = 0.6
+            self.media_weight = 0.2
+            self.appliance_weight = 0.1
+            self.environmental_weight = 0.1
+
+        # Probability dampening factors
+        self._dampening_window = timedelta(minutes=5)
+        self._min_probability_change = 0.05  # Minimum change to apply
+        self._max_probability_change = 0.3  # Maximum change per update
 
     def calculate(
         self,
@@ -124,15 +157,34 @@ class ProbabilityCalculator:
         env_weight = self.environmental_weight
 
         if sensor_correlations:
-            # Reduce weights for highly correlated sensors to avoid double-counting
             for motion_sensor in self.motion_sensors:
                 if motion_sensor in sensor_correlations:
                     correlations = sensor_correlations[motion_sensor]
-                    max_correlation = max(correlations.values()) if correlations else 0
-                    if max_correlation > 0.8:  # High correlation threshold
-                        motion_weight *= (
-                            1 - max_correlation * 0.5
-                        )  # Reduce weight by up to 50%
+                    max_correlation = min(
+                        max(correlations.values()) if correlations else 0,
+                        self._correlation_limit,
+                    )
+                    if max_correlation > 0.5:  # Only adjust if significant correlation
+                        reduction = max_correlation * 0.5
+                        motion_weight = max(
+                            self._min_motion_weight, motion_weight * (1 - reduction)
+                        )
+
+        # Normalize weights
+        total_weight = motion_weight + media_weight + appliance_weight + env_weight
+        if total_weight > 0:
+            motion_weight /= total_weight
+            media_weight /= total_weight
+            appliance_weight /= total_weight
+            env_weight /= total_weight
+
+        # Calculate individual probabilities with bounds checking
+        motion_result = self._calculate_motion_probability(
+            sensor_states, motion_timestamps
+        )
+        media_result = self._calculate_media_probability(sensor_states)
+        appliance_result = self._calculate_appliance_probability(sensor_states)
+        env_result = self._calculate_environmental_probability(sensor_states)
 
         # Calculate base combined probability using weights
         combined_prob = (
@@ -141,6 +193,9 @@ class ProbabilityCalculator:
             + appliance_result.probability * appliance_weight
             + env_result.probability * env_weight
         )
+
+        # Ensure final probability is properly bounded
+        final_prob = max(0.0, min(1.0, combined_prob))
 
         # Apply historical pattern adjustments
         if historical_patterns and "occupancy_patterns" in historical_patterns:
@@ -183,7 +238,7 @@ class ProbabilityCalculator:
 
         # Compile all results
         return {
-            "probability": combined_prob,
+            "probability": final_prob,
             "prior_probability": motion_result.probability,
             "active_triggers": (
                 motion_result.triggers
@@ -255,7 +310,6 @@ class ProbabilityCalculator:
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
     ) -> MotionCalculationResult:
-        """Calculate probability based on motion sensors."""
         active_triggers: list[str] = []
         decay_status: dict[str, float] = {}
         now = dt_util.utcnow()
@@ -263,9 +317,10 @@ class ProbabilityCalculator:
         motion_base = self.base_config["base_probabilities"]["motion"]
         single_sensor_prob = motion_base["single_sensor"]
         multiple_sensors_prob = motion_base["multiple_sensors"]
-        decay_factor = motion_base["decay_factor"]
+        decay_factor = min(motion_base["decay_factor"], self._max_compound_decay)
 
         motion_probability = 0.0
+        compound_decay = 0.0
         active_sensors = 0
         total_sensors = len(self.motion_sensors)
 
@@ -295,12 +350,19 @@ class ProbabilityCalculator:
                         self.decay_config.window,
                         self.decay_config.type,
                     )
-                    motion_probability += current_decay * decay_factor
-                    decay_status[entity_id] = time_diff
-                    if current_decay > 0.1:
-                        active_triggers.append(
-                            f"{entity_id} (decay: {current_decay:.2f})"
+                    # Limit compound decay
+                    remaining_decay = self._max_compound_decay - compound_decay
+                    if remaining_decay > 0:
+                        applied_decay = min(
+                            current_decay * decay_factor, remaining_decay
                         )
+                        compound_decay += applied_decay
+                        motion_probability += applied_decay
+                        decay_status[entity_id] = time_diff
+                        if applied_decay > 0.1:
+                            active_triggers.append(
+                                f"{entity_id} (decay: {applied_decay:.2f})"
+                            )
 
         # Calculate final probability based on number of active sensors
         if active_sensors > 0:
@@ -309,7 +371,7 @@ class ProbabilityCalculator:
             )
 
         final_probability = (
-            motion_probability / total_sensors if total_sensors > 0 else 0.0
+            min(motion_probability / total_sensors, 1.0) if total_sensors > 0 else 0.0
         )
 
         return MotionCalculationResult(
