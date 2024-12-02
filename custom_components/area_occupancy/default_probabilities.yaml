@@ -1,0 +1,121 @@
+# Area Occupancy Detection - Base Configuration
+# This file defines the core probability values and weights used by the integration.
+# All changes require a Home Assistant restart or integration reload to take effect.
+
+# Main category weights - These determine how much each type of detection
+# contributes to the final occupancy probability. Must sum to 1.0 (100%)
+weights:
+  # Motion sensors provide the most reliable indication of immediate occupancy
+  # Higher values make the system more responsive to motion but potentially more prone to false positives
+  motion: 0.4 # 40% weight - primary factor in occupancy detection
+
+  # Media devices (TVs, speakers, etc.) indicate intentional user interaction
+  # Higher values make the system more sensitive to media device states
+  media: 0.3 # 30% weight - strong indicator of active presence
+
+  # Appliances (smart plugs, switches) show indirect signs of occupancy
+  # Higher values increase sensitivity to appliance usage patterns
+  appliances: 0.2 # 20% weight - moderate indicator of presence
+
+  # Environmental sensors (light, temperature, humidity) show subtle changes
+  # Higher values make the system more sensitive to environmental changes
+  environmental: 0.1 # 10% weight - supporting evidence of occupancy
+
+# Base probability values for different sensor types
+base_probabilities:
+  motion:
+    # Probability when a single motion sensor is triggered
+    # Higher value = more sensitive to single sensor triggers
+    single_sensor: 0.85 # 85% chance area is occupied with one sensor
+
+    # Probability when multiple motion sensors are triggered
+    # Higher value = stronger confidence in true occupancy
+    multiple_sensors: 0.9 # 90% chance with multiple sensors
+
+    # How quickly motion sensor probability decays over time
+    # Higher value = motion triggers remain relevant longer
+    decay_factor: 0.7 # 70% influence from recent motion events
+
+  media:
+    # Probabilities for different media device states
+    # Higher values indicate stronger confidence in occupancy
+    playing: 0.9 # 90% - Active media playback strongly suggests presence
+    paused: 0.7 # 70% - Recently paused content suggests nearby user
+    idle: 0.3 # 30% - Device on but not active, might indicate presence
+    off_state: 0.1 # 10% - Device off, minimal indication of presence
+    default_state: 0.0 # 0% - Unknown state, no indication of presence
+
+  appliances:
+    # Probabilities for different appliance states
+    # Higher values increase sensitivity to appliance usage
+    active_state: 0.8 # 80% - Active appliance suggests presence
+    standby_state: 0.4 # 40% - Standby mode might indicate recent usage
+    off_state: 0.1 # 10% - Off state, minimal indication
+    default_state: 0.0 # 0% - Unknown state, no indication
+
+  environmental:
+    illuminance:
+      # Light level change detection settings
+      change_threshold: 50 # Minimum lux change to consider significant
+      significant_change: 0.7 # 70% - Large light level change
+      minor_change: 0.3 # 30% - Small light level change
+
+    temperature:
+      # Temperature change detection settings
+      change_threshold: 1.5 # Degrees of change to consider significant
+      baseline: 21.0 # Base temperature for change comparison
+      weight: 0.6 # 60% influence on environmental probability
+
+    humidity:
+      # Humidity change detection settings
+      change_threshold: 10.0 # Percent change to consider significant
+      baseline: 50.0 # Base humidity for change comparison
+      weight: 0.5 # 50% influence on environmental probability
+
+# Historical data analysis configuration
+history:
+  # How often to update historical analysis (in seconds)
+  update_interval: 3600 # 1 hour between updates
+
+  # Minimum number of samples required for reliable patterns
+  minimum_samples: 100 # Prevents premature pattern recognition
+
+  # Maximum samples to store for pattern analysis
+  maximum_samples: 1000 # Limits memory usage while maintaining accuracy
+
+  # How quickly historical patterns fade in importance
+  decay_rate: 0.1 # 10% reduction in importance over time
+
+# Confidence score calculation weights
+confidence:
+  # Weights for different aspects of confidence calculation
+  sensor_availability: 0.4 # 40% - Importance of sensor reliability
+  data_freshness: 0.3 # 30% - Importance of recent data
+  sample_size: 0.3 # 30% - Importance of sufficient data points
+
+# Usage Examples:
+#
+# 1. More responsive to motion:
+#    - Increase motion weight to 0.6
+#    - Decrease decay_factor to 0.3
+#    - Decrease media and appliance weights accordingly
+#
+# 2. Stronger emphasis on media devices:
+#    - Increase media weight to 0.4
+#    - Increase playing and paused states to 0.95 and 0.8
+#    - Decrease motion weight accordingly
+#
+# 3. More conservative detection:
+#    - Increase multiple_sensors probability to 0.9
+#    - Decrease single_sensor probability to 0.4
+#    - Increase change thresholds for environmental sensors
+#
+# 4. Faster response to changes:
+#    - Decrease update_interval in history
+#    - Decrease minimum_samples
+#    - Increase decay_rate
+#
+# 5. More stable, long-term patterns:
+#    - Increase maximum_samples
+#    - Decrease decay_rate
+#    - Increase minimum_samples

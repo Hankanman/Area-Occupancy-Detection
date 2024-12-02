@@ -1,13 +1,9 @@
 {
   "domain": "area_occupancy",
   "name": "Area Occupancy Detection",
-  "codeowners": [
-    "@Hankanman"
-  ],
+  "codeowners": ["@Hankanman"],
   "config_flow": true,
-  "dependencies": [
-    "recorder"
-  ],
+  "dependencies": ["recorder", "sensor", "binary_sensor"],
   "documentation": "https://github.com/Hankanman/Area-Occupancy-Detection",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Hankanman/Area-Occupancy-Detection/issues",
