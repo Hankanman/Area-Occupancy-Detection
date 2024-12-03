@@ -51,7 +51,8 @@ async def async_setup_entry(
         coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
             "coordinator"
         ]
-        threshold = entry.data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        # Get threshold from options_config
+        threshold = coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
 
         async_add_entities(
             [
