@@ -1,20 +1,22 @@
-"""Base classes for Area Occupancy sensors with shared attribute logic and enhanced features."""
+"""Base classes for Area Occupancy sensors with shared attribute logic."""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Final
+import logging
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorEntity,
     BinarySensorDeviceClass,
+    BinarySensorEntity,
 )
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import CONF_NAME, PERCENTAGE
-from homeassistant.helpers.typing import StateType
+from homeassistant.const import (
+    PERCENTAGE,
+)
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -37,6 +39,7 @@ from .const import (
     ATTR_WINDOW_SIZE,
     ATTR_MEDIA_STATES,
     ATTR_APPLIANCE_STATES,
+    DOMAIN,
     NAME_BINARY_SENSOR,
     NAME_PROBABILITY_SENSOR,
     ProbabilityResult,
@@ -44,7 +47,12 @@ from .const import (
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
+_LOGGER = logging.getLogger(__name__)
+
+ROUNDING_PRECISION: Final = 2
+
+
+class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
     """Base class for area occupancy sensors."""
 
     def __init__(
@@ -54,20 +62,35 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
     ) -> None:
         """Initialize the base sensor."""
         super().__init__(coordinator)
+
+        # Entity attributes
         self._attr_has_entity_name = True
+        self._attr_should_poll = False
         self._entry_id = entry_id
-        self._area_name = coordinator.config[CONF_NAME]
+        self._area_name = coordinator.core_config["name"]
+
+        # Device info
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": coordinator.core_config["name"],
+            "manufacturer": "Area Occupancy",
+            "model": "Occupancy Sensor",
+            "sw_version": "1.0.0",
+        }
 
     @staticmethod
     def _format_float(value: float) -> float:
         """Format float to consistently show 2 decimal places."""
-        return round(value, 2)
+        try:
+            return round(float(value), ROUNDING_PRECISION)
+        except (ValueError, TypeError):
+            return 0.0
 
     @callback
     def _format_unique_id(self, sensor_type: str) -> str:
         """Format the unique id consistently."""
         area_id = self._area_name.lower().replace(" ", "_")
-        return f"{area_id}_{sensor_type}"
+        return f"{DOMAIN}_{area_id}_{sensor_type}"
 
     @property
     def name(self) -> str:
@@ -82,60 +105,103 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult], ABC):
     @property
     def _shared_attributes(self) -> dict[str, Any]:
         """Return attributes common to all area occupancy sensors."""
-        if self.coordinator.data is None:
+        if not self.coordinator.data:
             return {}
 
-        data: ProbabilityResult = self.coordinator.data
+        try:
+            data: ProbabilityResult = self.coordinator.data
 
-        def format_percentage(value: float) -> float:
-            """Format percentage values consistently."""
-            return self._format_float(value * 100)
+            def format_percentage(value: float) -> float:
+                """Format percentage values consistently."""
+                return self._format_float(value * 100)
 
-        return {
-            ATTR_PROBABILITY: format_percentage(data.get("probability", 0.0)),
-            ATTR_PRIOR_PROBABILITY: format_percentage(
-                data.get("prior_probability", 0.0)
-            ),
-            ATTR_ACTIVE_TRIGGERS: data.get("active_triggers", []),
-            ATTR_SENSOR_PROBABILITIES: {
-                k: format_percentage(v)
-                for k, v in data.get("sensor_probabilities", {}).items()
-            },
-            ATTR_DECAY_STATUS: {
-                k: self._format_float(v)
-                for k, v in data.get("decay_status", {}).items()
-            },
-            ATTR_CONFIDENCE_SCORE: format_percentage(data.get("confidence_score", 0.0)),
-            ATTR_SENSOR_AVAILABILITY: data.get("sensor_availability", {}),
-            ATTR_MEDIA_STATES: data.get("device_states", {}).get("media_states", {}),
-            ATTR_APPLIANCE_STATES: data.get("device_states", {}).get(
-                "appliance_states", {}
-            ),
-        }
+            return {
+                ATTR_PROBABILITY: format_percentage(data.get("probability", 0.0)),
+                ATTR_PRIOR_PROBABILITY: format_percentage(
+                    data.get("prior_probability", 0.0)
+                ),
+                ATTR_ACTIVE_TRIGGERS: data.get("active_triggers", []),
+                ATTR_SENSOR_PROBABILITIES: {
+                    k: format_percentage(v)
+                    for k, v in data.get("sensor_probabilities", {}).items()
+                },
+                ATTR_DECAY_STATUS: {
+                    k: self._format_float(v)
+                    for k, v in data.get("decay_status", {}).items()
+                },
+                ATTR_CONFIDENCE_SCORE: format_percentage(
+                    data.get("confidence_score", 0.0)
+                ),
+                ATTR_SENSOR_AVAILABILITY: data.get("sensor_availability", {}),
+                ATTR_MEDIA_STATES: data.get("device_states", {}).get(
+                    "media_states", {}
+                ),
+                ATTR_APPLIANCE_STATES: data.get("device_states", {}).get(
+                    "appliance_states", {}
+                ),
+            }
 
-    @abstractmethod
-    def _sensor_specific_attributes(self) -> dict[str, Any]:
-        """Return attributes specific to this sensor type."""
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
-        attributes = self._shared_attributes
-        specific_attributes = self._sensor_specific_attributes()
-        if specific_attributes:
-            attributes.update(specific_attributes)
-        return attributes
+        except Exception as err:
+            _LOGGER.error("Error formatting shared attributes: %s", err)
+            return {}
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return (
-            self.coordinator.last_update_success and self.coordinator.data is not None
+        if not self.coordinator.last_update_success or not self.coordinator.data:
+            return False
+
+        motion_sensors = self.coordinator.core_config["motion_sensors"]
+        if not motion_sensors:
+            return False
+
+        # Check if at least one motion sensor is available
+        sensor_availability = self.coordinator.data.get("sensor_availability", {})
+        return any(
+            sensor_availability.get(sensor_id, False) for sensor_id in motion_sensors
         )
 
-    @abstractmethod
-    def get_value(self) -> StateType:
-        """Get the current value of the sensor."""
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            attributes = self._shared_attributes
+            specific_attributes = self._sensor_specific_attributes()
+            if specific_attributes:
+                attributes.update(specific_attributes)
+
+            # Add configuration info to attributes
+            core_config = self.coordinator.core_config
+            options_config = self.coordinator.options_config
+
+            attributes.update(
+                {
+                    "configured_motion_sensors": core_config["motion_sensors"],
+                    "configured_media_devices": options_config.get("media_devices", []),
+                    "configured_appliances": options_config.get("appliances", []),
+                    "configured_illuminance_sensors": options_config.get(
+                        "illuminance_sensors", []
+                    ),
+                    "configured_humidity_sensors": options_config.get(
+                        "humidity_sensors", []
+                    ),
+                    "configured_temperature_sensors": options_config.get(
+                        "temperature_sensors", []
+                    ),
+                }
+            )
+            return attributes
+
+        except Exception as err:
+            _LOGGER.error("Error getting entity attributes: %s", err)
+            return {}
+
+    def _sensor_specific_attributes(self) -> dict[str, Any]:
+        """Return attributes specific to this sensor type.
+
+        Must be implemented by child classes.
+        """
+        raise NotImplementedError
 
 
 class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
@@ -149,37 +215,38 @@ class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator, entry_id)
+
         self._attr_unique_id = self._format_unique_id("occupancy")
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._threshold = threshold
 
     def _sensor_specific_attributes(self) -> dict[str, Any]:
         """Return attributes specific to binary occupancy sensor."""
-        data = self.coordinator.data
-        if not data:
+        if not self.coordinator.data:
             return {}
 
+        data = self.coordinator.data
         return {
             ATTR_THRESHOLD: self._format_float(self._threshold),
             ATTR_LAST_OCCUPIED: data.get("last_occupied"),
             ATTR_STATE_DURATION: self._format_float(
-                data.get("state_duration", 0.0) / 60
-            ),  # Convert to minutes
+                data.get("state_duration", 0.0) / 60  # Convert to minutes
+            ),
             ATTR_OCCUPANCY_RATE: self._format_float(
                 data.get("occupancy_rate", 0.0) * 100
-            ),  # Convert to percentage
+            ),
         }
 
     @property
     def is_on(self) -> bool | None:
         """Return true if the area is occupied."""
-        return self.get_value()
-
-    def get_value(self) -> bool | None:
-        """Get the current value of the sensor."""
-        if self.coordinator.data is None:
+        try:
+            if not self.coordinator.data:
+                return None
+            return self.coordinator.data.get("probability", 0.0) >= self._threshold
+        except Exception as err:
+            _LOGGER.error("Error determining occupancy state: %s", err)
             return None
-        return self.coordinator.data.get("probability", 0.0) >= self._threshold
 
 
 class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
@@ -192,16 +259,18 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
     ) -> None:
         """Initialize the probability sensor."""
         super().__init__(coordinator, entry_id)
+
         self._attr_unique_id = self._format_unique_id("probability")
+        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
     def _sensor_specific_attributes(self) -> dict[str, Any]:
         """Return attributes specific to probability sensor."""
-        data = self.coordinator.data
-        if not data:
+        if not self.coordinator.data:
             return {}
 
+        data = self.coordinator.data
         return {
             ATTR_MOVING_AVERAGE: self._format_float(
                 data.get("moving_average", 0.0) * 100
@@ -219,12 +288,13 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
         }
 
     @property
-    def native_value(self) -> StateType:
+    def native_value(self) -> float | None:
         """Return the native value of the sensor."""
-        return self.get_value()
-
-    def get_value(self) -> StateType:
-        """Get the current value of the sensor."""
-        if self.coordinator.data is None:
+        try:
+            if not self.coordinator.data:
+                return None
+            probability = self.coordinator.data.get("probability", 0.0)
+            return self._format_float(probability * 100)
+        except Exception as err:
+            _LOGGER.error("Error getting probability value: %s", err)
             return None
-        return self._format_float(self.coordinator.data.get("probability", 0.0) * 100)
