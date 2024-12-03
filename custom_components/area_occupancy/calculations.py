@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Optional, Any
+from datetime import datetime
+from typing import TypedDict, Any
 
 from homeassistant.const import (
     STATE_ON,
@@ -15,11 +15,28 @@ from homeassistant.const import (
     STATE_PAUSED,
     STATE_IDLE,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import ProbabilityResult, SensorStates
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class MotionTrigger(TypedDict):
+    """Type for motion trigger data."""
+
+    entity_id: str
+    timestamp: datetime
+    probability: float
+
+
+class EnvMeasurement(TypedDict):
+    """Type for environmental measurement data."""
+
+    value: float
+    baseline: float
+    last_changed: datetime
 
 
 @dataclass
@@ -28,7 +45,7 @@ class DecayConfig:
 
     enabled: bool = True
     window: int = 600  # seconds
-    type: str = "linear"
+    type: str = "linear"  # or "exponential"
 
 
 @dataclass
@@ -97,38 +114,45 @@ class ProbabilityCalculator:
         self._max_env_change = 0.5  # Maximum environmental probability change
         self._min_confidence = 0.2  # Minimum confidence score
 
-        # Load weights from base config with bounds
-        weights = self.base_config.get("weights", {})
-        self.motion_weight = min(weights.get("motion", 0.4), 0.9)  # Cap at 90%
-        self.media_weight = min(weights.get("media", 0.3), 0.7)  # Cap at 70%
-        self.appliance_weight = min(weights.get("appliances", 0.2), 0.5)  # Cap at 50%
-        self.environmental_weight = min(
-            weights.get("environmental", 0.1), 0.3
-        )  # Cap at 30%
+        # Load and validate weights from base config
+        try:
+            self._initialize_weights()
+        except (KeyError, TypeError, ValueError) as err:
+            _LOGGER.error("Error initializing weights: %s", err)
+            self._set_default_weights()
 
-        # Normalize weights to ensure they sum to 1.0
+    def _initialize_weights(self) -> None:
+        """Initialize and validate weights from configuration."""
+        weights = self.base_config.get("weights", {})
+
+        # Validate and cap weights
+        self.motion_weight = min(weights.get("motion", 0.4), 0.9)
+        self.media_weight = min(weights.get("media", 0.3), 0.7)
+        self.appliance_weight = min(weights.get("appliances", 0.2), 0.5)
+        self.environmental_weight = min(weights.get("environmental", 0.1), 0.3)
+
+        # Normalize weights
         total_weight = (
             self.motion_weight
             + self.media_weight
             + self.appliance_weight
             + self.environmental_weight
         )
+
         if total_weight > 0:
             self.motion_weight /= total_weight
             self.media_weight /= total_weight
             self.appliance_weight /= total_weight
             self.environmental_weight /= total_weight
         else:
-            # Fallback to safe default weights if config is invalid
-            self.motion_weight = 0.6
-            self.media_weight = 0.2
-            self.appliance_weight = 0.1
-            self.environmental_weight = 0.1
+            self._set_default_weights()
 
-        # Probability dampening factors
-        self._dampening_window = timedelta(minutes=5)
-        self._min_probability_change = 0.05  # Minimum change to apply
-        self._max_probability_change = 0.3  # Maximum change per update
+    def _set_default_weights(self) -> None:
+        """Set default weights if configuration is invalid."""
+        self.motion_weight = 0.6
+        self.media_weight = 0.2
+        self.appliance_weight = 0.1
+        self.environmental_weight = 0.1
 
     def calculate(
         self,
@@ -137,179 +161,120 @@ class ProbabilityCalculator:
         historical_patterns: dict[str, Any] | None = None,
     ) -> ProbabilityResult:
         """Calculate overall area occupancy probability."""
-        # Calculate individual probabilities
-        motion_result = self._calculate_motion_probability(
-            sensor_states, motion_timestamps
-        )
-        media_result = self._calculate_media_probability(sensor_states)
-        appliance_result = self._calculate_appliance_probability(sensor_states)
-        env_result = self._calculate_environmental_probability(sensor_states)
+        try:
+            # Calculate individual probabilities
+            motion_result = self._calculate_motion_probability(
+                sensor_states, motion_timestamps
+            )
+            media_result = self._calculate_media_probability(sensor_states)
+            appliance_result = self._calculate_appliance_probability(sensor_states)
+            env_result = self._calculate_environmental_probability(sensor_states)
 
-        # Get sensor correlations from historical patterns
-        sensor_correlations = {}
-        if historical_patterns and "sensor_correlations" in historical_patterns:
-            sensor_correlations = historical_patterns["sensor_correlations"]
-
-        # Adjust weights based on correlations
-        motion_weight = self.motion_weight
-        media_weight = self.media_weight
-        appliance_weight = self.appliance_weight
-        env_weight = self.environmental_weight
-
-        if sensor_correlations:
-            for motion_sensor in self.motion_sensors:
-                if motion_sensor in sensor_correlations:
-                    correlations = sensor_correlations[motion_sensor]
-                    max_correlation = min(
-                        max(correlations.values()) if correlations else 0,
-                        self._correlation_limit,
-                    )
-                    if max_correlation > 0.5:  # Only adjust if significant correlation
-                        reduction = max_correlation * 0.5
-                        motion_weight = max(
-                            self._min_motion_weight, motion_weight * (1 - reduction)
-                        )
-
-        # Normalize weights
-        total_weight = motion_weight + media_weight + appliance_weight + env_weight
-        if total_weight > 0:
-            motion_weight /= total_weight
-            media_weight /= total_weight
-            appliance_weight /= total_weight
-            env_weight /= total_weight
-
-        # Calculate individual probabilities with bounds checking
-        motion_result = self._calculate_motion_probability(
-            sensor_states, motion_timestamps
-        )
-        media_result = self._calculate_media_probability(sensor_states)
-        appliance_result = self._calculate_appliance_probability(sensor_states)
-        env_result = self._calculate_environmental_probability(sensor_states)
-
-        # Calculate base combined probability using weights
-        combined_prob = (
-            motion_result.probability * motion_weight
-            + media_result.probability * media_weight
-            + appliance_result.probability * appliance_weight
-            + env_result.probability * env_weight
-        )
-
-        # Ensure final probability is properly bounded
-        final_prob = max(0.0, min(1.0, combined_prob))
-
-        # Apply historical pattern adjustments
-        if historical_patterns and "occupancy_patterns" in historical_patterns:
-            occupancy_patterns = historical_patterns["occupancy_patterns"]
-            current_time = dt_util.utcnow()
-            time_slot = current_time.strftime("%H:%M")
-            day_slot = current_time.strftime("%A").lower()
-
-            # Get historical occupancy rates
-            time_slots = occupancy_patterns.get("time_slots", {})
-            day_patterns = occupancy_patterns.get("day_patterns", {})
-
-            typical_occupancy = time_slots.get(time_slot, {}).get("occupied_ratio", 0.0)
-            day_occupancy = day_patterns.get(day_slot, {}).get("occupied_ratio", 0.0)
-
-            # Calculate historical confidence
-            total_slots = len(time_slots)
-            historical_confidence = min(
-                total_slots / 48, 1.0
-            )  # 48 30-minute slots per day
-
-            if historical_confidence > 0.3:  # Minimum confidence threshold
-                # Blend current probability with historical patterns
-                historical_weight = 0.3 * historical_confidence
-                historical_probability = (typical_occupancy + day_occupancy) / 2
-
-                combined_prob = (
-                    combined_prob * (1 - historical_weight)
-                    + historical_probability * historical_weight
-                )
-
-        # Calculate confidence score based on sensor availability
-        available_sensors = sum(
-            1 for state in sensor_states.values() if state["availability"]
-        )
-        total_sensors = len(self._get_all_configured_sensors())
-        confidence_score = (
-            min(available_sensors / total_sensors, 1.0) if total_sensors > 0 else 0.0
-        )
-
-        # Compile all results
-        return {
-            "probability": final_prob,
-            "prior_probability": motion_result.probability,
-            "active_triggers": (
-                motion_result.triggers
-                + media_result.triggers
-                + appliance_result.triggers
-                + env_result.triggers
-            ),
-            "sensor_probabilities": {
-                "motion_probability": motion_result.probability,
-                "media_probability": media_result.probability,
-                "appliance_probability": appliance_result.probability,
-                "environmental_probability": env_result.probability,
-            },
-            "device_states": {
-                "media_states": media_result.states,
-                "appliance_states": appliance_result.states,
-            },
-            "decay_status": motion_result.decay_status,
-            "confidence_score": confidence_score,
-            "sensor_availability": {
-                sensor_id: state["availability"]
-                for sensor_id, state in sensor_states.items()
-            },
-            "historical_patterns": (
-                {
-                    "typical_occupancy_rate": (
-                        typical_occupancy if historical_patterns else 0.0
-                    ),
-                    "day_occupancy_rate": day_occupancy if historical_patterns else 0.0,
-                    "sensor_correlations": sensor_correlations,
-                }
+            # Apply sensor correlations if available
+            sensor_correlations = (
+                historical_patterns.get("sensor_correlations", {})
                 if historical_patterns
                 else {}
-            ),
-        }
-
-    def _adjust_with_historical_patterns(
-        self, base_result: ProbabilityResult, historical_patterns: dict[str, Any]
-    ) -> ProbabilityResult:
-        """Adjust probability based on historical patterns."""
-        current_probability = base_result["probability"]
-
-        # Get current time slot patterns
-        typical_occupancy = historical_patterns.get("typical_occupancy_rate", 0.0)
-        day_occupancy = historical_patterns.get("day_occupancy_rate", 0.0)
-
-        # Calculate historical weight based on confidence
-        historical_confidence = min(
-            len(historical_patterns.get("time_slots", {})) / 48,  # 48 30-minute slots
-            1.0,
-        )
-
-        if historical_confidence > 0.3:  # Minimum confidence threshold
-            # Blend current probability with historical patterns
-            historical_weight = 0.3 * historical_confidence
-            historical_probability = (typical_occupancy + day_occupancy) / 2
-
-            adjusted_probability = (
-                current_probability * (1 - historical_weight)
-                + historical_probability * historical_weight
             )
 
-            base_result["probability"] = adjusted_probability
+            # Adjust weights based on correlations
+            motion_weight = self._adjust_motion_weight(
+                self.motion_weight, sensor_correlations
+            )
+            media_weight = self.media_weight
+            appliance_weight = self.appliance_weight
+            env_weight = self.environmental_weight
 
-        return base_result
+            # Normalize adjusted weights
+            total_weight = motion_weight + media_weight + appliance_weight + env_weight
+            if total_weight > 0:
+                weights = {
+                    "motion": motion_weight / total_weight,
+                    "media": media_weight / total_weight,
+                    "appliance": appliance_weight / total_weight,
+                    "environmental": env_weight / total_weight,
+                }
+            else:
+                weights = {
+                    "motion": 0.6,
+                    "media": 0.2,
+                    "appliance": 0.1,
+                    "environmental": 0.1,
+                }
+
+            # Calculate final probability
+            final_prob = (
+                motion_result.probability * weights["motion"]
+                + media_result.probability * weights["media"]
+                + appliance_result.probability * weights["appliance"]
+                + env_result.probability * weights["environmental"]
+            )
+
+            # Calculate confidence score
+            confidence_score = self._calculate_confidence_score(
+                sensor_states, motion_result, media_result, appliance_result, env_result
+            )
+
+            return {
+                "probability": final_prob,
+                "prior_probability": motion_result.probability,
+                "active_triggers": (
+                    motion_result.triggers
+                    + media_result.triggers
+                    + appliance_result.triggers
+                    + env_result.triggers
+                ),
+                "sensor_probabilities": {
+                    "motion_probability": motion_result.probability,
+                    "media_probability": media_result.probability,
+                    "appliance_probability": appliance_result.probability,
+                    "environmental_probability": env_result.probability,
+                },
+                "device_states": {
+                    "media_states": media_result.states,
+                    "appliance_states": appliance_result.states,
+                },
+                "decay_status": motion_result.decay_status,
+                "confidence_score": confidence_score,
+                "sensor_availability": {
+                    sensor_id: state.get("availability", False)
+                    for sensor_id, state in sensor_states.items()
+                },
+            }
+
+        except Exception as err:
+            _LOGGER.error("Error in probability calculation: %s", err)
+            raise HomeAssistantError(
+                "Failed to calculate occupancy probability"
+            ) from err
+
+    def _adjust_motion_weight(
+        self, base_weight: float, correlations: dict[str, dict[str, float]]
+    ) -> float:
+        """Adjust motion weight based on sensor correlations."""
+        if not correlations:
+            return base_weight
+
+        max_correlation = 0.0
+        for sensor_correlations in correlations.values():
+            if sensor_correlations:
+                max_correlation = max(
+                    max_correlation,
+                    min(max(sensor_correlations.values()), self._correlation_limit),
+                )
+
+        if max_correlation > 0.5:
+            reduction = max_correlation * 0.5
+            return max(self._min_motion_weight, base_weight * (1 - reduction))
+
+        return base_weight
 
     def _calculate_motion_probability(
         self,
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
     ) -> MotionCalculationResult:
+        """Calculate probability based on motion sensors."""
         active_triggers: list[str] = []
         decay_status: dict[str, float] = {}
         now = dt_util.utcnow()
@@ -322,22 +287,17 @@ class ProbabilityCalculator:
         motion_probability = 0.0
         compound_decay = 0.0
         active_sensors = 0
-        total_sensors = len(self.motion_sensors)
-
-        if total_sensors == 0:
-            return MotionCalculationResult(0.0, [], {})
+        valid_sensors = 0
 
         for entity_id in self.motion_sensors:
-            if entity_id not in sensor_states:
-                total_sensors -= 1
+            state = sensor_states.get(entity_id)
+            if not state or not state.get("availability", False):
                 continue
 
-            state = sensor_states[entity_id]
-            if not state["availability"]:
-                total_sensors -= 1
-                continue
+            valid_sensors += 1
+            current_state = state["state"]
 
-            if state["state"] == STATE_ON:
+            if current_state == STATE_ON:
                 active_sensors += 1
                 active_triggers.append(entity_id)
             elif self.decay_config.enabled and entity_id in motion_timestamps:
@@ -350,7 +310,6 @@ class ProbabilityCalculator:
                         self.decay_config.window,
                         self.decay_config.type,
                     )
-                    # Limit compound decay
                     remaining_decay = self._max_compound_decay - compound_decay
                     if remaining_decay > 0:
                         applied_decay = min(
@@ -364,14 +323,14 @@ class ProbabilityCalculator:
                                 f"{entity_id} (decay: {applied_decay:.2f})"
                             )
 
-        # Calculate final probability based on number of active sensors
         if active_sensors > 0:
             motion_probability = (
                 multiple_sensors_prob if active_sensors > 1 else single_sensor_prob
             )
 
+        # Calculate final probability with safety bounds
         final_probability = (
-            min(motion_probability / total_sensors, 1.0) if total_sensors > 0 else 0.0
+            min(motion_probability / valid_sensors, 1.0) if valid_sensors > 0 else 0.0
         )
 
         return MotionCalculationResult(
@@ -394,14 +353,13 @@ class ProbabilityCalculator:
 
         for entity_id in self.media_devices:
             state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
+            if not state or not state.get("availability", False):
                 continue
 
             valid_devices += 1
             current_state = state["state"]
             device_states[entity_id] = current_state
 
-            # Get probability based on state
             if current_state == STATE_PLAYING:
                 prob = media_base["playing"]
                 active_triggers.append(f"{entity_id} (playing)")
@@ -442,7 +400,7 @@ class ProbabilityCalculator:
 
         for entity_id in self.appliances:
             state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
+            if not state or not state.get("availability", False):
                 continue
 
             valid_devices += 1
@@ -534,7 +492,7 @@ class ProbabilityCalculator:
         sensor_states: SensorStates,
         active_triggers: list[str],
         config: dict[str, Any],
-    ) -> Optional[float]:
+    ) -> float | None:
         """Process illuminance sensors and update triggers."""
         valid_sensors = 0
         total_prob = 0.0
@@ -544,7 +502,7 @@ class ProbabilityCalculator:
 
         for entity_id in self.illuminance_sensors:
             state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
+            if not state or not state.get("availability", False):
                 continue
 
             try:
@@ -555,7 +513,8 @@ class ProbabilityCalculator:
                 else:
                     total_prob += minor_change_prob
                 valid_sensors += 1
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("Invalid illuminance value for %s: %s", entity_id, err)
                 continue
 
         return total_prob / valid_sensors if valid_sensors > 0 else None
@@ -569,14 +528,14 @@ class ProbabilityCalculator:
         threshold: float,
         weight: float,
         unit: str,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Process environmental sensors and update triggers."""
         valid_sensors = 0
         significant_changes = 0
 
         for entity_id in sensor_list:
             state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
+            if not state or not state.get("availability", False):
                 continue
 
             try:
@@ -585,7 +544,8 @@ class ProbabilityCalculator:
                 if abs(current_value - baseline) > threshold:
                     significant_changes += 1
                     active_triggers.append(f"{entity_id} ({current_value}{unit})")
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("Invalid sensor value for %s: %s", entity_id, err)
                 continue
 
         return (
@@ -598,10 +558,56 @@ class ProbabilityCalculator:
         self, time_diff: float, window: float, decay_type: str
     ) -> float:
         """Calculate the decay factor based on time difference."""
+        if time_diff >= window:
+            return 0.0
+
         if decay_type == "linear":
-            return max(0.0, 1.0 - (time_diff / window))
+            return 1.0 - (time_diff / window)
         # Exponential decay
         return math.exp(-3.0 * time_diff / window)
+
+    def _calculate_confidence_score(
+        self,
+        sensor_states: SensorStates,
+        motion_result: MotionCalculationResult,
+        media_result: MediaCalculationResult,
+        appliance_result: ApplianceCalculationResult,
+        env_result: EnvironmentalCalculationResult,
+    ) -> float:
+        """Calculate overall confidence score."""
+        # Sensor availability weight
+        available_sensors = sum(
+            1 for state in sensor_states.values() if state.get("availability", False)
+        )
+        total_sensors = len(sensor_states)
+        availability_score = (
+            available_sensors / total_sensors if total_sensors > 0 else 0.0
+        )
+
+        # Trigger consistency weight
+        all_probabilities = [
+            motion_result.probability,
+            media_result.probability,
+            appliance_result.probability,
+            env_result.probability,
+        ]
+        valid_probs = [p for p in all_probabilities if p is not None]
+
+        if not valid_probs:
+            consistency_score = 0.0
+        else:
+            variance = sum(
+                (p - sum(valid_probs) / len(valid_probs)) ** 2 for p in valid_probs
+            ) / len(valid_probs)
+            consistency_score = 1.0 - min(variance, 1.0)
+
+        # Combine scores with weights
+        final_score = (
+            availability_score * 0.6  # 60% weight to sensor availability
+            + consistency_score * 0.4  # 40% weight to reading consistency
+        )
+
+        return max(self._min_confidence, min(1.0, final_score))
 
     def _get_all_configured_sensors(self) -> list[str]:
         """Get list of all configured sensor entity IDs."""
@@ -613,17 +619,3 @@ class ProbabilityCalculator:
             *self.humidity_sensors,
             *self.temperature_sensors,
         ]
-
-    @staticmethod
-    def _is_valid_number(value: Any) -> bool:
-        """Check if a value can be converted to a float."""
-        try:
-            float(value)
-            return True
-        except (ValueError, TypeError):
-            return False
-
-    @staticmethod
-    def _validate_probability(prob: float) -> float:
-        """Validate and clamp probability to valid range."""
-        return max(0.0, min(1.0, prob))

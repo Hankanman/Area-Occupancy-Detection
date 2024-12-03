@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Final, TypedDict, NotRequired, Any
-from typing_extensions import TypeAlias
+from typing import Final, TypedDict, NotRequired, Literal, Any, Dict
+
+# Type aliases
+SensorId = str
+SensorStates = Dict[SensorId, "SensorState"]
 
 DOMAIN: Final = "area_occupancy"
 
@@ -11,7 +14,6 @@ DOMAIN: Final = "area_occupancy"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
-CONF_DEVICE_STATES: Final = "device_states"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
@@ -20,12 +22,13 @@ CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_DECAY_TYPE: Final = "decay_type"
-CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
-CONF_MINIMUM_CONFIDENCE = "minimum_confidence"
+CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
+CONF_MINIMUM_CONFIDENCE: Final = "minimum_confidence"
+CONF_DEVICE_STATES: Final = "device_states"
 
 # File paths and configuration
-PROBABILITY_CONFIG_FILE: Final = "default_probabilities.yaml"
-HISTORY_STORAGE_FILE: Final = "area_occupancy_history.yaml"
+STORAGE_KEY_HISTORY: Final = "area_occupancy_history"
+STORAGE_KEY_PATTERNS: Final = "area_occupancy_patterns"
 STORAGE_VERSION: Final = 1
 
 # Default values
@@ -34,8 +37,8 @@ DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
-DEFAULT_HISTORICAL_ANALYSIS_ENABLED = True
-DEFAULT_MINIMUM_CONFIDENCE = 0.3
+DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
+DEFAULT_MINIMUM_CONFIDENCE: Final = 0.3
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Area Occupancy Probability"
@@ -46,7 +49,6 @@ ATTR_PROBABILITY: Final = "probability"
 ATTR_PRIOR_PROBABILITY: Final = "prior_probability"
 ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
 ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
-ATTR_DEVICE_STATES: Final = "device_states"
 ATTR_DECAY_STATUS: Final = "decay_status"
 ATTR_CONFIDENCE_SCORE: Final = "confidence_score"
 ATTR_SENSOR_AVAILABILITY: Final = "sensor_availability"
@@ -61,17 +63,17 @@ ATTR_THRESHOLD: Final = "threshold"
 ATTR_WINDOW_SIZE: Final = "window_size"
 ATTR_MEDIA_STATES: Final = "media_states"
 ATTR_APPLIANCE_STATES: Final = "appliance_states"
-ATTR_HISTORICAL_PATTERNS = "historical_patterns"
-ATTR_TYPICAL_OCCUPANCY = "typical_occupancy_rate"
-ATTR_DAY_OCCUPANCY = "day_occupancy_rate"
-ATTR_SENSOR_CORRELATIONS = "sensor_correlations"
+ATTR_HISTORICAL_PATTERNS: Final = "historical_patterns"
+ATTR_TYPICAL_OCCUPANCY: Final = "typical_occupancy_rate"
+ATTR_DAY_OCCUPANCY: Final = "day_occupancy_rate"
+ATTR_SENSOR_CORRELATIONS: Final = "sensor_correlations"
 
 
 # Type definitions
-class SensorReadingState(TypedDict):
-    """Type for sensor reading state."""
+class SensorState(TypedDict):
+    """Type for sensor state data."""
 
-    state: str | float
+    state: str | float | None
     last_changed: str
     availability: bool
 
@@ -85,21 +87,40 @@ class EnvironmentalData(TypedDict):
     weight: float
 
 
-class DeviceClassification(TypedDict):
-    """Type for device classification data."""
+class DeviceState(TypedDict):
+    """Type for device state data."""
 
-    type: str
-    states: list[str]
-    probabilities: dict[str, float]
-
-
-class DeviceProbabilities(TypedDict):
-    """Type for device probability data."""
-
-    device_id: str
+    entity_id: str
     state: str
-    probability: float
     timestamp: str
+    confidence: float
+
+
+class TimeSlotStats(TypedDict):
+    """Type for time slot statistics."""
+
+    occupied_ratio: float
+    samples: int
+    confidence: float
+
+
+class HistoricalPatterns(TypedDict):
+    """Type for historical pattern data."""
+
+    time_slots: dict[str, TimeSlotStats]
+    day_patterns: dict[str, TimeSlotStats]
+    sensor_correlations: dict[str, dict[str, float]]
+    typical_occupancy_rate: float
+    day_occupancy_rate: float
+
+
+class SensorProbabilities(TypedDict):
+    """Type for sensor probability data."""
+
+    motion_probability: float
+    media_probability: float
+    appliance_probability: float
+    environmental_probability: float
 
 
 class ProbabilityResult(TypedDict):
@@ -108,7 +129,7 @@ class ProbabilityResult(TypedDict):
     probability: float
     prior_probability: float
     active_triggers: list[str]
-    sensor_probabilities: dict[str, float]
+    sensor_probabilities: SensorProbabilities
     device_states: dict[str, dict[str, str]]
     decay_status: dict[str, float]
     confidence_score: float
@@ -120,28 +141,11 @@ class ProbabilityResult(TypedDict):
     rate_of_change: NotRequired[float]
     min_probability: NotRequired[float]
     max_probability: NotRequired[float]
+    historical_patterns: NotRequired[HistoricalPatterns]
 
 
-class HistoryStorage(TypedDict):
-    """Type for history storage data."""
-
-    version: int
-    last_updated: str
-    global_data: dict[str, Any]
-    areas: dict[str, AreaHistory]
-
-
-class AreaHistory(TypedDict):
-    """Type for area-specific history data."""
-
-    priors: dict[str, float]
-    patterns: dict[str, list[float]]
-    device_states: dict[str, list[DeviceProbabilities]]
-    environmental_baselines: dict[str, float]
-
-
-class AreaOccupancyConfig(TypedDict):
-    """Type for area occupancy configuration."""
+class AreaConfig(TypedDict):
+    """Type for area configuration data."""
 
     name: str
     motion_sensors: list[str]
@@ -154,11 +158,14 @@ class AreaOccupancyConfig(TypedDict):
     history_period: NotRequired[int]
     decay_enabled: NotRequired[bool]
     decay_window: NotRequired[int]
-    decay_type: NotRequired[str]
+    decay_type: NotRequired[Literal["linear", "exponential"]]
+    historical_analysis_enabled: NotRequired[bool]
+    minimum_confidence: NotRequired[float]
 
 
-# Type aliases
-SensorId: TypeAlias = str
-Probability: TypeAlias = float
-DecayStatus: TypeAlias = dict[SensorId, float]
-SensorStates: TypeAlias = dict[SensorId, SensorReadingState]
+class StorageData(TypedDict):
+    """Type for persistent storage data."""
+
+    version: int
+    last_updated: str
+    areas: dict[str, dict[str, Any]]

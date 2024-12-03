@@ -11,10 +11,17 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .base import AreaOccupancyBinarySensor
-from .const import CONF_THRESHOLD, DEFAULT_THRESHOLD, DOMAIN, NAME_BINARY_SENSOR
+from .const import (
+    CONF_THRESHOLD,
+    DEFAULT_THRESHOLD,
+    DOMAIN,
+    NAME_BINARY_SENSOR,
+)
+from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +36,8 @@ class AreaOccupancyBinaryEntityDescription(BinarySensorEntityDescription):
             key="occupancy_status",
             name=f"{area_name} {NAME_BINARY_SENSOR}",
             device_class=BinarySensorDeviceClass.OCCUPANCY,
+            entity_category=None,
+            has_entity_name=True,
         )
 
 
@@ -38,15 +47,24 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Area Occupancy binary sensor based on a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    threshold = entry.data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-
-    async_add_entities(
-        [
-            AreaOccupancyBinarySensor(
-                coordinator,
-                entry.entry_id,
-                threshold,
-            )
+    try:
+        coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+            "coordinator"
         ]
-    )
+        threshold = entry.data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+
+        async_add_entities(
+            [
+                AreaOccupancyBinarySensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                    threshold=threshold,
+                )
+            ]
+        )
+
+    except Exception as err:
+        _LOGGER.error("Error setting up binary sensor: %s", err)
+        raise HomeAssistantError(
+            f"Failed to set up Area Occupancy binary sensor: {err}"
+        ) from err

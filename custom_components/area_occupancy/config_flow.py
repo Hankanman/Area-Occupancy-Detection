@@ -1,4 +1,4 @@
-"""Config flow with options for Area Occupancy Detection integration."""
+"""Config flow for Area Occupancy Detection integration."""
 
 from __future__ import annotations
 
@@ -6,259 +6,85 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant import config_entries
-from homeassistant.const import CONF_NAME
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import selector
-from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
-from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 
-from .const import (
-    DOMAIN,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_THRESHOLD,
-    CONF_HISTORY_PERIOD,
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
-    CONF_DECAY_TYPE,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_MINIMUM_CONFIDENCE,
-    DEFAULT_THRESHOLD,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_TYPE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_MINIMUM_CONFIDENCE,
-)
+from .const import DOMAIN
+from .config_management import ConfigManager, CoreConfig, OptionsConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def get_config_schema(
-    defaults: dict[str, Any] | None = None,
-) -> dict[vol.Required | vol.Optional, Any]:
-    """Get the config schema with optional defaults."""
-    defaults = defaults or {}
-
-    return {
-        vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
-        # Required sensors section
-        vol.Required(
-            CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=BINARY_SENSOR_DOMAIN,
-                device_class="motion",
-                multiple=True,
-            ),
-        ),
-        # Media devices section
-        vol.Optional(
-            CONF_MEDIA_DEVICES,
-            default=defaults.get(CONF_MEDIA_DEVICES, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=[MEDIA_PLAYER_DOMAIN],
-                multiple=True,
-            ),
-        ),
-        # Appliances section
-        vol.Optional(
-            CONF_APPLIANCES,
-            default=defaults.get(CONF_APPLIANCES, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=[BINARY_SENSOR_DOMAIN, SWITCH_DOMAIN],
-                device_class=["power", "plug", "outlet"],
-                multiple=True,
-            ),
-        ),
-        # Environmental sensors section
-        vol.Optional(
-            CONF_ILLUMINANCE_SENSORS,
-            default=defaults.get(CONF_ILLUMINANCE_SENSORS, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=SENSOR_DOMAIN,
-                device_class="illuminance",
-                multiple=True,
-            ),
-        ),
-        vol.Optional(
-            CONF_HUMIDITY_SENSORS,
-            default=defaults.get(CONF_HUMIDITY_SENSORS, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=SENSOR_DOMAIN,
-                device_class="humidity",
-                multiple=True,
-            ),
-        ),
-        vol.Optional(
-            CONF_TEMPERATURE_SENSORS,
-            default=defaults.get(CONF_TEMPERATURE_SENSORS, []),
-        ): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=SENSOR_DOMAIN,
-                device_class="temperature",
-                multiple=True,
-            ),
-        ),
-        # Configuration options section
-        vol.Optional(
-            CONF_THRESHOLD,
-            default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.05,
-                mode="slider",
-            ),
-        ),
-        vol.Optional(
-            CONF_HISTORY_PERIOD,
-            default=defaults.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=1,
-                max=30,
-                step=1,
-                mode="slider",
-                unit_of_measurement="days",
-            ),
-        ),
-        vol.Optional(
-            CONF_HISTORICAL_ANALYSIS_ENABLED,
-            default=defaults.get(
-                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
-            ),
-        ): selector.BooleanSelector(),
-        vol.Optional(
-            CONF_MINIMUM_CONFIDENCE,
-            default=defaults.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.05,
-                mode="slider",
-            ),
-        ),
-        # Decay configuration section
-        vol.Optional(
-            CONF_DECAY_ENABLED,
-            default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-        ): selector.BooleanSelector(),
-        vol.Optional(
-            CONF_DECAY_WINDOW,
-            default=defaults.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=60,
-                max=3600,
-                step=60,
-                mode="slider",
-                unit_of_measurement="seconds",
-            ),
-        ),
-        vol.Optional(
-            CONF_DECAY_TYPE,
-            default=defaults.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
-        ): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=["linear", "exponential"],
-                mode="dropdown",
-            ),
-        ),
-    }
-
-
-class AreaOccupancyConfigFlow(
-    config_entries.ConfigFlow, domain=DOMAIN
-):  # pylint: disable=abstract-method
+class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self.config_data: dict[str, Any] = {}
+        self._config: CoreConfig | None = None
+        self._options: OptionsConfig | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step."""
+        """Handle the initial setup step."""
         errors: dict[str, str] = {}
+
+        # Combine core and options schemas for initial setup
+        schema = {
+            **ConfigManager.get_core_schema(self._config or {}).schema,
+            **ConfigManager.get_options_schema(self._options or {}).schema,
+        }
 
         if user_input is not None:
             try:
-                # Validate the configuration
-                if not user_input.get(CONF_MOTION_SENSORS):
-                    errors["base"] = "no_motion_sensors"
-                else:
-                    # Check for duplicate entries
-                    await self.async_set_unique_id(user_input[CONF_NAME])
-                    self._abort_if_unique_id_configured()
+                # Separate core and options config
+                core_fields = set(ConfigManager.get_core_schema({}).schema.keys())
+                core_data = {k: v for k, v in user_input.items() if k in core_fields}
+                options_data = {
+                    k: v for k, v in user_input.items() if k not in core_fields
+                }
 
-                    # Convert any legacy device_states to new categories
-                    if "device_states" in user_input:
-                        # Attempt to categorize legacy device states
-                        media_devices = []
-                        appliances = []
-                        for entity_id in user_input["device_states"]:
-                            if entity_id.startswith(MEDIA_PLAYER_DOMAIN + "."):
-                                media_devices.append(entity_id)
-                            else:
-                                appliances.append(entity_id)
+                # Validate configurations
+                config = ConfigManager.validate_core_config(core_data)
+                options = ConfigManager.validate_options(options_data)
 
-                        # Update configuration with new categories
-                        user_input[CONF_MEDIA_DEVICES] = (
-                            user_input.get(CONF_MEDIA_DEVICES, []) + media_devices
-                        )
-                        user_input[CONF_APPLIANCES] = (
-                            user_input.get(CONF_APPLIANCES, []) + appliances
-                        )
-                        del user_input["device_states"]
+                # Check for duplicate entries
+                await self.async_set_unique_id(config["name"])
+                self._abort_if_unique_id_configured()
 
-                    self.config_data = user_input
-                    return self.async_create_entry(
-                        title=user_input[CONF_NAME],
-                        data=user_input,
-                    )
+                return self.async_create_entry(
+                    title=config["name"],
+                    data=config,
+                    options=options,
+                )
 
-            except Exception as error:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected error occurred: %s", error)
+            except vol.Invalid:
+                errors["base"] = "no_motion_sensors"
+            except Exception as err:
+                _LOGGER.exception("Unexpected error occurred: %s", err)
                 errors["base"] = "unknown"
 
+        # Show configuration form
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(get_config_schema(self.config_data)),
+            data_schema=vol.Schema(schema),
             errors=errors,
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> AreaOccupancyOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow for this handler."""
         return AreaOccupancyOptionsFlow(config_entry)
 
 
-class AreaOccupancyOptionsFlow(config_entries.OptionsFlow):
+class AreaOccupancyOptionsFlow(OptionsFlow):
     """Handle Area Occupancy options."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         self.config_entry = config_entry
 
@@ -270,49 +96,24 @@ class AreaOccupancyOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
-                # Validate configurations
-                if not user_input.get(CONF_MOTION_SENSORS):
-                    errors["base"] = "no_motion_sensors"
-                elif not 0 <= user_input.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) <= 1:
-                    errors[CONF_THRESHOLD] = "invalid_threshold"
-                else:
-                    # Handle conversion of legacy configurations
-                    if "device_states" in user_input:
-                        media_devices = []
-                        appliances = []
-                        for entity_id in user_input["device_states"]:
-                            if entity_id.startswith(MEDIA_PLAYER_DOMAIN + "."):
-                                media_devices.append(entity_id)
-                            else:
-                                appliances.append(entity_id)
+                # Validate options
+                options = ConfigManager.validate_options(user_input)
 
-                        user_input[CONF_MEDIA_DEVICES] = (
-                            user_input.get(CONF_MEDIA_DEVICES, []) + media_devices
-                        )
-                        user_input[CONF_APPLIANCES] = (
-                            user_input.get(CONF_APPLIANCES, []) + appliances
-                        )
-                        del user_input["device_states"]
+                return self.async_create_entry(
+                    title="",
+                    data=options,
+                )
 
-                    return self.async_create_entry(
-                        title="",
-                        data={
-                            CONF_NAME: self.config_entry.data[CONF_NAME],
-                            **user_input,
-                        },
-                    )
-
-            except Exception as error:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected error occurred: %s", error)
+            except vol.Invalid as err:
+                _LOGGER.error("Validation error: %s", err)
+                errors["base"] = "invalid_options"
+            except Exception as err:
+                _LOGGER.exception("Unexpected error occurred: %s", err)
                 errors["base"] = "unknown"
 
-        # Remove name from schema as it shouldn't be changed
-        options_schema = get_config_schema(self.config_entry.data)
-        if CONF_NAME in options_schema:
-            del options_schema[CONF_NAME]
-
+        # Show options form with current values
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(options_schema),
+            data_schema=ConfigManager.get_options_schema(self.config_entry.options),
             errors=errors,
         )
