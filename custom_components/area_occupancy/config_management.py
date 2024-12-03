@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import logging
-import voluptuous as vol
 from typing import Any, TypedDict
 
 from homeassistant.const import CONF_NAME
-from homeassistant.helpers import selector
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
-from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
-from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     CONF_MOTION_SENSORS,
@@ -64,191 +59,82 @@ class OptionsConfig(TypedDict, total=False):
 
 
 class ConfigManager:
-    """Manage Area Occupancy configuration."""
-
-    @staticmethod
-    def get_core_schema(data: dict[str, Any] | None = None) -> vol.Schema:
-        """Get schema for core configuration."""
-        data = data or {}
-        return vol.Schema(
-            {
-                vol.Required(CONF_NAME, default=data.get(CONF_NAME, "")): str,
-            }
-        )
-
-    @staticmethod
-    def get_options_schema(options: dict[str, Any] | None = None) -> vol.Schema:
-        """Get schema for options configuration."""
-        options = options or {}
-        return vol.Schema(
-            {
-                vol.Required(
-                    CONF_MOTION_SENSORS, default=options.get(CONF_MOTION_SENSORS, [])
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=BINARY_SENSOR_DOMAIN,
-                        device_class="motion",
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_MEDIA_DEVICES, default=options.get(CONF_MEDIA_DEVICES, [])
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=[MEDIA_PLAYER_DOMAIN],
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_APPLIANCES, default=options.get(CONF_APPLIANCES, [])
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=[BINARY_SENSOR_DOMAIN, SWITCH_DOMAIN],
-                        device_class=["power", "plug", "outlet"],
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_ILLUMINANCE_SENSORS,
-                    default=options.get(CONF_ILLUMINANCE_SENSORS, []),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=SENSOR_DOMAIN,
-                        device_class="illuminance",
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_HUMIDITY_SENSORS,
-                    default=options.get(CONF_HUMIDITY_SENSORS, []),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=SENSOR_DOMAIN,
-                        device_class="humidity",
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_TEMPERATURE_SENSORS,
-                    default=options.get(CONF_TEMPERATURE_SENSORS, []),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=SENSOR_DOMAIN,
-                        device_class="temperature",
-                        multiple=True,
-                    ),
-                ),
-                vol.Optional(
-                    CONF_THRESHOLD,
-                    default=options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=1.0,
-                        step=0.05,
-                        mode="slider",
-                    ),
-                ),
-                vol.Optional(
-                    CONF_HISTORY_PERIOD,
-                    default=options.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode="slider",
-                        unit_of_measurement="days",
-                    ),
-                ),
-                vol.Optional(
-                    CONF_HISTORICAL_ANALYSIS_ENABLED,
-                    default=options.get(
-                        CONF_HISTORICAL_ANALYSIS_ENABLED,
-                        DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                    ),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_MINIMUM_CONFIDENCE,
-                    default=options.get(
-                        CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=1.0,
-                        step=0.05,
-                        mode="slider",
-                    ),
-                ),
-                vol.Optional(
-                    CONF_DECAY_ENABLED,
-                    default=options.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_DECAY_WINDOW,
-                    default=options.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=60,
-                        max=3600,
-                        step=60,
-                        mode="slider",
-                        unit_of_measurement="seconds",
-                    ),
-                ),
-                vol.Optional(
-                    CONF_DECAY_TYPE,
-                    default=options.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=["linear", "exponential"],
-                        mode="dropdown",
-                        translation_key="decay_type",
-                    ),
-                ),
-            }
-        )
+    """Manage Area Occupancy configuration validation and migration."""
 
     @staticmethod
     def validate_core_config(data: dict[str, Any]) -> CoreConfig:
         """Validate core configuration data."""
-        schema = ConfigManager.get_core_schema()
-        validated = schema(data)
+        if not data.get(CONF_NAME):
+            raise HomeAssistantError("Name is required")
 
-        return CoreConfig(
-            name=validated[CONF_NAME],
-        )
+        return CoreConfig(name=data[CONF_NAME])
 
     @staticmethod
     def validate_options(data: dict[str, Any]) -> OptionsConfig:
         """Validate options configuration data."""
-        # Ensure at least one motion sensor is configured
         if not data.get(CONF_MOTION_SENSORS):
-            raise vol.Invalid("At least one motion sensor is required")
+            raise HomeAssistantError("At least one motion sensor is required")
 
-        schema = ConfigManager.get_options_schema()
-        return schema(data)
+        # Apply defaults for missing values
+        options: OptionsConfig = {
+            CONF_MOTION_SENSORS: data[CONF_MOTION_SENSORS],
+            CONF_MEDIA_DEVICES: data.get(CONF_MEDIA_DEVICES, []),
+            CONF_APPLIANCES: data.get(CONF_APPLIANCES, []),
+            CONF_ILLUMINANCE_SENSORS: data.get(CONF_ILLUMINANCE_SENSORS, []),
+            CONF_HUMIDITY_SENSORS: data.get(CONF_HUMIDITY_SENSORS, []),
+            CONF_TEMPERATURE_SENSORS: data.get(CONF_TEMPERATURE_SENSORS, []),
+            CONF_THRESHOLD: data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
+            CONF_HISTORY_PERIOD: data.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
+            CONF_DECAY_ENABLED: data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+            CONF_DECAY_WINDOW: data.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+            CONF_DECAY_TYPE: data.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
+            CONF_HISTORICAL_ANALYSIS_ENABLED: data.get(
+                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+            ),
+            CONF_MINIMUM_CONFIDENCE: data.get(
+                CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE
+            ),
+        }
+
+        ConfigManager._validate_numeric_bounds(options)
+        return options
+
+    @staticmethod
+    def _validate_numeric_bounds(options: OptionsConfig) -> None:
+        """Validate numeric values are within acceptable bounds."""
+        if not 0 <= options[CONF_THRESHOLD] <= 1:
+            raise HomeAssistantError("Threshold must be between 0 and 1")
+
+        if not 1 <= options[CONF_HISTORY_PERIOD] <= 30:
+            raise HomeAssistantError("History period must be between 1 and 30 days")
+
+        if not 60 <= options[CONF_DECAY_WINDOW] <= 3600:
+            raise HomeAssistantError("Decay window must be between 60 and 3600 seconds")
+
+        if not 0 <= options[CONF_MINIMUM_CONFIDENCE] <= 1:
+            raise HomeAssistantError("Minimum confidence must be between 0 and 1")
 
     @staticmethod
     def migrate_legacy_config(
         config: dict[str, Any]
     ) -> tuple[CoreConfig, OptionsConfig]:
         """Migrate legacy configuration to new format."""
-        core_config: dict[str, Any] = {
-            CONF_NAME: config[CONF_NAME],
-        }
+        try:
+            # Extract core config
+            core_config = CoreConfig(name=config[CONF_NAME])
 
-        options_config: dict[str, Any] = {
-            CONF_MOTION_SENSORS: config[CONF_MOTION_SENSORS],
-            **{
-                k: v
-                for k, v in config.items()
-                if k not in [CONF_NAME, CONF_MOTION_SENSORS]
-            },
-        }
+            # Extract and validate options
+            options_data = {k: v for k, v in config.items() if k != CONF_NAME}
+            options_config = ConfigManager.validate_options(options_data)
 
-        return (
-            ConfigManager.validate_core_config(core_config),
-            ConfigManager.validate_options(options_config),
-        )
+            return core_config, options_config
+
+        except Exception as err:
+            _LOGGER.error("Error migrating config: %s", err)
+            raise HomeAssistantError(f"Failed to migrate configuration: {err}") from err
+
+    @staticmethod
+    def merge_options(current: OptionsConfig, new: dict[str, Any]) -> OptionsConfig:
+        """Merge new options with current config, validating result."""
+        merged = {**current, **new}
+        return ConfigManager.validate_options(merged)
