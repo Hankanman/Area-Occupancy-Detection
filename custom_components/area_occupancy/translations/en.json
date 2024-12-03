@@ -2,39 +2,55 @@
     "config": {
         "step": {
             "user": {
-                "title": "Area Occupancy Detection Setup",
-                "description": "Configure area occupancy detection using multiple sensors and devices",
+                "title": "Area Occupancy Detection",
+                "description": "Create a new area for intelligent occupancy detection",
                 "data": {
-                    "name": "Area Name",
-                    "motion_sensors": "Motion Sensors (Required)",
-                    "media_devices": "Media Devices (TVs, Speakers, etc.)",
+                    "name": "Area Name"
+                },
+                "data_description": {
+                    "name": "Enter a descriptive name for this area (e.g., Living Room, Office)"
+                }
+            },
+            "motion_sensors": {
+                "title": "Motion Sensors Required",
+                "description": "Set up motion sensors for {name}",
+                "data": {
+                    "motion_sensors": "Motion Sensors (Required)"
+                },
+                "data_description": {
+                    "motion_sensors": "Select one or more motion sensors in this area. At least one is required."
+                }
+            },
+            "optional_sensors": {
+                "title": "Additional Configuration",
+                "description": "Set up optional sensors and settings for {name} (all fields are optional)",
+                "data": {
+                    "media_devices": "Media Players (TVs, Speakers, etc.)",
                     "appliances": "Power-Monitored Devices (Smart Plugs, Power Monitors)",
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
                     "temperature_sensors": "Temperature Sensors",
                     "threshold": "Occupancy Probability Threshold (0-1)",
                     "history_period": "Historical Analysis Period (days)",
-                    "historical_analysis_enabled": "Enable Historical Analysis",
-                    "minimum_confidence": "Minimum Confidence Level (0-1)",
                     "decay_enabled": "Enable Sensor Reading Decay",
                     "decay_window": "Decay Time Window (seconds)",
-                    "decay_type": "Decay Calculation Type"
+                    "decay_type": "Decay Calculation Type",
+                    "historical_analysis_enabled": "Enable Historical Analysis",
+                    "minimum_confidence": "Minimum Confidence Level (0-1)"
                 },
                 "data_description": {
-                    "name": "Unique name for this area (e.g., Living Room, Office)",
-                    "motion_sensors": "Motion sensors that detect physical presence in the area",
                     "media_devices": "Media players whose state indicates room usage",
                     "appliances": "Devices with power monitoring that suggest activity",
-                    "illuminance_sensors": "Sensors that measure ambient light levels",
-                    "humidity_sensors": "Sensors that detect humidity changes from activity",
+                    "illuminance_sensors": "Sensors that detect light level changes in the area",
+                    "humidity_sensors": "Sensors that detect humidity changes from room activity",
                     "temperature_sensors": "Sensors that detect temperature changes from occupancy",
-                    "threshold": "Minimum probability to consider the area occupied (0.0 to 1.0)",
+                    "threshold": "Minimum probability value to consider the area occupied (0.0 to 1.0)",
                     "history_period": "Number of days of historical data to analyze (1-30)",
-                    "historical_analysis_enabled": "Use historical data to improve detection accuracy",
-                    "minimum_confidence": "Required confidence in predictions (0.0 to 1.0)",
                     "decay_enabled": "Gradually decrease sensor influence over time",
                     "decay_window": "Time in seconds before sensor readings fully decay (60-3600)",
-                    "decay_type": "How quickly sensor influence should decrease"
+                    "decay_type": "How quickly sensor influence should decrease",
+                    "historical_analysis_enabled": "Use historical data to improve detection accuracy",
+                    "minimum_confidence": "Required confidence level for pattern predictions (0.0 to 1.0)"
                 }
             }
         },
@@ -48,8 +64,11 @@
             "name_exists": "An area with this name is already configured"
         },
         "abort": {
-            "already_configured": "This area is already configured. Please update using the Options menu",
+            "already_configured": "This area is already configured. Please use Options to modify settings",
             "no_sensors": "No compatible sensors were found in your system"
+        },
+        "progress": {
+            "initial_setup": "Setting up area occupancy detection. This may take a few moments..."
         }
     },
     "options": {
@@ -66,11 +85,11 @@
                     "temperature_sensors": "Temperature Sensors",
                     "threshold": "Occupancy Probability Threshold (0-1)",
                     "history_period": "Historical Analysis Period (days)",
-                    "historical_analysis_enabled": "Enable Historical Analysis",
-                    "minimum_confidence": "Minimum Confidence Level (0-1)",
                     "decay_enabled": "Enable Sensor Reading Decay",
                     "decay_window": "Decay Time Window (seconds)",
-                    "decay_type": "Decay Calculation Type"
+                    "decay_type": "Decay Calculation Type",
+                    "historical_analysis_enabled": "Enable Historical Analysis",
+                    "minimum_confidence": "Minimum Confidence Level (0-1)"
                 },
                 "data_description": {
                     "motion_sensors": "Motion sensors that detect physical presence",

@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .config_management import ConfigManager
+from .config_management import ConfigManager, CoreConfig, OptionsConfig
 from .const import (
     DOMAIN,
     STORAGE_KEY_HISTORY,
@@ -39,7 +39,6 @@ async def _load_base_config(hass: HomeAssistant) -> dict[str, Any]:
         return _CACHED_BASE_CONFIG
 
     try:
-        # Get the directory of this file
         dir_path = os.path.dirname(os.path.realpath(__file__))
         config_path = os.path.join(dir_path, "default_probabilities.yaml")
 
@@ -77,34 +76,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Area Occupancy Detection from a config entry."""
     try:
-        # Debug logging for config data
-        _LOGGER.debug("Config entry data: %s", entry.data)
-        _LOGGER.debug("Config entry options: %s", entry.options)
-
         # Load and validate base configuration
         base_config = await _load_base_config(hass)
-        if not base_config:
-            raise HomeAssistantError("Failed to load base configuration")
 
         # Initialize domain data if not exists
         hass.data.setdefault(DOMAIN, {})
 
-        # Extract core configuration and ensure it's a dictionary
-        core_data = dict(entry.data)
-        _LOGGER.debug("Core config before validation: %s", core_data)
-
-        # Extract and validate core configuration
+        # Validate core configuration
         try:
-            core_config = ConfigManager.validate_core_config(core_data)
-            _LOGGER.debug("Core config after validation: %s", core_config)
+            core_config = ConfigManager.validate_core_config(entry.data)
+            _LOGGER.debug("Core config validated: %s", core_config)
         except Exception as err:
             _LOGGER.error("Core config validation failed: %s", err)
             raise HomeAssistantError(f"Core config validation failed: {err}")
 
-        # Extract and validate options configuration
+        # Validate options configuration
         try:
             options_config = ConfigManager.validate_options(dict(entry.options))
-            _LOGGER.debug("Options config after validation: %s", options_config)
+            _LOGGER.debug("Options config validated: %s", options_config)
         except Exception as err:
             _LOGGER.error("Options config validation failed: %s", err)
             raise HomeAssistantError(f"Options config validation failed: {err}")
@@ -117,14 +106,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             atomic_writes=True,
         )
 
-        # Load historical data with defaults if none exists
+        # Load historical data
         stored_data = await store.async_load() or {
             "version": STORAGE_VERSION,
             "last_updated": "",
             "areas": {},
         }
 
-        # Initialize coordinator with validated configs
+        # Initialize coordinator
         coordinator = AreaOccupancyCoordinator(
             hass=hass,
             entry_id=entry.entry_id,
@@ -134,7 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             store=store,
         )
 
-        # Attempt coordinator setup
+        # Setup coordinator
         try:
             await coordinator.async_setup()
         except Exception as err:
@@ -148,14 +137,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"Failed to perform initial data refresh: {err}"
             ) from err
 
-        # Store initialized components
+        # Store components
         hass.data[DOMAIN][entry.entry_id] = {
             "coordinator": coordinator,
             "store": store,
-            "config": {
-                "core": core_config,
-                "options": options_config,
-            },
         }
 
         # Set up entry update listener
@@ -173,7 +158,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     except ConfigEntryNotReady as ready_err:
-        # Re-raise ConfigEntryNotReady to allow HA to handle it appropriately
         raise ready_err
 
     except Exception as err:
@@ -248,18 +232,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     try:
         if config_entry.version == 1:
-            # Migrate to version 2 using ConfigManager
+            # Migrate to version 2
             core_config, options_config = ConfigManager.migrate_legacy_config(
                 config_entry.data
             )
 
             # Update config entry with new format
             hass.config_entries.async_update_entry(
-                config_entry, data=core_config, options=options_config, version=2
+                config_entry,
+                data=core_config,
+                options=options_config,
+                version=2,
             )
 
             _LOGGER.info(
-                "Successfully migrated entry %s to version 2", config_entry.entry_id
+                "Successfully migrated Area Occupancy entry %s to version 2",
+                config_entry.entry_id,
             )
             return True
 
