@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
 import voluptuous as vol
+from typing import Any, TypedDict
 
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
@@ -43,7 +43,6 @@ class CoreConfig(TypedDict):
     """Core configuration that cannot be changed after setup."""
 
     name: str
-    motion_sensors: list[str]
 
 
 class OptionsConfig(TypedDict, total=False):
@@ -74,15 +73,6 @@ class ConfigManager:
         return vol.Schema(
             {
                 vol.Required(CONF_NAME, default=data.get(CONF_NAME, "")): str,
-                vol.Required(
-                    CONF_MOTION_SENSORS, default=data.get(CONF_MOTION_SENSORS, [])
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=BINARY_SENSOR_DOMAIN,
-                        device_class="motion",
-                        multiple=True,
-                    ),
-                ),
             }
         )
 
@@ -92,6 +82,15 @@ class ConfigManager:
         options = options or {}
         return vol.Schema(
             {
+                vol.Required(
+                    CONF_MOTION_SENSORS, default=options.get(CONF_MOTION_SENSORS, [])
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=BINARY_SENSOR_DOMAIN,
+                        device_class="motion",
+                        multiple=True,
+                    ),
+                ),
                 vol.Optional(
                     CONF_MEDIA_DEVICES, default=options.get(CONF_MEDIA_DEVICES, [])
                 ): selector.EntitySelector(
@@ -214,20 +213,20 @@ class ConfigManager:
     @staticmethod
     def validate_core_config(data: dict[str, Any]) -> CoreConfig:
         """Validate core configuration data."""
-        if not data.get(CONF_MOTION_SENSORS):
-            raise vol.Invalid("At least one motion sensor is required")
-
         schema = ConfigManager.get_core_schema()
         validated = schema(data)
 
         return CoreConfig(
             name=validated[CONF_NAME],
-            motion_sensors=validated[CONF_MOTION_SENSORS],
         )
 
     @staticmethod
     def validate_options(data: dict[str, Any]) -> OptionsConfig:
         """Validate options configuration data."""
+        # Ensure at least one motion sensor is configured
+        if not data.get(CONF_MOTION_SENSORS):
+            raise vol.Invalid("At least one motion sensor is required")
+
         schema = ConfigManager.get_options_schema()
         return schema(data)
 
@@ -238,11 +237,15 @@ class ConfigManager:
         """Migrate legacy configuration to new format."""
         core_config: dict[str, Any] = {
             CONF_NAME: config[CONF_NAME],
-            CONF_MOTION_SENSORS: config[CONF_MOTION_SENSORS],
         }
 
         options_config: dict[str, Any] = {
-            k: v for k, v in config.items() if k not in [CONF_NAME, CONF_MOTION_SENSORS]
+            CONF_MOTION_SENSORS: config[CONF_MOTION_SENSORS],
+            **{
+                k: v
+                for k, v in config.items()
+                if k not in [CONF_NAME, CONF_MOTION_SENSORS]
+            },
         }
 
         return (

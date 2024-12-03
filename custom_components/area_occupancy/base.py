@@ -148,10 +148,12 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
+        # Check coordinator update success
         if not self.coordinator.last_update_success or not self.coordinator.data:
             return False
 
-        motion_sensors = self.coordinator.core_config["motion_sensors"]
+        # Get motion sensors from options config
+        motion_sensors = self.coordinator.options_config.get("motion_sensors", [])
         if not motion_sensors:
             return False
 
@@ -170,13 +172,13 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
             if specific_attributes:
                 attributes.update(specific_attributes)
 
-            # Add configuration info to attributes
-            core_config = self.coordinator.core_config
+            # Add configuration info to attributes using options_config
             options_config = self.coordinator.options_config
-
             attributes.update(
                 {
-                    "configured_motion_sensors": core_config["motion_sensors"],
+                    "configured_motion_sensors": options_config.get(
+                        "motion_sensors", []
+                    ),
                     "configured_media_devices": options_config.get("media_devices", []),
                     "configured_appliances": options_config.get("appliances", []),
                     "configured_illuminance_sensors": options_config.get(
@@ -191,7 +193,6 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
                 }
             )
             return attributes
-
         except Exception as err:
             _LOGGER.error("Error getting entity attributes: %s", err)
             return {}

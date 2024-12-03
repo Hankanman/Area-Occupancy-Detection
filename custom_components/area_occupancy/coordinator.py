@@ -45,7 +45,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self,
         hass: HomeAssistant,
         entry_id: str,
-        config: dict[str, Any],
+        core_config: CoreConfig,
+        options_config: OptionsConfig,
         base_config: dict[str, Any],
         store: Store[StorageData],
     ) -> None:
@@ -60,30 +61,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         if not base_config or "base_probabilities" not in base_config:
             raise HomeAssistantError("Invalid base configuration provided")
 
+        if not options_config.get("motion_sensors"):
+            raise HomeAssistantError("No motion sensors configured")
+
         self.base_config = base_config
         self.entry_id = entry_id
         self.store = store
 
-        # Split configuration
-        self.core_config = CoreConfig(
-            name=config["name"],
-            motion_sensors=config["motion_sensors"],
-        )
-
-        self.options_config = OptionsConfig(
-            media_devices=config.get("media_devices", []),
-            appliances=config.get("appliances", []),
-            illuminance_sensors=config.get("illuminance_sensors", []),
-            humidity_sensors=config.get("humidity_sensors", []),
-            temperature_sensors=config.get("temperature_sensors", []),
-            threshold=config.get("threshold", 0.5),
-            history_period=config.get("history_period", 7),
-            decay_enabled=config.get("decay_enabled", True),
-            decay_window=config.get("decay_window", 600),
-            decay_type=config.get("decay_type", "linear"),
-            historical_analysis_enabled=config.get("historical_analysis_enabled", True),
-            minimum_confidence=config.get("minimum_confidence", 0.3),
-        )
+        self.core_config = core_config
+        self.options_config = options_config
 
         # Initialize state tracking
         self._state_lock = asyncio.Lock()
@@ -108,8 +94,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         # Initialize historical analysis
         self._history_analyzer = HistoricalAnalysis(
             hass=self.hass,
-            history_period=self.options_config["history_period"],
-            motion_sensors=self.core_config["motion_sensors"],
+            history_period=self.options_config.get("history_period", 7),
+            motion_sensors=self.options_config["motion_sensors"],
             media_devices=self.options_config.get("media_devices", []),
             environmental_sensors=[
                 *self.options_config.get("illuminance_sensors", []),
@@ -128,7 +114,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Create probability calculator with current configuration."""
         return ProbabilityCalculator(
             base_config=self.base_config,
-            motion_sensors=self.core_config["motion_sensors"],
+            motion_sensors=self.options_config["motion_sensors"],
             media_devices=self.options_config.get("media_devices", []),
             appliances=self.options_config.get("appliances", []),
             illuminance_sensors=self.options_config.get("illuminance_sensors", []),
@@ -462,7 +448,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                         ),
                         "historical_data": self._historical_data,
                         "configuration": {
-                            "motion_sensors": self.core_config["motion_sensors"],
+                            "motion_sensors": self.options_config[
+                                "motion_sensors"
+                            ],  # Changed from core_config
                             "media_devices": self.options_config.get(
                                 "media_devices", []
                             ),
@@ -482,7 +470,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             }
         except Exception as err:
             _LOGGER.error("Error preparing storage data: %s", err)
-            raise HomeAssistantError("Failed to prepare storage data") from err
+            raise HomeAssistantError(f"Failed to prepare storage data: {err}") from err
 
     def unsubscribe(self) -> None:
         """Unsubscribe from all registered events."""
@@ -491,18 +479,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def _get_all_configured_sensors(self) -> list[str]:
         """Get list of all configured sensor entity IDs."""
-        sensors = []
-        # Add core sensors
-        sensors.extend(self.core_config["motion_sensors"])
-
-        # Add optional sensors
-        sensors.extend(self.options_config.get("media_devices", []))
-        sensors.extend(self.options_config.get("appliances", []))
-        sensors.extend(self.options_config.get("illuminance_sensors", []))
-        sensors.extend(self.options_config.get("humidity_sensors", []))
-        sensors.extend(self.options_config.get("temperature_sensors", []))
-
-        return sensors
+        return [
+            *self.options_config["motion_sensors"],
+            *self.options_config.get("media_devices", []),
+            *self.options_config.get("appliances", []),
+            *self.options_config.get("illuminance_sensors", []),
+            *self.options_config.get("humidity_sensors", []),
+            *self.options_config.get("temperature_sensors", []),
+        ]
 
     def _limit_probability_change(self, new_probability: float) -> float:
         """Limit the rate of probability change."""
@@ -518,15 +502,32 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._last_probability = limited_prob
         return limited_prob
 
-    def update_options(self, options: OptionsConfig) -> None:
+    def update_options(self, options_config: OptionsConfig) -> None:
         """Update coordinator with new options."""
         try:
-            self.options_config = options
+            if not options_config.get("motion_sensors"):
+                raise HomeAssistantError("No motion sensors configured")
+
+            self.options_config = options_config
             self._setup_components()
+
+            # Clear invalid sensor states
+            current_sensors = set(self._get_all_configured_sensors())
+            self._sensor_states = {
+                entity_id: state
+                for entity_id, state in self._sensor_states.items()
+                if entity_id in current_sensors
+            }
+            self._motion_timestamps = {
+                entity_id: timestamp
+                for entity_id, timestamp in self._motion_timestamps.items()
+                if entity_id in options_config["motion_sensors"]
+            }
+
             _LOGGER.debug(
                 "Updated coordinator options for %s: %s",
                 self.core_config["name"],
-                options,
+                options_config,
             )
         except Exception as err:
             _LOGGER.error("Error updating coordinator options: %s", err)
