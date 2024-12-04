@@ -118,6 +118,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="devices",
+            description_placeholders={"name": self._core_data[CONF_NAME]},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -160,6 +161,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="environmental",
+            description_placeholders={"name": self._core_data[CONF_NAME]},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -226,6 +228,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="parameters",
+            description_placeholders={"name": self._core_data[CONF_NAME]},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -340,6 +343,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
 
         return self.async_show_form(
             step_id="motion",
+            description_placeholders={"name": self.config_entry.title},
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -372,6 +376,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
 
         return self.async_show_form(
             step_id="devices",
+            description_placeholders={"name": self.config_entry.title},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -417,6 +422,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
 
         return self.async_show_form(
             step_id="environmental",
+            description_placeholders={"name": self.config_entry.title},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -479,6 +485,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
 
         return self.async_show_form(
             step_id="parameters",
+            description_placeholders={"name": self.config_entry.title},
             data_schema=vol.Schema(
                 {
                     vol.Optional(
