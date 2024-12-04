@@ -22,6 +22,7 @@ from .const import (
     CONF_DECAY_TYPE,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_MINIMUM_CONFIDENCE,
+    CONF_AREA_ID,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
@@ -38,6 +39,7 @@ class CoreConfig(TypedDict):
     """Core configuration that cannot be changed after setup."""
 
     name: str
+    area_id: str
     motion_sensors: list[str]
 
 
@@ -70,15 +72,19 @@ class ConfigManager:
         if not data.get(CONF_MOTION_SENSORS):
             raise HomeAssistantError("At least one motion sensor is required")
 
+        if not data.get(CONF_AREA_ID):
+            raise HomeAssistantError("Area ID is required")
+
         return CoreConfig(
-            name=data[CONF_NAME], motion_sensors=data[CONF_MOTION_SENSORS]
+            name=data[CONF_NAME],
+            area_id=data[CONF_AREA_ID],
+            motion_sensors=data[CONF_MOTION_SENSORS],
         )
 
     @staticmethod
     def validate_options(data: dict[str, Any]) -> OptionsConfig:
         """Validate options configuration data."""
 
-        # Apply defaults for missing values
         options: OptionsConfig = {
             CONF_MEDIA_DEVICES: data.get(CONF_MEDIA_DEVICES, []),
             CONF_APPLIANCES: data.get(CONF_APPLIANCES, []),
@@ -123,13 +129,20 @@ class ConfigManager:
         """Migrate legacy configuration to new format."""
         try:
             core_config = CoreConfig(
-                name=config[CONF_NAME], motion_sensors=config[CONF_MOTION_SENSORS]
+                name=config[CONF_NAME],
+                area_id=config.get(CONF_AREA_ID),
+                motion_sensors=config[CONF_MOTION_SENSORS],
             )
 
             options_data = {
                 k: v
                 for k, v in config.items()
-                if k not in [CONF_NAME, CONF_MOTION_SENSORS]
+                if k
+                not in [
+                    CONF_NAME,
+                    CONF_MOTION_SENSORS,
+                    CONF_AREA_ID,
+                ]
             }
             options_config = ConfigManager.validate_options(options_data)
 

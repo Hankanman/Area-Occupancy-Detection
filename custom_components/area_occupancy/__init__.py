@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import logging
+import uuid
 from typing import Any
 
 import yaml
@@ -14,11 +15,12 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .config_management import ConfigManager, CoreConfig, OptionsConfig
+from .config_management import ConfigManager
 from .const import (
     DOMAIN,
     STORAGE_KEY_HISTORY,
     STORAGE_VERSION,
+    CONF_AREA_ID,
     StorageData,
 )
 from .coordinator import AreaOccupancyCoordinator
@@ -237,12 +239,17 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 config_entry.data
             )
 
+            # Add area_id if not present
+            if CONF_AREA_ID not in core_config:
+                core_config[CONF_AREA_ID] = str(uuid.uuid4())
+
             # Update config entry with new format
             hass.config_entries.async_update_entry(
                 config_entry,
                 data=core_config,
                 options=options_config,
                 version=2,
+                unique_id=core_config[CONF_AREA_ID],
             )
 
             _LOGGER.info(
