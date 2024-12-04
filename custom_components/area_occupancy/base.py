@@ -72,7 +72,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         # Device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry_id)},
-            "name": coordinator.core_config["name"],
+            "name": self._area_name,
             "manufacturer": "Area Occupancy",
             "model": "Occupancy Sensor",
             "sw_version": "1.0.0",
@@ -95,12 +95,11 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
     @property
     def name(self) -> str:
         """Return the display name of the sensor."""
-        sensor_name = (
+        return (
             NAME_BINARY_SENSOR
             if isinstance(self, AreaOccupancyBinarySensor)
             else NAME_PROBABILITY_SENSOR
         )
-        return f"{self._area_name} {sensor_name}"
 
     @property
     def _shared_attributes(self) -> dict[str, Any]:
