@@ -38,12 +38,12 @@ class CoreConfig(TypedDict):
     """Core configuration that cannot be changed after setup."""
 
     name: str
+    motion_sensors: list[str]
 
 
 class OptionsConfig(TypedDict, total=False):
     """Optional configuration that can be updated."""
 
-    motion_sensors: list[str]
     media_devices: list[str]
     appliances: list[str]
     illuminance_sensors: list[str]
@@ -67,17 +67,19 @@ class ConfigManager:
         if not data.get(CONF_NAME):
             raise HomeAssistantError("Name is required")
 
-        return CoreConfig(name=data[CONF_NAME])
+        if not data.get(CONF_MOTION_SENSORS):
+            raise HomeAssistantError("At least one motion sensor is required")
+
+        return CoreConfig(
+            name=data[CONF_NAME], motion_sensors=data[CONF_MOTION_SENSORS]
+        )
 
     @staticmethod
     def validate_options(data: dict[str, Any]) -> OptionsConfig:
         """Validate options configuration data."""
-        if not data.get(CONF_MOTION_SENSORS):
-            raise HomeAssistantError("At least one motion sensor is required")
 
         # Apply defaults for missing values
         options: OptionsConfig = {
-            CONF_MOTION_SENSORS: data[CONF_MOTION_SENSORS],
             CONF_MEDIA_DEVICES: data.get(CONF_MEDIA_DEVICES, []),
             CONF_APPLIANCES: data.get(CONF_APPLIANCES, []),
             CONF_ILLUMINANCE_SENSORS: data.get(CONF_ILLUMINANCE_SENSORS, []),
@@ -120,11 +122,15 @@ class ConfigManager:
     ) -> tuple[CoreConfig, OptionsConfig]:
         """Migrate legacy configuration to new format."""
         try:
-            # Extract core config
-            core_config = CoreConfig(name=config[CONF_NAME])
+            core_config = CoreConfig(
+                name=config[CONF_NAME], motion_sensors=config[CONF_MOTION_SENSORS]
+            )
 
-            # Extract and validate options
-            options_data = {k: v for k, v in config.items() if k != CONF_NAME}
+            options_data = {
+                k: v
+                for k, v in config.items()
+                if k not in [CONF_NAME, CONF_MOTION_SENSORS]
+            }
             options_config = ConfigManager.validate_options(options_data)
 
             return core_config, options_config
