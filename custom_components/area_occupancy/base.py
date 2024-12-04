@@ -43,6 +43,7 @@ from .const import (
     NAME_BINARY_SENSOR,
     NAME_PROBABILITY_SENSOR,
     ProbabilityResult,
+    CONF_AREA_ID,
 )
 from .coordinator import AreaOccupancyCoordinator
 
@@ -89,8 +90,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
     @callback
     def _format_unique_id(self, sensor_type: str) -> str:
         """Format the unique id consistently."""
-        area_id = self._area_name.lower().replace(" ", "_")
-        return f"{DOMAIN}_{area_id}_{sensor_type}"
+        return f"{DOMAIN}_{self.coordinator.core_config[CONF_AREA_ID]}_{sensor_type}"
 
     @property
     def name(self) -> str:

@@ -25,6 +25,7 @@ from homeassistant.helpers.event import (
 
 from .const import (
     DOMAIN,
+    CONF_AREA_ID,
     ProbabilityResult,
     SensorId,
     SensorStates,
@@ -426,7 +427,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def get_storage_data(self) -> StorageData:
         """Get data for storage before unloading."""
         try:
-            area_id = self.core_config["name"].lower().replace(" ", "_")
+            # Use area_id for storage key instead of name
+            area_id = self.core_config[CONF_AREA_ID]
 
             return {
                 "version": 1,

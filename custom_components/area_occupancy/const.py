@@ -25,6 +25,7 @@ CONF_DECAY_TYPE: Final = "decay_type"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_MINIMUM_CONFIDENCE: Final = "minimum_confidence"
 CONF_DEVICE_STATES: Final = "device_states"
+CONF_AREA_ID: Final = "area_id"
 
 # File paths and configuration
 STORAGE_KEY_HISTORY: Final = "area_occupancy_history"

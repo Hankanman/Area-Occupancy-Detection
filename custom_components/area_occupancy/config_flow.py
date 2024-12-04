@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
-    OptionsFlow,
     OptionsFlowWithConfigEntry,
 )
 from homeassistant.const import CONF_NAME
@@ -32,6 +32,7 @@ from .const import (
     CONF_DECAY_TYPE,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_MINIMUM_CONFIDENCE,
+    CONF_AREA_ID,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
@@ -69,14 +70,18 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not motion_sensors:
                     errors["base"] = "no_motion_sensors"
                 else:
-                    # Set unique ID based on area name
-                    await self.async_set_unique_id(name)
+                    # Generate unique ID for the area
+                    area_id = str(uuid.uuid4())
+
+                    # Set unique ID based on generated ID
+                    await self.async_set_unique_id(area_id)
                     self._abort_if_unique_id_configured()
 
-                    # Store core data (name only)
+                    # Store core data with area ID
                     self._core_data = {
                         CONF_NAME: name,
                         CONF_MOTION_SENSORS: motion_sensors,
+                        CONF_AREA_ID: area_id,
                     }
 
                     return await self.async_step_devices()
