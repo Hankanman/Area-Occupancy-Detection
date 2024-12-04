@@ -18,7 +18,39 @@ from homeassistant.const import (
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import ProbabilityResult, SensorStates
+from .const import (
+    ProbabilityResult,
+    SensorStates,
+)
+from .probabilities import (
+    # Core weights
+    MAX_MOTION_WEIGHT,
+    MAX_MEDIA_WEIGHT,
+    MAX_APPLIANCE_WEIGHT,
+    MAX_ENVIRONMENTAL_WEIGHT,
+    DEFAULT_MOTION_WEIGHT,
+    DEFAULT_MEDIA_WEIGHT,
+    DEFAULT_APPLIANCE_WEIGHT,
+    DEFAULT_ENVIRONMENTAL_WEIGHT,
+    CONFIDENCE_WEIGHTS,
+    # Motion detection
+    MOTION_SINGLE_SENSOR_PROBABILITY,
+    MOTION_MULTIPLE_SENSORS_PROBABILITY,
+    MOTION_DECAY_FACTOR,
+    MAX_COMPOUND_DECAY,
+    MIN_MOTION_WEIGHT,
+    # Device states
+    MEDIA_STATE_PROBABILITIES,
+    APPLIANCE_STATE_PROBABILITIES,
+    # Environmental
+    ENVIRONMENTAL_SETTINGS,
+    # Thresholds
+    CORRELATION_LIMIT,
+    MIN_CONFIDENCE,
+    MIN_PROBABILITY,
+    MAX_PROBABILITY,
+    MAX_WEIGHT_ADJUSTMENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +120,6 @@ class ProbabilityCalculator:
 
     def __init__(
         self,
-        base_config: dict[str, Any],
         motion_sensors: list[str],
         media_devices: list[str] | None = None,
         appliances: list[str] | None = None,
@@ -97,8 +128,7 @@ class ProbabilityCalculator:
         temperature_sensors: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
-        """Initialize the calculator with safety bounds."""
-        self.base_config = base_config
+        """Initialize the calculator with configuration."""
         self.motion_sensors = motion_sensors
         self.media_devices = media_devices or []
         self.appliances = appliances or []
@@ -107,14 +137,7 @@ class ProbabilityCalculator:
         self.temperature_sensors = temperature_sensors or []
         self.decay_config = decay_config or DecayConfig()
 
-        # Safety bounds
-        self._max_compound_decay = 0.8  # Maximum compound decay value
-        self._min_motion_weight = 0.3  # Minimum motion sensor weight
-        self._correlation_limit = 0.7  # Maximum correlation adjustment
-        self._max_env_change = 0.5  # Maximum environmental probability change
-        self._min_confidence = 0.2  # Minimum confidence score
-
-        # Load and validate weights from base config
+        # Initialize and validate weights
         try:
             self._initialize_weights()
         except (KeyError, TypeError, ValueError) as err:
@@ -123,13 +146,22 @@ class ProbabilityCalculator:
 
     def _initialize_weights(self) -> None:
         """Initialize and validate weights from configuration."""
-        weights = self.base_config.get("weights", {})
+        weights = {}
 
         # Validate and cap weights
-        self.motion_weight = min(weights.get("motion", 0.4), 0.9)
-        self.media_weight = min(weights.get("media", 0.3), 0.7)
-        self.appliance_weight = min(weights.get("appliances", 0.2), 0.5)
-        self.environmental_weight = min(weights.get("environmental", 0.1), 0.3)
+        self.motion_weight = min(
+            weights.get("motion", DEFAULT_MOTION_WEIGHT), MAX_MOTION_WEIGHT
+        )
+        self.media_weight = min(
+            weights.get("media", DEFAULT_MEDIA_WEIGHT), MAX_MEDIA_WEIGHT
+        )
+        self.appliance_weight = min(
+            weights.get("appliances", DEFAULT_APPLIANCE_WEIGHT), MAX_APPLIANCE_WEIGHT
+        )
+        self.environmental_weight = min(
+            weights.get("environmental", DEFAULT_ENVIRONMENTAL_WEIGHT),
+            MAX_ENVIRONMENTAL_WEIGHT,
+        )
 
         # Normalize weights
         total_weight = (
@@ -149,10 +181,10 @@ class ProbabilityCalculator:
 
     def _set_default_weights(self) -> None:
         """Set default weights if configuration is invalid."""
-        self.motion_weight = 0.6
-        self.media_weight = 0.2
-        self.appliance_weight = 0.1
-        self.environmental_weight = 0.1
+        self.motion_weight = DEFAULT_MOTION_WEIGHT
+        self.media_weight = DEFAULT_MEDIA_WEIGHT
+        self.appliance_weight = DEFAULT_APPLIANCE_WEIGHT
+        self.environmental_weight = DEFAULT_ENVIRONMENTAL_WEIGHT
 
     def calculate(
         self,
@@ -196,10 +228,10 @@ class ProbabilityCalculator:
                 }
             else:
                 weights = {
-                    "motion": 0.6,
-                    "media": 0.2,
-                    "appliance": 0.1,
-                    "environmental": 0.1,
+                    "motion": DEFAULT_MOTION_WEIGHT,
+                    "media": DEFAULT_MEDIA_WEIGHT,
+                    "appliance": DEFAULT_APPLIANCE_WEIGHT,
+                    "environmental": DEFAULT_ENVIRONMENTAL_WEIGHT,
                 }
 
             # Calculate final probability
@@ -216,7 +248,7 @@ class ProbabilityCalculator:
             )
 
             return {
-                "probability": final_prob,
+                "probability": max(MIN_PROBABILITY, min(final_prob, MAX_PROBABILITY)),
                 "prior_probability": motion_result.probability,
                 "active_triggers": (
                     motion_result.triggers
@@ -260,12 +292,12 @@ class ProbabilityCalculator:
             if sensor_correlations:
                 max_correlation = max(
                     max_correlation,
-                    min(max(sensor_correlations.values()), self._correlation_limit),
+                    min(max(sensor_correlations.values()), CORRELATION_LIMIT),
                 )
 
         if max_correlation > 0.5:
-            reduction = max_correlation * 0.5
-            return max(self._min_motion_weight, base_weight * (1 - reduction))
+            reduction = max_correlation * MAX_WEIGHT_ADJUSTMENT
+            return max(MIN_MOTION_WEIGHT, base_weight * (1 - reduction))
 
         return base_weight
 
@@ -278,11 +310,6 @@ class ProbabilityCalculator:
         active_triggers: list[str] = []
         decay_status: dict[str, float] = {}
         now = dt_util.utcnow()
-
-        motion_base = self.base_config["base_probabilities"]["motion"]
-        single_sensor_prob = motion_base["single_sensor"]
-        multiple_sensors_prob = motion_base["multiple_sensors"]
-        decay_factor = min(motion_base["decay_factor"], self._max_compound_decay)
 
         motion_probability = 0.0
         compound_decay = 0.0
@@ -310,10 +337,10 @@ class ProbabilityCalculator:
                         self.decay_config.window,
                         self.decay_config.type,
                     )
-                    remaining_decay = self._max_compound_decay - compound_decay
+                    remaining_decay = MAX_COMPOUND_DECAY - compound_decay
                     if remaining_decay > 0:
                         applied_decay = min(
-                            current_decay * decay_factor, remaining_decay
+                            current_decay * MOTION_DECAY_FACTOR, remaining_decay
                         )
                         compound_decay += applied_decay
                         motion_probability += applied_decay
@@ -325,12 +352,16 @@ class ProbabilityCalculator:
 
         if active_sensors > 0:
             motion_probability = (
-                multiple_sensors_prob if active_sensors > 1 else single_sensor_prob
+                MOTION_MULTIPLE_SENSORS_PROBABILITY
+                if active_sensors > 1
+                else MOTION_SINGLE_SENSOR_PROBABILITY
             )
 
         # Calculate final probability with safety bounds
         final_probability = (
-            min(motion_probability / valid_sensors, 1.0) if valid_sensors > 0 else 0.0
+            min(motion_probability / valid_sensors, MAX_PROBABILITY)
+            if valid_sensors > 0
+            else MIN_PROBABILITY
         )
 
         return MotionCalculationResult(
@@ -349,8 +380,6 @@ class ProbabilityCalculator:
         total_probability = 0.0
         valid_devices = 0
 
-        media_base = self.base_config["base_probabilities"]["media"]
-
         for entity_id in self.media_devices:
             state = sensor_states.get(entity_id)
             if not state or not state.get("availability", False):
@@ -361,27 +390,27 @@ class ProbabilityCalculator:
             device_states[entity_id] = current_state
 
             if current_state == STATE_PLAYING:
-                prob = media_base["playing"]
+                prob = MEDIA_STATE_PROBABILITIES["playing"]
                 active_triggers.append(f"{entity_id} (playing)")
             elif current_state == STATE_PAUSED:
-                prob = media_base["paused"]
+                prob = MEDIA_STATE_PROBABILITIES["paused"]
                 active_triggers.append(f"{entity_id} (paused)")
             elif current_state == STATE_IDLE:
-                prob = media_base["idle"]
+                prob = MEDIA_STATE_PROBABILITIES["idle"]
                 active_triggers.append(f"{entity_id} (idle)")
             elif current_state == STATE_OFF:
-                prob = media_base["off_state"]
+                prob = MEDIA_STATE_PROBABILITIES["off"]
             else:
-                prob = media_base["default_state"]
+                prob = MEDIA_STATE_PROBABILITIES["default"]
 
             total_probability += prob
 
         final_probability = (
-            total_probability / valid_devices if valid_devices > 0 else 0.0
+            total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
         return MediaCalculationResult(
-            probability=final_probability,
+            probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
             states=device_states,
         )
@@ -396,8 +425,6 @@ class ProbabilityCalculator:
         total_probability = 0.0
         valid_devices = 0
 
-        appliance_base = self.base_config["base_probabilities"]["appliances"]
-
         for entity_id in self.appliances:
             state = sensor_states.get(entity_id)
             if not state or not state.get("availability", False):
@@ -409,24 +436,24 @@ class ProbabilityCalculator:
 
             # Get probability based on state
             if current_state == STATE_ON:
-                prob = appliance_base["active_state"]
+                prob = APPLIANCE_STATE_PROBABILITIES["active"]
                 active_triggers.append(f"{entity_id} (active)")
             elif current_state == "standby":
-                prob = appliance_base["standby_state"]
+                prob = APPLIANCE_STATE_PROBABILITIES["standby"]
                 active_triggers.append(f"{entity_id} (standby)")
             elif current_state == STATE_OFF:
-                prob = appliance_base["off_state"]
+                prob = APPLIANCE_STATE_PROBABILITIES["off"]
             else:
-                prob = appliance_base["default_state"]
+                prob = APPLIANCE_STATE_PROBABILITIES["default"]
 
             total_probability += prob
 
         final_probability = (
-            total_probability / valid_devices if valid_devices > 0 else 0.0
+            total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
         return ApplianceCalculationResult(
-            probability=final_probability,
+            probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
             states=device_states,
         )
@@ -440,11 +467,9 @@ class ProbabilityCalculator:
         total_probability = 0.0
         valid_components = 0
 
-        env_base = self.base_config["base_probabilities"]["environmental"]
-
         # Process illuminance
         illuminance_prob = self._process_illuminance_sensors(
-            sensor_states, active_triggers, env_base["illuminance"]
+            sensor_states, active_triggers, ENVIRONMENTAL_SETTINGS["illuminance"]
         )
         if illuminance_prob is not None:
             total_probability += illuminance_prob
@@ -455,9 +480,9 @@ class ProbabilityCalculator:
             self.temperature_sensors,
             sensor_states,
             active_triggers,
-            env_base["temperature"]["baseline"],
-            env_base["temperature"]["change_threshold"],
-            env_base["temperature"]["weight"],
+            ENVIRONMENTAL_SETTINGS["temperature"]["baseline"],
+            ENVIRONMENTAL_SETTINGS["temperature"]["change_threshold"],
+            ENVIRONMENTAL_SETTINGS["temperature"]["weight"],
             "°C",
         )
         if temp_prob is not None:
@@ -469,9 +494,9 @@ class ProbabilityCalculator:
             self.humidity_sensors,
             sensor_states,
             active_triggers,
-            env_base["humidity"]["baseline"],
-            env_base["humidity"]["change_threshold"],
-            env_base["humidity"]["weight"],
+            ENVIRONMENTAL_SETTINGS["humidity"]["baseline"],
+            ENVIRONMENTAL_SETTINGS["humidity"]["change_threshold"],
+            ENVIRONMENTAL_SETTINGS["humidity"]["weight"],
             "%",
         )
         if humidity_prob is not None:
@@ -479,11 +504,13 @@ class ProbabilityCalculator:
             valid_components += 1
 
         final_probability = (
-            total_probability / valid_components if valid_components > 0 else 0.0
+            total_probability / valid_components
+            if valid_components > 0
+            else MIN_PROBABILITY
         )
 
         return EnvironmentalCalculationResult(
-            probability=final_probability,
+            probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
         )
 
@@ -491,14 +518,11 @@ class ProbabilityCalculator:
         self,
         sensor_states: SensorStates,
         active_triggers: list[str],
-        config: dict[str, Any],
+        config: dict[str, float],
     ) -> float | None:
         """Process illuminance sensors and update triggers."""
         valid_sensors = 0
         total_prob = 0.0
-        change_threshold = config["change_threshold"]
-        significant_change_prob = config["significant_change"]
-        minor_change_prob = config["minor_change"]
 
         for entity_id in self.illuminance_sensors:
             state = sensor_states.get(entity_id)
@@ -507,11 +531,11 @@ class ProbabilityCalculator:
 
             try:
                 current_value = float(state["state"])
-                if current_value > change_threshold:
-                    total_prob += significant_change_prob
+                if current_value > config["change_threshold"]:
+                    total_prob += config["significant_change_probability"]
                     active_triggers.append(f"{entity_id} ({current_value} lx)")
                 else:
-                    total_prob += minor_change_prob
+                    total_prob += config["minor_change_probability"]
                 valid_sensors += 1
             except (ValueError, TypeError) as err:
                 _LOGGER.debug("Invalid illuminance value for %s: %s", entity_id, err)
@@ -557,14 +581,11 @@ class ProbabilityCalculator:
     def _calculate_decay_factor(
         self, time_diff: float, window: float, decay_type: str
     ) -> float:
-        """Calculate the decay factor based on time difference."""
+        """Calculate decay factor based on time difference."""
         if time_diff >= window:
-            return 0.0
-
-        if decay_type == "linear":
-            return 1.0 - (time_diff / window)
-        # Exponential decay
-        return math.exp(-3.0 * time_diff / window)
+            return MIN_PROBABILITY
+        ratio = time_diff / window
+        return 1.0 - ratio if decay_type == "linear" else math.exp(-3.0 * ratio)
 
     def _calculate_confidence_score(
         self,
@@ -581,7 +602,7 @@ class ProbabilityCalculator:
         )
         total_sensors = len(sensor_states)
         availability_score = (
-            available_sensors / total_sensors if total_sensors > 0 else 0.0
+            available_sensors / total_sensors if total_sensors > 0 else MIN_PROBABILITY
         )
 
         # Trigger consistency weight
@@ -594,28 +615,17 @@ class ProbabilityCalculator:
         valid_probs = [p for p in all_probabilities if p is not None]
 
         if not valid_probs:
-            consistency_score = 0.0
+            consistency_score = MIN_PROBABILITY
         else:
             variance = sum(
                 (p - sum(valid_probs) / len(valid_probs)) ** 2 for p in valid_probs
             ) / len(valid_probs)
-            consistency_score = 1.0 - min(variance, 1.0)
+            consistency_score = 1.0 - min(variance, MAX_PROBABILITY)
 
-        # Combine scores with weights
+        # Combine scores with confidence weights
         final_score = (
-            availability_score * 0.6  # 60% weight to sensor availability
-            + consistency_score * 0.4  # 40% weight to reading consistency
+            availability_score * CONFIDENCE_WEIGHTS["sensor_availability"]
+            + consistency_score * CONFIDENCE_WEIGHTS["data_freshness"]
         )
 
-        return max(self._min_confidence, min(1.0, final_score))
-
-    def _get_all_configured_sensors(self) -> list[str]:
-        """Get list of all configured sensor entity IDs."""
-        return [
-            *self.motion_sensors,
-            *self.media_devices,
-            *self.appliances,
-            *self.illuminance_sensors,
-            *self.humidity_sensors,
-            *self.temperature_sensors,
-        ]
+        return max(MIN_CONFIDENCE, min(MAX_PROBABILITY, final_score))

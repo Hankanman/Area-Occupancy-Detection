@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import logging
 import uuid
 from typing import Any
 
-import yaml
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -29,58 +27,16 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
-# Global to store base config after loading
-_CACHED_BASE_CONFIG: dict[str, Any] | None = None
-
-
-async def _load_base_config(hass: HomeAssistant) -> dict[str, Any]:
-    """Load base configuration from YAML with caching."""
-    global _CACHED_BASE_CONFIG
-
-    if _CACHED_BASE_CONFIG is not None:
-        return _CACHED_BASE_CONFIG
-
-    try:
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        config_path = os.path.join(dir_path, "default_probabilities.yaml")
-
-        if not os.path.exists(config_path):
-            raise HomeAssistantError(
-                f"Base configuration file not found: {config_path}"
-            )
-
-        with open(config_path, "r", encoding="utf-8") as file:
-            config = yaml.safe_load(file)
-
-        if not isinstance(config, dict) or "base_probabilities" not in config:
-            raise HomeAssistantError("Invalid base configuration format")
-
-        _CACHED_BASE_CONFIG = config
-        return config
-
-    except Exception as err:
-        _LOGGER.error("Error loading base configuration: %s", err)
-        raise HomeAssistantError(f"Failed to load base configuration: {err}") from err
-
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Area Occupancy Detection integration."""
-    try:
-        # Load base configuration on integration setup
-        await _load_base_config(hass)
-        hass.data.setdefault(DOMAIN, {})
-        return True
-    except HomeAssistantError as err:
-        _LOGGER.error("Failed to setup integration: %s", err)
-        return False
+    hass.data.setdefault(DOMAIN, {})
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Area Occupancy Detection from a config entry."""
     try:
-        # Load and validate base configuration
-        base_config = await _load_base_config(hass)
-
         # Initialize domain data if not exists
         hass.data.setdefault(DOMAIN, {})
 
@@ -121,7 +77,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_id=entry.entry_id,
             core_config=core_config,
             options_config=options_config,
-            base_config=base_config,
             store=store,
         )
 
