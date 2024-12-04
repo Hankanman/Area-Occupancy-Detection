@@ -48,7 +48,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         entry_id: str,
         core_config: CoreConfig,
         options_config: OptionsConfig,
-        base_config: dict[str, Any],
         store: Store[StorageData],
     ) -> None:
         """Initialize the coordinator."""
@@ -59,13 +58,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             update_interval=timedelta(minutes=5),
         )
 
-        if not base_config or "base_probabilities" not in base_config:
-            raise HomeAssistantError("Invalid base configuration provided")
-
         if not core_config.get("motion_sensors"):
             raise HomeAssistantError("No motion sensors configured")
 
-        self.base_config = base_config
         self.entry_id = entry_id
         self.store = store
 
@@ -114,7 +109,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def _create_calculator(self) -> ProbabilityCalculator:
         """Create probability calculator with current configuration."""
         return ProbabilityCalculator(
-            base_config=self.base_config,
             motion_sensors=self.core_config["motion_sensors"],
             media_devices=self.options_config.get("media_devices", []),
             appliances=self.options_config.get("appliances", []),
