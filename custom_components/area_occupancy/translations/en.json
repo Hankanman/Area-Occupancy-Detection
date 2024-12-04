@@ -2,125 +2,155 @@
     "config": {
         "step": {
             "user": {
-                "title": "Area Occupancy Detection",
-                "description": "Create a new area for intelligent occupancy detection",
+                "title": "Area Setup",
+                "description": "Set up the area name and required motion sensors",
                 "data": {
-                    "name": "Area Name"
+                    "name": "Area Name",
+                    "motion_sensors": "Motion Sensors"
                 },
                 "data_description": {
-                    "name": "Enter a descriptive name for this area (e.g., Living Room, Office)"
+                    "name": "Name for this area (e.g., Living Room, Office)",
+                    "motion_sensors": "Select motion sensors that detect occupancy in this area"
                 }
             },
-            "motion_sensors": {
-                "title": "Motion Sensors Required",
-                "description": "Set up motion sensors for {name}",
+            "devices": {
+                "title": "Connected Devices",
+                "description": "Configure media devices and appliances that indicate room usage",
                 "data": {
-                    "motion_sensors": "Motion Sensors (Required)"
+                    "media_devices": "Media Devices",
+                    "appliances": "Power-Monitored Devices"
                 },
                 "data_description": {
-                    "motion_sensors": "Select one or more motion sensors in this area. At least one is required."
+                    "media_devices": "Media players that indicate room usage (e.g., TVs, speakers)",
+                    "appliances": "Devices whose power state indicates activity (e.g., computers, game consoles)"
                 }
             },
-            "optional_sensors": {
-                "title": "Additional Configuration",
-                "description": "Set up optional sensors and settings for {name} (all fields are optional)",
+            "environmental": {
+                "title": "Environmental Sensors",
+                "description": "Configure optional environmental sensors for improved detection",
                 "data": {
-                    "media_devices": "Media Players (TVs, Speakers, etc.)",
-                    "appliances": "Power-Monitored Devices (Smart Plugs, Power Monitors)",
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
-                    "temperature_sensors": "Temperature Sensors",
-                    "threshold": "Occupancy Probability Threshold (0-1)",
-                    "history_period": "Historical Analysis Period (days)",
-                    "decay_enabled": "Enable Sensor Reading Decay",
-                    "decay_window": "Decay Time Window (seconds)",
-                    "decay_type": "Decay Calculation Type",
-                    "historical_analysis_enabled": "Enable Historical Analysis",
-                    "minimum_confidence": "Minimum Confidence Level (0-1)"
+                    "temperature_sensors": "Temperature Sensors"
                 },
                 "data_description": {
-                    "media_devices": "Media players whose state indicates room usage",
-                    "appliances": "Devices with power monitoring that suggest activity",
-                    "illuminance_sensors": "Sensors that detect light level changes in the area",
-                    "humidity_sensors": "Sensors that detect humidity changes from room activity",
-                    "temperature_sensors": "Sensors that detect temperature changes from occupancy",
-                    "threshold": "Minimum probability value to consider the area occupied (0.0 to 1.0)",
-                    "history_period": "Number of days of historical data to analyze (1-30)",
-                    "decay_enabled": "Gradually decrease sensor influence over time",
-                    "decay_window": "Time in seconds before sensor readings fully decay (60-3600)",
-                    "decay_type": "How quickly sensor influence should decrease",
-                    "historical_analysis_enabled": "Use historical data to improve detection accuracy",
-                    "minimum_confidence": "Required confidence level for pattern predictions (0.0 to 1.0)"
+                    "illuminance_sensors": "Sensors that detect light level changes",
+                    "humidity_sensors": "Sensors that detect humidity changes from activity",
+                    "temperature_sensors": "Sensors that detect temperature changes from occupancy"
+                }
+            },
+            "parameters": {
+                "title": "Detection Parameters",
+                "description": "Configure detection sensitivity and behavior",
+                "data": {
+                    "threshold": "Occupancy Threshold",
+                    "history_period": "Historical Analysis Period",
+                    "decay_enabled": "Enable Sensor Decay",
+                    "decay_window": "Decay Time Window",
+                    "decay_type": "Decay Type",
+                    "historical_analysis_enabled": "Enable Historical Analysis",
+                    "minimum_confidence": "Minimum Confidence Level"
+                },
+                "data_description": {
+                    "threshold": "Probability threshold to consider area occupied (0-1)",
+                    "history_period": "Days of historical data to analyze (1-30)",
+                    "decay_enabled": "Gradually reduce sensor influence over time",
+                    "decay_window": "Time before sensor readings fully decay",
+                    "decay_type": "How sensor influence decreases over time",
+                    "historical_analysis_enabled": "Learn from historical occupancy patterns",
+                    "minimum_confidence": "Required confidence in predictions (0-1)"
                 }
             }
         },
         "error": {
-            "unknown": "An unexpected error occurred",
-            "no_motion_sensors": "At least one motion sensor is required for occupancy detection",
-            "invalid_threshold": "Occupancy threshold must be between 0 and 1",
+            "unknown": "Unexpected error occurred",
+            "no_motion_sensors": "At least one motion sensor is required",
+            "invalid_threshold": "Threshold must be between 0 and 1",
             "invalid_history": "History period must be between 1 and 30 days",
             "invalid_decay": "Decay window must be between 60 and 3600 seconds",
             "invalid_confidence": "Confidence level must be between 0 and 1",
-            "name_exists": "An area with this name is already configured"
+            "name_exists": "An area with this name already exists"
         },
         "abort": {
-            "already_configured": "This area is already configured. Please use Options to modify settings",
-            "no_sensors": "No compatible sensors were found in your system"
-        },
-        "progress": {
-            "initial_setup": "Setting up area occupancy detection. This may take a few moments..."
+            "already_configured": "This area is already configured",
+            "no_sensors": "No compatible sensors found"
         }
     },
     "options": {
         "step": {
-            "init": {
-                "title": "Area Occupancy Options",
-                "description": "Modify settings for {name}",
+            "motion": {
+                "title": "Motion Sensors",
+                "description": "Update motion sensors for {name}",
                 "data": {
-                    "motion_sensors": "Motion Sensors (at least one required)",
-                    "media_devices": "Media Players (TVs, Speakers, etc.)",
-                    "appliances": "Power-Monitored Devices (Smart Plugs, Power Monitors)",
-                    "illuminance_sensors": "Illuminance Sensors",
-                    "humidity_sensors": "Humidity Sensors",
-                    "temperature_sensors": "Temperature Sensors",
-                    "threshold": "Occupancy Probability Threshold (0-1)",
-                    "history_period": "Historical Analysis Period (days)",
-                    "decay_enabled": "Enable Sensor Reading Decay",
-                    "decay_window": "Decay Time Window (seconds)",
-                    "decay_type": "Decay Calculation Type",
-                    "historical_analysis_enabled": "Enable Historical Analysis",
-                    "minimum_confidence": "Minimum Confidence Level (0-1)"
+                    "motion_sensors": "Motion Sensors"
                 },
                 "data_description": {
-                    "motion_sensors": "Motion sensors that detect physical presence",
-                    "media_devices": "Media players whose state indicates room usage",
-                    "appliances": "Devices with power monitoring that suggest activity",
-                    "illuminance_sensors": "Sensors that measure ambient light levels",
+                    "motion_sensors": "Select motion sensors that detect occupancy in this area"
+                }
+            },
+            "devices": {
+                "title": "Connected Devices",
+                "description": "Update device configuration for {name}",
+                "data": {
+                    "media_devices": "Media Devices",
+                    "appliances": "Power-Monitored Devices"
+                },
+                "data_description": {
+                    "media_devices": "Media players that indicate room usage",
+                    "appliances": "Devices whose power state indicates activity"
+                }
+            },
+            "environmental": {
+                "title": "Environmental Sensors",
+                "description": "Update environmental sensors for {name}",
+                "data": {
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors"
+                },
+                "data_description": {
+                    "illuminance_sensors": "Sensors that detect light level changes",
                     "humidity_sensors": "Sensors that detect humidity changes from activity",
-                    "temperature_sensors": "Sensors that detect temperature changes from occupancy",
-                    "threshold": "Minimum probability to consider area occupied (0.0 to 1.0)",
-                    "history_period": "Number of days of historical data to analyze (1-30)",
-                    "historical_analysis_enabled": "Use historical data to improve detection accuracy",
-                    "minimum_confidence": "Required confidence in predictions (0.0 to 1.0)",
-                    "decay_enabled": "Gradually decrease sensor influence over time",
-                    "decay_window": "Time in seconds before sensor readings fully decay (60-3600)",
-                    "decay_type": "How quickly sensor influence should decrease"
+                    "temperature_sensors": "Sensors that detect temperature changes from occupancy"
+                }
+            },
+            "parameters": {
+                "title": "Detection Parameters",
+                "description": "Update detection parameters for {name}",
+                "data": {
+                    "threshold": "Occupancy Threshold",
+                    "history_period": "Historical Analysis Period",
+                    "decay_enabled": "Enable Sensor Decay",
+                    "decay_window": "Decay Time Window",
+                    "decay_type": "Decay Type",
+                    "historical_analysis_enabled": "Enable Historical Analysis",
+                    "minimum_confidence": "Minimum Confidence Level"
+                },
+                "data_description": {
+                    "threshold": "Probability threshold to consider area occupied (0-1)",
+                    "history_period": "Days of historical data to analyze (1-30)",
+                    "decay_enabled": "Gradually reduce sensor influence over time",
+                    "decay_window": "Time before sensor readings fully decay",
+                    "decay_type": "How sensor influence decreases over time",
+                    "historical_analysis_enabled": "Learn from historical occupancy patterns",
+                    "minimum_confidence": "Required confidence in predictions (0-1)"
                 }
             }
         },
         "error": {
-            "invalid_threshold": "Occupancy threshold must be between 0 and 1",
+            "unknown": "Unexpected error occurred",
+            "no_motion_sensors": "At least one motion sensor is required",
+            "invalid_threshold": "Threshold must be between 0 and 1",
             "invalid_history": "History period must be between 1 and 30 days",
             "invalid_decay": "Decay window must be between 60 and 3600 seconds",
-            "invalid_confidence": "Confidence level must be between 0 and 1",
-            "no_motion_sensors": "At least one motion sensor is required"
+            "invalid_confidence": "Confidence level must be between 0 and 1"
         }
     },
     "selector": {
         "decay_type": {
             "options": {
-                "linear": "Linear Decay (Steady Decrease)",
-                "exponential": "Exponential Decay (Faster Initial Decrease)"
+                "linear": "Linear (Steady Decrease)",
+                "exponential": "Exponential (Faster Initial Decrease)"
             }
         }
     }
