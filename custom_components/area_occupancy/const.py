@@ -41,8 +41,8 @@ DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_MINIMUM_CONFIDENCE: Final = 0.3
 
 # Entity naming
-NAME_PROBABILITY_SENSOR: Final = "Area Occupancy Probability"
-NAME_BINARY_SENSOR: Final = "Area Occupancy Status"
+NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
+NAME_BINARY_SENSOR: Final = "Occupancy Status"
 
 # Attribute keys
 ATTR_PROBABILITY: Final = "probability"
