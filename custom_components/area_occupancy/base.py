@@ -153,7 +153,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
             return False
 
         # Get motion sensors from options config
-        motion_sensors = self.coordinator.options_config.get("motion_sensors", [])
+        motion_sensors = self.coordinator.core_config.get("motion_sensors", [])
         if not motion_sensors:
             return False
 
@@ -174,11 +174,10 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
 
             # Add configuration info to attributes using options_config
             options_config = self.coordinator.options_config
+            core_config = self.coordinator.core_config
             attributes.update(
                 {
-                    "configured_motion_sensors": options_config.get(
-                        "motion_sensors", []
-                    ),
+                    "configured_motion_sensors": core_config.get("motion_sensors", []),
                     "configured_media_devices": options_config.get("media_devices", []),
                     "configured_appliances": options_config.get("appliances", []),
                     "configured_illuminance_sensors": options_config.get(

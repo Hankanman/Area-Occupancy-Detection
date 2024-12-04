@@ -74,10 +74,10 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
 
                     # Store core data (name only)
-                    self._core_data = {CONF_NAME: name}
-
-                    # Store motion sensors in options
-                    self._options_data = {CONF_MOTION_SENSORS: motion_sensors}
+                    self._core_data = {
+                        CONF_NAME: name,
+                        CONF_MOTION_SENSORS: motion_sensors,
+                    }
 
                     return await self.async_step_devices()
 
@@ -325,9 +325,17 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
             if not user_input.get(CONF_MOTION_SENSORS):
                 errors["base"] = "no_motion_sensors"
             else:
-                self._temp_options = {
-                    CONF_MOTION_SENSORS: user_input[CONF_MOTION_SENSORS]
-                }
+                # Update core config with new motion sensors
+                updated_data = dict(self.config_entry.data)
+                updated_data[CONF_MOTION_SENSORS] = user_input[CONF_MOTION_SENSORS]
+
+                # Update the config entry's core data
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=updated_data,
+                )
+
+                # Continue to next step without storing in options
                 return await self.async_step_devices()
 
         return self.async_show_form(
@@ -336,7 +344,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                 {
                     vol.Required(
                         CONF_MOTION_SENSORS,
-                        default=self.current_options.get(CONF_MOTION_SENSORS, []),
+                        default=self.config_entry.data.get(CONF_MOTION_SENSORS, []),
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(
                             domain="binary_sensor",
