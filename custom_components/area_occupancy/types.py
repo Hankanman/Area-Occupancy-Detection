@@ -192,3 +192,76 @@ class CalculationResult(TypedDict):
     result_type: str
     decay_status: dict[str, float]
     states: dict[str, str]
+
+
+class EnvironmentalReading(TypedDict):
+    """Environmental sensor reading with context."""
+
+    value: float
+    timestamp: datetime
+    baseline: float
+    noise_level: float
+    gradient: float  # Rate of change
+    is_significant: bool
+
+
+class EnvironmentalAnalysis(NamedTuple):
+    """Analysis results for environmental sensors."""
+
+    baseline: float
+    noise_level: float
+    change_threshold: float
+    gradient_threshold: float
+    is_significant: bool
+
+
+class BayesianProbability(TypedDict):
+    """Bayesian probability components."""
+
+    prob_given_true: float  # P(Evidence|Occupied)
+    prob_given_false: float  # P(Evidence|Unoccupied)
+    confidence: float
+    last_updated: datetime
+
+
+@dataclass
+class SensorTransition:
+    """Sensor state transition details."""
+
+    entity_id: str
+    from_state: Any
+    to_state: Any
+    timestamp: datetime
+    duration: float  # Duration in previous state
+    is_valid: bool  # Whether transition is reliable
+
+
+class StoredPattern(TypedDict):
+    """Pattern data for storage."""
+
+    timestamp: datetime
+    occupied: bool
+    sensor_states: Dict[str, str]
+    environmental_readings: Dict[str, EnvironmentalReading]
+    transitions: List[SensorTransition]
+
+
+class HistoricalData(TypedDict):
+    """Complete historical analysis data."""
+
+    version: int
+    last_updated: datetime
+    patterns: List[StoredPattern]
+    day_patterns: Dict[str, DayPattern]
+    probabilities: SensorProbabilities
+    environmental_baselines: Dict[str, float]
+    environmental_thresholds: Dict[str, float]
+
+
+class SensorCorrelation(TypedDict):
+    """Correlation between sensors."""
+
+    correlation: float
+    confidence: float
+    last_updated: datetime
+    sample_count: int
