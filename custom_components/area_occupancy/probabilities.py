@@ -73,6 +73,8 @@ MIN_PATTERN_SAMPLES: Final[int] = 100
 HISTORY_UPDATE_INTERVAL: Final[int] = 3600  # seconds
 MAX_HISTORY_SAMPLES: Final[int] = 1000
 HISTORY_DECAY_RATE: Final[float] = 0.1
+HISTORY_CORRELATION_THRESHOLD: Final[float] = 0.1
+HISTORY_TIMESLOT_SIZE: Final[int] = 1800  # seconds
 
 # Confidence calculation weights
 CONFIDENCE_WEIGHTS: Final[Dict[str, float]] = {

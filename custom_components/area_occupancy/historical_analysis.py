@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, TypedDict, List, Dict
+from typing import Any, List
 from collections import defaultdict
 
 from homeassistant.core import HomeAssistant, State
@@ -21,34 +21,16 @@ from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
+from .probabilities import (
+    HISTORY_CORRELATION_THRESHOLD,
+    HISTORY_UPDATE_INTERVAL,
+    HISTORY_TIMESLOT_SIZE,
+)
+
+from .types import TimeSlot, DayPattern
+
+
 _LOGGER = logging.getLogger(__name__)
-
-
-class TimeSlot(TypedDict):
-    """Time slot statistics."""
-
-    total_samples: int
-    active_samples: int
-    average_duration: float
-    confidence: float
-
-
-class DayPattern(TypedDict):
-    """Day pattern statistics."""
-
-    occupied_ratio: float
-    samples: int
-    confidence: float
-
-
-class SensorHistory(TypedDict):
-    """Historical data for a sensor."""
-
-    total_activations: int
-    average_duration: float
-    time_slots: Dict[str, TimeSlot]
-    day_patterns: Dict[str, DayPattern]
-    correlated_sensors: Dict[str, float]
 
 
 class HistoricalAnalysis:
@@ -68,7 +50,7 @@ class HistoricalAnalysis:
         self.motion_sensors = motion_sensors
         self.media_devices = media_devices or []
         self.environmental_sensors = environmental_sensors or []
-        self._time_slot_size = timedelta(minutes=30)
+        self._time_slot_size = timedelta(seconds=HISTORY_TIMESLOT_SIZE)
         self._last_analysis: datetime | None = None
 
         # Initialize storage
@@ -347,7 +329,9 @@ class HistoricalAnalysis:
             correlation = self._calculate_state_correlation(
                 source_states, device_states
             )
-            if correlation > 0.1:  # Only store significant correlations
+            if (
+                correlation > HISTORY_CORRELATION_THRESHOLD
+            ):  # Only store significant correlations
                 correlation_dict[device_id] = correlation
 
     def _calculate_state_correlation(
@@ -422,7 +406,7 @@ class HistoricalAnalysis:
             start_time = self._last_analysis
             current_time = dt_util.utcnow()
 
-            if (current_time - start_time) < timedelta(hours=1):
+            if (current_time - start_time) < timedelta(seconds=HISTORY_UPDATE_INTERVAL):
                 _LOGGER.debug("Skipping analysis update - too soon")
                 return {}
 

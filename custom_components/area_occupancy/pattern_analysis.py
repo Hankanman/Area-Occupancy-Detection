@@ -4,33 +4,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, NamedTuple
-from dataclasses import dataclass
+from typing import Dict, Tuple
 from collections import defaultdict
 
-from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
+from .types import PatternSummary, TimeSlot
+
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass
-class TimeSlotData:
-    """Data structure for time slot statistics."""
-
-    total_samples: int = 0
-    occupied_samples: int = 0
-    confidence: float = 0.0
-    last_updated: datetime = dt_util.utcnow()
-
-
-class PatternSummary(NamedTuple):
-    """Summary of occupancy pattern data."""
-
-    peak_times: list[tuple[str, float]]
-    pattern_stability: float
-    total_analyzed_days: int
-    significant_changes: int
 
 
 class OccupancyPatternAnalyzer:
@@ -60,8 +41,24 @@ class OccupancyPatternAnalyzer:
         try:
             if area_id not in self._patterns:
                 self._patterns[area_id] = {
-                    "daily_patterns": defaultdict(TimeSlotData),
-                    "weekly_patterns": defaultdict(lambda: defaultdict(TimeSlotData)),
+                    "daily_patterns": defaultdict(
+                        lambda: TimeSlot(
+                            total_samples=0,
+                            active_samples=0,
+                            average_duration=0.0,
+                            confidence=0.0,
+                        )
+                    ),
+                    "weekly_patterns": defaultdict(
+                        lambda: defaultdict(
+                            lambda: TimeSlot(
+                                total_samples=0,
+                                active_samples=0,
+                                average_duration=0.0,
+                                confidence=0.0,
+                            )
+                        )
+                    ),
                     "pattern_changes": [],
                     "last_analysis": timestamp,
                 }

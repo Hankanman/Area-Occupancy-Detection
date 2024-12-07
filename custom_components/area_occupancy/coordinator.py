@@ -23,16 +23,10 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 
-from .const import (
-    DOMAIN,
-    CONF_AREA_ID,
-    ProbabilityResult,
-    SensorId,
-    SensorStates,
-    StorageData,
-)
+from .const import DOMAIN, CONF_AREA_ID
+from .types import ProbabilityResult, SensorId, SensorStates, StorageData
 from .calculations import DecayConfig, ProbabilityCalculator
-from .pattern_analyzer import OccupancyPatternAnalyzer
+from .pattern_analysis import OccupancyPatternAnalyzer
 from .historical_analysis import HistoricalAnalysis
 from .config_management import CoreConfig, OptionsConfig
 

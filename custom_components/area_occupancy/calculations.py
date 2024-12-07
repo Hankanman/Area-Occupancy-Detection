@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import math
 import logging
-from dataclasses import dataclass
 from datetime import datetime
-from typing import TypedDict, Any
+from typing import Any
 
 from homeassistant.const import (
     STATE_ON,
@@ -18,9 +17,11 @@ from homeassistant.const import (
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import (
+from .types import (
     ProbabilityResult,
     SensorStates,
+    DecayConfig,
+    CalculationResult,
 )
 from .probabilities import (
     # Core weights
@@ -53,66 +54,6 @@ from .probabilities import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class MotionTrigger(TypedDict):
-    """Type for motion trigger data."""
-
-    entity_id: str
-    timestamp: datetime
-    probability: float
-
-
-class EnvMeasurement(TypedDict):
-    """Type for environmental measurement data."""
-
-    value: float
-    baseline: float
-    last_changed: datetime
-
-
-@dataclass
-class DecayConfig:
-    """Configuration for sensor decay calculations."""
-
-    enabled: bool = True
-    window: int = 600  # seconds
-    type: str = "linear"  # or "exponential"
-
-
-@dataclass
-class MotionCalculationResult:
-    """Result of motion probability calculation."""
-
-    probability: float
-    triggers: list[str]
-    decay_status: dict[str, float]
-
-
-@dataclass
-class MediaCalculationResult:
-    """Result of media device probability calculation."""
-
-    probability: float
-    triggers: list[str]
-    states: dict[str, str]
-
-
-@dataclass
-class ApplianceCalculationResult:
-    """Result of appliance probability calculation."""
-
-    probability: float
-    triggers: list[str]
-    states: dict[str, str]
-
-
-@dataclass
-class EnvironmentalCalculationResult:
-    """Result of environmental probability calculation."""
-
-    probability: float
-    triggers: list[str]
 
 
 class ProbabilityCalculator:
@@ -305,7 +246,7 @@ class ProbabilityCalculator:
         self,
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
-    ) -> MotionCalculationResult:
+    ) -> CalculationResult:
         """Calculate probability based on motion sensors."""
         active_triggers: list[str] = []
         decay_status: dict[str, float] = {}
@@ -364,16 +305,18 @@ class ProbabilityCalculator:
             else MIN_PROBABILITY
         )
 
-        return MotionCalculationResult(
+        return CalculationResult(
             probability=final_probability,
             triggers=active_triggers,
+            result_type="motion",
             decay_status=decay_status,
+            states={},
         )
 
     def _calculate_media_probability(
         self,
         sensor_states: SensorStates,
-    ) -> MediaCalculationResult:
+    ) -> CalculationResult:
         """Calculate probability based on media device states."""
         active_triggers: list[str] = []
         device_states: dict[str, str] = {}
@@ -409,16 +352,18 @@ class ProbabilityCalculator:
             total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
-        return MediaCalculationResult(
+        return CalculationResult(
             probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
+            result_type="media",
             states=device_states,
+            decay_status={},
         )
 
     def _calculate_appliance_probability(
         self,
         sensor_states: SensorStates,
-    ) -> ApplianceCalculationResult:
+    ) -> CalculationResult:
         """Calculate probability based on appliance states."""
         active_triggers: list[str] = []
         device_states: dict[str, str] = {}
@@ -452,16 +397,18 @@ class ProbabilityCalculator:
             total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
-        return ApplianceCalculationResult(
+        return CalculationResult(
             probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
+            result_type="appliance",
             states=device_states,
+            decay_status={},
         )
 
     def _calculate_environmental_probability(
         self,
         sensor_states: SensorStates,
-    ) -> EnvironmentalCalculationResult:
+    ) -> CalculationResult:
         """Calculate probability based on environmental sensors."""
         active_triggers: list[str] = []
         total_probability = 0.0
@@ -509,9 +456,12 @@ class ProbabilityCalculator:
             else MIN_PROBABILITY
         )
 
-        return EnvironmentalCalculationResult(
+        return CalculationResult(
             probability=min(final_probability, MAX_PROBABILITY),
             triggers=active_triggers,
+            result_type="environmental",
+            states={},
+            decay_status={},
         )
 
     def _process_illuminance_sensors(
@@ -590,10 +540,10 @@ class ProbabilityCalculator:
     def _calculate_confidence_score(
         self,
         sensor_states: SensorStates,
-        motion_result: MotionCalculationResult,
-        media_result: MediaCalculationResult,
-        appliance_result: ApplianceCalculationResult,
-        env_result: EnvironmentalCalculationResult,
+        motion_result: CalculationResult,
+        media_result: CalculationResult,
+        appliance_result: CalculationResult,
+        env_result: CalculationResult,
     ) -> float:
         """Calculate overall confidence score."""
         # Sensor availability weight

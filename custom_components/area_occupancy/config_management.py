@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
+from typing import Any
 
 from homeassistant.const import CONF_NAME
 from homeassistant.exceptions import HomeAssistantError
@@ -31,33 +31,9 @@ from .const import (
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_MINIMUM_CONFIDENCE,
 )
+from .types import CoreConfig, OptionsConfig
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class CoreConfig(TypedDict):
-    """Core configuration that cannot be changed after setup."""
-
-    name: str
-    area_id: str
-    motion_sensors: list[str]
-
-
-class OptionsConfig(TypedDict, total=False):
-    """Optional configuration that can be updated."""
-
-    media_devices: list[str]
-    appliances: list[str]
-    illuminance_sensors: list[str]
-    humidity_sensors: list[str]
-    temperature_sensors: list[str]
-    threshold: float
-    history_period: int
-    decay_enabled: bool
-    decay_window: int
-    decay_type: str
-    historical_analysis_enabled: bool
-    minimum_confidence: float
 
 
 class ConfigManager:

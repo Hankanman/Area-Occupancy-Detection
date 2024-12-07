@@ -59,6 +59,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
+        _LOGGER.debug("Starting user step with input: %s", user_input)
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -84,9 +85,13 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_AREA_ID: area_id,
                     }
 
+                    _LOGGER.info(
+                        "User step completed successfully with area ID: %s", area_id
+                    )
                     return await self.async_step_devices()
 
-            except Exception:
+            except Exception as e:
+                _LOGGER.error("Error in user step: %s", e)
                 errors["base"] = "unknown"
 
         # Show initial form
@@ -111,6 +116,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle device configuration step."""
+        _LOGGER.debug("Starting devices step with input: %s", user_input)
         if user_input is not None:
             # Store device configuration in options
             self._options_data.update(
@@ -119,6 +125,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_APPLIANCES: user_input.get(CONF_APPLIANCES, []),
                 }
             )
+            _LOGGER.info("Devices step completed successfully")
             return await self.async_step_environmental()
 
         return self.async_show_form(
@@ -149,6 +156,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor configuration step."""
+        _LOGGER.debug("Starting environmental step with input: %s", user_input)
         if user_input is not None:
             # Store environmental sensor configuration in options
             self._options_data.update(
@@ -162,6 +170,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             )
+            _LOGGER.info("Environmental step completed successfully")
             return await self.async_step_parameters()
 
         return self.async_show_form(
@@ -204,6 +213,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter configuration step."""
+        _LOGGER.debug("Starting parameters step with input: %s", user_input)
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -221,6 +231,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                     # Store parameter configuration in options
                     self._options_data.update(user_input)
 
+                    _LOGGER.info("Parameters step completed successfully")
                     # Create entry with separated core data and options
                     return self.async_create_entry(
                         title=self._core_data[CONF_NAME],
@@ -228,7 +239,8 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                         options=self._options_data,
                     )
 
-            except Exception:
+            except Exception as e:
+                _LOGGER.error("Error in parameters step: %s", e)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -327,6 +339,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle motion sensor configuration step."""
+        _LOGGER.debug("Starting motion step with input: %s", user_input)
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -343,6 +356,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                     data=updated_data,
                 )
 
+                _LOGGER.info("Motion step completed successfully")
                 # Continue to next step without storing in options
                 return await self.async_step_devices()
 
@@ -370,6 +384,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle device configuration step."""
+        _LOGGER.debug("Starting devices step with input: %s", user_input)
         if user_input is not None:
             self._temp_options.update(
                 {
@@ -377,6 +392,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                     CONF_APPLIANCES: user_input.get(CONF_APPLIANCES, []),
                 }
             )
+            _LOGGER.info("Devices step completed successfully")
             return await self.async_step_environmental()
 
         return self.async_show_form(
@@ -411,6 +427,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor configuration step."""
+        _LOGGER.debug("Starting environmental step with input: %s", user_input)
         if user_input is not None:
             self._temp_options.update(
                 {
@@ -423,6 +440,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                     ),
                 }
             )
+            _LOGGER.info("Environmental step completed successfully")
             return await self.async_step_parameters()
 
         return self.async_show_form(
@@ -468,6 +486,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter configuration step."""
+        _LOGGER.debug("Starting parameters step with input: %s", user_input)
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -483,9 +502,11 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                     errors["minimum_confidence"] = "invalid_confidence"
                 else:
                     self._temp_options.update(user_input)
+                    _LOGGER.info("Parameters step completed successfully")
                     return self.async_create_entry(title="", data=self._temp_options)
 
-            except Exception:
+            except Exception as e:
+                _LOGGER.error("Error in parameters step: %s", e)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
