@@ -153,5 +153,94 @@
                 "exponential": "Exponential (Faster Initial Decrease)"
             }
         }
+    },
+    "entity": {
+        "sensor": {
+            "motion_prior": {
+                "name": "Motion Prior",
+                "state_attributes": {
+                    "total_samples": {
+                        "name": "Total Samples",
+                        "description": "Total number of motion sensor readings analyzed"
+                    },
+                    "active_samples": {
+                        "name": "Active Samples",
+                        "description": "Number of samples where motion was detected"
+                    },
+                    "sampling_period": {
+                        "name": "Sampling Period",
+                        "description": "Time period over which samples were collected"
+                    }
+                }
+            },
+            "environmental_prior": {
+                "name": "Environmental Prior",
+                "state_attributes": {
+                    "total_samples": {
+                        "name": "Total Samples",
+                        "description": "Total number of environmental readings analyzed"
+                    },
+                    "active_samples": {
+                        "name": "Active Samples",
+                        "description": "Number of samples with significant environmental changes"
+                    },
+                    "sampling_period": {
+                        "name": "Sampling Period",
+                        "description": "Time period over which samples were collected"
+                    }
+                }
+            },
+            "media_prior": {
+                "name": "Media Prior",
+                "state_attributes": {
+                    "total_samples": {
+                        "name": "Total Samples",
+                        "description": "Total number of media device state readings"
+                    },
+                    "active_samples": {
+                        "name": "Active Samples",
+                        "description": "Number of samples where media was active"
+                    },
+                    "sampling_period": {
+                        "name": "Sampling Period",
+                        "description": "Time period over which samples were collected"
+                    }
+                }
+            },
+            "appliance_prior": {
+                "name": "Appliance Prior",
+                "state_attributes": {
+                    "total_samples": {
+                        "name": "Total Samples",
+                        "description": "Total number of appliance state readings"
+                    },
+                    "active_samples": {
+                        "name": "Active Samples",
+                        "description": "Number of samples where appliances were active"
+                    },
+                    "sampling_period": {
+                        "name": "Sampling Period",
+                        "description": "Time period over which samples were collected"
+                    }
+                }
+            },
+            "occupancy_prior": {
+                "name": "Occupancy Prior",
+                "state_attributes": {
+                    "total_samples": {
+                        "name": "Total Samples",
+                        "description": "Total number of occupancy readings analyzed"
+                    },
+                    "active_samples": {
+                        "name": "Active Samples",
+                        "description": "Number of samples where area was occupied"
+                    },
+                    "sampling_period": {
+                        "name": "Sampling Period",
+                        "description": "Time period over which samples were collected"
+                    }
+                }
+            }
+        }
     }
 }
