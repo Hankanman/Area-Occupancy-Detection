@@ -26,7 +26,6 @@ from homeassistant.helpers.event import (
 from .const import DOMAIN, CONF_AREA_ID
 from .types import ProbabilityResult, SensorId, SensorStates, StorageData
 from .calculations import DecayConfig, ProbabilityCalculator
-from .pattern_analysis import OccupancyPatternAnalyzer
 from .historical_analysis import HistoricalAnalysis
 from .config_management import CoreConfig, OptionsConfig
 
@@ -93,9 +92,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 *self.options_config.get("temperature_sensors", []),
             ],
         )
-
-        # Initialize pattern analyzer
-        self._pattern_analyzer = OccupancyPatternAnalyzer()
 
         # Initialize calculator
         self._calculator = self._create_calculator()
@@ -330,29 +326,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             is_occupied = current_probability >= current_threshold
 
             self._update_historical_data(current_probability, is_occupied)
-
-            # Update pattern recognition
-            now = dt_util.utcnow()
-            try:
-                self._pattern_analyzer.update_pattern(
-                    self.core_config["name"], now, is_occupied
-                )
-                pattern_prob, pattern_confidence = (
-                    self._pattern_analyzer.get_probability_adjustment(
-                        self.core_config["name"], now
-                    )
-                )
-
-                # Apply pattern adjustment if confidence is sufficient
-                if pattern_confidence >= self.options_config["minimum_confidence"]:
-                    pattern_weight = pattern_confidence * 0.3
-                    final_probability = (
-                        current_probability * (1 - pattern_weight)
-                        + pattern_prob * pattern_weight
-                    )
-                    data["probability"] = max(0.0, min(1.0, final_probability))
-            except Exception as pattern_err:
-                _LOGGER.warning("Error updating pattern analysis: %s", pattern_err)
 
             # Add historical metrics
             historical_metrics = self._get_historical_metrics()
