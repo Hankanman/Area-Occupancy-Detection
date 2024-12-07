@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -19,8 +18,8 @@ from .const import (
     STORAGE_KEY_HISTORY,
     STORAGE_VERSION,
     CONF_AREA_ID,
-    StorageData,
 )
+from .types import StorageData
 from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)

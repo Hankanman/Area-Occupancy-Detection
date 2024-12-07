@@ -42,9 +42,9 @@ from .const import (
     DOMAIN,
     NAME_BINARY_SENSOR,
     NAME_PROBABILITY_SENSOR,
-    ProbabilityResult,
     CONF_AREA_ID,
 )
+from .types import ProbabilityResult
 from .coordinator import AreaOccupancyCoordinator
 
 
