@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
@@ -16,12 +16,13 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     STATE_ON,
-    STATE_OFF,
     STATE_PLAYING,
     STATE_PAUSED,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
 )
-from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
+from homeassistant.core import State
 
 from .base import AreaOccupancySensorBase
 from .const import (
@@ -30,9 +31,8 @@ from .const import (
     NAME_MEDIA_PRIOR_SENSOR,
     NAME_APPLIANCE_PRIOR_SENSOR,
     NAME_OCCUPANCY_PRIOR_SENSOR,
-    ATTR_TOTAL_SAMPLES,
-    ATTR_ACTIVE_SAMPLES,
-    ATTR_SAMPLING_PERIOD,
+    ATTR_TOTAL_PERIOD,
+    ATTR_ACTIVE_PERIOD,
 )
 from .coordinator import AreaOccupancyCoordinator
 
@@ -56,21 +56,41 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._total_samples = 0
-        self._active_samples = 0
+        self._total_seconds = 0.0
+        self._active_seconds = 0.0
         self._sampling_period = None
 
     def _format_percentage(self, value: float) -> float:
         """Format percentage to 4 decimal places."""
         return round(float(value * 100), 4)
 
+    def _format_duration(self, seconds: float) -> str:
+        """Format a duration in seconds to a human readable string."""
+        duration = timedelta(seconds=seconds)
+        days = duration.days
+        hours = duration.seconds // 3600
+        minutes = (duration.seconds % 3600) // 60
+        remaining_seconds = duration.seconds % 60
+
+        parts = []
+        if days > 0:
+            parts.append(f"{days}d")
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        if remaining_seconds > 0 or not parts:
+            parts.append(f"{remaining_seconds}s")
+
+        return " ".join(parts)
+
     @property
     def native_value(self) -> float | None:
         """Return the prior probability as a percentage."""
         try:
-            if self._total_samples == 0:
+            if self._total_seconds == 0:
                 return 0.0
-            return self._format_percentage(self._active_samples / self._total_samples)
+            return self._format_percentage(self._active_seconds / self._total_seconds)
         except Exception as err:
             _LOGGER.error("Error calculating prior probability: %s", err)
             return None
@@ -79,50 +99,85 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         return {
-            ATTR_TOTAL_SAMPLES: self._total_samples,
-            ATTR_ACTIVE_SAMPLES: self._active_samples,
-            ATTR_SAMPLING_PERIOD: self._sampling_period,
+            ATTR_TOTAL_PERIOD: self._format_duration(self._total_seconds),
+            ATTR_ACTIVE_PERIOD: self._format_duration(self._active_seconds),
         }
 
     async def _async_update_historical_data(
         self, entity_ids: list[str], process_state_func
     ) -> None:
-        """Update historical data using recorder."""
+        """Update historical data using recorder with time-based calculations."""
         if not entity_ids:
             return
 
         try:
-            start_time = dt_util.utcnow() - timedelta(
+            # Calculate time window
+            end_time = dt_util.utcnow()
+            start_time = end_time - timedelta(
                 days=self.coordinator.options_config["history_period"]
             )
+            total_seconds = (end_time - start_time).total_seconds()
 
             def get_history():
+                """Get history from recorder."""
                 return get_significant_states(
                     self.hass,
                     start_time,
-                    dt_util.utcnow(),
+                    end_time,
                     entity_ids,
                 )
 
             states = await get_instance(self.hass).async_add_executor_job(get_history)
 
-            self._total_samples = 0
-            self._active_samples = 0
+            if not states:
+                self._total_seconds = 0.0
+                self._active_seconds = 0.0
+                return
 
-            if states:
-                for entity_id, entity_states in states.items():
-                    for state in entity_states:
-                        if state:  # Ensure state is not None
-                            self._total_samples += 1
-                            if process_state_func(state):
-                                self._active_samples += 1
+            active_seconds = 0.0
 
+            for entity_id, entity_states in states.items():
+                if not entity_states:
+                    continue
+
+                # Track the time spent in each state
+                current_state = None
+                last_change = start_time
+
+                # Process each state change
+                for state in entity_states:
+                    if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                        continue
+
+                    current_time = state.last_changed
+
+                    # If we had a previous valid state, calculate its duration
+                    if current_state is not None:
+                        duration = (current_time - last_change).total_seconds()
+                        if process_state_func(State(entity_id, current_state, {})):
+                            active_seconds += duration
+
+                    # Update tracking
+                    current_state = state.state
+                    last_change = current_time
+
+                # Handle the final state up to end_time
+                if current_state is not None:
+                    duration = (end_time - last_change).total_seconds()
+                    if process_state_func(State(entity_id, current_state, {})):
+                        active_seconds += duration
+
+            # Store results
+            self._total_seconds = total_seconds
+            self._active_seconds = min(active_seconds, total_seconds)
             self._sampling_period = (
                 f"{self.coordinator.options_config['history_period']} days"
             )
 
         except Exception as err:
             _LOGGER.error("Error updating historical data: %s", err)
+            self._total_seconds = 0.0
+            self._active_seconds = 0.0
 
 
 class MotionPriorSensor(PriorProbabilitySensorBase):
