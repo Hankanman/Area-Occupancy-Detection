@@ -39,6 +39,9 @@ from .const import (
     ATTR_WINDOW_SIZE,
     ATTR_MEDIA_STATES,
     ATTR_APPLIANCE_STATES,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
     DOMAIN,
     NAME_BINARY_SENSOR,
     NAME_PROBABILITY_SENSOR,
@@ -74,9 +77,9 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry_id)},
             "name": self._area_name,
-            "manufacturer": "Area Occupancy",
-            "model": "Occupancy Sensor",
-            "sw_version": "1.0.0",
+            "manufacturer": DEVICE_MANUFACTURER,
+            "model": DEVICE_MODEL,
+            "sw_version": DEVICE_SW_VERSION,
         }
 
     @staticmethod
@@ -93,13 +96,19 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         return f"{DOMAIN}_{self.coordinator.core_config[CONF_AREA_ID]}_{sensor_type}"
 
     @property
-    def name(self) -> str:
+    def name(self) -> str | None:
         """Return the display name of the sensor."""
-        return (
-            NAME_BINARY_SENSOR
-            if isinstance(self, AreaOccupancyBinarySensor)
-            else NAME_PROBABILITY_SENSOR
-        )
+        # Only set default name for main sensors
+        if isinstance(
+            self, (AreaOccupancyBinarySensor, AreaOccupancyProbabilitySensor)
+        ):
+            return (
+                NAME_BINARY_SENSOR
+                if isinstance(self, AreaOccupancyBinarySensor)
+                else NAME_PROBABILITY_SENSOR
+            )
+        # Let prior sensors use their own names
+        return self._attr_name
 
     @property
     def _shared_attributes(self) -> dict[str, Any]:

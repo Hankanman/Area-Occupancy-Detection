@@ -227,17 +227,13 @@
             "occupancy_prior": {
                 "name": "Occupancy Prior",
                 "state_attributes": {
-                    "total_samples": {
-                        "name": "Total Samples",
-                        "description": "Total number of occupancy readings analyzed"
+                    "total_period": {
+                        "name": "Total Period",
+                        "description": "Total time period analyzed"
                     },
-                    "active_samples": {
-                        "name": "Active Samples",
-                        "description": "Number of samples where area was occupied"
-                    },
-                    "sampling_period": {
-                        "name": "Sampling Period",
-                        "description": "Time period over which samples were collected"
+                    "active_period": {
+                        "name": "Active Period",
+                        "description": "Time period where activity was detected"
                     }
                 }
             }

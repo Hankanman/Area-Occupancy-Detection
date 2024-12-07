@@ -6,6 +6,11 @@ from typing import Final
 
 DOMAIN: Final = "area_occupancy"
 
+# Device information
+DEVICE_MANUFACTURER: Final = "Hankanman"
+DEVICE_MODEL: Final = "Area Occupancy Detector"
+DEVICE_SW_VERSION: Final = "2024.12.1"
+
 # Configuration constants
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MEDIA_DEVICES: Final = "media_devices"
@@ -36,6 +41,7 @@ DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_MINIMUM_CONFIDENCE: Final = 0.3
+DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
@@ -69,11 +75,14 @@ ATTR_HISTORICAL_PATTERNS: Final = "historical_patterns"
 ATTR_TYPICAL_OCCUPANCY: Final = "typical_occupancy_rate"
 ATTR_DAY_OCCUPANCY: Final = "day_occupancy_rate"
 ATTR_SENSOR_CORRELATIONS: Final = "sensor_correlations"
+ATTR_PROB_GIVEN_TRUE: Final = "probability_given_true"
+ATTR_PROB_GIVEN_FALSE: Final = "probability_given_false"
+ATTR_CONFIDENCE: Final = "confidence"
+ATTR_LAST_UPDATED: Final = "last_updated"
 
 # Prior probability attributes
-ATTR_TOTAL_SAMPLES: Final = "total_samples"
-ATTR_ACTIVE_SAMPLES: Final = "active_samples"
-ATTR_SAMPLING_PERIOD: Final = "sampling_period"
+ATTR_TOTAL_PERIOD: Final = "total_period"
+ATTR_ACTIVE_PERIOD: Final = "active_period"
 ATTR_MOTION_PRIOR: Final = "motion_prior"
 ATTR_ENVIRONMENTAL_PRIOR: Final = "environmental_prior"
 ATTR_MEDIA_PRIOR: Final = "media_prior"

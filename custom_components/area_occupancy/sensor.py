@@ -59,34 +59,39 @@ async def async_setup_entry(
             "coordinator"
         ]
 
+        # Create main probability sensor
         entities = [
-            # Main probability sensor
             AreaOccupancyProbabilitySensor(
                 coordinator=coordinator,
                 entry_id=entry.entry_id,
-            ),
-            # Prior probability sensors
-            MotionPriorSensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            ),
-            EnvironmentalPriorSensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            ),
-            MediaPriorSensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            ),
-            AppliancePriorSensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            ),
-            OccupancyPriorSensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            ),
+            )
         ]
+
+        # Create prior sensors if history period is configured
+        if coordinator.options_config.get("history_period"):
+            prior_sensors = [
+                MotionPriorSensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                ),
+                EnvironmentalPriorSensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                ),
+                MediaPriorSensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                ),
+                AppliancePriorSensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                ),
+                OccupancyPriorSensor(
+                    coordinator=coordinator,
+                    entry_id=entry.entry_id,
+                ),
+            ]
+            entities.extend(prior_sensors)
 
         async_add_entities(entities)
 
