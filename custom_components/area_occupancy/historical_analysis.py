@@ -129,6 +129,61 @@ class HistoricalAnalysis:
                 f"Failed to retrieve historical states: {err}"
             ) from err
 
+    def _process_time_slot_results(self, time_slots: dict) -> dict:
+        """Process and format time slot results."""
+        processed_slots = {}
+
+        for slot, data in time_slots.items():
+            if "occupied_ratio" in data and data["occupied_ratio"] > 0.0:
+                processed_slots[slot] = {
+                    "occupied_ratio": round(float(data["occupied_ratio"]), 4),
+                    "samples": int(data["samples"]),
+                }
+
+        return processed_slots
+
+    def _process_day_pattern_results(self, patterns: dict) -> dict:
+        """Process and format day pattern results."""
+        return {
+            day: {
+                "occupied_ratio": round(float(data["occupied_ratio"]), 4),
+                "samples": int(data["samples"]),
+                "confidence": round(float(data.get("confidence", 0.0)), 4),
+            }
+            for day, data in patterns.items()
+        }
+
+    def _process_motion_pattern_results(self, sensor_patterns: dict) -> dict:
+        """Process and format motion pattern results."""
+        processed_patterns = {}
+
+        for sensor_id, pattern_data in sensor_patterns.items():
+            processed_patterns[sensor_id] = {
+                "total_activations": int(pattern_data["total_activations"]),
+                "average_duration": int(round(float(pattern_data["average_duration"]))),
+                "time_slots": {},
+                "day_patterns": {},
+            }
+
+            # Process time slots
+            for slot, slot_data in pattern_data["time_slots"].items():
+                if slot_data["active_samples"] > 0:  # Only include slots with activity
+                    processed_patterns[sensor_id]["time_slots"][slot] = {
+                        "total_samples": int(slot_data["total_samples"]),
+                        "active_samples": int(slot_data["active_samples"]),
+                        "average_duration": int(
+                            round(float(slot_data["average_duration"]))
+                        ),
+                        "confidence": round(float(slot_data["confidence"]), 4),
+                    }
+
+            # Process day patterns
+            processed_patterns[sensor_id]["day_patterns"] = (
+                self._process_day_pattern_results(pattern_data["day_patterns"])
+            )
+
+        return processed_patterns
+
     async def _analyze_historical_states(
         self, states: dict[str, List[State]]
     ) -> dict[str, Any]:
@@ -138,12 +193,24 @@ class HistoricalAnalysis:
             occupancy_patterns = await self._analyze_occupancy_patterns(states)
             sensor_correlations = await self._analyze_sensor_correlations(states)
 
-            return {
-                "motion_patterns": motion_patterns,
-                "occupancy_patterns": occupancy_patterns,
+            # Process results with consistent formatting
+            processed_results = {
+                "motion_patterns": self._process_motion_pattern_results(
+                    motion_patterns
+                ),
+                "occupancy_patterns": {
+                    "time_slots": self._process_time_slot_results(
+                        occupancy_patterns["time_slots"]
+                    ),
+                    "day_patterns": self._process_day_pattern_results(
+                        occupancy_patterns["day_patterns"]
+                    ),
+                },
                 "sensor_correlations": sensor_correlations,
                 "last_analyzed": dt_util.utcnow().isoformat(),
             }
+
+            return processed_results
 
         except Exception as err:
             _LOGGER.error("Error analyzing historical states: %s", err)
