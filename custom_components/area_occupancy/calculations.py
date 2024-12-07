@@ -177,10 +177,10 @@ class ProbabilityCalculator:
 
             # Calculate final probability
             final_prob = (
-                motion_result.probability * weights["motion"]
-                + media_result.probability * weights["media"]
-                + appliance_result.probability * weights["appliance"]
-                + env_result.probability * weights["environmental"]
+                motion_result["probability"] * weights["motion"]
+                + media_result["probability"] * weights["media"]
+                + appliance_result["probability"] * weights["appliance"]
+                + env_result["probability"] * weights["environmental"]
             )
 
             # Calculate confidence score
@@ -190,24 +190,24 @@ class ProbabilityCalculator:
 
             return {
                 "probability": max(MIN_PROBABILITY, min(final_prob, MAX_PROBABILITY)),
-                "prior_probability": motion_result.probability,
+                "prior_probability": motion_result["probability"],
                 "active_triggers": (
-                    motion_result.triggers
-                    + media_result.triggers
-                    + appliance_result.triggers
-                    + env_result.triggers
+                    motion_result["triggers"]
+                    + media_result["triggers"]
+                    + appliance_result["triggers"]
+                    + env_result["triggers"]
                 ),
                 "sensor_probabilities": {
-                    "motion_probability": motion_result.probability,
-                    "media_probability": media_result.probability,
-                    "appliance_probability": appliance_result.probability,
-                    "environmental_probability": env_result.probability,
+                    "motion_probability": motion_result["probability"],
+                    "media_probability": media_result["probability"],
+                    "appliance_probability": appliance_result["probability"],
+                    "environmental_probability": env_result["probability"],
                 },
                 "device_states": {
-                    "media_states": media_result.states,
-                    "appliance_states": appliance_result.states,
+                    "media_states": media_result["states"],
+                    "appliance_states": appliance_result["states"],
                 },
-                "decay_status": motion_result.decay_status,
+                "decay_status": motion_result["decay_status"],
                 "confidence_score": confidence_score,
                 "sensor_availability": {
                     sensor_id: state.get("availability", False)
@@ -305,13 +305,13 @@ class ProbabilityCalculator:
             else MIN_PROBABILITY
         )
 
-        return CalculationResult(
-            probability=final_probability,
-            triggers=active_triggers,
-            result_type="motion",
-            decay_status=decay_status,
-            states={},
-        )
+        return {
+            "probability": final_probability,
+            "triggers": active_triggers,
+            "result_type": "motion",
+            "decay_status": decay_status,
+            "states": {},
+        }
 
     def _calculate_media_probability(
         self,
@@ -352,13 +352,13 @@ class ProbabilityCalculator:
             total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
-        return CalculationResult(
-            probability=min(final_probability, MAX_PROBABILITY),
-            triggers=active_triggers,
-            result_type="media",
-            states=device_states,
-            decay_status={},
-        )
+        return {
+            "probability": min(final_probability, MAX_PROBABILITY),
+            "triggers": active_triggers,
+            "result_type": "media",
+            "states": device_states,
+            "decay_status": {},
+        }
 
     def _calculate_appliance_probability(
         self,
@@ -397,13 +397,13 @@ class ProbabilityCalculator:
             total_probability / valid_devices if valid_devices > 0 else MIN_PROBABILITY
         )
 
-        return CalculationResult(
-            probability=min(final_probability, MAX_PROBABILITY),
-            triggers=active_triggers,
-            result_type="appliance",
-            states=device_states,
-            decay_status={},
-        )
+        return {
+            "probability": min(final_probability, MAX_PROBABILITY),
+            "triggers": active_triggers,
+            "result_type": "appliance",
+            "states": device_states,
+            "decay_status": {},
+        }
 
     def _calculate_environmental_probability(
         self,
@@ -456,13 +456,13 @@ class ProbabilityCalculator:
             else MIN_PROBABILITY
         )
 
-        return CalculationResult(
-            probability=min(final_probability, MAX_PROBABILITY),
-            triggers=active_triggers,
-            result_type="environmental",
-            states={},
-            decay_status={},
-        )
+        return {
+            "probability": min(final_probability, MAX_PROBABILITY),
+            "triggers": active_triggers,
+            "result_type": "environmental",
+            "states": {},
+            "decay_status": {},
+        }
 
     def _process_illuminance_sensors(
         self,
@@ -557,10 +557,10 @@ class ProbabilityCalculator:
 
         # Trigger consistency weight
         all_probabilities = [
-            motion_result.probability,
-            media_result.probability,
-            appliance_result.probability,
-            env_result.probability,
+            motion_result["probability"],
+            media_result["probability"],
+            appliance_result["probability"],
+            env_result["probability"],
         ]
         valid_probs = [p for p in all_probabilities if p is not None]
 

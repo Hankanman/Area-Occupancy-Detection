@@ -1,4 +1,4 @@
-"""Area Occupancy Detection config and options flow."""
+"""Config flow for Area Occupancy Detection integration."""
 
 from __future__ import annotations
 
@@ -7,15 +7,30 @@ import uuid
 from typing import Any
 
 import voluptuous as vol
+
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     OptionsFlowWithConfigEntry,
 )
-from homeassistant.const import CONF_NAME
+from homeassistant.const import (
+    CONF_NAME,
+    Platform,
+)
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 from .const import (
     DOMAIN,
@@ -45,6 +60,161 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def create_form_schema(defaults: dict[str, Any] | None = None) -> dict:
+    """Create a form schema with optional default values."""
+    if defaults is None:
+        defaults = {}
+
+    return {
+        vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
+        vol.Required(
+            CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=Platform.BINARY_SENSOR,
+                device_class=BinarySensorDeviceClass.MOTION,
+                multiple=True,
+            ),
+        ),
+    }
+
+
+def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
+    """Create device configuration schema with optional default values."""
+    if defaults is None:
+        defaults = {}
+
+    return {
+        vol.Optional(
+            CONF_MEDIA_DEVICES, default=defaults.get(CONF_MEDIA_DEVICES, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=Platform.MEDIA_PLAYER,
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
+            CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=[Platform.BINARY_SENSOR, Platform.SWITCH],
+                device_class=["power", "plug", "outlet"],
+                multiple=True,
+            ),
+        ),
+    }
+
+
+def create_environmental_schema(defaults: dict[str, Any] | None = None) -> dict:
+    """Create environmental sensor schema with optional default values."""
+    if defaults is None:
+        defaults = {}
+
+    return {
+        vol.Optional(
+            CONF_ILLUMINANCE_SENSORS, default=defaults.get(CONF_ILLUMINANCE_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=Platform.SENSOR,
+                device_class=SensorDeviceClass.ILLUMINANCE,
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
+            CONF_HUMIDITY_SENSORS, default=defaults.get(CONF_HUMIDITY_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=Platform.SENSOR,
+                device_class=SensorDeviceClass.HUMIDITY,
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
+            CONF_TEMPERATURE_SENSORS, default=defaults.get(CONF_TEMPERATURE_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=Platform.SENSOR,
+                device_class=SensorDeviceClass.TEMPERATURE,
+                multiple=True,
+            ),
+        ),
+    }
+
+
+def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
+    """Create parameters schema with optional default values."""
+    if defaults is None:
+        defaults = {}
+
+    return {
+        vol.Optional(
+            CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_HISTORY_PERIOD,
+            default=defaults.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1,
+                max=30,
+                step=1,
+                mode="slider",
+                unit_of_measurement="days",
+            ),
+        ),
+        vol.Optional(
+            CONF_DECAY_ENABLED,
+            default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+        ): BooleanSelector(),
+        vol.Optional(
+            CONF_DECAY_WINDOW,
+            default=defaults.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=60,
+                max=3600,
+                step=60,
+                mode="slider",
+                unit_of_measurement="seconds",
+            ),
+        ),
+        vol.Optional(
+            CONF_DECAY_TYPE,
+            default=defaults.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=["linear", "exponential"],
+                mode="dropdown",
+                translation_key="decay_type",
+            ),
+        ),
+        vol.Optional(
+            CONF_HISTORICAL_ANALYSIS_ENABLED,
+            default=defaults.get(
+                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+            ),
+        ): BooleanSelector(),
+        vol.Optional(
+            CONF_MINIMUM_CONFIDENCE,
+            default=defaults.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+    }
+
+
 class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection."""
 
@@ -59,263 +229,88 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        _LOGGER.debug("Starting user step with input: %s", user_input)
         errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
-                name = user_input[CONF_NAME]
-                motion_sensors = user_input[CONF_MOTION_SENSORS]
+                # Generate unique ID
+                area_id = str(uuid.uuid4())
+                await self.async_set_unique_id(area_id)
+                self._abort_if_unique_id_configured()
 
-                # Validate motion sensors are provided
-                if not motion_sensors:
-                    errors["base"] = "no_motion_sensors"
-                else:
-                    # Generate unique ID for the area
-                    area_id = str(uuid.uuid4())
+                # Store core configuration
+                self._core_data = {
+                    CONF_NAME: user_input[CONF_NAME],
+                    CONF_AREA_ID: area_id,
+                    CONF_MOTION_SENSORS: user_input[CONF_MOTION_SENSORS],
+                }
 
-                    # Set unique ID based on generated ID
-                    await self.async_set_unique_id(area_id)
-                    self._abort_if_unique_id_configured()
+                # Proceed to devices step
+                return await self.async_step_devices()
 
-                    # Store core data with area ID
-                    self._core_data = {
-                        CONF_NAME: name,
-                        CONF_MOTION_SENSORS: motion_sensors,
-                        CONF_AREA_ID: area_id,
-                    }
-
-                    _LOGGER.info(
-                        "User step completed successfully with area ID: %s", area_id
-                    )
-                    return await self.async_step_devices()
-
-            except Exception as e:
-                _LOGGER.error("Error in user step: %s", e)
+            except Exception as err:
+                _LOGGER.error("Error in user step: %s", err)
                 errors["base"] = "unknown"
 
-        # Show initial form
+        schema = create_form_schema(self._core_data)
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_NAME): str,
-                    vol.Required(CONF_MOTION_SENSORS): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="binary_sensor",
-                            device_class="motion",
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
             errors=errors,
         )
 
     async def async_step_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle device configuration step."""
-        _LOGGER.debug("Starting devices step with input: %s", user_input)
+        """Handle device configuration."""
         if user_input is not None:
-            # Store device configuration in options
-            self._options_data.update(
-                {
-                    CONF_MEDIA_DEVICES: user_input.get(CONF_MEDIA_DEVICES, []),
-                    CONF_APPLIANCES: user_input.get(CONF_APPLIANCES, []),
-                }
-            )
-            _LOGGER.info("Devices step completed successfully")
+            self._options_data.update(user_input)
             return await self.async_step_environmental()
 
+        schema = create_device_schema(self._options_data)
         return self.async_show_form(
             step_id="devices",
+            data_schema=vol.Schema(schema),
             description_placeholders={"name": self._core_data[CONF_NAME]},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_MEDIA_DEVICES, default=[]
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="media_player",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(CONF_APPLIANCES, default=[]): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=["binary_sensor", "switch"],
-                            device_class=["power", "plug", "outlet"],
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
         )
 
     async def async_step_environmental(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle environmental sensor configuration step."""
-        _LOGGER.debug("Starting environmental step with input: %s", user_input)
+        """Handle environmental sensor configuration."""
         if user_input is not None:
-            # Store environmental sensor configuration in options
-            self._options_data.update(
-                {
-                    CONF_ILLUMINANCE_SENSORS: user_input.get(
-                        CONF_ILLUMINANCE_SENSORS, []
-                    ),
-                    CONF_HUMIDITY_SENSORS: user_input.get(CONF_HUMIDITY_SENSORS, []),
-                    CONF_TEMPERATURE_SENSORS: user_input.get(
-                        CONF_TEMPERATURE_SENSORS, []
-                    ),
-                }
-            )
-            _LOGGER.info("Environmental step completed successfully")
+            self._options_data.update(user_input)
             return await self.async_step_parameters()
 
+        schema = create_environmental_schema(self._options_data)
         return self.async_show_form(
             step_id="environmental",
+            data_schema=vol.Schema(schema),
             description_placeholders={"name": self._core_data[CONF_NAME]},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_ILLUMINANCE_SENSORS, default=[]
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="illuminance",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HUMIDITY_SENSORS, default=[]
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="humidity",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_TEMPERATURE_SENSORS, default=[]
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="temperature",
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
         )
 
     async def async_step_parameters(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle parameter configuration step."""
-        _LOGGER.debug("Starting parameters step with input: %s", user_input)
-        errors: dict[str, str] = {}
-
+        """Handle parameter configuration."""
         if user_input is not None:
-            try:
-                # Validate parameters
-                if not 0 <= user_input[CONF_THRESHOLD] <= 1:
-                    errors["threshold"] = "invalid_threshold"
-                elif not 1 <= user_input[CONF_HISTORY_PERIOD] <= 30:
-                    errors["history_period"] = "invalid_history"
-                elif not 60 <= user_input[CONF_DECAY_WINDOW] <= 3600:
-                    errors["decay_window"] = "invalid_decay"
-                elif not 0 <= user_input[CONF_MINIMUM_CONFIDENCE] <= 1:
-                    errors["minimum_confidence"] = "invalid_confidence"
-                else:
-                    # Store parameter configuration in options
-                    self._options_data.update(user_input)
+            self._options_data.update(user_input)
+            return self.async_create_entry(
+                title=self._core_data[CONF_NAME],
+                data=self._core_data,
+                options=self._options_data,
+            )
 
-                    _LOGGER.info("Parameters step completed successfully")
-                    # Create entry with separated core data and options
-                    return self.async_create_entry(
-                        title=self._core_data[CONF_NAME],
-                        data=self._core_data,
-                        options=self._options_data,
-                    )
-
-            except Exception as e:
-                _LOGGER.error("Error in parameters step: %s", e)
-                errors["base"] = "unknown"
-
+        schema = create_parameters_schema(self._options_data)
         return self.async_show_form(
             step_id="parameters",
+            data_schema=vol.Schema(schema),
             description_placeholders={"name": self._core_data[CONF_NAME]},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_THRESHOLD, default=DEFAULT_THRESHOLD
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0,
-                            max=1.0,
-                            step=0.05,
-                            mode="slider",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HISTORY_PERIOD, default=DEFAULT_HISTORY_PERIOD
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1,
-                            max=30,
-                            step=1,
-                            mode="slider",
-                            unit_of_measurement="days",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_DECAY_ENABLED, default=DEFAULT_DECAY_ENABLED
-                    ): selector.BooleanSelector(),
-                    vol.Optional(
-                        CONF_DECAY_WINDOW, default=DEFAULT_DECAY_WINDOW
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=60,
-                            max=3600,
-                            step=60,
-                            mode="slider",
-                            unit_of_measurement="seconds",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_DECAY_TYPE, default=DEFAULT_DECAY_TYPE
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=["linear", "exponential"],
-                            mode="dropdown",
-                            translation_key="decay_type",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HISTORICAL_ANALYSIS_ENABLED,
-                        default=DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                    ): selector.BooleanSelector(),
-                    vol.Optional(
-                        CONF_MINIMUM_CONFIDENCE, default=DEFAULT_MINIMUM_CONFIDENCE
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0,
-                            max=1.0,
-                            step=0.05,
-                            mode="slider",
-                        ),
-                    ),
-                }
-            ),
-            errors=errors,
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> AreaOccupancyOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow for this handler."""
         return AreaOccupancyOptionsFlow(config_entry)
 
@@ -326,274 +321,104 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self.current_options = dict(config_entry.options)
-        self._temp_options: dict[str, Any] = {}
+        self._core_data = dict(config_entry.data)
+        self._options_data = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage the options starting step."""
+        """Manage the options."""
         return await self.async_step_motion()
 
     async def async_step_motion(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle motion sensor configuration step."""
-        _LOGGER.debug("Starting motion step with input: %s", user_input)
+        """Handle motion sensor options."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_MOTION_SENSORS):
-                errors["base"] = "no_motion_sensors"
-            else:
-                # Update core config with new motion sensors
-                updated_data = dict(self.config_entry.data)
-                updated_data[CONF_MOTION_SENSORS] = user_input[CONF_MOTION_SENSORS]
+            try:
+                if not user_input.get(CONF_MOTION_SENSORS):
+                    errors["base"] = "no_motion_sensors"
+                else:
+                    self._core_data[CONF_MOTION_SENSORS] = user_input[
+                        CONF_MOTION_SENSORS
+                    ]
+                    return await self.async_step_devices()
 
-                # Update the config entry's core data
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data=updated_data,
-                )
+            except Exception as err:
+                _LOGGER.error("Error in motion step: %s", err)
+                errors["base"] = "unknown"
 
-                _LOGGER.info("Motion step completed successfully")
-                # Continue to next step without storing in options
-                return await self.async_step_devices()
+        schema = {
+            vol.Required(
+                CONF_MOTION_SENSORS,
+                default=self._core_data.get(CONF_MOTION_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.BINARY_SENSOR,
+                    device_class=BinarySensorDeviceClass.MOTION,
+                    multiple=True,
+                ),
+            ),
+        }
 
         return self.async_show_form(
             step_id="motion",
-            description_placeholders={"name": self.config_entry.title},
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_MOTION_SENSORS,
-                        default=self.config_entry.data.get(CONF_MOTION_SENSORS, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="binary_sensor",
-                            device_class="motion",
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
             errors=errors,
+            description_placeholders={"name": self._core_data[CONF_NAME]},
         )
 
     async def async_step_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle device configuration step."""
-        _LOGGER.debug("Starting devices step with input: %s", user_input)
+        """Handle device options."""
         if user_input is not None:
-            self._temp_options.update(
-                {
-                    CONF_MEDIA_DEVICES: user_input.get(CONF_MEDIA_DEVICES, []),
-                    CONF_APPLIANCES: user_input.get(CONF_APPLIANCES, []),
-                }
-            )
-            _LOGGER.info("Devices step completed successfully")
+            self._options_data.update(user_input)
             return await self.async_step_environmental()
 
+        schema = create_device_schema(self._options_data)
         return self.async_show_form(
             step_id="devices",
-            description_placeholders={"name": self.config_entry.title},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_MEDIA_DEVICES,
-                        default=self.current_options.get(CONF_MEDIA_DEVICES, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="media_player",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_APPLIANCES,
-                        default=self.current_options.get(CONF_APPLIANCES, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=["binary_sensor", "switch"],
-                            device_class=["power", "plug", "outlet"],
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
+            description_placeholders={"name": self._core_data[CONF_NAME]},
         )
 
     async def async_step_environmental(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle environmental sensor configuration step."""
-        _LOGGER.debug("Starting environmental step with input: %s", user_input)
+        """Handle environmental sensor options."""
         if user_input is not None:
-            self._temp_options.update(
-                {
-                    CONF_ILLUMINANCE_SENSORS: user_input.get(
-                        CONF_ILLUMINANCE_SENSORS, []
-                    ),
-                    CONF_HUMIDITY_SENSORS: user_input.get(CONF_HUMIDITY_SENSORS, []),
-                    CONF_TEMPERATURE_SENSORS: user_input.get(
-                        CONF_TEMPERATURE_SENSORS, []
-                    ),
-                }
-            )
-            _LOGGER.info("Environmental step completed successfully")
+            self._options_data.update(user_input)
             return await self.async_step_parameters()
 
+        schema = create_environmental_schema(self._options_data)
         return self.async_show_form(
             step_id="environmental",
-            description_placeholders={"name": self.config_entry.title},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_ILLUMINANCE_SENSORS,
-                        default=self.current_options.get(CONF_ILLUMINANCE_SENSORS, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="illuminance",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HUMIDITY_SENSORS,
-                        default=self.current_options.get(CONF_HUMIDITY_SENSORS, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="humidity",
-                            multiple=True,
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_TEMPERATURE_SENSORS,
-                        default=self.current_options.get(CONF_TEMPERATURE_SENSORS, []),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor",
-                            device_class="temperature",
-                            multiple=True,
-                        ),
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
+            description_placeholders={"name": self._core_data[CONF_NAME]},
         )
 
     async def async_step_parameters(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle parameter configuration step."""
-        _LOGGER.debug("Starting parameters step with input: %s", user_input)
-        errors: dict[str, str] = {}
-
+        """Handle parameter options."""
         if user_input is not None:
-            try:
-                # Validate parameters
-                if not 0 <= user_input[CONF_THRESHOLD] <= 1:
-                    errors["threshold"] = "invalid_threshold"
-                elif not 1 <= user_input[CONF_HISTORY_PERIOD] <= 30:
-                    errors["history_period"] = "invalid_history"
-                elif not 60 <= user_input[CONF_DECAY_WINDOW] <= 3600:
-                    errors["decay_window"] = "invalid_decay"
-                elif not 0 <= user_input[CONF_MINIMUM_CONFIDENCE] <= 1:
-                    errors["minimum_confidence"] = "invalid_confidence"
-                else:
-                    self._temp_options.update(user_input)
-                    _LOGGER.info("Parameters step completed successfully")
-                    return self.async_create_entry(title="", data=self._temp_options)
+            self._options_data.update(user_input)
 
-            except Exception as e:
-                _LOGGER.error("Error in parameters step: %s", e)
-                errors["base"] = "unknown"
+            # Update config entry
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=self._core_data,
+                options=self._options_data,
+            )
 
+            return self.async_create_entry(title="", data=self._options_data)
+
+        schema = create_parameters_schema(self._options_data)
         return self.async_show_form(
             step_id="parameters",
-            description_placeholders={"name": self.config_entry.title},
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_THRESHOLD,
-                        default=self.current_options.get(
-                            CONF_THRESHOLD, DEFAULT_THRESHOLD
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0,
-                            max=1.0,
-                            step=0.05,
-                            mode="slider",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HISTORY_PERIOD,
-                        default=self.current_options.get(
-                            CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1,
-                            max=30,
-                            step=1,
-                            mode="slider",
-                            unit_of_measurement="days",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_DECAY_ENABLED,
-                        default=self.current_options.get(
-                            CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
-                        ),
-                    ): selector.BooleanSelector(),
-                    vol.Optional(
-                        CONF_DECAY_WINDOW,
-                        default=self.current_options.get(
-                            CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=60,
-                            max=3600,
-                            step=60,
-                            mode="slider",
-                            unit_of_measurement="seconds",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_DECAY_TYPE,
-                        default=self.current_options.get(
-                            CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE
-                        ),
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=["linear", "exponential"],
-                            mode="dropdown",
-                            translation_key="decay_type",
-                        ),
-                    ),
-                    vol.Optional(
-                        CONF_HISTORICAL_ANALYSIS_ENABLED,
-                        default=self.current_options.get(
-                            CONF_HISTORICAL_ANALYSIS_ENABLED,
-                            DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                        ),
-                    ): selector.BooleanSelector(),
-                    vol.Optional(
-                        CONF_MINIMUM_CONFIDENCE,
-                        default=self.current_options.get(
-                            CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0,
-                            max=1.0,
-                            step=0.05,
-                            mode="slider",
-                        ),
-                    ),
-                }
-            ),
-            errors=errors,
+            data_schema=vol.Schema(schema),
+            description_placeholders={"name": self._core_data[CONF_NAME]},
         )

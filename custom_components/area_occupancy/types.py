@@ -1,9 +1,10 @@
 """Constants and types for the Area Occupancy Detection integration."""
 
 from __future__ import annotations
+from dataclasses import dataclass
 
 from datetime import datetime
-from typing import NamedTuple, TypedDict, NotRequired, Literal, Any, Dict
+from typing import NamedTuple, TypedDict, NotRequired, Literal, Any, Dict, List
 
 # Type aliases
 SensorId = str
@@ -174,19 +175,20 @@ class PatternSummary(NamedTuple):
     significant_changes: int
 
 
+@dataclass
 class DecayConfig:
     """Configuration for sensor decay calculations."""
 
-    enabled: bool
-    window: int
-    type: str
+    enabled: bool = True
+    window: int = 600  # seconds
+    type: Literal["linear", "exponential"] = "linear"
 
 
-class CalculationResult:
-    """Result of probability calculation."""
+class CalculationResult(TypedDict):
+    """Result from probability calculation steps."""
 
     probability: float
-    triggers: list[str]
+    triggers: List[str]
     result_type: str
     decay_status: dict[str, float]
     states: dict[str, str]
