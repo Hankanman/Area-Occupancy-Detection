@@ -8,10 +8,23 @@ from typing import Dict, Tuple
 from collections import defaultdict
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from .types import PatternSummary, TimeSlot
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def create_time_slot() -> TimeSlot:
+    """Create a new TimeSlot with default values."""
+    return {
+        "total_samples": 0,
+        "active_samples": 0,
+        "occupied_samples": 0,
+        "average_duration": 0.0,
+        "confidence": 0.0,
+        "last_updated": dt_util.utcnow(),
+    }
 
 
 class OccupancyPatternAnalyzer:
@@ -41,23 +54,9 @@ class OccupancyPatternAnalyzer:
         try:
             if area_id not in self._patterns:
                 self._patterns[area_id] = {
-                    "daily_patterns": defaultdict(
-                        lambda: TimeSlot(
-                            total_samples=0,
-                            active_samples=0,
-                            average_duration=0.0,
-                            confidence=0.0,
-                        )
-                    ),
+                    "daily_patterns": defaultdict(create_time_slot),
                     "weekly_patterns": defaultdict(
-                        lambda: defaultdict(
-                            lambda: TimeSlot(
-                                total_samples=0,
-                                active_samples=0,
-                                average_duration=0.0,
-                                confidence=0.0,
-                            )
-                        )
+                        lambda: defaultdict(create_time_slot)
                     ),
                     "pattern_changes": [],
                     "last_analysis": timestamp,
@@ -69,19 +68,19 @@ class OccupancyPatternAnalyzer:
 
             # Update daily pattern
             daily = pattern["daily_patterns"][time_slot]
-            daily.total_samples += 1
+            daily["total_samples"] += 1
             if is_occupied:
-                daily.occupied_samples += 1
-            daily.confidence = min(daily.total_samples / 100, 1.0)
-            daily.last_updated = timestamp
+                daily["occupied_samples"] += 1
+            daily["confidence"] = min(daily["total_samples"] / 100, 1.0)
+            daily["last_updated"] = timestamp
 
             # Update weekly pattern
             weekly = pattern["weekly_patterns"][day_name][time_slot]
-            weekly.total_samples += 1
+            weekly["total_samples"] += 1
             if is_occupied:
-                weekly.occupied_samples += 1
-            weekly.confidence = min(weekly.total_samples / 100, 1.0)
-            weekly.last_updated = timestamp
+                weekly["occupied_samples"] += 1
+            weekly["confidence"] = min(weekly["total_samples"] / 100, 1.0)
+            weekly["last_updated"] = timestamp
 
             # Detect pattern changes
             self._detect_pattern_changes(area_id, timestamp)
@@ -107,20 +106,20 @@ class OccupancyPatternAnalyzer:
             # Get daily pattern probability
             daily_data = pattern["daily_patterns"][time_slot]
             daily_prob = (
-                daily_data.occupied_samples / daily_data.total_samples
-                if daily_data.total_samples > 0
+                daily_data["occupied_samples"] / daily_data["total_samples"]
+                if daily_data["total_samples"] > 0
                 else 0.0
             )
-            daily_confidence = daily_data.confidence
+            daily_confidence = daily_data["confidence"]
 
             # Get weekly pattern probability
             weekly_data = pattern["weekly_patterns"][day_name][time_slot]
             weekly_prob = (
-                weekly_data.occupied_samples / weekly_data.total_samples
-                if weekly_data.total_samples > 0
+                weekly_data["occupied_samples"] / weekly_data["total_samples"]
+                if weekly_data["total_samples"] > 0
                 else 0.0
             )
-            weekly_confidence = weekly_data.confidence
+            weekly_confidence = weekly_data["confidence"]
 
             # Combine probabilities based on confidence
             if (
@@ -161,15 +160,15 @@ class OccupancyPatternAnalyzer:
             # Compare patterns over the last week
             week_ago = timestamp - timedelta(days=7)
             for time_slot, data in daily_patterns.items():
-                if data.last_updated < week_ago:
+                if data["last_updated"] < week_ago:
                     continue
 
                 historical_prob = self._get_historical_probability(
                     area_id, time_slot, week_ago
                 )
                 current_prob = (
-                    data.occupied_samples / data.total_samples
-                    if data.total_samples > 0
+                    data["occupied_samples"] / data["total_samples"]
+                    if data["total_samples"] > 0
                     else 0.0
                 )
 
@@ -197,12 +196,12 @@ class OccupancyPatternAnalyzer:
             pattern = self._patterns[area_id]
             daily_data = pattern["daily_patterns"][time_slot]
 
-            if daily_data.last_updated >= before_date:
+            if daily_data["last_updated"] >= before_date:
                 return 0.0
 
             return (
-                daily_data.occupied_samples / daily_data.total_samples
-                if daily_data.total_samples > 0
+                daily_data["occupied_samples"] / daily_data["total_samples"]
+                if daily_data["total_samples"] > 0
                 else 0.0
             )
         except Exception as err:
@@ -220,8 +219,8 @@ class OccupancyPatternAnalyzer:
             # Calculate peak occupancy times
             daily_peaks = []
             for time_slot, data in pattern["daily_patterns"].items():
-                if data.total_samples > 0:
-                    prob = data.occupied_samples / data.total_samples
+                if data["total_samples"] > 0:
+                    prob = data["occupied_samples"] / data["total_samples"]
                     if prob > 0.7:  # Consider slots with >70% occupancy as peaks
                         daily_peaks.append((time_slot, prob))
 
@@ -240,7 +239,9 @@ class OccupancyPatternAnalyzer:
                     )
 
             total_days = len(
-                set(d.last_updated.date() for d in pattern["daily_patterns"].values())
+                set(
+                    d["last_updated"].date() for d in pattern["daily_patterns"].values()
+                )
             )
 
             return PatternSummary(
@@ -266,7 +267,7 @@ class OccupancyPatternAnalyzer:
             pattern["daily_patterns"] = {
                 slot: data
                 for slot, data in pattern["daily_patterns"].items()
-                if data.last_updated >= before_date
+                if data["last_updated"] >= before_date
             }
 
             # Clear old weekly patterns
@@ -274,7 +275,7 @@ class OccupancyPatternAnalyzer:
                 pattern["weekly_patterns"][day] = {
                     slot: data
                     for slot, data in pattern["weekly_patterns"][day].items()
-                    if data.last_updated >= before_date
+                    if data["last_updated"] >= before_date
                 }
 
             # Clear old pattern changes
