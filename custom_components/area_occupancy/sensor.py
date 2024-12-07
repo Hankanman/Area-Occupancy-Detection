@@ -16,8 +16,18 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .base import AreaOccupancyProbabilitySensor
-from .const import DOMAIN, NAME_PROBABILITY_SENSOR
+from .const import (
+    DOMAIN,
+    NAME_PROBABILITY_SENSOR,
+)
 from .coordinator import AreaOccupancyCoordinator
+from .prior_sensors import (
+    MotionPriorSensor,
+    EnvironmentalPriorSensor,
+    MediaPriorSensor,
+    AppliancePriorSensor,
+    OccupancyPriorSensor,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,17 +59,39 @@ async def async_setup_entry(
             "coordinator"
         ]
 
-        async_add_entities(
-            [
-                AreaOccupancyProbabilitySensor(
-                    coordinator=coordinator,
-                    entry_id=entry.entry_id,
-                )
-            ]
-        )
+        entities = [
+            # Main probability sensor
+            AreaOccupancyProbabilitySensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+            # Prior probability sensors
+            MotionPriorSensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+            EnvironmentalPriorSensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+            MediaPriorSensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+            AppliancePriorSensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+            OccupancyPriorSensor(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            ),
+        ]
+
+        async_add_entities(entities)
 
     except Exception as err:
-        _LOGGER.error("Error setting up sensor: %s", err)
+        _LOGGER.error("Error setting up sensors: %s", err)
         raise HomeAssistantError(
-            f"Failed to set up Area Occupancy sensor: {err}"
+            f"Failed to set up Area Occupancy sensors: {err}"
         ) from err

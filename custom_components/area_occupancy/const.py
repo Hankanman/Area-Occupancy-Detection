@@ -40,6 +40,11 @@ DEFAULT_MINIMUM_CONFIDENCE: Final = 0.3
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
 NAME_BINARY_SENSOR: Final = "Occupancy Status"
+NAME_MOTION_PRIOR_SENSOR: Final = "Motion Prior"
+NAME_ENVIRONMENTAL_PRIOR_SENSOR: Final = "Environmental Prior"
+NAME_MEDIA_PRIOR_SENSOR: Final = "Media Prior"
+NAME_APPLIANCE_PRIOR_SENSOR: Final = "Appliance Prior"
+NAME_OCCUPANCY_PRIOR_SENSOR: Final = "Occupancy Prior"
 
 # Attribute keys
 ATTR_PROBABILITY: Final = "probability"
@@ -64,3 +69,13 @@ ATTR_HISTORICAL_PATTERNS: Final = "historical_patterns"
 ATTR_TYPICAL_OCCUPANCY: Final = "typical_occupancy_rate"
 ATTR_DAY_OCCUPANCY: Final = "day_occupancy_rate"
 ATTR_SENSOR_CORRELATIONS: Final = "sensor_correlations"
+
+# Prior probability attributes
+ATTR_TOTAL_SAMPLES: Final = "total_samples"
+ATTR_ACTIVE_SAMPLES: Final = "active_samples"
+ATTR_SAMPLING_PERIOD: Final = "sampling_period"
+ATTR_MOTION_PRIOR: Final = "motion_prior"
+ATTR_ENVIRONMENTAL_PRIOR: Final = "environmental_prior"
+ATTR_MEDIA_PRIOR: Final = "media_prior"
+ATTR_APPLIANCE_PRIOR: Final = "appliance_prior"
+ATTR_OCCUPANCY_PRIOR: Final = "occupancy_prior"
