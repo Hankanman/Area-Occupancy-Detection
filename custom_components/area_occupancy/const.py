@@ -88,3 +88,11 @@ ATTR_ENVIRONMENTAL_PRIOR: Final = "environmental_prior"
 ATTR_MEDIA_PRIOR: Final = "media_prior"
 ATTR_APPLIANCE_PRIOR: Final = "appliance_prior"
 ATTR_OCCUPANCY_PRIOR: Final = "occupancy_prior"
+
+# Service related constants
+ATTR_START_TIME = "start_time"
+ATTR_END_TIME = "end_time"
+ATTR_OUTPUT_FILE = "output_file"
+ATTR_DAYS = "days"
+DEFAULT_PRIOR_OUTPUT = "area_occupancy_prior.json"
+DEFAULT_TIMESLOT_OUTPUT = "area_occupancy_timeslots.json"
