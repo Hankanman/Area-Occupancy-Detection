@@ -1,0 +1,56 @@
+[
+    {
+        "00:00": {
+            "entities": [
+                {
+                    "id": "binary_sensor.study_motion_1",
+                    "prob_given_true": 0.0015,
+                    "prob_given_false": 0.0005
+                },
+                {
+                    "id": "binary_sensor.study_motion_2",
+                    "prob_given_true": 0.0023,
+                    "prob_given_false": 0.0007
+                },
+                {
+                    "id": "binary_sensor.study_media",
+                    "prob_given_true": 0.0053,
+                    "prob_given_false": 0.0016
+                },
+                {
+                    "id": "binary_sensor.study_pc_active",
+                    "prob_given_true": 0.0047,
+                    "prob_given_false": 0.0014
+                }
+            ],
+            "prob_given_true": 0.0005,
+            "prob_given_false": 0.0001
+        },
+        "00:30": {
+            "entities": [
+                {
+                    "id": "binary_sensor.study_motion_1",
+                    "prob_given_true": 0.0025,
+                    "prob_given_false": 0.0007
+                },
+                {
+                    "id": "binary_sensor.study_motion_2",
+                    "prob_given_true": 0.0025,
+                    "prob_given_false": 0.0005
+                },
+                {
+                    "id": "binary_sensor.study_media",
+                    "prob_given_true": 0.0050,
+                    "prob_given_false": 0.0014
+                },
+                {
+                    "id": "binary_sensor.study_pc_active",
+                    "prob_given_true": 0.0043,
+                    "prob_given_false": 0.0012
+                }
+            ],
+            "prob_given_true": 0.0004,
+            "prob_given_false": 0.0001
+        }
+    }
+]
