@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import logging
 from datetime import datetime
-from typing import Any
 
 from homeassistant.const import (
     STATE_ON,
@@ -19,6 +18,7 @@ from .types import (
     ProbabilityResult,
     SensorStates,
     DecayConfig,
+    Timeslot,
 )
 from .probabilities import (
     # Core weights
@@ -63,54 +63,31 @@ def update_probability(
     return numerator / denominator
 
 
-def calculate_sensor_probabilities(
-    historical_data: dict[str, Any],
+def get_timeslot_probabilities(
     entity_id: str,
+    timeslot: Timeslot | None,
 ) -> tuple[float, float]:
-    """Calculate P(Evidence|State) from historical data."""
-    patterns = historical_data.get("occupancy_patterns", {})
-    if not patterns:
-        return 0.5, 0.5  # No data, return neutral probabilities
-
-    time_slots = patterns.get("time_slots", {})
-    active_slots = 0
-    total_slots = 0
-    occupied_active_slots = 0
-
-    for slot_data in time_slots.values():
-        samples = slot_data.get("samples", 0)
-        if samples == 0:
-            continue
-
-        occupied_ratio = slot_data.get("occupied_ratio", 0.0)
-        active_ratio = slot_data.get("active_ratio", {}).get(entity_id, 0.0)
-
-        if active_ratio > 0:
-            active_slots += 1
-            if occupied_ratio > 0.5:  # Consider slot occupied if >50% occupied
-                occupied_active_slots += 1
-        total_slots += 1
-
-    if total_slots == 0 or active_slots == 0:
+    """Get probabilities from timeslot data for entity."""
+    if not timeslot or "entities" not in timeslot:
         return 0.5, 0.5
 
-    # P(Evidence|Occupied)
-    p_given_true = occupied_active_slots / active_slots
+    # Find entity data in timeslot
+    entity_data = next(
+        (e for e in timeslot["entities"] if e["id"] == entity_id),
+        None,
+    )
 
-    # P(Evidence|Not Occupied)
-    p_given_false = (active_slots - occupied_active_slots) / active_slots
+    if entity_data:
+        return entity_data["prob_given_true"], entity_data["prob_given_false"]
 
-    # Ensure minimum probability to avoid multiplication by zero
-    p_given_true = max(0.1, min(0.9, p_given_true))
-    p_given_false = max(0.1, min(0.9, p_given_false))
-
-    return p_given_true, p_given_false
+    return 0.5, 0.5
 
 
 def calculate_decay_factor(time_diff: float, window: float, decay_type: str) -> float:
     """Calculate decay factor based on time difference."""
     if time_diff >= window:
         return MIN_PROBABILITY
+
     ratio = time_diff / window
     return 1.0 - ratio if decay_type == "linear" else math.exp(-3.0 * ratio)
 
@@ -170,11 +147,11 @@ class ProbabilityCalculator:
         self.appliance_weight = DEFAULT_APPLIANCE_WEIGHT
         self.environmental_weight = DEFAULT_ENVIRONMENTAL_WEIGHT
 
-    def calculate(
+    async def calculate(
         self,
         sensor_states: SensorStates,
         motion_timestamps: dict[str, datetime],
-        historical_patterns: dict[str, Any] | None = None,
+        timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
         """Calculate overall probability using Bayesian inference."""
         try:
@@ -186,23 +163,16 @@ class ProbabilityCalculator:
                 "media_states": {},
                 "appliance_states": {},
             }
-
-            # Process each sensor type
             sensor_probs = {}
 
-            # Motion sensors (highest weight)
+            # Process motion sensors
             for entity_id in self.motion_sensors:
                 state = sensor_states.get(entity_id)
                 if not state or not state.get("availability", False):
                     continue
 
-                # Get historical probabilities
-                p_true, p_false = calculate_sensor_probabilities(
-                    historical_patterns or {},
-                    entity_id,
-                )
-
-                # Check current state
+                # Get historical probabilities from timeslot
+                p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
                 is_active = False
 
                 if state["state"] == STATE_ON:
@@ -240,17 +210,13 @@ class ProbabilityCalculator:
 
                 sensor_probs[entity_id] = current_probability
 
-            # Media devices
+            # Process media devices
             for entity_id in self.media_devices:
                 state = sensor_states.get(entity_id)
                 if not state or not state.get("availability", False):
                     continue
 
-                p_true, p_false = calculate_sensor_probabilities(
-                    historical_patterns or {},
-                    entity_id,
-                )
-
+                p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
                 current_state = state["state"]
                 device_states["media_states"][entity_id] = current_state
 
@@ -270,17 +236,13 @@ class ProbabilityCalculator:
 
                 sensor_probs[entity_id] = current_probability
 
-            # Appliances
+            # Process appliances
             for entity_id in self.appliances:
                 state = sensor_states.get(entity_id)
                 if not state or not state.get("availability", False):
                     continue
 
-                p_true, p_false = calculate_sensor_probabilities(
-                    historical_patterns or {},
-                    entity_id,
-                )
-
+                p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
                 current_state = state["state"]
                 device_states["appliance_states"][entity_id] = current_state
 
@@ -292,7 +254,7 @@ class ProbabilityCalculator:
 
                 sensor_probs[entity_id] = current_probability
 
-            # Environmental sensors
+            # Process environmental sensors
             env_sensors = (
                 self.illuminance_sensors
                 + self.humidity_sensors
@@ -306,10 +268,7 @@ class ProbabilityCalculator:
 
                 try:
                     current_value = float(state["state"])
-                    p_true, p_false = calculate_sensor_probabilities(
-                        historical_patterns or {},
-                        entity_id,
-                    )
+                    p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
 
                     # Check thresholds based on sensor type
                     is_active = False
