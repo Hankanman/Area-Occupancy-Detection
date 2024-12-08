@@ -219,6 +219,12 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 2
 
+    def is_matching(self, other_flow: ConfigEntry) -> bool:
+        """Check if the entry matches the current flow."""
+        return other_flow.data.get(CONF_AREA_ID) == self._core_data.get(CONF_AREA_ID)
+
+    VERSION = 2
+
     def __init__(self) -> None:
         """Initialize config flow."""
         self._core_data: dict[str, Any] = {}
@@ -247,7 +253,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Proceed to devices step
                 return await self.async_step_devices()
 
-            except Exception as err:
+            except Exception as err:  # pylint: disable=broad-except
                 _LOGGER.error("Error in user step: %s", err)
                 errors["base"] = "unknown"
 
@@ -345,7 +351,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
                     ]
                     return await self.async_step_devices()
 
-            except Exception as err:
+            except Exception as err:  # pylint: disable=broad-except
                 _LOGGER.error("Error in motion step: %s", err)
                 errors["base"] = "unknown"
 

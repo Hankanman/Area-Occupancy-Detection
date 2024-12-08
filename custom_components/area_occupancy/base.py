@@ -149,7 +149,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
                 ),
             }
 
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error formatting shared attributes: %s", err)
             return {}
 
@@ -200,7 +200,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
                 }
             )
             return attributes
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error getting entity attributes: %s", err)
             return {}
 
@@ -252,7 +252,7 @@ class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
             if not self.coordinator.data:
                 return None
             return self.coordinator.data.get("probability", 0.0) >= self._threshold
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None
 
@@ -303,6 +303,6 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
                 return None
             probability = self.coordinator.data.get("probability", 0.0)
             return self._format_float(probability * 100)
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error getting probability value: %s", err)
             return None
