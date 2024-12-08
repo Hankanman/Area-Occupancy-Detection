@@ -21,6 +21,7 @@ from .const import (
 )
 from .types import StorageData
 from .coordinator import AreaOccupancyCoordinator
+from .service import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Area Occupancy Detection integration."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Set up services
+    await async_setup_services(hass)
     return True
 
 
@@ -45,7 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Core config validated: %s", core_config)
         except Exception as err:
             _LOGGER.error("Core config validation failed: %s", err)
-            raise HomeAssistantError(f"Core config validation failed: {err}")
+            raise HomeAssistantError(f"Core config validation failed: {err}") from err
 
         # Validate options configuration
         try:
@@ -53,7 +57,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Options config validated: %s", options_config)
         except Exception as err:
             _LOGGER.error("Options config validation failed: %s", err)
-            raise HomeAssistantError(f"Options config validation failed: {err}")
+            raise HomeAssistantError(
+                f"Options config validation failed: {err}"
+            ) from err
 
         # Initialize storage with unique key per entry
         store = Store[StorageData](
@@ -64,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         # Load historical data
-        stored_data = await store.async_load() or {
+        stored_data = await store.async_load() or {  # pylint: disable=unused-variable
             "version": STORAGE_VERSION,
             "last_updated": "",
             "areas": {},
@@ -142,13 +148,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Remove entry data
             hass.data[DOMAIN].pop(entry.entry_id)
 
+            # If this is the last config entry, remove services
+            if not hass.config_entries.async_entries(DOMAIN):
+                await async_unload_services(hass)
+
             _LOGGER.debug(
                 "Successfully unloaded Area Occupancy entry %s", entry.entry_id
             )
 
         return unload_ok
 
-    except Exception as err:
+    except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Error unloading entry: %s", err)
         return False
 
@@ -214,6 +224,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         return False
 
-    except Exception as err:
+    except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Error migrating Area Occupancy configuration: %s", err)
         return False
