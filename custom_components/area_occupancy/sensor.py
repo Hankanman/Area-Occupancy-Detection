@@ -23,7 +23,6 @@ from .const import (
 from .coordinator import AreaOccupancyCoordinator
 from .prior_sensors import (
     MotionPriorSensor,
-    EnvironmentalPriorSensor,
     MediaPriorSensor,
     AppliancePriorSensor,
     OccupancyPriorSensor,
@@ -71,10 +70,6 @@ async def async_setup_entry(
         if coordinator.options_config.get("history_period"):
             prior_sensors = [
                 MotionPriorSensor(
-                    coordinator=coordinator,
-                    entry_id=entry.entry_id,
-                ),
-                EnvironmentalPriorSensor(
                     coordinator=coordinator,
                     entry_id=entry.entry_id,
                 ),
