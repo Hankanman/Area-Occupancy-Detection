@@ -246,4 +246,5 @@ class HistoricalAnalysis:
                 timeslots[slot_key] = slot_data
                 self._cache[slot_key] = slot_data
 
+        _LOGGER.debug("Historical analysis complete")
         return timeslots

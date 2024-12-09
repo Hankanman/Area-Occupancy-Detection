@@ -156,20 +156,35 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        # Check coordinator update success
-        if not self.coordinator.last_update_success or not self.coordinator.data:
-            return False
-
-        # Get motion sensors from options config
+        # Get motion sensors configuration
         motion_sensors = self.coordinator.core_config.get("motion_sensors", [])
+
+        # Check if we have motion sensors configured
         if not motion_sensors:
+            _LOGGER.debug("%s: No motion sensors configured", self.entity_id)
             return False
 
-        # Check if at least one motion sensor is available
-        sensor_availability = self.coordinator.data.get("sensor_availability", {})
-        return any(
-            sensor_availability.get(sensor_id, False) for sensor_id in motion_sensors
+        # Check overall coordinator health
+        if not self.coordinator.last_update_success:
+            _LOGGER.debug("%s: Coordinator update failed", self.entity_id)
+            return False
+
+        # Check if we have sensor data
+        if not self.coordinator.data:
+            _LOGGER.debug("%s: No data available from coordinator", self.entity_id)
+            return False
+
+        # Check motion sensor states directly from coordinator's sensor states
+        motion_states = {
+            sensor_id: self.coordinator._sensor_states.get(sensor_id, {})
+            for sensor_id in motion_sensors
+        }
+
+        is_available = any(
+            state.get("availability", False) for state in motion_states.values()
         )
+
+        return is_available
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
