@@ -19,10 +19,25 @@ from .const import (
     STORAGE_VERSION,
     CONF_AREA_ID,
     CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_HISTORY_PERIOD,
     CONF_DECAY_WINDOW,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_TYPE,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_MINIMUM_CONFIDENCE,
+    DEFAULT_THRESHOLD,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_TYPE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_MINIMUM_CONFIDENCE,
 )
 from .types import StorageData, CoreConfig, OptionsConfig
 from .coordinator import AreaOccupancyCoordinator
@@ -249,18 +264,53 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsConfig]:
     """Migrate legacy configuration to new format."""
     try:
+        # Generate area_id if not present
+        area_id = config.get(CONF_AREA_ID)
+        if not area_id:
+            area_id = str(uuid.uuid4())
+
+        # Core config with required fields
         core_config = CoreConfig(
             name=config[CONF_NAME],
-            area_id=config.get(CONF_AREA_ID),
+            area_id=area_id,
             motion_sensors=config[CONF_MOTION_SENSORS],
         )
 
-        options_data = {
-            k: v
-            for k, v in config.items()
-            if k not in [CONF_NAME, CONF_MOTION_SENSORS, CONF_AREA_ID]
+        # Build options with defaults for new fields
+        options_data: OptionsConfig = {
+            # Preserve existing fields
+            "threshold": config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
+            "history_period": config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
+            "decay_enabled": config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+            "decay_window": config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+            "decay_type": config.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
+            # Initialize new fields with defaults
+            "media_devices": config.get(CONF_MEDIA_DEVICES, []),
+            "appliances": config.get(CONF_APPLIANCES, []),
+            "illuminance_sensors": config.get(CONF_ILLUMINANCE_SENSORS, []),
+            "humidity_sensors": config.get(CONF_HUMIDITY_SENSORS, []),
+            "temperature_sensors": config.get(CONF_TEMPERATURE_SENSORS, []),
+            "historical_analysis_enabled": config.get(
+                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+            ),
+            "minimum_confidence": config.get(
+                CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE
+            ),
         }
+
+        # Validate numeric bounds for all relevant fields
         validate_numeric_bounds(options_data)
+
+        # Validate sensor lists
+        for sensor_list in [
+            "media_devices",
+            "appliances",
+            "illuminance_sensors",
+            "humidity_sensors",
+            "temperature_sensors",
+        ]:
+            if not isinstance(options_data.get(sensor_list, []), list):
+                options_data[sensor_list] = []
 
         return core_config, options_data
 
