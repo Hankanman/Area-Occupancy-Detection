@@ -18,6 +18,17 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
 
+from .probabilities import (
+    DEFAULT_PROB_GIVEN_TRUE,
+    DEFAULT_PROB_GIVEN_FALSE,
+    MOTION_PROB_GIVEN_TRUE,
+    MOTION_PROB_GIVEN_FALSE,
+    MEDIA_PROB_GIVEN_TRUE,
+    MEDIA_PROB_GIVEN_FALSE,
+    APPLIANCE_PROB_GIVEN_TRUE,
+    APPLIANCE_PROB_GIVEN_FALSE,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 VALID_ACTIVE_STATES = {STATE_ON, STATE_PLAYING, STATE_PAUSED}
@@ -146,24 +157,49 @@ class HistoricalAnalysis:
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> tuple[float, float]:
         """Calculate prior probabilities based on historical state."""
+        # Get sensor type from entity_id to determine defaults
+        if "motion" in entity_id:
+            default_true, default_false = (
+                MOTION_PROB_GIVEN_TRUE,
+                MOTION_PROB_GIVEN_FALSE,
+            )
+            min_true, max_false = 0.15, 0.85  # Minimum thresholds for motion
+        elif "media" in entity_id:
+            default_true, default_false = MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
+            min_true, max_false = 0.10, 0.90  # Minimum thresholds for media
+        elif "appliance" in entity_id:
+            default_true, default_false = (
+                APPLIANCE_PROB_GIVEN_TRUE,
+                APPLIANCE_PROB_GIVEN_FALSE,
+            )
+            min_true, max_false = 0.05, 0.95  # Minimum thresholds for appliances
+        else:
+            default_true, default_false = (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+            )
+            min_true, max_false = 0.01, 0.99  # Default minimum thresholds
+
         total_duration = (end_time - start_time).total_seconds()
         if total_duration <= 0:
-            return 0.0, 0.0
+            return default_true, default_false
 
         states = await self._get_states_from_recorder(entity_id, start_time, end_time)
         if not states:
-            return 0.0, 0.0
+            return default_true, default_false
 
         active_duration = min(
             self._calculate_active_duration(states, start_time, end_time),
             total_duration,
         )
 
-        # Calculate probabilities
-        prob_given_true = round(active_duration / total_duration, 4)
-        prob_given_false = round(1 - prob_given_true, 4)
+        # Calculate probabilities with sensor-specific bounds
+        prob_given_true = min(
+            max(active_duration / total_duration, min_true), max_false
+        )
+        prob_given_false = 1 - prob_given_true
 
-        return prob_given_true, prob_given_false
+        return round(prob_given_true, 4), round(prob_given_false, 4)
 
     async def calculate_timeslots(
         self, entity_ids: list[str], history_period: int

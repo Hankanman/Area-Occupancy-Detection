@@ -309,6 +309,12 @@ class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
         self._attr_extra_state_attributes.update(self._shared_attributes)
         self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
 
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update entity state from coordinator data."""
+        self._attr_is_on = result["probability"] >= self._threshold
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
+
 
 class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
     """Probability sensor for area occupancy."""
@@ -365,6 +371,12 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
         if not self.coordinator.data:
             return
         result = self.coordinator.data
+        self._attr_native_value = self._format_float(result["probability"] * 100)
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
+
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update entity state from coordinator data."""
         self._attr_native_value = self._format_float(result["probability"] * 100)
         self._attr_extra_state_attributes.update(self._shared_attributes)
         self._attr_extra_state_attributes.update(self._sensor_specific_attributes())

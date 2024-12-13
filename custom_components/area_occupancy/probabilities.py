@@ -93,3 +93,25 @@ MIN_SAMPLES_FOR_CONFIDENCE: Final[int] = 10
 DEFAULT_TIME_WINDOW: Final[int] = 300  # seconds
 MIN_TIME_WINDOW: Final[int] = 60  # seconds
 MAX_TIME_WINDOW: Final[int] = 3600  # seconds
+
+# Add these constants for default prior probabilities
+# Default prior probabilities (should never be 0 or 1)
+DEFAULT_PRIOR_PROBABILITY: Final[float] = 0.5
+DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
+DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
+
+# Motion sensor specific defaults
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.85
+MOTION_PROB_GIVEN_FALSE: Final[float] = 0.15
+
+# Media device specific defaults
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.75
+MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.25
+
+# Appliance specific defaults
+APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.7
+APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.3
+
+# Environmental sensor specific defaults
+ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.6
+ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.4

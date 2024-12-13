@@ -37,6 +37,7 @@ from .probabilities import (
     MIN_CONFIDENCE,
     MIN_PROBABILITY,
     MAX_PROBABILITY,
+    MOTION_PROB_GIVEN_TRUE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,8 +51,8 @@ def update_probability(
 ) -> float:
     """Update probability using Bayes' rule with optional weight factor."""
     # Apply weight to the probabilities while maintaining a minimum uncertainty
-    effective_prob_true = (prob_given_true * weight) + ((1 - weight) * 0.5)
-    effective_prob_false = (prob_given_false * weight) + ((1 - weight) * 0.5)
+    effective_prob_true = (prob_given_true * weight) + ((1 - weight) * prior)
+    effective_prob_false = (prob_given_false * weight) + ((1 - weight) * (1 - prior))
 
     # Calculate Bayesian update
     numerator = effective_prob_true * prior
@@ -60,6 +61,7 @@ def update_probability(
     if denominator == 0:
         return prior
 
+    # Don't clamp the result - let it reflect the true probability
     return numerator / denominator
 
 
@@ -155,8 +157,18 @@ class ProbabilityCalculator:
     ) -> ProbabilityResult:
         """Calculate overall probability using Bayesian inference."""
         try:
-            # Start with a neutral prior
-            current_probability = 0.5
+            # Initialize with motion sensor state instead of neutral prior
+            motion_active = any(
+                sensor_states.get(sensor_id, {}).get("state") == STATE_ON
+                for sensor_id in self.motion_sensors
+            )
+            # Start with motion-based prior
+            current_probability = (
+                MOTION_PROB_GIVEN_TRUE
+                if motion_active
+                else (1 - MOTION_PROB_GIVEN_TRUE)
+            )
+
             active_triggers = []
             decay_status = {}
             device_states = {
@@ -345,7 +357,11 @@ class ProbabilityCalculator:
 
             return {
                 "probability": final_probability,
-                "prior_probability": 0.5,  # Neutral prior
+                "prior_probability": (
+                    MOTION_PROB_GIVEN_TRUE
+                    if motion_active
+                    else (1 - MOTION_PROB_GIVEN_TRUE)
+                ),
                 "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probs,
                 "device_states": device_states,
