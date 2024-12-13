@@ -39,13 +39,13 @@ STORAGE_MAX_CACHE_AGE: Final = timedelta(days=30)
 STORAGE_SAVE_DELAY: Final = 60  # seconds
 
 # Default values
-DEFAULT_THRESHOLD: Final = 50
+DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
-DEFAULT_MINIMUM_CONFIDENCE: Final = 0.3
+DEFAULT_MINIMUM_CONFIDENCE: Final = 30.0
 DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
 
 # Entity naming

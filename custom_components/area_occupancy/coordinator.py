@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_TYPE,
     CONF_THRESHOLD,
+    DEFAULT_THRESHOLD,
 )
 from .types import (
     ProbabilityResult,
@@ -107,6 +108,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def _create_calculator(self) -> ProbabilityCalculator:
         """Create probability calculator with current configuration."""
         return ProbabilityCalculator(
+            coordinator=self,
             motion_sensors=self.core_config["motion_sensors"],
             media_devices=self.options_config.get("media_devices", []),
             appliances=self.options_config.get("appliances", []),
@@ -667,6 +669,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.error("Error during refresh: %s", err, exc_info=True)
 
     async def async_update_threshold(self, value: float) -> None:
-        """Update the threshold value."""
+        """Update the threshold value (expects percentage 0-100)."""
+        # Ensure value is stored as percentage
+        if not 0 <= value <= 100:
+            raise ValueError("Threshold must be between 0 and 100")
         self.options_config[CONF_THRESHOLD] = value
         self.async_set_updated_data(self.data)
+
+    def get_threshold_decimal(self) -> float:
+        """Get threshold as decimal (0-1) for calculations."""
+        return self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0
