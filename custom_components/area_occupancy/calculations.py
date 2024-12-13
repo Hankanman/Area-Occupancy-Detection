@@ -21,15 +21,6 @@ from .types import (
     Timeslot,
 )
 from .probabilities import (
-    # Core weights
-    MAX_MOTION_WEIGHT,
-    MAX_MEDIA_WEIGHT,
-    MAX_APPLIANCE_WEIGHT,
-    MAX_ENVIRONMENTAL_WEIGHT,
-    DEFAULT_MOTION_WEIGHT,
-    DEFAULT_MEDIA_WEIGHT,
-    DEFAULT_APPLIANCE_WEIGHT,
-    DEFAULT_ENVIRONMENTAL_WEIGHT,
     # Environmental
     ENVIRONMENTAL_SETTINGS,
     # Thresholds
@@ -45,21 +36,15 @@ def update_probability(
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
-    weight: float = 1.0,
 ) -> float:
-    """Update probability using Bayes' rule with optional weight factor."""
-    # Apply weight to the probabilities while maintaining a minimum uncertainty
-    effective_prob_true = (prob_given_true * weight) + ((1 - weight) * prior)
-    effective_prob_false = (prob_given_false * weight) + ((1 - weight) * (1 - prior))
-
+    """Update probability using Bayes' rule."""
     # Calculate Bayesian update
-    numerator = effective_prob_true * prior
-    denominator = numerator + effective_prob_false * (1 - prior)
+    numerator = prob_given_true * prior
+    denominator = numerator + prob_given_false * (1 - prior)
 
     if denominator == 0:
         return prior
 
-    # Don't clamp the result - let it reflect the true probability
     return numerator / denominator
 
 
@@ -116,39 +101,6 @@ class ProbabilityCalculator:
         self.temperature_sensors = temperature_sensors or []
         self.decay_config = decay_config or DecayConfig()
 
-        # Initialize and validate weights
-        try:
-            self._initialize_weights()
-        except (KeyError, TypeError, ValueError) as err:
-            _LOGGER.error("Error initializing weights: %s", err)
-            self._set_default_weights()
-
-    def _initialize_weights(self) -> None:
-        """Initialize and validate weights from configuration."""
-        weights = {}
-
-        # Validate and cap weights
-        self.motion_weight = min(
-            weights.get("motion", DEFAULT_MOTION_WEIGHT), MAX_MOTION_WEIGHT
-        )
-        self.media_weight = min(
-            weights.get("media", DEFAULT_MEDIA_WEIGHT), MAX_MEDIA_WEIGHT
-        )
-        self.appliance_weight = min(
-            weights.get("appliances", DEFAULT_APPLIANCE_WEIGHT), MAX_APPLIANCE_WEIGHT
-        )
-        self.environmental_weight = min(
-            weights.get("environmental", DEFAULT_ENVIRONMENTAL_WEIGHT),
-            MAX_ENVIRONMENTAL_WEIGHT,
-        )
-
-    def _set_default_weights(self) -> None:
-        """Set default weights if configuration is invalid."""
-        self.motion_weight = DEFAULT_MOTION_WEIGHT
-        self.media_weight = DEFAULT_MEDIA_WEIGHT
-        self.appliance_weight = DEFAULT_APPLIANCE_WEIGHT
-        self.environmental_weight = DEFAULT_ENVIRONMENTAL_WEIGHT
-
     async def calculate(
         self,
         sensor_states: SensorStates,
@@ -157,13 +109,12 @@ class ProbabilityCalculator:
     ) -> ProbabilityResult:
         """Calculate overall probability using Bayesian inference."""
         try:
-            # Initialize with motion sensor state instead of waiting for historical data
+            # Initialize with motion sensor state
             motion_active = any(
                 sensor_states.get(sensor_id, {}).get("state") == STATE_ON
                 for sensor_id in self.motion_sensors
             )
 
-            # Start with motion-based prior
             current_probability = (
                 MOTION_PROB_GIVEN_TRUE
                 if motion_active
@@ -172,10 +123,7 @@ class ProbabilityCalculator:
 
             active_triggers = []
             decay_status = {}
-            device_states = {
-                "media_states": {},
-                "appliance_states": {},
-            }
+            device_states = {"media_states": {}, "appliance_states": {}}
             sensor_probs = {}
 
             # Process motion sensors
@@ -184,7 +132,6 @@ class ProbabilityCalculator:
                 if not state or not state.get("availability", False):
                     continue
 
-                # Get historical probabilities from timeslot
                 p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
                 is_active = False
 
@@ -192,7 +139,6 @@ class ProbabilityCalculator:
                     is_active = True
                     active_triggers.append(entity_id)
                 elif self.decay_config.enabled and entity_id in motion_timestamps:
-                    # Apply decay if enabled
                     time_diff = (
                         dt_util.utcnow() - motion_timestamps[entity_id]
                     ).total_seconds()
@@ -208,19 +154,14 @@ class ProbabilityCalculator:
                             active_triggers.append(
                                 f"{entity_id} (decay: {decay_factor:.2f})"
                             )
-                            # Modify probabilities based on decay
-                            p_true = p_true * decay_factor
+                            p_true *= decay_factor
                             p_false = p_false + ((1 - p_false) * (1 - decay_factor))
 
-                if is_active:
-                    current_probability = update_probability(
-                        current_probability, p_true, p_false, self.motion_weight
-                    )
-                else:
-                    current_probability = update_probability(
-                        current_probability, 1 - p_true, 1 - p_false, self.motion_weight
-                    )
-
+                current_probability = update_probability(
+                    current_probability,
+                    p_true if is_active else (1 - p_true),
+                    p_false if is_active else (1 - p_false),
+                )
                 sensor_probs[entity_id] = current_probability
 
             # Process media devices
@@ -236,7 +177,7 @@ class ProbabilityCalculator:
                 if current_state == STATE_PLAYING:
                     active_triggers.append(f"{entity_id} (playing)")
                     current_probability = update_probability(
-                        current_probability, p_true, p_false, self.media_weight
+                        current_probability, p_true, p_false
                     )
                 elif current_state == STATE_PAUSED:
                     active_triggers.append(f"{entity_id} (paused)")
@@ -244,9 +185,7 @@ class ProbabilityCalculator:
                         current_probability,
                         p_true * 0.7,
                         p_false * 0.7,
-                        self.media_weight,
                     )
-
                 sensor_probs[entity_id] = current_probability
 
             # Process appliances
@@ -262,19 +201,16 @@ class ProbabilityCalculator:
                 if current_state == STATE_ON:
                     active_triggers.append(f"{entity_id} (on)")
                     current_probability = update_probability(
-                        current_probability, p_true, p_false, self.appliance_weight
+                        current_probability, p_true, p_false
                     )
-
                 sensor_probs[entity_id] = current_probability
 
             # Process environmental sensors
-            env_sensors = (
+            for entity_id in (
                 self.illuminance_sensors
                 + self.humidity_sensors
                 + self.temperature_sensors
-            )
-
-            for entity_id in env_sensors:
+            ):
                 state = sensor_states.get(entity_id)
                 if not state or not state.get("availability", False):
                     continue
@@ -282,47 +218,33 @@ class ProbabilityCalculator:
                 try:
                     current_value = float(state["state"])
                     p_true, p_false = get_timeslot_probabilities(entity_id, timeslot)
-
-                    # Check thresholds based on sensor type
                     is_active = False
+                    value_str = f"{current_value:.1f}"
+
                     if entity_id in self.illuminance_sensors:
-                        threshold = ENVIRONMENTAL_SETTINGS["illuminance"][
-                            "change_threshold"
-                        ]
-                        if current_value > threshold:
-                            is_active = True
-                            active_triggers.append(
-                                f"{entity_id} ({current_value:.1f} lx)"
-                            )
+                        settings = ENVIRONMENTAL_SETTINGS["illuminance"]
+                        is_active = current_value > settings["change_threshold"]
+                        value_str += " lx"
                     elif entity_id in self.temperature_sensors:
-                        threshold = ENVIRONMENTAL_SETTINGS["temperature"][
-                            "change_threshold"
-                        ]
-                        baseline = ENVIRONMENTAL_SETTINGS["temperature"]["baseline"]
-                        if abs(current_value - baseline) > threshold:
-                            is_active = True
-                            active_triggers.append(
-                                f"{entity_id} ({current_value:.1f}°C)"
-                            )
+                        settings = ENVIRONMENTAL_SETTINGS["temperature"]
+                        is_active = (
+                            abs(current_value - settings["baseline"])
+                            > settings["change_threshold"]
+                        )
+                        value_str += "°C"
                     elif entity_id in self.humidity_sensors:
-                        threshold = ENVIRONMENTAL_SETTINGS["humidity"][
-                            "change_threshold"
-                        ]
-                        baseline = ENVIRONMENTAL_SETTINGS["humidity"]["baseline"]
-                        if abs(current_value - baseline) > threshold:
-                            is_active = True
-                            active_triggers.append(
-                                f"{entity_id} ({current_value:.1f}%)"
-                            )
+                        settings = ENVIRONMENTAL_SETTINGS["humidity"]
+                        is_active = (
+                            abs(current_value - settings["baseline"])
+                            > settings["change_threshold"]
+                        )
+                        value_str += "%"
 
                     if is_active:
+                        active_triggers.append(f"{entity_id} ({value_str})")
                         current_probability = update_probability(
-                            current_probability,
-                            p_true,
-                            p_false,
-                            self.environmental_weight,
+                            current_probability, p_true, p_false
                         )
-
                     sensor_probs[entity_id] = current_probability
 
                 except (ValueError, TypeError):
@@ -332,10 +254,14 @@ class ProbabilityCalculator:
             final_probability = max(
                 MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
             )
-
-            # Convert threshold from percentage to decimal for comparison
             threshold_decimal = self.coordinator.get_threshold_decimal()
-            is_occupied = final_probability >= threshold_decimal
+
+            # Add debug logging
+            _LOGGER.debug(
+                "Probability calculation: final=%.3f, threshold=%.3f",
+                final_probability,
+                threshold_decimal,
+            )
 
             return {
                 "probability": final_probability,
@@ -352,7 +278,7 @@ class ProbabilityCalculator:
                     sensor_id: state.get("availability", False)
                     for sensor_id, state in sensor_states.items()
                 },
-                "is_occupied": is_occupied,
+                "is_occupied": final_probability >= threshold_decimal,
             }
 
         except Exception as err:
