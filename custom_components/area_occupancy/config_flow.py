@@ -30,6 +30,7 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     DOMAIN,
@@ -223,12 +224,35 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         """Check if the entry matches the current flow."""
         return other_flow.data.get(CONF_AREA_ID) == self._core_data.get(CONF_AREA_ID)
 
-    VERSION = 2
-
     def __init__(self) -> None:
         """Initialize config flow."""
         self._core_data: dict[str, Any] = {}
         self._options_data: dict[str, Any] = {}
+
+    def _validate_core_config(self, data: dict[str, Any]) -> None:
+        """Validate core configuration data."""
+        if not data.get(CONF_NAME):
+            raise HomeAssistantError("Name is required")
+
+        if not data.get(CONF_MOTION_SENSORS):
+            raise HomeAssistantError("At least one motion sensor is required")
+
+    def _validate_numeric_bounds(self, data: dict[str, Any]) -> None:
+        """Validate numeric values are within acceptable bounds."""
+        if CONF_THRESHOLD in data and not 0 <= data[CONF_THRESHOLD] <= 1:
+            raise HomeAssistantError("Threshold must be between 0 and 1")
+
+        if CONF_HISTORY_PERIOD in data and not 1 <= data[CONF_HISTORY_PERIOD] <= 30:
+            raise HomeAssistantError("History period must be between 1 and 30 days")
+
+        if CONF_DECAY_WINDOW in data and not 60 <= data[CONF_DECAY_WINDOW] <= 3600:
+            raise HomeAssistantError("Decay window must be between 60 and 3600 seconds")
+
+        if (
+            CONF_MINIMUM_CONFIDENCE in data
+            and not 0 <= data[CONF_MINIMUM_CONFIDENCE] <= 1
+        ):
+            raise HomeAssistantError("Minimum confidence must be between 0 and 1")
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -238,6 +262,9 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
+                # Validate core config
+                self._validate_core_config(user_input)
+
                 # Generate unique ID
                 area_id = str(uuid.uuid4())
                 await self.async_set_unique_id(area_id)
@@ -253,8 +280,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Proceed to devices step
                 return await self.async_step_devices()
 
+            except HomeAssistantError as err:
+                _LOGGER.error("Configuration error: %s", err)
+                errors["base"] = str(err)
             except Exception as err:  # pylint: disable=broad-except
-                _LOGGER.error("Error in user step: %s", err)
+                _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
         schema = create_form_schema(self._core_data)
@@ -298,18 +328,26 @@ class AreaOccupancyConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter configuration."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            self._options_data.update(user_input)
-            return self.async_create_entry(
-                title=self._core_data[CONF_NAME],
-                data=self._core_data,
-                options=self._options_data,
-            )
+            try:
+                self._validate_numeric_bounds(user_input)
+                self._options_data.update(user_input)
+                return self.async_create_entry(
+                    title=self._core_data[CONF_NAME],
+                    data=self._core_data,
+                    options=self._options_data,
+                )
+            except HomeAssistantError as err:
+                _LOGGER.error("Parameter validation error: %s", err)
+                errors["base"] = str(err)
 
         schema = create_parameters_schema(self._options_data)
         return self.async_show_form(
             step_id="parameters",
             data_schema=vol.Schema(schema),
+            errors=errors,
             description_placeholders={"name": self._core_data[CONF_NAME]},
         )
 
@@ -328,6 +366,23 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         super().__init__(config_entry)
         self._core_data = dict(config_entry.data)
         self._options_data = dict(config_entry.options)
+
+    def _validate_numeric_bounds(self, data: dict[str, Any]) -> None:
+        """Validate numeric values are within acceptable bounds."""
+        if CONF_THRESHOLD in data and not 0 <= data[CONF_THRESHOLD] <= 1:
+            raise HomeAssistantError("Threshold must be between 0 and 1")
+
+        if CONF_HISTORY_PERIOD in data and not 1 <= data[CONF_HISTORY_PERIOD] <= 30:
+            raise HomeAssistantError("History period must be between 1 and 30 days")
+
+        if CONF_DECAY_WINDOW in data and not 60 <= data[CONF_DECAY_WINDOW] <= 3600:
+            raise HomeAssistantError("Decay window must be between 60 and 3600 seconds")
+
+        if (
+            CONF_MINIMUM_CONFIDENCE in data
+            and not 0 <= data[CONF_MINIMUM_CONFIDENCE] <= 1
+        ):
+            raise HomeAssistantError("Minimum confidence must be between 0 and 1")
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -409,21 +464,29 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            self._options_data.update(user_input)
+            try:
+                self._validate_numeric_bounds(user_input)
+                self._options_data.update(user_input)
 
-            # Update config entry
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=self._core_data,
-                options=self._options_data,
-            )
+                # Update config entry
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=self._core_data,
+                    options=self._options_data,
+                )
 
-            return self.async_create_entry(title="", data=self._options_data)
+                return self.async_create_entry(title="", data=self._options_data)
+            except HomeAssistantError as err:
+                _LOGGER.error("Parameter validation error: %s", err)
+                errors["base"] = str(err)
 
         schema = create_parameters_schema(self._options_data)
         return self.async_show_form(
             step_id="parameters",
             data_schema=vol.Schema(schema),
+            errors=errors,
             description_placeholders={"name": self._core_data[CONF_NAME]},
         )

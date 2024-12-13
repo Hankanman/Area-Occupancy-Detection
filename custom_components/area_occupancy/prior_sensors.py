@@ -106,6 +106,28 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
             ),
         }
 
+    def _update_attributes(self) -> None:
+        """Update the entity attributes with coordinator data."""
+        if not self.coordinator.data:
+            return
+        self._attr_native_value = round(self._prob_given_true * 100, 4)
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
+        self._attr_extra_state_attributes.update(
+            {
+                ATTR_TOTAL_PERIOD: str(
+                    timedelta(days=self.coordinator.options_config["history_period"])
+                ),
+                ATTR_PROB_GIVEN_TRUE: self._prob_given_true,
+                ATTR_PROB_GIVEN_FALSE: self._prob_given_false,
+                ATTR_LAST_UPDATED: (
+                    self._last_calculation.isoformat()
+                    if self._last_calculation
+                    else None
+                ),
+            }
+        )
+
 
 class MotionPriorSensor(PriorProbabilitySensorBase):
     """Sensor for motion prior probability."""

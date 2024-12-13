@@ -19,6 +19,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import Entity
 
 from .const import (
     ATTR_ACTIVE_TRIGGERS,
@@ -56,7 +57,31 @@ _LOGGER = logging.getLogger(__name__)
 ROUNDING_PRECISION: Final = 2
 
 
-class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
+class AreaOccupancyEntity(CoordinatorEntity[AreaOccupancyCoordinator], Entity):
+    """Base entity for Area Occupancy."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, name: str) -> None:
+        """Initialize the entity."""
+        super().__init__(coordinator)
+        self._attr_name = name
+        self._attr_unique_id = f"{coordinator.entry_id}_{name}"
+        self._attr_device_info = coordinator.device_info
+        self._attr_extra_state_attributes = {}  # Initialize empty attributes dict
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        try:
+            self._update_attributes()
+            self.async_write_ha_state()
+        except Exception as err:  # pylint: disable=broad-except
+            self.coordinator.logger.error("Error handling coordinator update: %s", err)
+
+    def _update_attributes(self) -> None:
+        """Update the entity attributes with coordinator data."""
+        raise NotImplementedError("Subclasses must implement _update_attributes")
+
+
+class AreaOccupancySensorBase(AreaOccupancyEntity):
     """Base class for area occupancy sensors."""
 
     def __init__(
@@ -65,7 +90,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         entry_id: str,
     ) -> None:
         """Initialize the base sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, coordinator.core_config["name"])
 
         # Entity attributes
         self._attr_has_entity_name = True
@@ -226,31 +251,6 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         """
         raise NotImplementedError
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-
-        async def _async_handle_update():
-            try:
-                async with self.coordinator._state_lock:
-                    result = self.coordinator.data
-                    if result is None:
-                        self._attr_available = False
-                        return
-
-                    # Update state and attributes atomically
-                    self._update_entity_state(result)
-                    self._attr_available = self.coordinator.available
-
-            except Exception as err:
-                _LOGGER.error("Error handling coordinator update: %s", err)
-                self._attr_available = False
-
-            self.async_write_ha_state()
-
-        # Schedule the update
-        self.hass.async_create_task(_async_handle_update())
-
     def _update_entity_state(self, result: ProbabilityResult) -> None:
         """Update entity state from coordinator data."""
         raise NotImplementedError
@@ -300,8 +300,11 @@ class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None
 
-    def _update_entity_state(self, result: ProbabilityResult) -> None:
-        """Update binary sensor state from coordinator data."""
+    def _update_attributes(self) -> None:
+        """Update the entity attributes with coordinator data."""
+        if not self.coordinator.data:
+            return
+        result = self.coordinator.data
         self._attr_is_on = result["probability"] >= self._threshold
         self._attr_extra_state_attributes.update(self._shared_attributes)
         self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
@@ -357,8 +360,11 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
             _LOGGER.error("Error getting probability value: %s", err)
             return None
 
-    def _update_entity_state(self, result: ProbabilityResult) -> None:
-        """Update probability sensor state from coordinator data."""
+    def _update_attributes(self) -> None:
+        """Update the entity attributes with coordinator data."""
+        if not self.coordinator.data:
+            return
+        result = self.coordinator.data
         self._attr_native_value = self._format_float(result["probability"] * 100)
         self._attr_extra_state_attributes.update(self._shared_attributes)
         self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
