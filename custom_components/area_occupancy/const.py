@@ -39,7 +39,7 @@ STORAGE_MAX_CACHE_AGE: Final = timedelta(days=30)
 STORAGE_SAVE_DELAY: Final = 60  # seconds
 
 # Default values
-DEFAULT_THRESHOLD: Final = 0.5
+DEFAULT_THRESHOLD: Final = 50
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
@@ -56,6 +56,8 @@ NAME_ENVIRONMENTAL_PRIOR_SENSOR: Final = "Environmental Prior"
 NAME_MEDIA_PRIOR_SENSOR: Final = "Media Prior"
 NAME_APPLIANCE_PRIOR_SENSOR: Final = "Appliance Prior"
 NAME_OCCUPANCY_PRIOR_SENSOR: Final = "Occupancy Prior"
+NAME_DECAY_SENSOR = "Decay Status"
+NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
 # Attribute keys
 ATTR_PROBABILITY: Final = "probability"

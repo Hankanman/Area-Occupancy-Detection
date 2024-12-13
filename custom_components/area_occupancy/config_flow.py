@@ -154,9 +154,9 @@ def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
             CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
         ): NumberSelector(
             NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.05,
+                min=0,
+                max=100,
+                step=1,
                 mode="slider",
             ),
         ),
@@ -232,10 +232,10 @@ class BaseOccupancyFlow:
 
         # Numeric bounds validation
         bounds = {
-            CONF_THRESHOLD: (0, 1),
+            CONF_THRESHOLD: (0, 100),
             CONF_HISTORY_PERIOD: (1, 30),
             CONF_DECAY_WINDOW: (60, 3600),
-            CONF_MINIMUM_CONFIDENCE: (0, 1),
+            CONF_MINIMUM_CONFIDENCE: (0, 100),
         }
 
         for field, (min_val, max_val) in bounds.items():

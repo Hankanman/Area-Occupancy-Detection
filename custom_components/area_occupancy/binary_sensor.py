@@ -15,22 +15,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    ATTR_ACTIVE_TRIGGERS,
-    ATTR_CONFIDENCE_SCORE,
-    ATTR_DECAY_STATUS,
-    ATTR_LAST_OCCUPIED,
-    ATTR_OCCUPANCY_RATE,
-    ATTR_PRIOR_PROBABILITY,
-    ATTR_PROBABILITY,
-    ATTR_SENSOR_AVAILABILITY,
-    ATTR_SENSOR_PROBABILITIES,
-    ATTR_STATE_DURATION,
-    ATTR_THRESHOLD,
+    DOMAIN,
+    NAME_BINARY_SENSOR,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
-    DOMAIN,
-    NAME_BINARY_SENSOR,
+    ATTR_ACTIVE_TRIGGERS,
     CONF_AREA_ID,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
@@ -90,7 +80,10 @@ class AreaOccupancyBinarySensor(
         try:
             if not self.coordinator.data:
                 return None
-            return self.coordinator.data.get("probability", 0.0) >= self._threshold
+            threshold = self.coordinator.options_config.get(
+                CONF_THRESHOLD, DEFAULT_THRESHOLD
+            )
+            return self.coordinator.data.get("probability", 0.0) >= threshold
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None
@@ -104,57 +97,61 @@ class AreaOccupancyBinarySensor(
         try:
             data: ProbabilityResult = self.coordinator.data
 
-            def format_percentage(value: float) -> float:
-                """Format percentage values consistently."""
-                return self._format_float(value * 100)
+            def get_friendly_names(entity_ids: list[str]) -> list[str]:
+                """Convert entity IDs to friendly names."""
+                return [
+                    self.hass.states.get(entity_id).attributes.get(
+                        "friendly_name", entity_id
+                    )
+                    for entity_id in entity_ids
+                    if self.hass.states.get(entity_id)
+                ]
 
+            # Core attributes
             attributes = {
-                ATTR_PROBABILITY: format_percentage(data.get("probability", 0.0)),
-                ATTR_PRIOR_PROBABILITY: format_percentage(
-                    data.get("prior_probability", 0.0)
-                ),
-                ATTR_ACTIVE_TRIGGERS: data.get("active_triggers", []),
-                ATTR_SENSOR_PROBABILITIES: {
-                    k: format_percentage(v)
-                    for k, v in data.get("sensor_probabilities", {}).items()
-                },
-                ATTR_DECAY_STATUS: {
-                    k: self._format_float(v)
-                    for k, v in data.get("decay_status", {}).items()
-                },
-                ATTR_CONFIDENCE_SCORE: format_percentage(
-                    data.get("confidence_score", 0.0)
-                ),
-                ATTR_SENSOR_AVAILABILITY: data.get("sensor_availability", {}),
-                ATTR_THRESHOLD: self._format_float(self._threshold),
-                ATTR_LAST_OCCUPIED: data.get("last_occupied"),
-                ATTR_STATE_DURATION: self._format_float(
-                    data.get("state_duration", 0.0) / 60  # Convert to minutes
-                ),
-                ATTR_OCCUPANCY_RATE: self._format_float(
-                    data.get("occupancy_rate", 0.0) * 100
-                ),
+                ATTR_ACTIVE_TRIGGERS: [
+                    self.hass.states.get(entity_id).attributes.get(
+                        "friendly_name", entity_id
+                    )
+                    for entity_id in data.get("active_triggers", [])
+                    if self.hass.states.get(entity_id)
+                ],
             }
 
-            # Add configuration info
+            # Add configured sensors with friendly names
             options_config = self.coordinator.options_config
             core_config = self.coordinator.core_config
-            attributes.update(
-                {
-                    "configured_motion_sensors": core_config.get("motion_sensors", []),
-                    "configured_media_devices": options_config.get("media_devices", []),
-                    "configured_appliances": options_config.get("appliances", []),
-                    "configured_illuminance_sensors": options_config.get(
-                        "illuminance_sensors", []
+
+            if any(
+                core_config.get(key) or options_config.get(key)
+                for key in [
+                    "motion_sensors",
+                    "media_devices",
+                    "appliances",
+                    "illuminance_sensors",
+                    "humidity_sensors",
+                    "temperature_sensors",
+                ]
+            ):
+                attributes["configured_sensors"] = {
+                    "Motion": get_friendly_names(core_config.get("motion_sensors", [])),
+                    "Media": get_friendly_names(
+                        options_config.get("media_devices", [])
                     ),
-                    "configured_humidity_sensors": options_config.get(
-                        "humidity_sensors", []
+                    "Appliances": get_friendly_names(
+                        options_config.get("appliances", [])
                     ),
-                    "configured_temperature_sensors": options_config.get(
-                        "temperature_sensors", []
+                    "Illuminance": get_friendly_names(
+                        options_config.get("illuminance_sensors", [])
+                    ),
+                    "Humidity": get_friendly_names(
+                        options_config.get("humidity_sensors", [])
+                    ),
+                    "Temperature": get_friendly_names(
+                        options_config.get("temperature_sensors", [])
                     ),
                 }
-            )
+
             return attributes
 
         except Exception as err:  # pylint: disable=broad-except
