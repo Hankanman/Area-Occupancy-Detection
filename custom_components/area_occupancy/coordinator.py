@@ -56,6 +56,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Initialize the coordinator."""
         self.storage = AreaOccupancyStorage(hass, entry_id)
         self._last_known_values: dict[str, Any] = {}
+        self._debounce_refresh = None
 
         super().__init__(
             hass,
@@ -223,6 +224,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         entities = self._get_all_configured_sensors()
         _LOGGER.debug("Setting up entity tracking for: %s", entities)
 
+        # Add debouncer for state updates
+        self._debounce_refresh = None
+
         @callback
         def async_state_changed_listener(event) -> None:
             """Handle entity state changes."""
@@ -255,8 +259,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             ):
                 self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-            # Schedule update
-            self.hass.async_create_task(self.async_refresh())
+            # Debounce the refresh call
+            if self._debounce_refresh:
+                self._debounce_refresh.cancel()
+
+            self._debounce_refresh = self.hass.loop.call_later(
+                0.5,  # 500ms debounce
+                lambda: self.hass.async_create_task(self.async_refresh()),
+            )
 
         # Set up state tracking
         async_track_state_change_event(
@@ -651,6 +661,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Refresh data with forced update."""
         try:
             result = await self._async_update_data()
+            # Only log at debug level if significant changes occurred
+            if (not self.data) or abs(
+                result["probability"] - self.data["probability"]
+            ) > 0.05:
+                _LOGGER.debug("Significant probability change detected")
             self.async_set_updated_data(result)
         except (HomeAssistantError, ValueError, RuntimeError) as err:
             _LOGGER.error("Error during refresh: %s", err, exc_info=True)
