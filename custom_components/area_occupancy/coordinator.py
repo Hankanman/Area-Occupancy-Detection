@@ -67,6 +67,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(minutes=5),  # Fallback update interval
+            request_refresh_debouncer=Debouncer(
+                hass,
+                _LOGGER,
+                cooldown=1.0,
+                immediate=False,
+            ),
+            # Prevent waiting for first update
+            always_update=False,
         )
 
         if not core_config.get("motion_sensors"):
@@ -128,30 +136,63 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_setup(self) -> None:
         """Perform setup tasks that require async operations."""
+        start_time = dt_util.utcnow()
         try:
-            # Initialize states
-            await self._async_initialize_states()
-
-            # Set up state tracking
-            self._setup_entity_tracking()
-
-            # Start historical analysis in background
-            self._historical_analysis_ready.clear()
-            self._historical_analysis_task = self.hass.async_create_task(
-                self._async_historical_analysis()
-            )
-
-            # Set up periodic timeslot updates
-            self.hass.helpers.event.async_track_time_interval(
-                self._async_update_timeslots,
-                TIMESLOT_UPDATE_INTERVAL,
-            )
-
+            # Set minimal initial state
+            self._sensor_states = {}
+            self._motion_timestamps = {}
             self.last_update_success = True
+
+            # Start all initialization in background
+            self.hass.async_create_task(self._async_background_setup())
+
+            setup_time = (dt_util.utcnow() - start_time).total_seconds()
+            _LOGGER.debug("Coordinator setup completed in %.3f seconds", setup_time)
 
         except Exception as err:
             _LOGGER.error("Failed to setup coordinator: %s", err)
             raise HomeAssistantError(f"Coordinator setup failed: {err}") from err
+
+    async def _async_background_setup(self) -> None:
+        """Perform all heavy setup operations in background."""
+        start_time = dt_util.utcnow()
+        try:
+            # Initialize states
+            state_start = dt_util.utcnow()
+            await self._async_initialize_states()
+            _LOGGER.debug(
+                "State initialization took %.3f seconds",
+                (dt_util.utcnow() - state_start).total_seconds(),
+            )
+
+            # Set up state tracking
+            tracking_start = dt_util.utcnow()
+            self._setup_entity_tracking()
+            _LOGGER.debug(
+                "Entity tracking setup took %.3f seconds",
+                (dt_util.utcnow() - tracking_start).total_seconds(),
+            )
+
+            # Start historical analysis
+            self._historical_analysis_ready.clear()
+            _LOGGER.debug("Starting historical analysis task")
+            self._historical_analysis_task = self.hass.async_create_task(
+                self._async_historical_analysis()
+            )
+
+            # Schedule first update instead of waiting
+            update_start = dt_util.utcnow()
+            self.hass.async_create_task(self.async_refresh())
+            _LOGGER.debug(
+                "Scheduled first update at %.3f seconds",
+                (dt_util.utcnow() - update_start).total_seconds(),
+            )
+
+            total_time = (dt_util.utcnow() - start_time).total_seconds()
+            _LOGGER.debug("Background setup completed in %.3f seconds", total_time)
+
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.error("Background setup failed: %s", err)
 
     async def _async_initialize_states(self) -> None:
         """Initialize states for all configured sensors."""
@@ -253,12 +294,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self._historical_analysis_ready.set()
                 return
 
+            # Add delay to ensure we don't impact startup
+            await asyncio.sleep(30)  # Wait 30 seconds after startup
+
             self._timeslot_data = await self._historical_analysis.calculate_timeslots(
                 self._get_all_configured_sensors(),
-                self.options_config["history_period"],
+                self.options_config.get("history_period", 7),
             )
 
-        except Exception as err:  # pylint: disable=broad-except
+        except (ValueError, TypeError, HomeAssistantError) as err:
             _LOGGER.error("Historical analysis failed: %s", err)
         finally:
             self._historical_analysis_ready.set()

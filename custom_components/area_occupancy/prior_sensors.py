@@ -146,6 +146,18 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self._attr_extra_state_attributes.update(self._shared_attributes)
         self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
 
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        _LOGGER.debug("%s added to hass: %s", self.__class__.__name__, self.entity_id)
+
+        # Schedule calculation in background
+        self.hass.async_create_task(self._calculate_prior())
+
+        # Set initial state with defaults
+        self._attr_native_value = round(self._prob_given_true * 100, 4)
+        self.async_write_ha_state()
+
 
 class MotionPriorSensor(PriorProbabilitySensorBase):
     """Sensor for motion prior probability."""
@@ -157,12 +169,6 @@ class MotionPriorSensor(PriorProbabilitySensorBase):
         # Use motion-specific defaults
         self._prob_given_true = MOTION_PROB_GIVEN_TRUE
         self._prob_given_false = MOTION_PROB_GIVEN_FALSE
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        _LOGGER.debug("MotionPriorSensor added to hass: %s", self.entity_id)
-        await self._calculate_prior()
 
 
 class MediaPriorSensor(PriorProbabilitySensorBase):
@@ -176,12 +182,6 @@ class MediaPriorSensor(PriorProbabilitySensorBase):
         self._prob_given_true = MEDIA_PROB_GIVEN_TRUE
         self._prob_given_false = MEDIA_PROB_GIVEN_FALSE
 
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        _LOGGER.debug("MediaPriorSensor added to hass: %s", self.entity_id)
-        await self._calculate_prior()
-
 
 class AppliancePriorSensor(PriorProbabilitySensorBase):
     """Sensor for appliance prior probability."""
@@ -194,12 +194,6 @@ class AppliancePriorSensor(PriorProbabilitySensorBase):
         self._prob_given_true = APPLIANCE_PROB_GIVEN_TRUE
         self._prob_given_false = APPLIANCE_PROB_GIVEN_FALSE
 
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        _LOGGER.debug("AppliancePriorSensor added to hass: %s", self.entity_id)
-        await self._calculate_prior()
-
 
 class OccupancyPriorSensor(PriorProbabilitySensorBase):
     """Sensor for occupancy prior probability."""
@@ -208,9 +202,3 @@ class OccupancyPriorSensor(PriorProbabilitySensorBase):
         """Initialize occupancy prior sensor."""
         super().__init__(coordinator, entry_id, NAME_OCCUPANCY_PRIOR_SENSOR)
         self._attr_unique_id = self._format_unique_id("occupancy_prior")
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        _LOGGER.debug("OccupancyPriorSensor added to hass: %s", self.entity_id)
-        await self._calculate_prior()

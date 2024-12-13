@@ -100,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"Options config validation failed: {err}"
             ) from err
 
-        # Initialize storage with unique key per entry
+        # Initialize storage
         store = Store[StorageData](
             hass,
             STORAGE_VERSION,
@@ -108,36 +108,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             atomic_writes=True,
         )
 
-        # Load historical data and pass it to coordinator
-        stored_data = await store.async_load() or {
-            "version": STORAGE_VERSION,
-            "last_updated": "",
-            "areas": {},
-        }
-
-        # Initialize coordinator with stored data
+        # Initialize coordinator
         coordinator = AreaOccupancyCoordinator(
             hass=hass,
             entry_id=entry.entry_id,
             core_config=core_config,
             options_config=options_config,
             store=store,
-            stored_data=stored_data,  # Pass stored data to coordinator
+            stored_data=await store.async_load()
+            or {
+                "version": STORAGE_VERSION,
+                "last_updated": "",
+                "areas": {},
+            },
         )
 
-        # Setup coordinator
-        try:
-            await coordinator.async_setup()
-        except Exception as err:
-            raise ConfigEntryNotReady(f"Failed to setup coordinator: {err}") from err
-
-        # Perform first update
-        try:
-            await coordinator.async_config_entry_first_refresh()
-        except Exception as err:
-            raise ConfigEntryNotReady(
-                f"Failed to perform initial data refresh: {err}"
-            ) from err
+        # Setup coordinator in background
+        hass.async_create_task(coordinator.async_setup())
 
         # Store components
         hass.data[DOMAIN][entry.entry_id] = {
@@ -151,16 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Set up platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-        _LOGGER.debug(
-            "Successfully set up Area Occupancy for %s with ID %s",
-            core_config["name"],
-            entry.entry_id,
-        )
-
         return True
-
-    except ConfigEntryNotReady as ready_err:
-        raise ready_err
 
     except Exception as err:
         _LOGGER.error("Failed to set up Area Occupancy integration: %s", err)

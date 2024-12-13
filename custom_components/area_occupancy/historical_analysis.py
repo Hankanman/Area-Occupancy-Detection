@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,6 +18,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
+from homeassistant.exceptions import HomeAssistantError
 
 from .probabilities import (
     DEFAULT_PROB_GIVEN_TRUE,
@@ -205,82 +207,96 @@ class HistoricalAnalysis:
         self, entity_ids: list[str], history_period: int
     ) -> dict[str, Any]:
         """Calculate timeslot probabilities for entities."""
-        if self._needs_cache_update():
-            self._cache = {}
+        try:
+            # Use cached data if available and valid
+            if not self._needs_cache_update():
+                return self._cache
+
+            end_time = dt_util.utcnow()
+            start_time = end_time - timedelta(days=history_period)
+
+            # Process in smaller chunks to avoid long operations
+            chunk_size = 4  # Process 4 hours at a time
+            timeslots = {}
+
+            for hour_chunk in range(0, 24, chunk_size):
+                # Allow other tasks to run between chunks
+                await asyncio.sleep(0.1)
+
+                for hour in range(hour_chunk, min(hour_chunk + chunk_size, 24)):
+                    for minute in (0, 30):
+                        slot_key = f"{hour:02d}:{minute:02d}"
+
+                        # Skip if cached and valid
+                        if slot_key in self._cache:
+                            timeslots[slot_key] = self._cache[slot_key]
+                            continue
+
+                        slot_data = {
+                            "entities": [],
+                            "prob_given_true": 0.0,
+                            "prob_given_false": 0.0,
+                        }
+
+                        # Process each entity
+                        for entity_id in entity_ids:
+                            daily_probs = []
+                            current = start_time
+
+                            # Analyze each day in history period
+                            while current < end_time:
+                                slot_start = current.replace(
+                                    hour=hour, minute=minute, second=0, microsecond=0
+                                )
+                                slot_end = slot_start + TIMESLOT_DURATION
+
+                                if slot_end > end_time:
+                                    break
+
+                                prob_true, prob_false = await self.calculate_prior(
+                                    entity_id, slot_start, slot_end
+                                )
+                                daily_probs.append((prob_true, prob_false))
+                                current += timedelta(days=1)
+
+                            # Average probabilities across days
+                            if daily_probs:
+                                avg_prob_true = round(
+                                    sum(p[0] for p in daily_probs) / len(daily_probs), 4
+                                )
+                                avg_prob_false = round(
+                                    sum(p[1] for p in daily_probs) / len(daily_probs), 4
+                                )
+
+                                slot_data["entities"].append(
+                                    {
+                                        "id": entity_id,
+                                        "prob_given_true": avg_prob_true,
+                                        "prob_given_false": avg_prob_false,
+                                    }
+                                )
+
+                        # Calculate combined probability for slot
+                        if slot_data["entities"]:
+                            combined_true = 1.0
+                            combined_false = 1.0
+                            for entity in slot_data["entities"]:
+                                combined_true *= entity["prob_given_true"]
+                                combined_false *= entity["prob_given_false"]
+
+                            slot_data["prob_given_true"] = round(combined_true, 4)
+                            slot_data["prob_given_false"] = round(combined_false, 4)
+
+                        timeslots[slot_key] = slot_data
+                        self._cache[slot_key] = slot_data
+
+            self._cache = timeslots
             self._last_cache_update = dt_util.utcnow()
+            return timeslots
 
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=history_period)
-
-        timeslots = {}
-
-        # Generate time slots
-        for hour in range(24):
-            for minute in (0, 30):
-                slot_key = f"{hour:02d}:{minute:02d}"
-
-                # Skip if cached and valid
-                if slot_key in self._cache:
-                    timeslots[slot_key] = self._cache[slot_key]
-                    continue
-
-                slot_data = {
-                    "entities": [],
-                    "prob_given_true": 0.0,
-                    "prob_given_false": 0.0,
-                }
-
-                # Process each entity
-                for entity_id in entity_ids:
-                    daily_probs = []
-                    current = start_time
-
-                    # Analyze each day in history period
-                    while current < end_time:
-                        slot_start = current.replace(
-                            hour=hour, minute=minute, second=0, microsecond=0
-                        )
-                        slot_end = slot_start + TIMESLOT_DURATION
-
-                        if slot_end > end_time:
-                            break
-
-                        prob_true, prob_false = await self.calculate_prior(
-                            entity_id, slot_start, slot_end
-                        )
-                        daily_probs.append((prob_true, prob_false))
-                        current += timedelta(days=1)
-
-                    # Average probabilities across days
-                    if daily_probs:
-                        avg_prob_true = round(
-                            sum(p[0] for p in daily_probs) / len(daily_probs), 4
-                        )
-                        avg_prob_false = round(
-                            sum(p[1] for p in daily_probs) / len(daily_probs), 4
-                        )
-
-                        slot_data["entities"].append(
-                            {
-                                "id": entity_id,
-                                "prob_given_true": avg_prob_true,
-                                "prob_given_false": avg_prob_false,
-                            }
-                        )
-
-                # Calculate combined probability for slot
-                if slot_data["entities"]:
-                    combined_true = 1.0
-                    combined_false = 1.0
-                    for entity in slot_data["entities"]:
-                        combined_true *= entity["prob_given_true"]
-                        combined_false *= entity["prob_given_false"]
-
-                    slot_data["prob_given_true"] = round(combined_true, 4)
-                    slot_data["prob_given_false"] = round(combined_false, 4)
-
-                timeslots[slot_key] = slot_data
-                self._cache[slot_key] = slot_data
-
-        _LOGGER.debug("Historical analysis complete")
-        return timeslots
+        except (ValueError, TypeError) as err:
+            _LOGGER.error("Error processing timeslot data: %s", err)
+            return {}
+        except HomeAssistantError as err:
+            _LOGGER.error("Home Assistant error during timeslot calculation: %s", err)
+            return {}

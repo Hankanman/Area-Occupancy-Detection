@@ -157,11 +157,12 @@ class ProbabilityCalculator:
     ) -> ProbabilityResult:
         """Calculate overall probability using Bayesian inference."""
         try:
-            # Initialize with motion sensor state instead of neutral prior
+            # Initialize with motion sensor state instead of waiting for historical data
             motion_active = any(
                 sensor_states.get(sensor_id, {}).get("state") == STATE_ON
                 for sensor_id in self.motion_sensors
             )
+
             # Start with motion-based prior
             current_probability = (
                 MOTION_PROB_GIVEN_TRUE

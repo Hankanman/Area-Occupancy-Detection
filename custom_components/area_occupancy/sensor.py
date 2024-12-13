@@ -88,7 +88,8 @@ async def async_setup_entry(
             ]
             entities.extend(prior_sensors)
 
-        async_add_entities(entities)
+        # Add entities without waiting for coordinator
+        async_add_entities(entities, False)  # Set update_before_add to False
 
     except Exception as err:
         _LOGGER.error("Error setting up sensors: %s", err)
