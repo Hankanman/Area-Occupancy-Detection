@@ -673,9 +673,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         # Ensure value is stored as percentage
         if not 0 <= value <= 100:
             raise ValueError("Threshold must be between 0 and 100")
+        old_threshold = self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
         self.options_config[CONF_THRESHOLD] = value
-        self.async_set_updated_data(self.data)
+        _LOGGER.debug(
+            "Updated threshold from %.2f to %.2f (decimal: %.3f)",
+            old_threshold,
+            value,
+            self.get_threshold_decimal(),
+        )
+        # Force a refresh to recalculate with new threshold
+        await self.async_refresh()
 
     def get_threshold_decimal(self) -> float:
         """Get threshold as decimal (0-1) for calculations."""
-        return self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0
+        threshold = self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        return threshold / 100.0

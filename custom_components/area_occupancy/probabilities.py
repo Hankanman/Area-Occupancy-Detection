@@ -3,24 +3,11 @@
 from __future__ import annotations
 from typing import Final, Dict, Any
 
-# Core weight limits - Ensure weights don't exceed reasonable bounds
-MAX_MOTION_WEIGHT: Final[float] = 0.9
-MAX_MEDIA_WEIGHT: Final[float] = 0.7
-MAX_APPLIANCE_WEIGHT: Final[float] = 0.5
-MAX_ENVIRONMENTAL_WEIGHT: Final[float] = 0.3
-
-# Default weights for each detection type
-DEFAULT_MOTION_WEIGHT: Final[float] = 0.7
-DEFAULT_MEDIA_WEIGHT: Final[float] = 0.5
-DEFAULT_APPLIANCE_WEIGHT: Final[float] = 0.1
-DEFAULT_ENVIRONMENTAL_WEIGHT: Final[float] = 0.1
-
 # Motion detection probabilities
 MOTION_SINGLE_SENSOR_PROBABILITY: Final[float] = 0.85
 MOTION_MULTIPLE_SENSORS_PROBABILITY: Final[float] = 0.9
 MOTION_DECAY_FACTOR: Final[float] = 0.7
 MAX_COMPOUND_DECAY: Final[float] = 0.8
-MIN_MOTION_WEIGHT: Final[float] = 0.3
 
 # Media device state probabilities
 MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
@@ -49,12 +36,10 @@ ENVIRONMENTAL_SETTINGS: Final[Dict[str, Any]] = {
     "temperature": {
         "change_threshold": 1.5,  # degrees
         "baseline": 21.0,
-        "weight": 0.6,
     },
     "humidity": {
         "change_threshold": 10.0,  # percent
         "baseline": 50.0,
-        "weight": 0.5,
     },
 }
 
@@ -62,7 +47,6 @@ ENVIRONMENTAL_SETTINGS: Final[Dict[str, Any]] = {
 MIN_PROBABILITY: Final[float] = 0.0
 MAX_PROBABILITY: Final[float] = 1.0
 
-# Add these constants for default prior probabilities
 # Default prior probabilities (should never be 0 or 1)
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2

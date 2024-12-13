@@ -80,10 +80,7 @@ class AreaOccupancyBinarySensor(
         try:
             if not self.coordinator.data:
                 return None
-            threshold = self.coordinator.options_config.get(
-                CONF_THRESHOLD, DEFAULT_THRESHOLD
-            )
-            return self.coordinator.data.get("probability", 0.0) >= threshold
+            return self.coordinator.data.get("is_occupied", False)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None

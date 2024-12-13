@@ -52,7 +52,6 @@ class EnvironmentalData(TypedDict):
     current_value: float
     baseline: float
     threshold: float
-    weight: float
 
 
 class DeviceState(TypedDict):
