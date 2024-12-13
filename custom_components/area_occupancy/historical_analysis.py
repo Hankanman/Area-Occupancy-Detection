@@ -18,7 +18,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
-from homeassistant.exceptions import HomeAssistantError
 
 from .probabilities import (
     DEFAULT_PROB_GIVEN_TRUE,
@@ -59,37 +58,26 @@ class HistoricalAnalysis:
     ) -> list[State] | None:
         """Get states from recorder."""
         try:
-
-            def _get_states():
-                return get_significant_states(
+            states = await get_instance(self.hass).async_add_executor_job(
+                lambda: get_significant_states(
                     self.hass,
                     start_time,
                     end_time,
                     [entity_id],
-                    minimal_response=False,  # Changed to get full state objects
+                    minimal_response=False,
                 )
+            )
 
-            recorder = get_instance(self.hass)
-            states = await recorder.async_add_executor_job(_get_states)
-
-            if not states:
+            if not states or entity_id not in states:
                 return None
 
-            state_list = states.get(entity_id, [])
-
-            # Validate each state object
-            validated_states = []
-            for state in state_list:
-                if hasattr(state, "state") or (
-                    isinstance(state, dict) and "state" in state
-                ):
-                    validated_states.append(state)
-                else:
-                    _LOGGER.warning(
-                        "Invalid state object found for %s: %s", entity_id, state
-                    )
-
-            return validated_states if validated_states else None
+            # Filter and validate states
+            return [
+                state
+                for state in states[entity_id]
+                if hasattr(state, "state")
+                or (isinstance(state, dict) and "state" in state)
+            ] or None
 
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error getting states for %s: %s", entity_id, err)
@@ -106,41 +94,25 @@ class HistoricalAnalysis:
         current_state = None
         last_change = start_time
 
-        # Process each state change
         for state_obj in states:
             try:
-                # Ensure we're working with a proper state object
-                if hasattr(state_obj, "state"):
-                    state = state_obj.state
-                elif isinstance(state_obj, dict) and "state" in state_obj:
-                    state = state_obj["state"]
-                else:
-                    _LOGGER.warning("Invalid state object encountered: %s", state_obj)
-                    continue
+                state = (
+                    state_obj.state
+                    if hasattr(state_obj, "state")
+                    else state_obj.get("state")
+                )
 
-                if state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                if not state or state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                     continue
 
                 current_time = (
                     state_obj.last_changed
                     if hasattr(state_obj, "last_changed")
-                    else (
-                        dt_util.parse_datetime(state_obj.get("last_changed", ""))
-                        if isinstance(state_obj, dict)
-                        else start_time
-                    )
-                )
+                    else dt_util.parse_datetime(state_obj.get("last_changed", ""))
+                ) or start_time
 
-                if not current_time:
-                    _LOGGER.warning(
-                        "Could not determine state change time for %s", state_obj
-                    )
-                    continue
-
-                # If previous state was active, add its duration
                 if current_state in VALID_ACTIVE_STATES:
-                    duration = current_time - last_change
-                    total_active_time += duration
+                    total_active_time += current_time - last_change
 
                 current_state = state
                 last_change = current_time
@@ -149,7 +121,7 @@ class HistoricalAnalysis:
                 _LOGGER.error("Error processing state object: %s", err)
                 continue
 
-        # Handle final state up to end_time
+        # Add final state duration
         if current_state in VALID_ACTIVE_STATES:
             total_active_time += end_time - last_change
 
@@ -159,28 +131,25 @@ class HistoricalAnalysis:
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> tuple[float, float]:
         """Calculate prior probabilities based on historical state."""
-        # Get sensor type from entity_id to determine defaults
-        if "motion" in entity_id:
-            default_true, default_false = (
-                MOTION_PROB_GIVEN_TRUE,
-                MOTION_PROB_GIVEN_FALSE,
-            )
-            min_true, max_false = 0.15, 0.85  # Minimum thresholds for motion
-        elif "media" in entity_id:
-            default_true, default_false = MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
-            min_true, max_false = 0.10, 0.90  # Minimum thresholds for media
-        elif "appliance" in entity_id:
-            default_true, default_false = (
+        # Define sensor type defaults
+        sensor_defaults = {
+            "motion": (MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE, 0.15, 0.85),
+            "media": (MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE, 0.10, 0.90),
+            "appliance": (
                 APPLIANCE_PROB_GIVEN_TRUE,
                 APPLIANCE_PROB_GIVEN_FALSE,
-            )
-            min_true, max_false = 0.05, 0.95  # Minimum thresholds for appliances
-        else:
-            default_true, default_false = (
-                DEFAULT_PROB_GIVEN_TRUE,
-                DEFAULT_PROB_GIVEN_FALSE,
-            )
-            min_true, max_false = 0.01, 0.99  # Default minimum thresholds
+                0.05,
+                0.95,
+            ),
+        }
+
+        # Get defaults based on entity type
+        sensor_type = next(
+            (stype for stype in sensor_defaults if stype in entity_id), None
+        )
+        default_true, default_false, min_true, max_false = sensor_defaults.get(
+            sensor_type, (DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE, 0.01, 0.99)
+        )
 
         total_duration = (end_time - start_time).total_seconds()
         if total_duration <= 0:
@@ -195,108 +164,100 @@ class HistoricalAnalysis:
             total_duration,
         )
 
-        # Calculate probabilities with sensor-specific bounds
         prob_given_true = min(
             max(active_duration / total_duration, min_true), max_false
         )
-        prob_given_false = 1 - prob_given_true
-
-        return round(prob_given_true, 4), round(prob_given_false, 4)
+        return round(prob_given_true, 4), round(1 - prob_given_true, 4)
 
     async def calculate_timeslots(
         self, entity_ids: list[str], history_period: int
     ) -> dict[str, Any]:
         """Calculate timeslot probabilities for entities."""
-        try:
-            # Use cached data if available and valid
-            if not self._needs_cache_update():
-                return self._cache
+        if not self._needs_cache_update():
+            return self._cache
 
+        try:
             end_time = dt_util.utcnow()
             start_time = end_time - timedelta(days=history_period)
-
-            # Process in smaller chunks to avoid long operations
-            chunk_size = 4  # Process 4 hours at a time
             timeslots = {}
 
-            for hour_chunk in range(0, 24, chunk_size):
-                # Allow other tasks to run between chunks
-                await asyncio.sleep(0.1)
+            for hour in range(24):
+                for minute in (0, 30):
+                    if hour % 4 == 0 and minute == 0:  # Process in 4-hour chunks
+                        await asyncio.sleep(0.1)
 
-                for hour in range(hour_chunk, min(hour_chunk + chunk_size, 24)):
-                    for minute in (0, 30):
-                        slot_key = f"{hour:02d}:{minute:02d}"
+                    slot_key = f"{hour:02d}:{minute:02d}"
+                    if slot_key in self._cache:
+                        timeslots[slot_key] = self._cache[slot_key]
+                        continue
 
-                        # Skip if cached and valid
-                        if slot_key in self._cache:
-                            timeslots[slot_key] = self._cache[slot_key]
-                            continue
+                    slot_data = await self._process_timeslot(
+                        entity_ids, start_time, end_time, hour, minute
+                    )
+                    timeslots[slot_key] = slot_data
+                    self._cache[slot_key] = slot_data
 
-                        slot_data = {
-                            "entities": [],
-                            "prob_given_true": 0.0,
-                            "prob_given_false": 0.0,
-                        }
-
-                        # Process each entity
-                        for entity_id in entity_ids:
-                            daily_probs = []
-                            current = start_time
-
-                            # Analyze each day in history period
-                            while current < end_time:
-                                slot_start = current.replace(
-                                    hour=hour, minute=minute, second=0, microsecond=0
-                                )
-                                slot_end = slot_start + TIMESLOT_DURATION
-
-                                if slot_end > end_time:
-                                    break
-
-                                prob_true, prob_false = await self.calculate_prior(
-                                    entity_id, slot_start, slot_end
-                                )
-                                daily_probs.append((prob_true, prob_false))
-                                current += timedelta(days=1)
-
-                            # Average probabilities across days
-                            if daily_probs:
-                                avg_prob_true = round(
-                                    sum(p[0] for p in daily_probs) / len(daily_probs), 4
-                                )
-                                avg_prob_false = round(
-                                    sum(p[1] for p in daily_probs) / len(daily_probs), 4
-                                )
-
-                                slot_data["entities"].append(
-                                    {
-                                        "id": entity_id,
-                                        "prob_given_true": avg_prob_true,
-                                        "prob_given_false": avg_prob_false,
-                                    }
-                                )
-
-                        # Calculate combined probability for slot
-                        if slot_data["entities"]:
-                            combined_true = 1.0
-                            combined_false = 1.0
-                            for entity in slot_data["entities"]:
-                                combined_true *= entity["prob_given_true"]
-                                combined_false *= entity["prob_given_false"]
-
-                            slot_data["prob_given_true"] = round(combined_true, 4)
-                            slot_data["prob_given_false"] = round(combined_false, 4)
-
-                        timeslots[slot_key] = slot_data
-                        self._cache[slot_key] = slot_data
-
-            self._cache = timeslots
             self._last_cache_update = dt_util.utcnow()
             return timeslots
 
-        except (ValueError, TypeError) as err:
+        except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error processing timeslot data: %s", err)
             return {}
-        except HomeAssistantError as err:
-            _LOGGER.error("Home Assistant error during timeslot calculation: %s", err)
-            return {}
+
+    async def _process_timeslot(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        hour: int,
+        minute: int,
+    ) -> dict[str, Any]:
+        """Process a single timeslot."""
+        slot_data = {"entities": [], "prob_given_true": 0.0, "prob_given_false": 0.0}
+
+        for entity_id in entity_ids:
+            daily_probs = []
+            current = start_time
+
+            while current < end_time:
+                slot_start = current.replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+                slot_end = slot_start + TIMESLOT_DURATION
+
+                if slot_end > end_time:
+                    break
+
+                prob_true, prob_false = await self.calculate_prior(
+                    entity_id, slot_start, slot_end
+                )
+                daily_probs.append((prob_true, prob_false))
+                current += timedelta(days=1)
+
+            if daily_probs:
+                avg_prob_true = round(
+                    sum(p[0] for p in daily_probs) / len(daily_probs), 4
+                )
+                avg_prob_false = round(
+                    sum(p[1] for p in daily_probs) / len(daily_probs), 4
+                )
+
+                slot_data["entities"].append(
+                    {
+                        "id": entity_id,
+                        "prob_given_true": avg_prob_true,
+                        "prob_given_false": avg_prob_false,
+                    }
+                )
+
+        if slot_data["entities"]:
+            combined_true = 1.0
+            combined_false = 1.0
+            for entity in slot_data["entities"]:
+                combined_true *= entity["prob_given_true"]
+                combined_false *= entity["prob_given_false"]
+
+            slot_data["prob_given_true"] = round(combined_true, 4)
+            slot_data["prob_given_false"] = round(combined_false, 4)
+
+        return slot_data
