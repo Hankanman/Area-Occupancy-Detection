@@ -99,6 +99,7 @@ class ProbabilityCalculator:
 
     def __init__(
         self,
+        coordinator,
         motion_sensors: list[str],
         media_devices: list[str] | None = None,
         appliances: list[str] | None = None,
@@ -108,6 +109,7 @@ class ProbabilityCalculator:
         decay_config: DecayConfig | None = None,
     ) -> None:
         """Initialize the calculator with configuration."""
+        self.coordinator = coordinator
         self.motion_sensors = motion_sensors
         self.media_devices = media_devices or []
         self.appliances = appliances or []
@@ -356,6 +358,10 @@ class ProbabilityCalculator:
                 MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
             )
 
+            # Convert threshold from percentage to decimal for comparison
+            threshold_decimal = self.coordinator.get_threshold_decimal()
+            is_occupied = final_probability >= threshold_decimal
+
             return {
                 "probability": final_probability,
                 "prior_probability": (
@@ -372,6 +378,7 @@ class ProbabilityCalculator:
                     sensor_id: state.get("availability", False)
                     for sensor_id, state in sensor_states.items()
                 },
+                "is_occupied": is_occupied,
             }
 
         except Exception as err:

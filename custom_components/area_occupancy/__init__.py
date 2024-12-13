@@ -64,15 +64,17 @@ def validate_config(data: dict[str, Any], validate_core: bool = True) -> None:
 
     # Validate numeric bounds
     bounds = {
-        CONF_THRESHOLD: (0, 1),
+        CONF_THRESHOLD: (0, 100),
         CONF_HISTORY_PERIOD: (1, 30),
         CONF_DECAY_WINDOW: (60, 3600),
-        CONF_MINIMUM_CONFIDENCE: (0, 1),
+        CONF_MINIMUM_CONFIDENCE: (0, 100),
     }
 
     for key, (min_val, max_val) in bounds.items():
-        if key in data and not min_val <= data[key] <= max_val:
-            raise HomeAssistantError(f"{key} must be between {min_val} and {max_val}")
+        if key in data and not min_val <= float(data[key]) <= max_val:
+            raise HomeAssistantError(
+                f"{key.replace('_', ' ').title()} must be between {min_val} and {max_val}"
+            )
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -173,11 +175,17 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             data = {**config_entry.data}
             options = {**config_entry.options}
 
-            # Convert threshold values from float to percentage
+            # Convert threshold values from decimal to percentage if needed
             if CONF_THRESHOLD in data:
-                data[CONF_THRESHOLD] = data[CONF_THRESHOLD] * 100.0
+                threshold = float(data[CONF_THRESHOLD])
+                data[CONF_THRESHOLD] = (
+                    threshold * 100.0 if threshold <= 1.0 else threshold
+                )
             if CONF_THRESHOLD in options:
-                options[CONF_THRESHOLD] = options[CONF_THRESHOLD] * 100.0
+                threshold = float(options[CONF_THRESHOLD])
+                options[CONF_THRESHOLD] = (
+                    threshold * 100.0 if threshold <= 1.0 else threshold
+                )
 
             # Convert minimum confidence from float to percentage if present
             if CONF_MINIMUM_CONFIDENCE in data:
@@ -224,6 +232,16 @@ def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsCo
     """Migrate legacy configuration to new format."""
     area_id = config.get(CONF_AREA_ID, str(uuid.uuid4()))
 
+    # Convert threshold to percentage if it's in decimal form
+    threshold = config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+    if threshold <= 1.0:  # If it's still in decimal form
+        threshold = threshold * 100.0
+
+    # Convert minimum confidence to percentage if it's in decimal form
+    min_confidence = config.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE)
+    if min_confidence <= 1.0:  # If it's still in decimal form
+        min_confidence = min_confidence * 100.0
+
     core_config = CoreConfig(
         name=config[CONF_NAME],
         area_id=area_id,
@@ -239,7 +257,7 @@ def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsCo
     ]
 
     options_data = {
-        CONF_THRESHOLD: config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
+        CONF_THRESHOLD: threshold,
         CONF_HISTORY_PERIOD: config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
         CONF_DECAY_ENABLED: config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
         CONF_DECAY_WINDOW: config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
@@ -247,15 +265,11 @@ def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsCo
         CONF_HISTORICAL_ANALYSIS_ENABLED: config.get(
             CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
         ),
-        CONF_MINIMUM_CONFIDENCE: config.get(
-            CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE
-        ),
+        CONF_MINIMUM_CONFIDENCE: min_confidence,
     }
 
     # Add sensor lists with empty list defaults
     for sensor_list in sensor_lists:
         options_data[sensor_list] = config.get(sensor_list, [])
-
-    validate_config(options_data, validate_core=False)
 
     return core_config, options_data

@@ -62,15 +62,11 @@ class AreaOccupancyThreshold(
     @property
     def native_value(self) -> float:
         """Return the current threshold value as a percentage."""
-        return (
-            self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-            * 100.0
-        )
+        return self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new threshold value, converting from percentage to float."""
-        decimal_value = value / 100.0
-        await self.coordinator.async_update_threshold(decimal_value)
+        """Set new threshold value (already in percentage)."""
+        await self.coordinator.async_update_threshold(value)
 
 
 async def async_setup_entry(
