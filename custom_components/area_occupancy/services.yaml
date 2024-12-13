@@ -1,0 +1,47 @@
+calculate_prior:
+  name: Calculate Prior Probability
+  description: Calculate prior probability for a specific entity
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The entity to calculate prior probability for
+      required: true
+      selector:
+        entity:
+          integration: area_occupancy
+    output_file:
+      name: Output File
+      description: File to save the calculation results
+      required: false
+      default: "area_occupancy_prior.json"
+      selector:
+        text:
+
+calculate_timeslots:
+  name: Calculate Timeslots
+  description: Calculate timeslot probabilities for entities
+  fields:
+    entity_id:
+      name: Entity IDs
+      description: The entities to analyze
+      required: true
+      selector:
+        entity:
+          integration: area_occupancy
+          multiple: true
+    days:
+      name: Days
+      description: Number of days to analyze
+      required: false
+      default: 7
+      selector:
+        number:
+          min: 1
+          max: 30
+    output_file:
+      name: Output File
+      description: File to save the calculation results
+      required: false
+      default: "area_occupancy_timeslots.json"
+      selector:
+        text:
