@@ -661,11 +661,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Refresh data with forced update."""
         try:
             result = await self._async_update_data()
-            # Only log at debug level if significant changes occurred
-            if (not self.data) or abs(
-                result["probability"] - self.data["probability"]
-            ) > 0.05:
-                _LOGGER.debug("Significant probability change detected")
             self.async_set_updated_data(result)
         except (HomeAssistantError, ValueError, RuntimeError) as err:
             _LOGGER.error("Error during refresh: %s", err, exc_info=True)
