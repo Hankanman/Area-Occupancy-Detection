@@ -24,6 +24,9 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import (
     DOMAIN,
     CONF_AREA_ID,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
 )
 from .types import (
     ProbabilityResult,
@@ -538,3 +541,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def get_sensor_states(self) -> SensorStates:
         """Get current sensor states."""
         return self._sensor_states
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device info for the integration."""
+        return {
+            "identifiers": {(DOMAIN, self.entry_id)},
+            "name": self.core_config["name"],
+            "manufacturer": DEVICE_MANUFACTURER,
+            "model": DEVICE_MODEL,
+            "sw_version": DEVICE_SW_VERSION,
+        }

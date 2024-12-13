@@ -4,28 +4,66 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import Platform, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .config_management import ConfigManager
 from .const import (
     DOMAIN,
     STORAGE_KEY_HISTORY,
     STORAGE_VERSION,
     CONF_AREA_ID,
+    CONF_MOTION_SENSORS,
+    CONF_THRESHOLD,
+    CONF_HISTORY_PERIOD,
+    CONF_DECAY_WINDOW,
+    CONF_MINIMUM_CONFIDENCE,
 )
-from .types import StorageData
+from .types import StorageData, CoreConfig, OptionsConfig
 from .coordinator import AreaOccupancyCoordinator
 from .service import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+
+
+def validate_core_config(data: dict[str, Any]) -> CoreConfig:
+    """Validate core configuration data."""
+    if not data.get(CONF_NAME):
+        raise HomeAssistantError("Name is required")
+
+    if not data.get(CONF_MOTION_SENSORS):
+        raise HomeAssistantError("At least one motion sensor is required")
+
+    if not data.get(CONF_AREA_ID):
+        raise HomeAssistantError("Area ID is required")
+
+    return CoreConfig(
+        name=data[CONF_NAME],
+        area_id=data[CONF_AREA_ID],
+        motion_sensors=data[CONF_MOTION_SENSORS],
+    )
+
+
+def validate_numeric_bounds(data: dict[str, Any]) -> None:
+    """Validate numeric values are within acceptable bounds."""
+    if CONF_THRESHOLD in data and not 0 <= data[CONF_THRESHOLD] <= 1:
+        raise HomeAssistantError("Threshold must be between 0 and 1")
+
+    if CONF_HISTORY_PERIOD in data and not 1 <= data[CONF_HISTORY_PERIOD] <= 30:
+        raise HomeAssistantError("History period must be between 1 and 30 days")
+
+    if CONF_DECAY_WINDOW in data and not 60 <= data[CONF_DECAY_WINDOW] <= 3600:
+        raise HomeAssistantError("Decay window must be between 60 and 3600 seconds")
+
+    if CONF_MINIMUM_CONFIDENCE in data and not 0 <= data[CONF_MINIMUM_CONFIDENCE] <= 1:
+        raise HomeAssistantError("Minimum confidence must be between 0 and 1")
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -45,7 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Validate core configuration
         try:
-            core_config = ConfigManager.validate_core_config(entry.data)
+            core_config = validate_core_config(entry.data)
             _LOGGER.debug("Core config validated: %s", core_config)
         except Exception as err:
             _LOGGER.error("Core config validation failed: %s", err)
@@ -53,7 +91,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Validate options configuration
         try:
-            options_config = ConfigManager.validate_options(dict(entry.options))
+            options_config = dict(entry.options)
+            validate_numeric_bounds(options_config)
             _LOGGER.debug("Options config validated: %s", options_config)
         except Exception as err:
             _LOGGER.error("Options config validation failed: %s", err)
@@ -168,7 +207,8 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options for existing area occupancy entry."""
     try:
         # Validate new options
-        new_options = ConfigManager.validate_options(entry.options)
+        new_options = dict(entry.options)
+        validate_numeric_bounds(new_options)
 
         # Get coordinator
         coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
@@ -200,9 +240,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     try:
         if config_entry.version == 1:
             # Migrate to version 2
-            core_config, options_config = ConfigManager.migrate_legacy_config(
-                config_entry.data
-            )
+            core_config, options_config = migrate_legacy_config(config_entry.data)
 
             # Add area_id if not present
             if CONF_AREA_ID not in core_config:
@@ -228,3 +266,26 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Error migrating Area Occupancy configuration: %s", err)
         return False
+
+
+def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsConfig]:
+    """Migrate legacy configuration to new format."""
+    try:
+        core_config = CoreConfig(
+            name=config[CONF_NAME],
+            area_id=config.get(CONF_AREA_ID),
+            motion_sensors=config[CONF_MOTION_SENSORS],
+        )
+
+        options_data = {
+            k: v
+            for k, v in config.items()
+            if k not in [CONF_NAME, CONF_MOTION_SENSORS, CONF_AREA_ID]
+        }
+        validate_numeric_bounds(options_data)
+
+        return core_config, options_data
+
+    except Exception as err:
+        _LOGGER.error("Error migrating config: %s", err)
+        raise HomeAssistantError(f"Failed to migrate configuration: {err}") from err
