@@ -51,9 +51,9 @@ async def async_setup_entry(
         coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
             "coordinator"
         ]
-        # Get threshold from options_config
         threshold = coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
 
+        # Add entity without waiting for coordinator
         async_add_entities(
             [
                 AreaOccupancyBinarySensor(
@@ -61,7 +61,8 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                     threshold=threshold,
                 )
-            ]
+            ],
+            False,  # Set update_before_add to False
         )
 
     except Exception as err:
