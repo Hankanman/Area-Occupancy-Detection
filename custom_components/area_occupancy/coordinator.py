@@ -26,6 +26,10 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_TYPE,
 )
 from .types import (
     ProbabilityResult,
@@ -146,9 +150,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             humidity_sensors=self.options_config.get("humidity_sensors", []),
             temperature_sensors=self.options_config.get("temperature_sensors", []),
             decay_config=DecayConfig(
-                enabled=self.options_config.get("decay_enabled", True),
-                window=self.options_config.get("decay_window", 600),
-                type=self.options_config.get("decay_type", "linear"),
+                enabled=self.options_config.get("decay_enabled", DEFAULT_DECAY_ENABLED),
+                window=self.options_config.get("decay_window", DEFAULT_DECAY_WINDOW),
+                type=self.options_config.get("decay_type", DEFAULT_DECAY_TYPE),
             ),
         )
 
@@ -320,12 +324,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self._historical_analysis_ready.set()
                 return
 
-            # Add delay to ensure we don't impact startup
-            await asyncio.sleep(30)  # Wait 30 seconds after startup
-
             self._timeslot_data = await self._historical_analysis.calculate_timeslots(
                 self._get_all_configured_sensors(),
-                self.options_config.get("history_period", 7),
+                self.options_config.get("history_period", DEFAULT_HISTORY_PERIOD),
             )
 
         except (ValueError, TypeError, HomeAssistantError) as err:
