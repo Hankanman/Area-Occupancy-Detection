@@ -245,7 +245,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
+        """Return entity specific state attributes."""
         if not self.coordinator.data:
             return {}
 

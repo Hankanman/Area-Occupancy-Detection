@@ -58,45 +58,12 @@ ENVIRONMENTAL_SETTINGS: Final[Dict[str, Any]] = {
     },
 }
 
-# Correlation and confidence thresholds
-CORRELATION_LIMIT: Final[float] = 0.7
-MIN_CONFIDENCE: Final[float] = 0.2
-HIGH_CONFIDENCE_THRESHOLD: Final[float] = 0.8
-MEDIUM_CONFIDENCE_THRESHOLD: Final[float] = 0.5
-
-# Pattern recognition thresholds
-PATTERN_CHANGE_THRESHOLD: Final[float] = 0.2
-PATTERN_PEAK_THRESHOLD: Final[float] = 0.7
-MIN_PATTERN_SAMPLES: Final[int] = 100
-
-# History analysis settings
-HISTORY_UPDATE_INTERVAL: Final[int] = 3600  # seconds
-MAX_HISTORY_SAMPLES: Final[int] = 1000
-HISTORY_DECAY_RATE: Final[float] = 0.1
-HISTORY_CORRELATION_THRESHOLD: Final[float] = 0.1
-HISTORY_TIMESLOT_SIZE: Final[int] = 1800  # seconds
-
-# Confidence calculation weights
-CONFIDENCE_WEIGHTS: Final[Dict[str, float]] = {
-    "sensor_availability": 0.4,
-    "data_freshness": 0.3,
-    "sample_size": 0.3,
-}
-
 # Safety bounds
 MIN_PROBABILITY: Final[float] = 0.0
 MAX_PROBABILITY: Final[float] = 1.0
-MAX_WEIGHT_ADJUSTMENT: Final[float] = 0.5
-MIN_SAMPLES_FOR_CONFIDENCE: Final[int] = 10
-
-# Time windows
-DEFAULT_TIME_WINDOW: Final[int] = 300  # seconds
-MIN_TIME_WINDOW: Final[int] = 60  # seconds
-MAX_TIME_WINDOW: Final[int] = 3600  # seconds
 
 # Add these constants for default prior probabilities
 # Default prior probabilities (should never be 0 or 1)
-DEFAULT_PRIOR_PROBABILITY: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
 

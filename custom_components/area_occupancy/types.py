@@ -35,7 +35,6 @@ class OptionsConfig(TypedDict, total=False):
     decay_window: int
     decay_type: str
     historical_analysis_enabled: bool
-    minimum_confidence: float
 
 
 # State and sensor types
@@ -62,7 +61,6 @@ class DeviceState(TypedDict):
     entity_id: str
     state: str
     timestamp: str
-    confidence: float
 
 
 # Historical analysis types
@@ -81,7 +79,6 @@ class Timeslot(TypedDict):
     prob_given_true: float
     prob_given_false: float
     day_of_week: str
-    confidence: float
 
 
 class TimeslotData(TypedDict):
@@ -96,7 +93,6 @@ class HistoricalResult(TypedDict):
 
     prob_given_true: float
     prob_given_false: float
-    confidence: float
     sample_count: int
     time_analyzed: datetime
 
@@ -120,10 +116,9 @@ class ProbabilityResult(TypedDict):
     sensor_probabilities: SensorProbabilities
     device_states: dict[str, dict[str, str]]
     decay_status: dict[str, float]
-    confidence_score: float
     sensor_availability: dict[str, bool]
+    is_occupied: bool
     historical_probability: NotRequired[float]
-    historical_confidence: NotRequired[float]
     last_occupied: NotRequired[str]
     state_duration: NotRequired[float]
     occupancy_rate: NotRequired[float]
