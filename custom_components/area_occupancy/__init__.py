@@ -69,20 +69,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             atomic_writes=True,
         )
 
-        # Load historical data
-        stored_data = await store.async_load() or {  # pylint: disable=unused-variable
+        # Load historical data and pass it to coordinator
+        stored_data = await store.async_load() or {
             "version": STORAGE_VERSION,
             "last_updated": "",
             "areas": {},
         }
 
-        # Initialize coordinator
+        # Initialize coordinator with stored data
         coordinator = AreaOccupancyCoordinator(
             hass=hass,
             entry_id=entry.entry_id,
             core_config=core_config,
             options_config=options_config,
             store=store,
+            stored_data=stored_data,  # Pass stored data to coordinator
         )
 
         # Setup coordinator
