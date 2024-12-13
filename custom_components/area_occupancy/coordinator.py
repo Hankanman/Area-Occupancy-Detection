@@ -14,9 +14,8 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
@@ -47,11 +46,6 @@ from .storage import AreaOccupancyStorage
 
 _LOGGER = logging.getLogger(__name__)
 
-# Update constants
-UPDATE_COOLDOWN = 1.0  # seconds
-TIMESLOT_UPDATE_INTERVAL = timedelta(hours=6)
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=1)
-
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     """Class to manage fetching area occupancy data with optimized updates."""
@@ -68,30 +62,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.storage = AreaOccupancyStorage(hass, entry_id)
 
         self._last_known_values: dict[str, Any] = {}
-        self._setup_complete = asyncio.Event()
-        self._sensor_availability: dict[str, bool] = {}
-        self._device_states: dict[str, dict] = {
-            "media_states": {},
-            "appliance_states": {},
-        }
-        self._decay_status: dict[str, float] = {}
-        self._confidence_score: float = 0.0
-        self._active_triggers: list[str] = []
-        self._sensor_probabilities: dict[str, float] = {}
-        self._prior_probability: float = 0.0
-        self._probability: float = 0.0
 
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(minutes=5),
-            request_refresh_debouncer=Debouncer(
-                hass,
-                _LOGGER,
-                cooldown=1.0,
-                immediate=False,
-            ),
+            update_method=self._async_update_data,
         )
 
         if not core_config.get("motion_sensors"):
@@ -125,15 +102,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._historical_analysis = HistoricalAnalysis(self.hass)
         self._historical_analysis_task: asyncio.Task | None = None
 
-        # Initialize debouncer
-        self._update_debouncer = Debouncer(
-            hass,
-            _LOGGER,
-            cooldown=UPDATE_COOLDOWN,
-            immediate=False,
-            function=self.async_refresh,
-        )
-
         self._storage_lock = asyncio.Lock()
         self._last_save = dt_util.utcnow()
         self._save_interval = timedelta(minutes=5)
@@ -163,10 +131,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             # Load stored data first
             await self._load_stored_data()
 
-            # Set minimal initial state
-            self._sensor_states = {}
-            self._motion_timestamps = {}
-            self.last_update_success = True
+            # Set up state tracking
+            self._setup_entity_tracking()
 
             # Start all initialization in background
             self.hass.async_create_task(self._async_background_setup())
@@ -261,61 +227,49 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def _setup_entity_tracking(self) -> None:
         """Set up optimized entity state tracking."""
         entities = self._get_all_configured_sensors()
+        _LOGGER.debug("Setting up entity tracking for: %s", entities)
 
         @callback
         def async_state_changed_listener(event) -> None:
             """Handle entity state changes."""
-            entity_id = event.data["entity_id"]
-            new_state = event.data["new_state"]
+            entity_id = event.data.get("entity_id")
+            new_state = event.data.get("new_state")
 
-            if not new_state:
+            if not new_state or entity_id not in entities:
                 return
 
-            self._handle_state_update(entity_id, new_state)
+            # Update state immediately
+            is_available = bool(
+                new_state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
+            )
 
+            self._sensor_states[entity_id] = {
+                "state": new_state.state if is_available else None,
+                "last_changed": (
+                    new_state.last_changed.isoformat()
+                    if new_state.last_changed
+                    else dt_util.utcnow().isoformat()
+                ),
+                "availability": is_available,
+            }
+
+            # Update motion timestamps
+            if (
+                entity_id in self.core_config["motion_sensors"]
+                and is_available
+                and new_state.state == STATE_ON
+            ):
+                self._motion_timestamps[entity_id] = dt_util.utcnow()
+
+            # Schedule update
+            self.hass.async_create_task(self.async_refresh())
+
+        # Set up state tracking
         async_track_state_change_event(
             self.hass,
             entities,
             async_state_changed_listener,
         )
-
-    @callback
-    def _handle_state_update(self, entity_id: str, state) -> None:
-        """Process state updates and schedule coordinator refresh."""
-
-        async def _async_update():
-            async with self._state_lock:
-                try:
-                    is_available = bool(
-                        state
-                        and state.state
-                        not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
-                    )
-
-                    self._sensor_states[entity_id] = {
-                        "state": state.state if is_available else None,
-                        "last_changed": (
-                            state.last_changed.isoformat()
-                            if state and state.last_changed
-                            else dt_util.utcnow().isoformat()
-                        ),
-                        "availability": is_available,
-                    }
-
-                    # Update motion timestamps
-                    if (
-                        entity_id in self.core_config["motion_sensors"]
-                        and is_available
-                        and state.state == STATE_ON
-                    ):
-                        self._motion_timestamps[entity_id] = dt_util.utcnow()
-
-                except (ValueError, AttributeError, LookupError) as err:
-                    _LOGGER.error("Error handling state update: %s", err)
-
-        # Schedule the update
-        self.hass.async_create_task(_async_update())
-        self._update_debouncer.async_schedule_call()
 
     async def _async_historical_analysis(self) -> None:
         """Run historical analysis in background."""
@@ -379,13 +333,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self._last_update_time = dt_util.utcnow()
                 return result
 
-        except (
-            HomeAssistantError,
-            ValueError,
-            RuntimeError,
-            asyncio.TimeoutError,
-        ) as err:
-            _LOGGER.error("Error updating data: %s", err)
+        except Exception as err:
+            _LOGGER.error("Error updating data: %s", err, exc_info=True)
             raise UpdateFailed(f"Error updating data: {err}") from err
 
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
@@ -504,7 +453,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._occupancy_history.extend([False] * self._occupancy_history.maxlen)
         self._last_occupied = None
         self._last_state_change = None
-        self._last_update_time = None
 
         # Reset historical analysis
         if self._historical_analysis_task and not self._historical_analysis_task.done():
@@ -513,17 +461,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._historical_analysis_ready.clear()
         self._timeslot_data = {"slots": {}, "last_updated": dt_util.utcnow()}
 
-        # Cancel any pending updates
-        self._update_debouncer.async_cancel()
-
         # Force refresh after reset
         await self.async_refresh()
 
     async def async_unload(self) -> None:
         """Unload coordinator and clean up resources."""
-        # Cancel any pending updates
-        self._update_debouncer.async_shutdown()
-
         if self._historical_analysis_task and not self._historical_analysis_task.done():
             self._historical_analysis_task.cancel()
 
@@ -601,16 +543,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             "timeslot_data": {
                 "slot_count": len(self._timeslot_data["slots"]),
                 "last_updated": self._timeslot_data["last_updated"].isoformat(),
-            },
-            "update_statistics": {
-                "last_update_time": (
-                    self._last_update_time.isoformat()
-                    if self._last_update_time
-                    else None
-                ),
-                "debouncer_active": self._update_debouncer.async_schedule_call
-                is not None,
-                "historical_analysis_ready": self._historical_analysis_ready.is_set(),
             },
         }
 
@@ -710,14 +642,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._last_occupied = None
         self._last_state_change = None
         self._last_save = dt_util.utcnow()
-        self._sensor_availability = {}
-        self._device_states = {"media_states": {}, "appliance_states": {}}
-        self._decay_status = {}
-        self._confidence_score = 0.0
-        self._active_triggers = []
-        self._sensor_probabilities = {}
-        self._prior_probability = 0.0
-        self._probability = 0.0
 
     def get_storage_data(self) -> dict:
         """Get data for storage."""
@@ -745,3 +669,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def unregister_entity(self, entity_id: str) -> None:
         """Unregister an entity ID from the coordinator."""
         self._entity_ids.discard(entity_id)
+
+    async def async_refresh(self) -> None:
+        """Refresh data with forced update."""
+        try:
+            result = await self._async_update_data()
+            self.async_set_updated_data(result)
+        except Exception as err:
+            _LOGGER.error("Error during refresh: %s", err, exc_info=True)
