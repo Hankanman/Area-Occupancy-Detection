@@ -47,7 +47,7 @@ from .storage import StorageEncoder, AreaOccupancyStorage
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -169,8 +169,26 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     try:
         if config_entry.version == 1:
+            # Get existing data and options
+            data = {**config_entry.data}
+            options = {**config_entry.options}
+
+            # Convert threshold values from float to percentage
+            if CONF_THRESHOLD in data:
+                data[CONF_THRESHOLD] = data[CONF_THRESHOLD] * 100.0
+            if CONF_THRESHOLD in options:
+                options[CONF_THRESHOLD] = options[CONF_THRESHOLD] * 100.0
+
+            # Convert minimum confidence from float to percentage if present
+            if CONF_MINIMUM_CONFIDENCE in data:
+                data[CONF_MINIMUM_CONFIDENCE] = data[CONF_MINIMUM_CONFIDENCE] * 100.0
+            if CONF_MINIMUM_CONFIDENCE in options:
+                options[CONF_MINIMUM_CONFIDENCE] = (
+                    options[CONF_MINIMUM_CONFIDENCE] * 100.0
+                )
+
             # Migrate to version 2
-            core_config, options_data = migrate_legacy_config(config_entry.data)
+            core_config, options_data = migrate_legacy_config(data)
 
             # Clean up old storage data
             old_store = Store(hass, 1, f"{DOMAIN}.{config_entry.entry_id}.storage")
@@ -180,7 +198,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             new_store = AreaOccupancyStorage(hass, config_entry.entry_id)
             await new_store.async_save(core_config)
 
-            # Update config entry
+            # Update config entry with both percentage conversions and storage migration
             hass.config_entries.async_update_entry(
                 config_entry,
                 data=core_config,

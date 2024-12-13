@@ -1,0 +1,94 @@
+"""Number platform for Area Occupancy Detection integration."""
+
+from __future__ import annotations
+
+from homeassistant.components.number import (
+    NumberEntity,
+    NumberMode,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import (
+    DOMAIN,
+    NAME_THRESHOLD_NUMBER,
+    CONF_THRESHOLD,
+    CONF_AREA_ID,
+    DEFAULT_THRESHOLD,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
+)
+from .coordinator import AreaOccupancyCoordinator
+
+
+class AreaOccupancyThreshold(
+    CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity
+):  # pylint: disable=abstract-method
+    """Number entity for adjusting occupancy threshold."""
+
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entry_id: str,
+    ) -> None:
+        """Initialize the threshold entity."""
+        super().__init__(coordinator)
+
+        self._attr_has_entity_name = True
+        self._attr_name = NAME_THRESHOLD_NUMBER
+        self._attr_unique_id = (
+            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_threshold"
+        )
+        self._attr_native_min_value = 0.0
+        self._attr_native_max_value = 100.0
+        self._attr_native_step = 5.0
+        self._attr_mode = NumberMode.SLIDER
+        self._attr_native_unit_of_measurement = "%"
+        self._area_name = coordinator.core_config[CONF_NAME]
+
+        # Device info
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": self._area_name,
+            "manufacturer": DEVICE_MANUFACTURER,
+            "model": DEVICE_MODEL,
+            "sw_version": DEVICE_SW_VERSION,
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current threshold value as a percentage."""
+        return (
+            self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+            * 100.0
+        )
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new threshold value, converting from percentage to float."""
+        decimal_value = value / 100.0
+        await self.coordinator.async_update_threshold(decimal_value)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Area Occupancy threshold number based on a config entry."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
+
+    async_add_entities(
+        [
+            AreaOccupancyThreshold(
+                coordinator=coordinator,
+                entry_id=entry.entry_id,
+            )
+        ],
+        False,
+    )

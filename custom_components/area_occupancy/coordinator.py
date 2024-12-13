@@ -25,6 +25,7 @@ from .const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_TYPE,
+    CONF_THRESHOLD,
 )
 from .types import (
     ProbabilityResult,
@@ -664,3 +665,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self.async_set_updated_data(result)
         except (HomeAssistantError, ValueError, RuntimeError) as err:
             _LOGGER.error("Error during refresh: %s", err, exc_info=True)
+
+    async def async_update_threshold(self, value: float) -> None:
+        """Update the threshold value."""
+        self.options_config[CONF_THRESHOLD] = value
+        self.async_set_updated_data(self.data)

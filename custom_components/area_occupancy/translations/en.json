@@ -9,20 +9,68 @@
                     "area_id": "Area ID",
                     "motion_sensors": "Motion Sensors"
                 }
+            },
+            "devices": {
+                "title": "Device Configuration",
+                "data": {
+                    "media_devices": "Media Players",
+                    "appliances": "Appliances"
+                }
+            },
+            "environmental": {
+                "title": "Environmental Sensors",
+                "data": {
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors"
+                }
+            },
+            "parameters": {
+                "title": "Area Occupancy Parameters",
+                "data": {
+                    "threshold": "Occupancy Threshold (%)",
+                    "history_period": "History Period (days)",
+                    "decay_enabled": "Enable Time Decay",
+                    "decay_window": "Decay Window (seconds)",
+                    "decay_type": "Decay Type",
+                    "minimum_confidence": "Minimum Confidence (%)"
+                }
             }
         }
     },
     "options": {
         "step": {
-            "init": {
-                "title": "Area Occupancy Options",
+            "motion": {
+                "title": "Motion Sensors",
                 "data": {
-                    "threshold": "Occupancy Threshold",
+                    "motion_sensors": "Motion Sensors"
+                }
+            },
+            "devices": {
+                "title": "Device Configuration",
+                "data": {
+                    "media_devices": "Media Players",
+                    "appliances": "Appliances"
+                }
+            },
+            "environmental": {
+                "title": "Environmental Sensors",
+                "data": {
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors"
+                }
+            },
+            "parameters": {
+                "title": "Area Occupancy Parameters",
+                "data": {
+                    "threshold": "Occupancy Threshold (%)",
                     "history_period": "History Period (days)",
                     "decay_enabled": "Enable Motion Decay",
                     "decay_window": "Decay Window (seconds)",
                     "decay_type": "Decay Type",
-                    "minimum_confidence": "Minimum Confidence"
+                    "historical_analysis_enabled": "Enable Historical Analysis",
+                    "minimum_confidence": "Minimum Confidence (%)"
                 }
             }
         }
@@ -48,6 +96,19 @@
             },
             "occupancy_prior": {
                 "name": "Occupancy Prior"
+            }
+        },
+        "number": {
+            "threshold": {
+                "name": "Occupancy Threshold"
+            }
+        }
+    },
+    "selector": {
+        "decay_type": {
+            "options": {
+                "linear": "Linear",
+                "exponential": "Exponential"
             }
         }
     }

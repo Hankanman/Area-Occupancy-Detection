@@ -23,7 +23,7 @@ pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=inva
 TEST_CONFIG = {
     CONF_NAME: "Test Area",
     CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-    CONF_THRESHOLD: 0.5,
+    CONF_THRESHOLD: 50,
 }
 
 
