@@ -46,7 +46,6 @@ from .const import (
     CONF_DECAY_WINDOW,
     CONF_DECAY_TYPE,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_MINIMUM_CONFIDENCE,
     CONF_AREA_ID,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
@@ -54,7 +53,6 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_TYPE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_MINIMUM_CONFIDENCE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -204,17 +202,6 @@ def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
                 CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
             ),
         ): BooleanSelector(),
-        vol.Optional(
-            CONF_MINIMUM_CONFIDENCE,
-            default=defaults.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.05,
-                mode="slider",
-            ),
-        ),
     }
 
 
@@ -235,7 +222,6 @@ class BaseOccupancyFlow:
             CONF_THRESHOLD: (0, 100),
             CONF_HISTORY_PERIOD: (1, 30),
             CONF_DECAY_WINDOW: (60, 3600),
-            CONF_MINIMUM_CONFIDENCE: (0, 100),
         }
 
         for field, (min_val, max_val) in bounds.items():

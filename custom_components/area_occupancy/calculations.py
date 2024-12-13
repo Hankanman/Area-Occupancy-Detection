@@ -30,11 +30,9 @@ from .probabilities import (
     DEFAULT_MEDIA_WEIGHT,
     DEFAULT_APPLIANCE_WEIGHT,
     DEFAULT_ENVIRONMENTAL_WEIGHT,
-    CONFIDENCE_WEIGHTS,
     # Environmental
     ENVIRONMENTAL_SETTINGS,
     # Thresholds
-    MIN_CONFIDENCE,
     MIN_PROBABILITY,
     MAX_PROBABILITY,
     MOTION_PROB_GIVEN_TRUE,
@@ -330,29 +328,6 @@ class ProbabilityCalculator:
                 except (ValueError, TypeError):
                     continue
 
-            # Calculate confidence score
-            available_sensors = sum(
-                1
-                for state in sensor_states.values()
-                if state.get("availability", False)
-            )
-            total_sensors = len(sensor_states)
-            availability_score = (
-                available_sensors / total_sensors
-                if total_sensors > 0
-                else MIN_PROBABILITY
-            )
-
-            confidence_score = (
-                availability_score * CONFIDENCE_WEIGHTS["sensor_availability"]
-            )
-
-            # Apply minimum confidence threshold
-            if confidence_score < MIN_CONFIDENCE:
-                current_probability = max(
-                    MIN_PROBABILITY, current_probability * confidence_score
-                )
-
             # Ensure probability bounds
             final_probability = max(
                 MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
@@ -373,7 +348,6 @@ class ProbabilityCalculator:
                 "sensor_probabilities": sensor_probs,
                 "device_states": device_states,
                 "decay_status": decay_status,
-                "confidence_score": confidence_score,
                 "sensor_availability": {
                     sensor_id: state.get("availability", False)
                     for sensor_id, state in sensor_states.items()

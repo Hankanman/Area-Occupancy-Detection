@@ -31,14 +31,12 @@ from .const import (
     CONF_DECAY_ENABLED,
     CONF_DECAY_TYPE,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_MINIMUM_CONFIDENCE,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_TYPE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_MINIMUM_CONFIDENCE,
 )
 from .types import StorageData, CoreConfig, OptionsConfig
 from .coordinator import AreaOccupancyCoordinator
@@ -67,7 +65,6 @@ def validate_config(data: dict[str, Any], validate_core: bool = True) -> None:
         CONF_THRESHOLD: (0, 100),
         CONF_HISTORY_PERIOD: (1, 30),
         CONF_DECAY_WINDOW: (60, 3600),
-        CONF_MINIMUM_CONFIDENCE: (0, 100),
     }
 
     for key, (min_val, max_val) in bounds.items():
@@ -186,15 +183,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 options[CONF_THRESHOLD] = (
                     threshold * 100.0 if threshold <= 1.0 else threshold
                 )
-
-            # Convert minimum confidence from float to percentage if present
-            if CONF_MINIMUM_CONFIDENCE in data:
-                data[CONF_MINIMUM_CONFIDENCE] = data[CONF_MINIMUM_CONFIDENCE] * 100.0
-            if CONF_MINIMUM_CONFIDENCE in options:
-                options[CONF_MINIMUM_CONFIDENCE] = (
-                    options[CONF_MINIMUM_CONFIDENCE] * 100.0
-                )
-
             # Migrate to version 2
             core_config, options_data = migrate_legacy_config(data)
 
@@ -237,11 +225,6 @@ def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsCo
     if threshold <= 1.0:  # If it's still in decimal form
         threshold = threshold * 100.0
 
-    # Convert minimum confidence to percentage if it's in decimal form
-    min_confidence = config.get(CONF_MINIMUM_CONFIDENCE, DEFAULT_MINIMUM_CONFIDENCE)
-    if min_confidence <= 1.0:  # If it's still in decimal form
-        min_confidence = min_confidence * 100.0
-
     core_config = CoreConfig(
         name=config[CONF_NAME],
         area_id=area_id,
@@ -265,7 +248,6 @@ def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsCo
         CONF_HISTORICAL_ANALYSIS_ENABLED: config.get(
             CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
         ),
-        CONF_MINIMUM_CONFIDENCE: min_confidence,
     }
 
     # Add sensor lists with empty list defaults

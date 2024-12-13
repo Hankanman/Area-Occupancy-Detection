@@ -25,7 +25,6 @@ CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_DECAY_TYPE: Final = "decay_type"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
-CONF_MINIMUM_CONFIDENCE: Final = "minimum_confidence"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 
@@ -45,7 +44,6 @@ DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_DECAY_TYPE: Final = "linear"
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
-DEFAULT_MINIMUM_CONFIDENCE: Final = 30.0
 DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
 
 # Entity naming
@@ -65,7 +63,6 @@ ATTR_PRIOR_PROBABILITY: Final = "prior_probability"
 ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
 ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
 ATTR_DECAY_STATUS: Final = "decay_status"
-ATTR_CONFIDENCE_SCORE: Final = "confidence_score"
 ATTR_SENSOR_AVAILABILITY: Final = "sensor_availability"
 ATTR_LAST_OCCUPIED: Final = "last_occupied"
 ATTR_STATE_DURATION: Final = "state_duration"
@@ -84,7 +81,6 @@ ATTR_DAY_OCCUPANCY: Final = "day_occupancy_rate"
 ATTR_SENSOR_CORRELATIONS: Final = "sensor_correlations"
 ATTR_PROB_GIVEN_TRUE: Final = "prob_given_true"
 ATTR_PROB_GIVEN_FALSE: Final = "prob_given_false"
-ATTR_CONFIDENCE: Final = "confidence"
 ATTR_LAST_UPDATED: Final = "last_updated"
 
 # Prior probability attributes

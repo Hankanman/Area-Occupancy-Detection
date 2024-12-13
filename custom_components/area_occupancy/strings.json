@@ -33,7 +33,7 @@
                     "decay_enabled": "Enable Time Decay",
                     "decay_window": "Decay Window (seconds)",
                     "decay_type": "Decay Type",
-                    "minimum_confidence": "Minimum Confidence (%)"
+                    "historical_analysis_enabled": "Enable Historical Analysis"
                 }
             }
         }
@@ -69,8 +69,7 @@
                     "decay_enabled": "Enable Motion Decay",
                     "decay_window": "Decay Window (seconds)",
                     "decay_type": "Decay Type",
-                    "historical_analysis_enabled": "Enable Historical Analysis",
-                    "minimum_confidence": "Minimum Confidence (%)"
+                    "historical_analysis_enabled": "Enable Historical Analysis"
                 }
             }
         }
