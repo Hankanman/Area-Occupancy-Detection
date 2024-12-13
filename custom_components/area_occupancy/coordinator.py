@@ -8,11 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from collections import deque
 
-from homeassistant.const import (
-    STATE_ON,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -21,10 +17,10 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     DOMAIN,
-    CONF_AREA_ID,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
+    CONF_AREA_ID,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
@@ -58,9 +54,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         options_config: OptionsConfig,
     ) -> None:
         """Initialize the coordinator."""
-        # Initialize storage first
         self.storage = AreaOccupancyStorage(hass, entry_id)
-
         self._last_known_values: dict[str, Any] = {}
 
         super().__init__(
@@ -78,30 +72,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.core_config = core_config
         self.options_config = options_config
 
-        # Initialize state tracking
+        # State tracking
         self._state_lock = asyncio.Lock()
         self._sensor_states: SensorStates = {}
         self._motion_timestamps: dict[SensorId, datetime] = {}
-        self._last_update_time: datetime | None = None
 
-        # Initialize history tracking
+        # History tracking
         self._probability_history = deque(maxlen=12)
         self._occupancy_history = deque([False] * 288, maxlen=288)
         self._last_occupied: datetime | None = None
         self._last_state_change: datetime | None = None
 
-        # Initialize timeslot tracking
+        # Timeslot tracking
         self._timeslot_data: TimeslotData = {
             "slots": {},
             "last_updated": dt_util.utcnow(),
         }
         self._historical_analysis_ready = asyncio.Event()
 
-        # Component initialization
+        # Components
         self._calculator = self._create_calculator()
         self._historical_analysis = HistoricalAnalysis(self.hass)
         self._historical_analysis_task: asyncio.Task | None = None
 
+        # Storage
         self._storage_lock = asyncio.Lock()
         self._last_save = dt_util.utcnow()
         self._save_interval = timedelta(minutes=5)
@@ -330,7 +324,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 # Save updated data
                 await self._save_data(result)
 
-                self._last_update_time = dt_util.utcnow()
                 return result
 
         except Exception as err:
@@ -469,12 +462,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         if self._historical_analysis_task and not self._historical_analysis_task.done():
             self._historical_analysis_task.cancel()
 
-        # Final state save
-        try:
-            if self.data:
-                await self._save_data(self.data)
-        except (HomeAssistantError, ValueError, TypeError) as err:
-            _LOGGER.error("Error saving final state: %s", err)
+        if self.data:
+            await self._save_data(self.data)
 
     def update_options(self, options_config: OptionsConfig) -> None:
         """Update coordinator with new options."""
@@ -546,10 +535,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             },
         }
 
-    def get_sensor_states(self) -> SensorStates:
-        """Get current sensor states."""
-        return self._sensor_states
-
     @property
     def device_info(self) -> dict[str, Any]:
         """Return device info for the integration."""
@@ -560,14 +545,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             "model": DEVICE_MODEL,
             "sw_version": DEVICE_SW_VERSION,
         }
-
-    async def _async_migrate_data(self, old_version: int, data: dict) -> dict:
-        """Migrate stored data to new version."""
-        if old_version == 1:
-            # Example migration from version 1 to 2
-            data["migrated"] = True
-            return data
-        return data
 
     async def _load_stored_data(self) -> None:
         """Load data with migration support."""
@@ -675,5 +652,5 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         try:
             result = await self._async_update_data()
             self.async_set_updated_data(result)
-        except Exception as err:
+        except (HomeAssistantError, ValueError, RuntimeError) as err:
             _LOGGER.error("Error during refresh: %s", err, exc_info=True)
