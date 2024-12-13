@@ -27,6 +27,17 @@ from .const import (
 )
 from .coordinator import AreaOccupancyCoordinator
 from .historical_analysis import HistoricalAnalysis
+from .probabilities import (
+    MOTION_PROB_GIVEN_TRUE,
+    MOTION_PROB_GIVEN_FALSE,
+    MEDIA_PROB_GIVEN_TRUE,
+    MEDIA_PROB_GIVEN_FALSE,
+    APPLIANCE_PROB_GIVEN_TRUE,
+    APPLIANCE_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+    DEFAULT_PROB_GIVEN_FALSE,
+)
+from .types import ProbabilityResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,8 +67,9 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
-        self._prob_given_true = 0.0
-        self._prob_given_false = 0.0
+        # Initialize with non-zero default probabilities
+        self._prob_given_true = DEFAULT_PROB_GIVEN_TRUE
+        self._prob_given_false = DEFAULT_PROB_GIVEN_FALSE
         self._last_calculation: datetime | None = None
         self._analyzer = HistoricalAnalysis(coordinator.hass)
 
@@ -128,6 +140,12 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
             }
         )
 
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update entity state from coordinator data."""
+        self._attr_native_value = round(self._prob_given_true * 100, 4)
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
+
 
 class MotionPriorSensor(PriorProbabilitySensorBase):
     """Sensor for motion prior probability."""
@@ -136,6 +154,9 @@ class MotionPriorSensor(PriorProbabilitySensorBase):
         """Initialize motion prior sensor."""
         super().__init__(coordinator, entry_id, NAME_MOTION_PRIOR_SENSOR)
         self._attr_unique_id = self._format_unique_id("motion_prior")
+        # Use motion-specific defaults
+        self._prob_given_true = MOTION_PROB_GIVEN_TRUE
+        self._prob_given_false = MOTION_PROB_GIVEN_FALSE
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
@@ -151,6 +172,9 @@ class MediaPriorSensor(PriorProbabilitySensorBase):
         """Initialize media prior sensor."""
         super().__init__(coordinator, entry_id, NAME_MEDIA_PRIOR_SENSOR)
         self._attr_unique_id = self._format_unique_id("media_prior")
+        # Use media-specific defaults
+        self._prob_given_true = MEDIA_PROB_GIVEN_TRUE
+        self._prob_given_false = MEDIA_PROB_GIVEN_FALSE
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
@@ -166,6 +190,9 @@ class AppliancePriorSensor(PriorProbabilitySensorBase):
         """Initialize appliance prior sensor."""
         super().__init__(coordinator, entry_id, NAME_APPLIANCE_PRIOR_SENSOR)
         self._attr_unique_id = self._format_unique_id("appliance_prior")
+        # Use appliance-specific defaults
+        self._prob_given_true = APPLIANCE_PROB_GIVEN_TRUE
+        self._prob_given_false = APPLIANCE_PROB_GIVEN_FALSE
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
