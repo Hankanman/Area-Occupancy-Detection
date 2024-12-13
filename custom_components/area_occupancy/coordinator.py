@@ -264,7 +264,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self._debounce_refresh.cancel()
 
             self._debounce_refresh = self.hass.loop.call_later(
-                0.5,  # 500ms debounce
+                0.1,  # 100ms debounce
                 lambda: self.hass.async_create_task(self.async_refresh()),
             )
 
