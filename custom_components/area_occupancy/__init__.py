@@ -133,12 +133,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             core_config=core_config,
             options_config=options_config,
             store=store,
-            stored_data=await store.async_load()
-            or {
-                "version": STORAGE_VERSION,
-                "last_updated": "",
-                "areas": {},
-            },
         )
 
         # Setup coordinator in background
