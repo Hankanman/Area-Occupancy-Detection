@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from dataclasses import dataclass
-from typing import TypedDict, NotRequired, Literal, Any, Dict, List
+from typing import TypedDict, NotRequired, Literal, Any, Dict, List, Optional
+from homeassistant.util import dt as dt_util
 
 # Type aliases
 SensorId = str
@@ -135,11 +136,67 @@ class ProbabilityResult(TypedDict):
 
 # Storage types
 class StorageData(TypedDict):
-    """Type for persistent storage data."""
+    """Storage data structure."""
 
     version: int
+    version_minor: int
     last_updated: str
-    areas: dict[str, dict[str, Any]]
+    data: dict[str, Any]
+    cache: dict[str, Any]
+    metadata: dict[str, Any]
+
+
+class StorageMetadata(TypedDict):
+    """Storage metadata structure."""
+
+    created: str
+    last_cleaned: Optional[str]
+    migrations: list[str]
+    schema_version: int
+
+
+class StorageValidationError(Exception):
+    """Storage validation error."""
+
+
+def validate_storage_data(data: Any) -> StorageData:
+    """Validate storage data structure."""
+    if not isinstance(data, dict):
+        raise StorageValidationError("Storage data must be a dictionary")
+
+    required_keys = {"version", "last_updated", "data"}
+    if not all(key in data for key in required_keys):
+        raise StorageValidationError(
+            f"Missing required keys: {required_keys - data.keys()}"
+        )
+
+    if not isinstance(data["version"], int):
+        raise StorageValidationError("Version must be an integer")
+
+    try:
+        datetime.fromisoformat(data["last_updated"])
+    except (TypeError, ValueError) as err:
+        raise StorageValidationError("Invalid last_updated timestamp") from err
+
+    if not isinstance(data["data"], dict):
+        raise StorageValidationError("Data must be a dictionary")
+
+    return StorageData(
+        version=data["version"],
+        version_minor=data.get("version_minor", 0),
+        last_updated=data["last_updated"],
+        data=data["data"],
+        cache=data.get("cache", {}),
+        metadata=data.get(
+            "metadata",
+            {
+                "created": dt_util.utcnow().isoformat(),
+                "last_cleaned": None,
+                "migrations": [],
+                "schema_version": 1,
+            },
+        ),
+    )
 
 
 # Configuration types

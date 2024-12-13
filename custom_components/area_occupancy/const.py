@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Final
+from datetime import timedelta
 
 DOMAIN: Final = "area_occupancy"
 
@@ -31,7 +32,11 @@ CONF_AREA_ID: Final = "area_id"
 # File paths and configuration
 STORAGE_KEY_HISTORY: Final = "area_occupancy_history"
 STORAGE_KEY_PATTERNS: Final = "area_occupancy_patterns"
-STORAGE_VERSION: Final = 1
+STORAGE_VERSION: Final = 2
+STORAGE_VERSION_MINOR: Final = 1
+STORAGE_CLEANUP_INTERVAL: Final = timedelta(days=7)
+STORAGE_MAX_CACHE_AGE: Final = timedelta(days=30)
+STORAGE_SAVE_DELAY: Final = 60  # seconds
 
 # Default values
 DEFAULT_THRESHOLD: Final = 0.5

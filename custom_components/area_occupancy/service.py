@@ -66,7 +66,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             entry_id = None
             for entry in hass.config_entries.async_entries(DOMAIN):
                 coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-                if entity_id in coordinator.get_configured_sensors():
+                if entity_id in coordinator.entity_ids:
                     entry_id = entry.entry_id
                     break
 
@@ -121,10 +121,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             entry_id = None
             for entry in hass.config_entries.async_entries(DOMAIN):
                 coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-                if any(
-                    entity_id in coordinator.get_configured_sensors()
-                    for entity_id in entity_ids
-                ):
+                if any(entity_id in coordinator.entity_ids for entity_id in entity_ids):
                     entry_id = entry.entry_id
                     break
 
