@@ -9,7 +9,7 @@
             "args": [
                 "--debug",
                 "-c",
-                "/config"
+                ".haconfig"
             ],
             "justMyCode": false,
             "console": "internalConsole"

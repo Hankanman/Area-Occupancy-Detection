@@ -1,6 +1,9 @@
+// See https://aka.ms/vscode-remote/devcontainer.json for format details.
 {
-  "name": "Area Occupancy Development",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "name": "Area Occupancy Development",
+  "containerUser": "root",
+  "remoteUser": "1000",
   "appPort": [
     "9123:8123"
   ],
@@ -9,48 +12,41 @@
   ],
   "portsAttributes": {
     "9123": {
-      "label": "Home Assistant",
+      "label": "HomeAssistant port",
+      "protocol": "http",
       "onAutoForward": "notify"
     }
   },
   "customizations": {
+    // Configure properties specific to VS Code.
     "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "github.copilot",
-        "ryanluker.vscode-coverage-gutters",
-        "ms-python.vscode-pylance",
-        "ms-python.pylint"
-      ],
       "settings": {
         "files.eol": "\n",
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.pythonPath": "/usr/bin/python3",
         "python.analysis.autoSearchPaths": false,
-        "python.linting.pylintEnabled": true,
-        "python.linting.enabled": true,
         "python.formatting.provider": "black",
         "editor.formatOnPaste": false,
         "editor.formatOnSave": true,
         "editor.formatOnType": true,
         "files.trimTrailingWhitespace": true
-      }
+      },
+      "extensions": [
+        "ms-python.python",
+        "GitHub.copilot",
+        "ryanluker.vscode-coverage-gutters",
+        "ms-python.vscode-pylance",
+        "ms-python.pylint",
+        "ms-python.black-formatter",
+        "ms-python.flake8",
+        "ms-python.isort",
+        "donjayamanne.python-environment-manager"
+      ]
     }
   },
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "installTools": true,
-      "version": "3.12"
-    }
-  },
-  "postCreateCommand": "mkdir -p /workspace/.haconfig && cp -f .devcontainer/configuration.yaml /workspace/.haconfig/ && scripts/setup",
-  "remoteUser": "vscode",
+  "postCreateCommand": "mkdir -p /workspace/.haconfig && cp /workspace/.devcontainer/configuration.yaml /workspace/.haconfig && scripts/setup",
   "mounts": [
-    "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached"
-  ],
-  "workspaceFolder": "/workspace",
-  "remoteEnv": {
-    "PYTHONPATH": "/workspace"
-  }
+    "type=bind,source=${localWorkspaceFolder},target=/workspace,consistency=cached"
+  ]
 }
