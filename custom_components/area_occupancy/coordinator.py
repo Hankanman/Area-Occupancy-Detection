@@ -15,7 +15,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.util import dt as dt_util
@@ -27,7 +26,6 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
-    STORAGE_VERSION,
 )
 from .types import (
     ProbabilityResult,
@@ -41,6 +39,7 @@ from .types import (
 )
 from .calculations import ProbabilityCalculator
 from .historical_analysis import HistoricalAnalysis
+from .storage import AreaOccupancyStorage
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,26 +58,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         entry_id: str,
         core_config: CoreConfig,
         options_config: OptionsConfig,
-        store: Store[StorageData],
     ) -> None:
         """Initialize the coordinator."""
         # Initialize storage first
-        self._store = Store[dict[str, Any]](
-            hass,
-            STORAGE_VERSION,
-            f".{DOMAIN}_{entry_id}_data",
-            private=True,
-            atomic_writes=True,
-        )
-        self._data_store = Store[dict[str, Any]](
-            hass,
-            STORAGE_VERSION,
-            f".{DOMAIN}_{entry_id}_cache",
-            private=True,
-            atomic_writes=True,
-        )
+        self.storage = AreaOccupancyStorage(hass, entry_id)
+
         self._last_known_values: dict[str, Any] = {}
         self._setup_complete = asyncio.Event()
+        self._sensor_availability: dict[str, bool] = {}
+        self._device_states: dict[str, dict] = {
+            "media_states": {},
+            "appliance_states": {},
+        }
+        self._decay_status: dict[str, float] = {}
+        self._confidence_score: float = 0.0
+        self._active_triggers: list[str] = []
+        self._sensor_probabilities: dict[str, float] = {}
+        self._prior_probability: float = 0.0
+        self._probability: float = 0.0
 
         super().__init__(
             hass,
@@ -97,7 +94,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             raise HomeAssistantError("No motion sensors configured")
 
         self.entry_id = entry_id
-        self.store = store
         self.core_config = core_config
         self.options_config = options_config
 
@@ -133,6 +129,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             immediate=False,
             function=self.async_refresh,
         )
+
+        self._storage_lock = asyncio.Lock()
+        self._last_save = dt_util.utcnow()
+        self._save_interval = timedelta(minutes=5)
+
+        self._entity_ids: set[str] = set()
 
     def _create_calculator(self) -> ProbabilityCalculator:
         """Create probability calculator with current configuration."""
@@ -407,7 +409,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def _async_store_result(self, result: ProbabilityResult) -> None:
         """Store calculation result."""
         try:
-            stored_data = await self.store.async_load() or {}
+            stored_data = await self.storage.async_load() or {}
             area_id = self.core_config[CONF_AREA_ID]
 
             stored_data.setdefault("areas", {})
@@ -435,7 +437,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 }
             )
 
-            await self.store.async_save(stored_data)
+            await self.storage.async_save(stored_data)
 
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error storing result: %s", err)
@@ -637,16 +639,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def _load_stored_data(self) -> None:
         """Load data with migration support."""
         try:
-            stored = await self._data_store.async_load()
-            if stored:
-                version = stored.get("version", 1)
-                if version != STORAGE_VERSION:
-                    stored["data"] = await self._async_migrate_data(
-                        version, stored["data"]
-                    )
-                self._last_known_values = stored["data"]
-                _LOGGER.debug("Loaded stored data: %s", self._last_known_values)
-        except (HomeAssistantError, ValueError, TypeError) as err:
+            stored_data = await self.storage.async_load()
+            self._last_known_values = stored_data["data"]
+            _LOGGER.debug("Loaded stored data: %s", self._last_known_values)
+        except (IOError, ValueError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error loading stored data: %s", err)
             self._last_known_values = {}
 
@@ -655,12 +651,96 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         try:
             if not data:
                 return
-            await self._data_store.async_save(
-                {
-                    "version": STORAGE_VERSION,
-                    "data": data,
-                    "last_updated": dt_util.utcnow().isoformat(),
-                }
-            )
-        except (HomeAssistantError, ValueError, TypeError) as err:
+            await self.storage.async_save(data)
+        except (IOError, ValueError, HomeAssistantError) as err:
             _LOGGER.error("Error saving data: %s", err)
+
+    async def async_save_state(self) -> None:
+        """Save state to storage with rate limiting."""
+        now = dt_util.utcnow()
+        if now - self._last_save < self._save_interval:
+            return
+
+        async with self._storage_lock:
+            try:
+                await self.storage.async_save(self.get_storage_data())
+                self._last_save = now
+            except (IOError, ValueError, HomeAssistantError) as err:
+                _LOGGER.error("Failed to save state: %s", err)
+
+    async def async_restore_state(self, stored_data: StorageData) -> None:
+        """Restore state from storage."""
+        try:
+            # Validate stored data format
+            if not isinstance(stored_data, dict):
+                raise ValueError("Invalid storage data format")
+
+            # Restore coordinator state
+            self._last_known_values = stored_data.get("last_known_values", {})
+            self._probability_history = deque(
+                stored_data.get("probability_history", []), maxlen=12
+            )
+            # Restore occupancy history
+            self._occupancy_history = deque(
+                stored_data.get("occupancy_history", [False] * 288), maxlen=288
+            )
+
+            # Restore timestamps
+            last_occupied = stored_data.get("last_occupied")
+            self._last_occupied = (
+                dt_util.parse_datetime(last_occupied) if last_occupied else None
+            )
+
+            last_state_change = stored_data.get("last_state_change")
+            self._last_state_change = (
+                dt_util.parse_datetime(last_state_change) if last_state_change else None
+            )
+
+        except (ValueError, TypeError, KeyError, HomeAssistantError) as err:
+            _LOGGER.error("Error restoring state: %s", err)
+            # Reset to default state
+            self._reset_state()
+
+    def _reset_state(self) -> None:
+        """Reset coordinator state to defaults."""
+        self._last_known_values = {}
+        self._probability_history = deque(maxlen=12)
+        self._occupancy_history = deque([False] * 288, maxlen=288)
+        self._last_occupied = None
+        self._last_state_change = None
+        self._last_save = dt_util.utcnow()
+        self._sensor_availability = {}
+        self._device_states = {"media_states": {}, "appliance_states": {}}
+        self._decay_status = {}
+        self._confidence_score = 0.0
+        self._active_triggers = []
+        self._sensor_probabilities = {}
+        self._prior_probability = 0.0
+        self._probability = 0.0
+
+    def get_storage_data(self) -> dict:
+        """Get data for storage."""
+        return {
+            "last_known_values": self._last_known_values,
+            "probability_history": list(self._probability_history),
+            "occupancy_history": list(self._occupancy_history),
+            "last_occupied": (
+                self._last_occupied.isoformat() if self._last_occupied else None
+            ),
+            "last_state_change": (
+                self._last_state_change.isoformat() if self._last_state_change else None
+            ),
+        }
+
+    @property
+    def entity_ids(self) -> set[str]:
+        """Get the set of configured entity IDs."""
+        return self._entity_ids
+
+    def register_entity(self, entity_id: str) -> None:
+        """Register an entity ID with the coordinator."""
+        self._entity_ids.add(entity_id)
+
+    def unregister_entity(self, entity_id: str) -> None:
+        """Unregister an entity ID from the coordinator."""
+        self._entity_ids.discard(entity_id)
