@@ -17,15 +17,23 @@ This integration provides intelligent room occupancy detection by combining mult
 
 - `custom_components/occupancy_detection` - Main integration directory
   - `__init__.py` - Integration setup
-  - `sensor.py` - Sensor entity definitions
+  - `base.py` - Base classes for sensor and binary sensor entities
   - `binary_sensor.py` - Binary sensor entity definitions
-  - `config_flow.py` - Configuration flow for the integration
   - `calculations.py` - Probability calculations
+  - `config_flow.py` - Configuration flow for the integration
   - `const.py` - Constants used across the integration
+  - `coordinator.py` - Coordinator for the integration
+  - `historical_analysis.py` - Historical data retrieval and analysis
   - `manifest.json` - Integration metadata
+  - `prior_sensors.py` - Prior sensor data retrieval and sensor creation
+  - `probabilities.py` - Default probability constants
+  - `sensor.py` - Sensor entity definitions
+  - `service.py` - Service creation and
+  - `strings.json` - Integration strings
+  - `types.py` - Type definitions
   - `services.yaml` - Service definitions
   - `translations/` - Localized strings
-  - `tests/` - Unit tests for the integration
+- `tests/` - Unit tests for the integration
 
 ## Rules
 
@@ -39,6 +47,9 @@ Follow these rules strictly to ensure high-quality development.
 - Maintain consistency with Home Assistant patterns and practices.
 - Use snake_case for all file names and variables.
 - Follow PEP8 standards.
+- Use `asyncio.Lock` for state locking.
+- All constants should be defined in `const.py`.
+- All types should be defined in `types.py`.
 
 ### Environment Rules
 
