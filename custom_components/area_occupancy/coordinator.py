@@ -56,6 +56,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         core_config: CoreConfig,
         options_config: OptionsConfig,
         store: Store[StorageData],
+        stored_data: StorageData | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -207,35 +208,40 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     @callback
     def _handle_state_update(self, entity_id: str, state) -> None:
         """Process state updates and schedule coordinator refresh."""
-        try:
-            is_available = bool(
-                state
-                and state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
-            )
 
-            self._sensor_states[entity_id] = {
-                "state": state.state if is_available else None,
-                "last_changed": (
-                    state.last_changed.isoformat()
-                    if state and state.last_changed
-                    else dt_util.utcnow().isoformat()
-                ),
-                "availability": is_available,
-            }
+        async def _async_update():
+            async with self._state_lock:
+                try:
+                    is_available = bool(
+                        state
+                        and state.state
+                        not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
+                    )
 
-            # Update motion timestamps
-            if (
-                entity_id in self.core_config["motion_sensors"]
-                and is_available
-                and state.state == STATE_ON
-            ):
-                self._motion_timestamps[entity_id] = dt_util.utcnow()
+                    self._sensor_states[entity_id] = {
+                        "state": state.state if is_available else None,
+                        "last_changed": (
+                            state.last_changed.isoformat()
+                            if state and state.last_changed
+                            else dt_util.utcnow().isoformat()
+                        ),
+                        "availability": is_available,
+                    }
 
-            # Schedule update
-            self._update_debouncer.async_schedule_call()
+                    # Update motion timestamps
+                    if (
+                        entity_id in self.core_config["motion_sensors"]
+                        and is_available
+                        and state.state == STATE_ON
+                    ):
+                        self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("Error handling state update: %s", err)
+                except Exception as err:  # pylint: disable=broad-except
+                    _LOGGER.error("Error handling state update: %s", err)
+
+        # Schedule the update
+        self.hass.async_create_task(_async_update())
+        self._update_debouncer.async_schedule_call()
 
     async def _async_historical_analysis(self) -> None:
         """Run historical analysis in background."""
@@ -528,3 +534,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 "historical_analysis_ready": self._historical_analysis_ready.is_set(),
             },
         }
+
+    def get_sensor_states(self) -> SensorStates:
+        """Get current sensor states."""
+        return self._sensor_states

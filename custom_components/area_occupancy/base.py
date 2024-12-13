@@ -176,7 +176,7 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
 
         # Check motion sensor states directly from coordinator's sensor states
         motion_states = {
-            sensor_id: self.coordinator._sensor_states.get(sensor_id, {})
+            sensor_id: self.coordinator.get_sensor_states().get(sensor_id, {})
             for sensor_id in motion_sensors
         }
 
@@ -226,6 +226,35 @@ class AreaOccupancySensorBase(CoordinatorEntity[ProbabilityResult]):
         """
         raise NotImplementedError
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+
+        async def _async_handle_update():
+            try:
+                async with self.coordinator._state_lock:
+                    result = self.coordinator.data
+                    if result is None:
+                        self._attr_available = False
+                        return
+
+                    # Update state and attributes atomically
+                    self._update_entity_state(result)
+                    self._attr_available = self.coordinator.available
+
+            except Exception as err:
+                _LOGGER.error("Error handling coordinator update: %s", err)
+                self._attr_available = False
+
+            self.async_write_ha_state()
+
+        # Schedule the update
+        self.hass.async_create_task(_async_handle_update())
+
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update entity state from coordinator data."""
+        raise NotImplementedError
+
 
 class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
     """Binary sensor for area occupancy."""
@@ -270,6 +299,12 @@ class AreaOccupancyBinarySensor(AreaOccupancySensorBase, BinarySensorEntity):
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None
+
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update binary sensor state from coordinator data."""
+        self._attr_is_on = result["probability"] >= self._threshold
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
 
 
 class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
@@ -321,3 +356,9 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase, SensorEntity):
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error getting probability value: %s", err)
             return None
+
+    def _update_entity_state(self, result: ProbabilityResult) -> None:
+        """Update probability sensor state from coordinator data."""
+        self._attr_native_value = self._format_float(result["probability"] * 100)
+        self._attr_extra_state_attributes.update(self._shared_attributes)
+        self._attr_extra_state_attributes.update(self._sensor_specific_attributes())
