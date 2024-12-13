@@ -14,7 +14,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.debounce import Debouncer
@@ -27,6 +27,7 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
+    STORAGE_VERSION,
 )
 from .types import (
     ProbabilityResult,
@@ -59,22 +60,37 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         core_config: CoreConfig,
         options_config: OptionsConfig,
         store: Store[StorageData],
-        stored_data: StorageData | None = None,
     ) -> None:
         """Initialize the coordinator."""
+        # Initialize storage first
+        self._store = Store[dict[str, Any]](
+            hass,
+            STORAGE_VERSION,
+            f".{DOMAIN}_{entry_id}_data",
+            private=True,
+            atomic_writes=True,
+        )
+        self._data_store = Store[dict[str, Any]](
+            hass,
+            STORAGE_VERSION,
+            f".{DOMAIN}_{entry_id}_cache",
+            private=True,
+            atomic_writes=True,
+        )
+        self._last_known_values: dict[str, Any] = {}
+        self._setup_complete = asyncio.Event()
+
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=5),  # Fallback update interval
+            update_interval=timedelta(minutes=5),
             request_refresh_debouncer=Debouncer(
                 hass,
                 _LOGGER,
                 cooldown=1.0,
                 immediate=False,
             ),
-            # Prevent waiting for first update
-            always_update=False,
         )
 
         if not core_config.get("motion_sensors"):
@@ -138,6 +154,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Perform setup tasks that require async operations."""
         start_time = dt_util.utcnow()
         try:
+            # Load stored data first
+            await self._load_stored_data()
+
             # Set minimal initial state
             self._sensor_states = {}
             self._motion_timestamps = {}
@@ -149,7 +168,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             setup_time = (dt_util.utcnow() - start_time).total_seconds()
             _LOGGER.debug("Coordinator setup completed in %.3f seconds", setup_time)
 
-        except Exception as err:
+        except (HomeAssistantError, ValueError, RuntimeError) as err:
             _LOGGER.error("Failed to setup coordinator: %s", err)
             raise HomeAssistantError(f"Coordinator setup failed: {err}") from err
 
@@ -191,7 +210,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             total_time = (dt_util.utcnow() - start_time).total_seconds()
             _LOGGER.debug("Background setup completed in %.3f seconds", total_time)
 
-        except Exception as err:  # pylint: disable=broad-except
+        except (
+            HomeAssistantError,
+            ValueError,
+            RuntimeError,
+            asyncio.TimeoutError,
+        ) as err:
             _LOGGER.error("Background setup failed: %s", err)
 
     async def _async_initialize_states(self) -> None:
@@ -224,7 +248,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 ):
                     self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-        except Exception as err:  # pylint: disable=broad-except
+        except (HomeAssistantError, ValueError, LookupError) as err:
             _LOGGER.error("Error initializing states: %s", err)
             self._sensor_states = {}
 
@@ -280,7 +304,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                     ):
                         self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-                except Exception as err:  # pylint: disable=broad-except
+                except (ValueError, AttributeError, LookupError) as err:
                     _LOGGER.error("Error handling state update: %s", err)
 
         # Schedule the update
@@ -346,15 +370,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 # Update historical tracking
                 self._update_historical_tracking(result)
 
-                # Store results
-                await self._async_store_result(result)
+                # Save updated data
+                await self._save_data(result)
 
                 self._last_update_time = dt_util.utcnow()
                 return result
 
-        except Exception as err:
+        except (
+            HomeAssistantError,
+            ValueError,
+            RuntimeError,
+            asyncio.TimeoutError,
+        ) as err:
             _LOGGER.error("Error updating data: %s", err)
-            raise
+            raise UpdateFailed(f"Error updating data: {err}") from err
 
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
         """Update historical tracking with rate limiting."""
@@ -497,9 +526,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         # Final state save
         try:
-            result = await self._async_update_data()
-            await self._async_store_result(result)
-        except Exception as err:  # pylint: disable=broad-except
+            if self.data:
+                await self._save_data(self.data)
+        except (HomeAssistantError, ValueError, TypeError) as err:
             _LOGGER.error("Error saving final state: %s", err)
 
     def update_options(self, options_config: OptionsConfig) -> None:
@@ -596,3 +625,42 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             "model": DEVICE_MODEL,
             "sw_version": DEVICE_SW_VERSION,
         }
+
+    async def _async_migrate_data(self, old_version: int, data: dict) -> dict:
+        """Migrate stored data to new version."""
+        if old_version == 1:
+            # Example migration from version 1 to 2
+            data["migrated"] = True
+            return data
+        return data
+
+    async def _load_stored_data(self) -> None:
+        """Load data with migration support."""
+        try:
+            stored = await self._data_store.async_load()
+            if stored:
+                version = stored.get("version", 1)
+                if version != STORAGE_VERSION:
+                    stored["data"] = await self._async_migrate_data(
+                        version, stored["data"]
+                    )
+                self._last_known_values = stored["data"]
+                _LOGGER.debug("Loaded stored data: %s", self._last_known_values)
+        except (HomeAssistantError, ValueError, TypeError) as err:
+            _LOGGER.error("Error loading stored data: %s", err)
+            self._last_known_values = {}
+
+    async def _save_data(self, data: ProbabilityResult) -> None:
+        """Save data with validation."""
+        try:
+            if not data:
+                return
+            await self._data_store.async_save(
+                {
+                    "version": STORAGE_VERSION,
+                    "data": data,
+                    "last_updated": dt_util.utcnow().isoformat(),
+                }
+            )
+        except (HomeAssistantError, ValueError, TypeError) as err:
+            _LOGGER.error("Error saving data: %s", err)
