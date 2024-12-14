@@ -27,6 +27,13 @@ from .probabilities import (
     MIN_PROBABILITY,
     MAX_PROBABILITY,
     MOTION_PROB_GIVEN_TRUE,
+    MOTION_PROB_GIVEN_FALSE,
+    MEDIA_PROB_GIVEN_TRUE,
+    MEDIA_PROB_GIVEN_FALSE,
+    APPLIANCE_PROB_GIVEN_TRUE,
+    APPLIANCE_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+    DEFAULT_PROB_GIVEN_FALSE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -286,3 +293,14 @@ class ProbabilityCalculator:
             raise HomeAssistantError(
                 "Failed to calculate occupancy probability"
             ) from err
+
+    def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
+        """Get prior probabilities for a sensor."""
+        if entity_id in self.motion_sensors:
+            return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
+        elif entity_id in self.media_devices:
+            return MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
+        elif entity_id in self.appliances:
+            return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
+        # Add other sensor types as needed
+        return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE

@@ -1,0 +1,62 @@
+export_calculations:
+  name: Export calculations
+  description: "Export area occupancy probability calculations to a JSON file."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance"
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    start_time:
+      name: Start Time
+      description: "Start time for the calculations (defaults to 7 days ago)"
+      required: false
+      selector:
+        datetime:
+    end_time:
+      name: End Time
+      description: "End time for the calculations (defaults to now)"
+      required: false
+      selector:
+        datetime:
+    output_file:
+      name: Output File
+      description: "The output file path."
+      required: false
+      default: "occupancy_calculations.json"
+      example: "/config/occupancy_calculations.json"
+      selector:
+        text:
+
+export_historical_analysis:
+  name: Export historical analysis
+  description: "Export historical analysis of area occupancy to a JSON file."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance"
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    days:
+      name: Days
+      description: "Number of days for the historical analysis."
+      required: false
+      default: 7
+      example: 7
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+    output_file:
+      name: Output File
+      description: "The output file path."
+      required: false
+      default: "historical_analysis.json"
+      example: "/config/historical_analysis.json"
+      selector:
+        text:

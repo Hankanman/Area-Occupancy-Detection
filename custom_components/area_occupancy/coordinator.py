@@ -526,27 +526,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def get_diagnostics(self) -> dict[str, Any]:
         """Get diagnostic information."""
-        return {
-            "core_config": self.core_config,
-            "options_config": self.options_config,
-            "sensor_states": self._sensor_states,
-            "historical_data": {
-                "probability_history": list(self._probability_history),
-                "occupancy_history": list(self._occupancy_history),
-                "last_occupied": (
-                    self._last_occupied.isoformat() if self._last_occupied else None
-                ),
-                "last_state_change": (
-                    self._last_state_change.isoformat()
-                    if self._last_state_change
-                    else None
-                ),
-            },
-            "timeslot_data": {
-                "slot_count": len(self._timeslot_data["slots"]),
-                "last_updated": self._timeslot_data["last_updated"].isoformat(),
-            },
-        }
+        try:
+            timeslot_data = {}
+            if self._timeslot_data:
+                last_updated = self._timeslot_data.get("last_updated")
+                if isinstance(last_updated, str):
+                    last_updated = dt_util.parse_datetime(last_updated)
+
+                timeslot_data = {
+                    "slot_count": len(self._timeslot_data.get("slots", {})),
+                    "last_updated": last_updated.isoformat() if last_updated else None,
+                }
+
+            return {
+                "core_config": self.core_config,
+                "options_config": self.options_config,
+                "sensor_states": self._sensor_states,
+                "historical_data": {
+                    "probability_history": list(self._probability_history),
+                    "occupancy_history": list(self._occupancy_history),
+                    "last_occupied": (
+                        self._last_occupied.isoformat() if self._last_occupied else None
+                    ),
+                    "last_state_change": (
+                        self._last_state_change.isoformat()
+                        if self._last_state_change
+                        else None
+                    ),
+                },
+                "timeslot_data": timeslot_data,
+            }
+        except Exception as err:
+            _LOGGER.error("Error getting diagnostics: %s", err)
+            return {}
 
     @property
     def device_info(self) -> dict[str, Any]:
@@ -688,3 +700,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Get threshold as decimal (0-1) for calculations."""
         threshold = self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
         return threshold / 100.0
+
+    def get_configured_sensors(self) -> list[str]:
+        """Get list of all configured sensors."""
+        return self._get_all_configured_sensors()
