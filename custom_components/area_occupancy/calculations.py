@@ -46,12 +46,23 @@ VALID_ACTIVE_STATES = {STATE_ON, STATE_PLAYING, STATE_PAUSED}
 CACHE_DURATION = timedelta(hours=6)
 TIMESLOT_DURATION = timedelta(minutes=30)
 
+# MODIFICATION START: Define minimum sample count for learned priors
+MIN_SAMPLE_COUNT_FOR_PRIORS = 5
+# MODIFICATION END
+
 
 def update_probability(
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
 ) -> float:
+    """Perform a Bayesian update given a prior probability and evidence.
+
+    numerator = P(E|H)*P(H)
+    denominator = P(E|H)*P(H) + P(E|~H)*P(~H)
+
+    This function updates the prior probability P(H) with new evidence E.
+    """
     numerator = prob_given_true * prior
     denominator = numerator + prob_given_false * (1 - prior)
     if denominator == 0:
@@ -60,7 +71,15 @@ def update_probability(
 
 
 class ProbabilityCalculator:
-    """Handles probability calculations and historical analysis."""
+    """Handles probability calculations and historical analysis.
+
+    This class calculates occupancy probability by:
+    1. Starting from a prior (often derived from motion sensors).
+    2. Incorporating additional sensors (media, appliances, environment) by updating
+       the probability using learned priors or fallback defaults.
+    3. Provides methods to compute learned priors from historical data and to fall back
+       to timeslot-based aggregated probabilities if no direct learned priors are found.
+    """
 
     def __init__(
         self,
@@ -96,6 +115,7 @@ class ProbabilityCalculator:
     async def _get_states_from_recorder(
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> list[State] | None:
+        """Fetch states history from recorder."""
         try:
             states = await get_instance(self.hass).async_add_executor_job(
                 lambda: get_significant_states(
@@ -114,6 +134,7 @@ class ProbabilityCalculator:
     def _calculate_active_duration(
         self, states: list[State], start_time: datetime, end_time: datetime
     ) -> float:
+        """Calculate how long an entity was in an active state within the time period."""
         if not states:
             return 0.0
 
@@ -146,8 +167,13 @@ class ProbabilityCalculator:
     async def calculate_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> tuple[float, float]:
-        """Calculate prior probabilities for a given entity based on historical data."""
+        """Calculate learned priors for a given entity based on historical data.
 
+        We compare how often the entity's 'active' state correlated with motion being on.
+        If insufficient data or no meaningful correlation found, default priors are returned.
+
+        Only store learned priors if minimum sample count is met.
+        """
         _LOGGER.info(
             "Calculating prior for %s from %s to %s",
             entity_id,
@@ -165,67 +191,84 @@ class ProbabilityCalculator:
                     motion_states[motion_sensor] = states
 
             if not motion_states:
+                _LOGGER.debug(
+                    "No motion states found, returning defaults for %s", entity_id
+                )
                 return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
             entity_states = await self._get_states_from_recorder(
                 entity_id, start_time, end_time
             )
             if not entity_states:
+                _LOGGER.debug(
+                    "No entity states found for %s, using defaults", entity_id
+                )
                 return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
-            total_time = 0
-            active_with_motion = 0
-            active_without_motion = 0
+            total_time = 0.0
+            active_with_motion = 0.0
+            active_without_motion = 0.0
+            sample_count = 0  # Count how many times we see active states
 
+            # Simple approach: sum durations when active and check if motion was also active
             for state_obj in entity_states:
                 duration = self._get_state_duration(state_obj)
                 if duration <= 0:
                     continue
-
                 total_time += duration
                 motion_active = self._check_motion_active_during(
                     state_obj.last_updated, motion_states
                 )
 
                 if self._is_active_state(state_obj.state, entity_id):
+                    sample_count += 1
                     if motion_active:
                         active_with_motion += duration
                     else:
                         active_without_motion += duration
 
             if total_time == 0:
-                _LOGGER.info(
-                    "Total time: %s using default priors for %s", total_time, entity_id
-                )
-                self.coordinator.update_learned_priors(
-                    entity_id, DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
-                )
+                _LOGGER.info("No active time found for %s, using defaults", entity_id)
                 return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
-            _LOGGER.info(
-                "Active with motion: %s, Active without motion: %s",
-                active_with_motion,
-                active_without_motion,
+            prob_given_true = (
+                active_with_motion / total_time
+                if total_time > 0
+                else DEFAULT_PROB_GIVEN_TRUE
+            )
+            prob_given_false = (
+                active_without_motion / total_time
+                if total_time > 0
+                else DEFAULT_PROB_GIVEN_FALSE
             )
 
-            prob_given_true = active_with_motion / total_time
-            prob_given_false = active_without_motion / total_time
-
+            # Bound probabilities
             prob_given_true = max(min(prob_given_true, 0.99), 0.01)
             prob_given_false = max(min(prob_given_false, 0.99), 0.01)
 
-            # MODIFICATION START: Store learned priors in coordinator
-            self.coordinator.update_learned_priors(
-                entity_id, prob_given_true, prob_given_false
-            )
+            # MODIFICATION START: Only store learned priors if we have enough samples
+            if sample_count >= MIN_SAMPLE_COUNT_FOR_PRIORS:
+                self.coordinator.update_learned_priors(
+                    entity_id, prob_given_true, prob_given_false
+                )
+                _LOGGER.info(
+                    "Learned priors for %s: true=%.4f, false=%.4f based on %d samples",
+                    entity_id,
+                    prob_given_true,
+                    prob_given_false,
+                    sample_count,
+                )
+            else:
+                _LOGGER.info(
+                    "Not enough samples (%d) for %s, not storing learned priors, using defaults",
+                    sample_count,
+                    entity_id,
+                )
+                prob_given_true, prob_given_false = (
+                    DEFAULT_PROB_GIVEN_TRUE,
+                    DEFAULT_PROB_GIVEN_FALSE,
+                )
             # MODIFICATION END
-
-            _LOGGER.info(
-                "Learned priors for %s: true=%s, false=%s",
-                entity_id,
-                prob_given_true,
-                prob_given_false,
-            )
 
             return round(prob_given_true, 4), round(prob_given_false, 4)
 
@@ -236,6 +279,11 @@ class ProbabilityCalculator:
     async def calculate_timeslots(
         self, entity_ids: list[str], history_period: int
     ) -> dict[str, Any]:
+        """Calculate aggregated timeslot-based probabilities over a historical period.
+
+        This can serve as a fallback if no learned priors are available for a sensor.
+        Timeslot data is grouped in 30-minute increments over the specified history period.
+        """
         if not self._needs_cache_update():
             return self._cache
 
@@ -249,10 +297,11 @@ class ProbabilityCalculator:
             history_period,
         )
 
+        # Generate half-hour slots for a 24-hour period
         for hour in range(24):
             for minute in (0, 30):
                 if hour % 4 == 0 and minute == 0:
-                    await asyncio.sleep(0.1)  # Sleep for 100ms to avoid rate limiting
+                    await asyncio.sleep(0.1)  # Sleep briefly to avoid DB pressure
 
                 slot_key = f"{hour:02d}:{minute:02d}"
                 if slot_key in self._cache:
@@ -275,17 +324,20 @@ class ProbabilityCalculator:
         hour: int,
         minute: int,
     ) -> dict[str, Any]:
+        """Compute average priors for a given timeslot over the historical period."""
         slot_key = f"{hour:02d}:{minute:02d}"
         slot_data = {"entities": []}
-        combined_true = combined_false = 1.0
+        combined_true = 1.0
+        combined_false = 1.0
 
         _LOGGER.info("Processing timeslot %s for %s", slot_key, entity_ids)
 
+        # For each entity, we compute priors in daily slices aligned with the slot
         for entity_id in entity_ids:
             daily_probs = []
             current = start_time
 
-            _LOGGER.info("Processing entity %s for timeslot %s", entity_id, slot_key)
+            _LOGGER.debug("Processing entity %s for timeslot %s", entity_id, slot_key)
 
             while current < end_time:
                 slot_start = current.replace(
@@ -337,7 +389,18 @@ class ProbabilityCalculator:
         motion_timestamps: dict[str, datetime],
         timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
+        """Calculate the current occupancy probability by applying Bayesian updates.
+
+        This method:
+        1. Starts with a probability heavily influenced by motion sensors (if active).
+        2. For each other sensor, attempts to get learned priors. If none, it tries timeslot data.
+           If still none found, it falls back to default constants.
+        3. Updates the current probability using each sensor's state as evidence.
+
+        The final probability is bounded between MIN_PROBABILITY and MAX_PROBABILITY.
+        """
         try:
+            # Start from a motion-based prior
             motion_active = any(
                 sensor_states.get(sensor_id, {}).get("state") == STATE_ON
                 for sensor_id in self.motion_sensors
@@ -351,25 +414,32 @@ class ProbabilityCalculator:
             active_triggers = []
             sensor_probs = {}
 
+            # For each sensor, we get priors from learned data, timeslots, or defaults
             for entity_id, state in sensor_states.items():
                 if not state or not state.get("availability", False):
                     continue
 
-                # MODIFICATION START: Attempt to fetch learned/historical priors first
+                # MODIFICATION START: Detailed fallback logging
                 p_true, p_false = self._get_sensor_priors_from_history(entity_id)
                 if p_true is None or p_false is None:
-                    # If not found in learned priors, fallback to timeslot data
+                    _LOGGER.debug(
+                        "No learned priors for %s, attempting timeslot fallback.",
+                        entity_id,
+                    )
                     p_true, p_false = self.get_timeslot_probabilities(
                         entity_id, timeslot
                     )
                     if p_true is None or p_false is None:
-                        # Finally, fallback to default constants
+                        _LOGGER.debug(
+                            "No timeslot data for %s, using default priors.", entity_id
+                        )
                         p_true, p_false = self.get_sensor_priors(entity_id)
                 # MODIFICATION END
 
                 is_active = self._is_active_state(state["state"], entity_id)
                 if is_active:
                     active_triggers.append(entity_id)
+                    # Apply Bayesian update with the found priors
                     current_probability = update_probability(
                         current_probability, p_true, p_false
                     )
@@ -381,11 +451,11 @@ class ProbabilityCalculator:
 
             return {
                 "probability": final_probability,
-                "prior_probability": 0.0,  # Keeping as is; could be refined
+                "prior_probability": 0.0,
                 "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probs,
-                "device_states": {},  # Device states if needed
-                "decay_status": {},  # Decay logic if implemented
+                "device_states": {},
+                "decay_status": {},
                 "sensor_availability": {
                     k: v.get("availability", False) for k, v in sensor_states.items()
                 },
@@ -400,6 +470,7 @@ class ProbabilityCalculator:
             ) from err
 
     def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
+        """Return default priors for a sensor based on its category."""
         if entity_id in self.motion_sensors:
             return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
         elif entity_id in self.media_devices:
@@ -408,21 +479,24 @@ class ProbabilityCalculator:
             return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
         return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
-    # MODIFICATION START: New helper to retrieve priors from learned_priors
     def _get_sensor_priors_from_history(
         self, entity_id: str
-    ) -> tuple[float, float] | (None, None):
+    ) -> tuple[float, float] | tuple[None, None]:
+        """Attempt to retrieve learned priors for a sensor from stored coordinator data."""
         priors = self.coordinator.learned_priors.get(entity_id)
         if priors:
             return priors["prob_given_true"], priors["prob_given_false"]
         return None, None
 
-    # MODIFICATION END
-
-    # MODIFICATION START: Adjust get_timeslot_probabilities to use learned priors if no timeslot data
     def get_timeslot_probabilities(
         self, entity_id: str, timeslot: Timeslot | None
-    ) -> tuple[float, float] | (None, None):
+    ) -> tuple[float, float] | tuple[None, None]:
+        """Get probability from timeslot data if learned priors are unavailable.
+
+        Timeslot probabilities are an aggregated fallback, representing how historically
+        active this sensor was during similar times of day. If no timeslot data is found,
+        return None, prompting a fallback to defaults.
+        """
         if timeslot and "entities" in timeslot:
             entity_data = next(
                 (e for e in timeslot["entities"] if e["id"] == entity_id),
@@ -431,17 +505,11 @@ class ProbabilityCalculator:
             if entity_data:
                 return entity_data["prob_given_true"], entity_data["prob_given_false"]
 
-        # If no timeslot data, try learned priors
-        p_true, p_false = self._get_sensor_priors_from_history(entity_id)
-        if p_true is not None and p_false is not None:
-            return p_true, p_false
-
-        # If still not found, return None to indicate fallback to defaults
+        # If no timeslot data, return None to indicate we should fallback further
         return None, None
 
-    # MODIFICATION END
-
     def _get_state_duration(self, state: State) -> float:
+        """Calculate how long a given state lasted."""
         try:
             last_changed = getattr(
                 state, "last_changed", None
@@ -458,6 +526,7 @@ class ProbabilityCalculator:
     def _check_motion_active_during(
         self, timestamp: datetime, motion_states: dict
     ) -> bool:
+        """Check if motion was active at a given timestamp."""
         try:
             for states in motion_states.values():
                 for state in states:
@@ -471,6 +540,7 @@ class ProbabilityCalculator:
             return False
 
     def _is_active_state(self, state: str, entity_id: str) -> bool:
+        """Check if given state indicates 'activity' for the entity type."""
         if entity_id in self.motion_sensors:
             return state == STATE_ON
         elif entity_id in self.media_devices:

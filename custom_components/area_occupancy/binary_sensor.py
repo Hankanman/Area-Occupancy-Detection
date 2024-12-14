@@ -35,7 +35,7 @@ ROUNDING_PRECISION: Final = 2
 class AreaOccupancyBinarySensor(
     CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity
 ):
-    """Binary sensor for area occupancy."""
+    """Binary sensor that indicates occupancy status based on computed probability."""
 
     def __init__(
         self,
@@ -43,10 +43,7 @@ class AreaOccupancyBinarySensor(
         entry_id: str,
         threshold: float,
     ) -> None:
-        """Initialize the binary sensor."""
         super().__init__(coordinator)
-
-        # Entity attributes
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._attr_name = NAME_BINARY_SENSOR
@@ -56,8 +53,6 @@ class AreaOccupancyBinarySensor(
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._threshold = threshold
         self._area_name = coordinator.core_config["name"]
-
-        # Device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry_id)},
             "name": self._area_name,
@@ -68,7 +63,6 @@ class AreaOccupancyBinarySensor(
 
     @staticmethod
     def _format_float(value: float) -> float:
-        """Format float to consistently show 2 decimal places."""
         try:
             return round(float(value), ROUNDING_PRECISION)
         except (ValueError, TypeError):
@@ -77,11 +71,11 @@ class AreaOccupancyBinarySensor(
     @property
     def is_on(self) -> bool | None:
         """Return true if the area is occupied."""
+        if not self.coordinator.data:
+            return None
         try:
-            if not self.coordinator.data:
-                return None
             return self.coordinator.data.get("is_occupied", False)
-        except Exception as err:  # pylint: disable=broad-except
+        except (AttributeError, KeyError) as err:
             _LOGGER.error("Error determining occupancy state: %s", err)
             return None
 
@@ -90,7 +84,6 @@ class AreaOccupancyBinarySensor(
         """Return the state attributes."""
         if not self.coordinator.data:
             return {}
-
         try:
             data: ProbabilityResult = self.coordinator.data
 
@@ -104,7 +97,6 @@ class AreaOccupancyBinarySensor(
                     if self.hass.states.get(entity_id)
                 ]
 
-            # Core attributes
             attributes = {
                 ATTR_ACTIVE_TRIGGERS: [
                     self.hass.states.get(entity_id).attributes.get(
@@ -115,7 +107,6 @@ class AreaOccupancyBinarySensor(
                 ],
             }
 
-            # Add configured sensors with friendly names
             options_config = self.coordinator.options_config
             core_config = self.coordinator.core_config
 
@@ -151,7 +142,7 @@ class AreaOccupancyBinarySensor(
 
             return attributes
 
-        except Exception as err:  # pylint: disable=broad-except
+        except (AttributeError, KeyError, TypeError) as err:
             _LOGGER.error("Error getting entity attributes: %s", err)
             return {}
 
@@ -161,7 +152,6 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Area Occupancy binary sensor based on a config entry."""
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
