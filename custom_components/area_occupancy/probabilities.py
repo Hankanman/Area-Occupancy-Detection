@@ -1,7 +1,7 @@
 """Probability constants and defaults for Area Occupancy Detection."""
 
 from __future__ import annotations
-from typing import Final, Dict, Any
+from typing import Final, Dict
 
 # Motion detection probabilities
 MOTION_SINGLE_SENSOR_PROBABILITY: Final[float] = 0.85
@@ -26,43 +26,36 @@ APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
     "default": 0.0,
 }
 
-# Environmental detection settings
-ENVIRONMENTAL_SETTINGS: Final[Dict[str, Any]] = {
-    "illuminance": {
-        "change_threshold": 50.0,  # lux
-        "significant_change_probability": 0.7,
-        "minor_change_probability": 0.3,
-    },
-    "temperature": {
-        "change_threshold": 1.5,  # degrees
-        "baseline": 21.0,
-    },
-    "humidity": {
-        "change_threshold": 10.0,  # percent
-        "baseline": 50.0,
-    },
-}
+# Environmental detection baseline settings
+ENVIRONMENTAL_BASELINE_PERCENT: Final[float] = 0.05  # 5% deviation allowed around mean
+ENVIRONMENTAL_MIN_ACTIVE_DURATION: Final[int] = 300  # seconds of active data needed
 
 # Safety bounds
 MIN_PROBABILITY: Final[float] = 0.0
 MAX_PROBABILITY: Final[float] = 1.0
 
-# Default prior probabilities (should never be 0 or 1)
+# Default prior probabilities
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
 
-# Motion sensor specific defaults
+# Motion sensor defaults
 MOTION_PROB_GIVEN_TRUE: Final[float] = 0.85
 MOTION_PROB_GIVEN_FALSE: Final[float] = 0.15
 
-# Media device specific defaults
+# Media device defaults
 MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.75
 MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.25
 
-# Appliance specific defaults
+# Appliance defaults
 APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.7
 APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.3
 
-# Environmental sensor specific defaults
+# Environmental defaults
 ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.6
 ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.4
+
+# Minimum active duration for storing learned priors
+MIN_ACTIVE_DURATION_FOR_PRIORS: Final[int] = 300
+
+# Baseline cache TTL (to avoid hitting DB repeatedly)
+BASELINE_CACHE_TTL: Final[int] = 21600  # 6 hours in seconds
