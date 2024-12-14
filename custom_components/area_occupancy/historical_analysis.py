@@ -18,6 +18,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
+from homeassistant.exceptions import HomeAssistantError
+from sqlalchemy.exc import SQLAlchemyError
 
 from .probabilities import (
     DEFAULT_PROB_GIVEN_TRUE,
@@ -49,9 +51,10 @@ class HistoricalAnalysis:
 
     def _needs_cache_update(self) -> bool:
         """Check if cache needs updating."""
-        if not self._last_cache_update:
-            return True
-        return dt_util.utcnow() - self._last_cache_update > CACHE_DURATION
+        return (
+            not self._last_cache_update
+            or dt_util.utcnow() - self._last_cache_update > CACHE_DURATION
+        )
 
     async def _get_states_from_recorder(
         self, entity_id: str, start_time: datetime, end_time: datetime
@@ -67,19 +70,9 @@ class HistoricalAnalysis:
                     minimal_response=False,
                 )
             )
+            return states.get(entity_id) if states else None
 
-            if not states or entity_id not in states:
-                return None
-
-            # Filter and validate states
-            return [
-                state
-                for state in states[entity_id]
-                if hasattr(state, "state")
-                or (isinstance(state, dict) and "state" in state)
-            ] or None
-
-        except Exception as err:  # pylint: disable=broad-except
+        except (HomeAssistantError, SQLAlchemyError) as err:
             _LOGGER.error("Error getting states for %s: %s", entity_id, err)
             return None
 
@@ -95,33 +88,22 @@ class HistoricalAnalysis:
         last_change = start_time
 
         for state_obj in states:
-            try:
-                state = (
-                    state_obj.state
-                    if hasattr(state_obj, "state")
-                    else state_obj.get("state")
-                )
-
-                if not state or state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                    continue
-
-                current_time = (
-                    state_obj.last_changed
-                    if hasattr(state_obj, "last_changed")
-                    else dt_util.parse_datetime(state_obj.get("last_changed", ""))
-                ) or start_time
-
-                if current_state in VALID_ACTIVE_STATES:
-                    total_active_time += current_time - last_change
-
-                current_state = state
-                last_change = current_time
-
-            except Exception as err:  # pylint: disable=broad-except
-                _LOGGER.error("Error processing state object: %s", err)
+            state = getattr(state_obj, "state", None) or state_obj.get("state")
+            if not state or state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 continue
 
-        # Add final state duration
+            current_time = (
+                getattr(state_obj, "last_changed", None)
+                or dt_util.parse_datetime(state_obj.get("last_changed", ""))
+                or start_time
+            )
+
+            if current_state in VALID_ACTIVE_STATES:
+                total_active_time += current_time - last_change
+
+            current_state = state
+            last_change = current_time
+
         if current_state in VALID_ACTIVE_STATES:
             total_active_time += end_time - last_change
 
@@ -131,24 +113,17 @@ class HistoricalAnalysis:
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> tuple[float, float]:
         """Calculate prior probabilities based on historical state."""
-        # Define sensor type defaults
         sensor_defaults = {
-            "motion": (MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE, 0.15, 0.85),
-            "media": (MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE, 0.10, 0.90),
-            "appliance": (
-                APPLIANCE_PROB_GIVEN_TRUE,
-                APPLIANCE_PROB_GIVEN_FALSE,
-                0.05,
-                0.95,
-            ),
+            "motion": (MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE, 0.15),
+            "media": (MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE, 0.10),
+            "appliance": (APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE, 0.05),
         }
 
-        # Get defaults based on entity type
         sensor_type = next(
             (stype for stype in sensor_defaults if stype in entity_id), None
         )
-        default_true, default_false, min_true, max_false = sensor_defaults.get(
-            sensor_type, (DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE, 0.01, 0.99)
+        default_true, default_false, min_true = sensor_defaults.get(
+            sensor_type, (DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE, 0.01)
         )
 
         total_duration = (end_time - start_time).total_seconds()
@@ -164,9 +139,7 @@ class HistoricalAnalysis:
             total_duration,
         )
 
-        prob_given_true = min(
-            max(active_duration / total_duration, min_true), max_false
-        )
+        prob_given_true = min(max(active_duration / total_duration, min_true), 0.99)
         return round(prob_given_true, 4), round(1 - prob_given_true, 4)
 
     async def calculate_timeslots(
@@ -176,33 +149,27 @@ class HistoricalAnalysis:
         if not self._needs_cache_update():
             return self._cache
 
-        try:
-            end_time = dt_util.utcnow()
-            start_time = end_time - timedelta(days=history_period)
-            timeslots = {}
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=history_period)
+        timeslots = {}
 
-            for hour in range(24):
-                for minute in (0, 30):
-                    if hour % 4 == 0 and minute == 0:  # Process in 4-hour chunks
-                        await asyncio.sleep(0.1)
+        for hour in range(24):
+            for minute in (0, 30):
+                if hour % 4 == 0 and minute == 0:
+                    await asyncio.sleep(0.1)
 
-                    slot_key = f"{hour:02d}:{minute:02d}"
-                    if slot_key in self._cache:
-                        timeslots[slot_key] = self._cache[slot_key]
-                        continue
+                slot_key = f"{hour:02d}:{minute:02d}"
+                if slot_key in self._cache:
+                    timeslots[slot_key] = self._cache[slot_key]
+                    continue
 
-                    slot_data = await self._process_timeslot(
-                        entity_ids, start_time, end_time, hour, minute
-                    )
-                    timeslots[slot_key] = slot_data
-                    self._cache[slot_key] = slot_data
+                slot_data = await self._process_timeslot(
+                    entity_ids, start_time, end_time, hour, minute
+                )
+                timeslots[slot_key] = self._cache[slot_key] = slot_data
 
-            self._last_cache_update = dt_util.utcnow()
-            return timeslots
-
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("Error processing timeslot data: %s", err)
-            return {}
+        self._last_cache_update = dt_util.utcnow()
+        return timeslots
 
     async def _process_timeslot(
         self,
@@ -213,7 +180,8 @@ class HistoricalAnalysis:
         minute: int,
     ) -> dict[str, Any]:
         """Process a single timeslot."""
-        slot_data = {"entities": [], "prob_given_true": 0.0, "prob_given_false": 0.0}
+        slot_data = {"entities": []}
+        combined_true = combined_false = 1.0
 
         for entity_id in entity_ids:
             daily_probs = []
@@ -250,14 +218,15 @@ class HistoricalAnalysis:
                     }
                 )
 
-        if slot_data["entities"]:
-            combined_true = 1.0
-            combined_false = 1.0
-            for entity in slot_data["entities"]:
-                combined_true *= entity["prob_given_true"]
-                combined_false *= entity["prob_given_false"]
+                combined_true *= avg_prob_true
+                combined_false *= avg_prob_false
 
-            slot_data["prob_given_true"] = round(combined_true, 4)
-            slot_data["prob_given_false"] = round(combined_false, 4)
+        if slot_data["entities"]:
+            slot_data.update(
+                {
+                    "prob_given_true": round(combined_true, 4),
+                    "prob_given_false": round(combined_false, 4),
+                }
+            )
 
         return slot_data
