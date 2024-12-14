@@ -14,7 +14,7 @@ scripts
 .repomixignore
 blueprints
 setup.cfg
-*.md
 LICENSE
 pytest.ini
 repomix.config.json
+tests
