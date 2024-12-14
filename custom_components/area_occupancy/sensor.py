@@ -26,6 +26,8 @@ from .const import (
     NAME_MEDIA_PRIOR_SENSOR,
     NAME_APPLIANCE_PRIOR_SENSOR,
     NAME_OCCUPANCY_PRIOR_SENSOR,
+    NAME_DOOR_PRIOR_SENSOR,
+    NAME_LIGHT_PRIOR_SENSOR,
     ATTR_TOTAL_PERIOD,
     ATTR_PROB_GIVEN_TRUE,
     ATTR_PROB_GIVEN_FALSE,
@@ -40,6 +42,10 @@ from .const import (
 )
 from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
+    DOOR_PROB_GIVEN_TRUE,
+    DOOR_PROB_GIVEN_FALSE,
+    LIGHT_PROB_GIVEN_TRUE,
+    LIGHT_PROB_GIVEN_FALSE,
     MOTION_PROB_GIVEN_TRUE,
     MOTION_PROB_GIVEN_FALSE,
     MEDIA_PROB_GIVEN_TRUE,
@@ -207,6 +213,38 @@ class AppliancePriorSensor(PriorProbabilitySensorBase):
 
     def _get_sensor_list(self) -> list[str]:
         return self.coordinator.options_config.get("appliances", [])
+
+
+class DoorPriorSensor(PriorProbabilitySensorBase):
+    """Sensor for aggregated door prior probability."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+        super().__init__(
+            coordinator,
+            entry_id,
+            NAME_DOOR_PRIOR_SENSOR,
+            default_p_true=DOOR_PROB_GIVEN_TRUE,
+            default_p_false=DOOR_PROB_GIVEN_FALSE,
+        )
+
+    def _get_sensor_list(self) -> list[str]:
+        return self.coordinator.options_config.get("door_sensors", [])
+
+
+class LightPriorSensor(PriorProbabilitySensorBase):
+    """Sensor for aggregated light prior probability."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+        super().__init__(
+            coordinator,
+            entry_id,
+            NAME_LIGHT_PRIOR_SENSOR,
+            default_p_true=LIGHT_PROB_GIVEN_TRUE,
+            default_p_false=LIGHT_PROB_GIVEN_FALSE,
+        )
+
+    def _get_sensor_list(self) -> list[str]:
+        return self.coordinator.options_config.get("light_sensors", [])
 
 
 class OccupancyPriorSensor(PriorProbabilitySensorBase):

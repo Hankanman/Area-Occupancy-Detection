@@ -8,16 +8,15 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
 from .const import (
     DOMAIN,
-    STORAGE_KEY_HISTORY,
-    STORAGE_VERSION,
     CONF_AREA_ID,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
@@ -36,10 +35,10 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
 )
-from .types import StorageData, CoreConfig, OptionsConfig
+from .types import CoreConfig, OptionsConfig
 from .coordinator import AreaOccupancyCoordinator
 from .service import async_setup_services
-from .storage import StorageEncoder, AreaOccupancyStorage
+from .storage import AreaOccupancyStorage
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,13 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         validate_config(entry.data, validate_core=True)
         validate_config(dict(entry.options), validate_core=False)
 
-        store = Store[StorageData](
-            hass,
-            STORAGE_VERSION,
-            f"{STORAGE_KEY_HISTORY}_{entry.entry_id}",
-            atomic_writes=True,
-            encoder=StorageEncoder(),
-        )
+        store = AreaOccupancyStorage(hass, entry.entry_id)
 
         coordinator = AreaOccupancyCoordinator(
             hass=hass,
@@ -106,12 +99,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         # Load stored data
-        stored_data = await store.async_load()
-        if stored_data:
-            await coordinator.async_restore_state(stored_data)
+        await coordinator.async_load_stored_data()
+        # Initialize states without blocking historical analysis
+        await coordinator.async_initialize_states()
 
-        hass.async_create_task(coordinator.async_setup())
-
+        # Save references
         hass.data[DOMAIN][entry.entry_id] = {
             "coordinator": coordinator,
             "store": store,
@@ -119,6 +111,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(entry.add_update_listener(async_update_options))
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Schedule the historical analysis after HA has fully started
+        @callback
+        async def after_startup(event):
+            await coordinator.async_run_historical_analysis_task()
+
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, after_startup)
 
         return True
 
