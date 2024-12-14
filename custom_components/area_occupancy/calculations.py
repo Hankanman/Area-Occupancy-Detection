@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import logging
-import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -135,7 +134,6 @@ class ProbabilityCalculator:
                 motion_states[motion_sensor] = ms
 
         if not motion_states:
-            _LOGGER.debug("No motion states found, using defaults for %s", entity_id)
             return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
         # Get entity states
@@ -143,7 +141,6 @@ class ProbabilityCalculator:
             entity_id, start_time, end_time
         )
         if not entity_states:
-            _LOGGER.debug("No states found for %s, using defaults", entity_id)
             return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
         is_environmental = entity_id in (
@@ -207,19 +204,7 @@ class ProbabilityCalculator:
             self.coordinator.update_learned_priors(
                 entity_id, prob_given_true, prob_given_false
             )
-            _LOGGER.debug(
-                "Learned priors for %s: true=%.4f, false=%.4f based on %.1f seconds active",
-                entity_id,
-                prob_given_true,
-                prob_given_false,
-                total_active_time,
-            )
         else:
-            _LOGGER.debug(
-                "Not enough active duration (%.1f s) for %s, using defaults",
-                total_active_time,
-                entity_id,
-            )
             prob_given_true, prob_given_false = (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
@@ -384,18 +369,8 @@ class ProbabilityCalculator:
         start_time = end_time - timedelta(days=history_period)
         timeslots = {}
 
-        _LOGGER.debug(
-            "Calculating timeslots for %s for the last %s days",
-            entity_ids,
-            history_period,
-        )
-
         for hour in range(24):
             for minute in (0, 30):
-                if hour % 4 == 0 and minute == 0:
-                    await asyncio.sleep(0.1)  # Sleep briefly to reduce DB pressure
-
-                # Removed slot_key since it's unused
                 slot_data = await self._process_timeslot(
                     entity_ids, start_time, end_time, hour, minute
                 )
@@ -473,36 +448,37 @@ class ProbabilityCalculator:
         timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
         try:
-            motion_active = any(
-                sensor_states.get(sensor_id, {}).get("state") == STATE_ON
-                for sensor_id in self.motion_sensors
-            )
-            current_probability = (
-                MOTION_PROB_GIVEN_TRUE
-                if motion_active
-                else (1 - MOTION_PROB_GIVEN_TRUE)
-            )
+            # Determine baseline: if we have a previous probability, start from there
+            if self.coordinator.data and "probability" in self.coordinator.data:
+                previous_probability = self.coordinator.data["probability"]
+            else:
+                # No previous probability, use motion to set an initial baseline
+                motion_active = any(
+                    sensor_states.get(sensor_id, {}).get("state") == STATE_ON
+                    for sensor_id in self.motion_sensors
+                )
+                # If motion is active at the very start, assume probability close to MOTION_PROB_GIVEN_TRUE
+                # If no motion, assume a lower baseline closer to MOTION_PROB_GIVEN_FALSE
+                previous_probability = (
+                    MOTION_PROB_GIVEN_TRUE if motion_active else MOTION_PROB_GIVEN_FALSE
+                )
+
+            current_probability = previous_probability
 
             active_triggers = []
             sensor_probs = {}
 
+            # Check all sensors to see if they are active and update probability accordingly
             for entity_id, state in sensor_states.items():
                 if not state or not state.get("availability", False):
                     continue
 
                 p_true, p_false = self._get_sensor_priors_from_history(entity_id)
                 if p_true is None or p_false is None:
-                    _LOGGER.debug(
-                        "No learned priors for %s, attempting timeslot fallback.",
-                        entity_id,
-                    )
                     p_true, p_false = self.get_timeslot_probabilities(
                         entity_id, timeslot
                     )
                     if p_true is None or p_false is None:
-                        _LOGGER.debug(
-                            "No timeslot data for %s, using default priors.", entity_id
-                        )
                         p_true, p_false = self.get_sensor_priors(entity_id)
 
                 is_active = self._is_active_now(entity_id, state["state"])
@@ -511,33 +487,44 @@ class ProbabilityCalculator:
                     current_probability = update_probability(
                         current_probability, p_true, p_false
                     )
+
                 sensor_probs[entity_id] = current_probability
 
-            # Clamp intermediate probability to avoid extremes
+            # Clamp after sensor updates
             current_probability = max(
                 MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
             )
 
             now = dt_util.utcnow()
+            decay_status = {}
+
             if active_triggers:
-                # Reset the last positive trigger time
+                # Reset last positive trigger
                 self.coordinator.set_last_positive_trigger(now)
+                decay_status["global_decay"] = 0.0
             else:
-                # Apply exponential decay if no positive triggers since last time
+                # No active triggers, apply exponential decay if we have a last positive trigger
                 last_trigger = self.coordinator.get_last_positive_trigger()
                 if last_trigger is not None:
                     elapsed = (now - last_trigger).total_seconds()
                     decay_window = self.coordinator.get_decay_window()
 
                     if elapsed > 0 and decay_window > 0:
-                        # Apply exponential decay:
-                        # factor = exp(-DECAY_LAMBDA * (elapsed/decay_window))
-                        factor = math.exp(-DECAY_LAMBDA * (elapsed / decay_window))
-                        current_probability = current_probability * factor
-                        # Re-clamp after decay
+                        # Calculate decay factor
+                        decay_factor = math.exp(
+                            -DECAY_LAMBDA * (elapsed / decay_window)
+                        )
+                        current_probability *= decay_factor
                         current_probability = max(
                             MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
                         )
+                        decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+                    else:
+                        # Decay not applicable yet (no time elapsed or no window)
+                        decay_status["global_decay"] = 0.0
+                else:
+                    # No previous trigger recorded, no decay applies
+                    decay_status["global_decay"] = 0.0
 
             final_probability = current_probability
 
@@ -547,7 +534,7 @@ class ProbabilityCalculator:
                 "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probs,
                 "device_states": {},
-                "decay_status": {},
+                "decay_status": decay_status,
                 "sensor_availability": {
                     k: v.get("availability", False) for k, v in sensor_states.items()
                 },
