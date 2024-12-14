@@ -174,7 +174,7 @@ class ProbabilityCalculator:
 
         Only store learned priors if minimum sample count is met.
         """
-        _LOGGER.info(
+        _LOGGER.debug(
             "Calculating prior for %s from %s to %s",
             entity_id,
             start_time,
@@ -228,7 +228,7 @@ class ProbabilityCalculator:
                         active_without_motion += duration
 
             if total_time == 0:
-                _LOGGER.info("No active time found for %s, using defaults", entity_id)
+                _LOGGER.debug("No active time found for %s, using defaults", entity_id)
                 return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
             prob_given_true = (
@@ -251,7 +251,7 @@ class ProbabilityCalculator:
                 self.coordinator.update_learned_priors(
                     entity_id, prob_given_true, prob_given_false
                 )
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Learned priors for %s: true=%.4f, false=%.4f based on %d samples",
                     entity_id,
                     prob_given_true,
@@ -259,7 +259,7 @@ class ProbabilityCalculator:
                     sample_count,
                 )
             else:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Not enough samples (%d) for %s, not storing learned priors, using defaults",
                     sample_count,
                     entity_id,
@@ -291,7 +291,7 @@ class ProbabilityCalculator:
         start_time = end_time - timedelta(days=history_period)
         timeslots = {}
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Calculating timeslots for %s for the last %s days",
             entity_ids,
             history_period,
@@ -330,7 +330,7 @@ class ProbabilityCalculator:
         combined_true = 1.0
         combined_false = 1.0
 
-        _LOGGER.info("Processing timeslot %s for %s", slot_key, entity_ids)
+        _LOGGER.debug("Processing timeslot %s for %s", slot_key, entity_ids)
 
         # For each entity, we compute priors in daily slices aligned with the slot
         for entity_id in entity_ids:
