@@ -11,6 +11,7 @@ from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.const import (
     STATE_ON,
+    STATE_OFF,
     STATE_PLAYING,
     STATE_PAUSED,
 )
@@ -31,6 +32,10 @@ from .probabilities import (
     MEDIA_PROB_GIVEN_FALSE,
     APPLIANCE_PROB_GIVEN_TRUE,
     APPLIANCE_PROB_GIVEN_FALSE,
+    DOOR_PROB_GIVEN_TRUE,
+    DOOR_PROB_GIVEN_FALSE,
+    LIGHT_PROB_GIVEN_TRUE,
+    LIGHT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
     DEFAULT_PROB_GIVEN_FALSE,
     MIN_ACTIVE_DURATION_FOR_PRIORS,
@@ -74,6 +79,8 @@ class ProbabilityCalculator:
         illuminance_sensors: list[str] | None = None,
         humidity_sensors: list[str] | None = None,
         temperature_sensors: list[str] | None = None,
+        door_sensors: list[str] | None = None,
+        light_sensors: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
         self.coordinator = coordinator
@@ -83,6 +90,8 @@ class ProbabilityCalculator:
         self.illuminance_sensors = illuminance_sensors or []
         self.humidity_sensors = humidity_sensors or []
         self.temperature_sensors = temperature_sensors or []
+        self.door_sensors = door_sensors or []
+        self.light_sensors = light_sensors or []
         self.decay_config = decay_config or DecayConfig()
 
         self.hass = hass
@@ -448,6 +457,9 @@ class ProbabilityCalculator:
         timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
         try:
+
+            decay_min_delay = self.coordinator.get_decay_min_delay()
+
             # Determine baseline: if we have a previous probability, start from there
             if self.coordinator.data and "probability" in self.coordinator.data:
                 previous_probability = self.coordinator.data["probability"]
@@ -509,7 +521,7 @@ class ProbabilityCalculator:
                     elapsed = (now - last_trigger).total_seconds()
                     decay_window = self.coordinator.get_decay_window()
 
-                    if elapsed > 0 and decay_window > 0:
+                    if elapsed > decay_min_delay and elapsed > 0 and decay_window > 0:
                         # Calculate decay factor
                         decay_factor = math.exp(
                             -DECAY_LAMBDA * (elapsed / decay_window)
@@ -556,6 +568,10 @@ class ProbabilityCalculator:
             return MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
         elif entity_id in self.appliances:
             return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
+        elif entity_id in self.door_sensors:
+            return DOOR_PROB_GIVEN_TRUE, DOOR_PROB_GIVEN_FALSE
+        elif entity_id in self.light_sensors:
+            return LIGHT_PROB_GIVEN_TRUE, LIGHT_PROB_GIVEN_FALSE
         # Environmental or unknown: fallback to default
         return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 
@@ -584,10 +600,19 @@ class ProbabilityCalculator:
     def _is_active_now(self, entity_id: str, state: str) -> bool:
         """Check if the entity is currently active (for instant probability calculation)."""
         if entity_id in self.motion_sensors:
+            # Motion sensors active if state == on
             return state == STATE_ON
         elif entity_id in self.media_devices:
+            # Media devices active if state == playing or paused
             return state in (STATE_PLAYING, STATE_PAUSED)
         elif entity_id in self.appliances:
+            # Appliances active if state == on
+            return state == STATE_ON
+        elif entity_id in self.door_sensors:
+            # Doors active if state == off (closed)
+            return state in STATE_OFF
+        elif entity_id in self.light_sensors:
+            # Lights active if state == on
             return state == STATE_ON
         # For environmental sensors, instantaneous 'active' determination could be done if desired.
         return False

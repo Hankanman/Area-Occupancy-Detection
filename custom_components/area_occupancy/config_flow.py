@@ -38,16 +38,20 @@ from .const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_TEMPERATURE_SENSORS,
+    CONF_DOOR_SENSORS,
+    CONF_LIGHT_SENSORS,
     CONF_THRESHOLD,
     CONF_HISTORY_PERIOD,
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
+    CONF_DECAY_MIN_DELAY,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_AREA_ID,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
 )
 
@@ -83,6 +87,27 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
 
     return {
         vol.Optional(
+            CONF_DOOR_SENSORS, default=defaults.get(CONF_DOOR_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=[Platform.BINARY_SENSOR, Platform.SENSOR],
+                device_class=[
+                    BinarySensorDeviceClass.DOOR,
+                    BinarySensorDeviceClass.GARAGE_DOOR,
+                ],
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
+            CONF_LIGHT_SENSORS, default=defaults.get(CONF_LIGHT_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=[Platform.LIGHT, Platform.BINARY_SENSOR, Platform.SWITCH],
+                device_class=["light"],
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
             CONF_MEDIA_DEVICES, default=defaults.get(CONF_MEDIA_DEVICES, [])
         ): EntitySelector(
             EntitySelectorConfig(
@@ -95,7 +120,14 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
         ): EntitySelector(
             EntitySelectorConfig(
                 domain=[Platform.BINARY_SENSOR, Platform.SWITCH],
-                device_class=["power", "plug", "outlet"],
+                device_class=[
+                    BinarySensorDeviceClass.POWER,
+                    BinarySensorDeviceClass.PLUG,
+                    BinarySensorDeviceClass.GAS,
+                    BinarySensorDeviceClass.HEAT,
+                    BinarySensorDeviceClass.COLD,
+                    BinarySensorDeviceClass.MOISTURE,
+                ],
                 multiple=True,
             ),
         ),
@@ -181,6 +213,18 @@ def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
                 mode="slider",
                 unit_of_measurement="seconds",
             ),
+        ),
+        vol.Optional(
+            CONF_DECAY_MIN_DELAY,
+            default=defaults.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=3600,
+                step=10,
+                mode="box",
+                unit_of_measurement="seconds",
+            )
         ),
         vol.Optional(
             CONF_HISTORICAL_ANALYSIS_ENABLED,

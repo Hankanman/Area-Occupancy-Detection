@@ -48,6 +48,14 @@ DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
 MOTION_PROB_GIVEN_TRUE: Final[float] = 0.9
 MOTION_PROB_GIVEN_FALSE: Final[float] = 0.1
 
+# Door sensor defaults
+DOOR_PROB_GIVEN_TRUE: Final[float] = 0.65
+DOOR_PROB_GIVEN_FALSE: Final[float] = 0.35
+
+# Light sensor defaults
+LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.75
+LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.25
+
 # Media device defaults
 MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.8
 MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.2

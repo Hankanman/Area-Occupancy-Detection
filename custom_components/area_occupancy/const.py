@@ -19,6 +19,8 @@ CONF_APPLIANCES: Final = "appliances"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
+CONF_DOOR_SENSORS: Final = "door_sensors"
+CONF_LIGHT_SENSORS: Final = "light_sensors"
 CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
@@ -26,6 +28,7 @@ CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
+CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
 # File paths and configuration
 STORAGE_KEY_HISTORY: Final = "area_occupancy_history"
@@ -43,6 +46,7 @@ DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
+DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
@@ -51,6 +55,8 @@ NAME_MOTION_PRIOR_SENSOR: Final = "Motion Prior"
 NAME_ENVIRONMENTAL_PRIOR_SENSOR: Final = "Environmental Prior"
 NAME_MEDIA_PRIOR_SENSOR: Final = "Media Prior"
 NAME_APPLIANCE_PRIOR_SENSOR: Final = "Appliance Prior"
+NAME_DOOR_PRIOR_SENSOR: Final = "Door Prior"
+NAME_LIGHT_PRIOR_SENSOR: Final = "Light Prior"
 NAME_OCCUPANCY_PRIOR_SENSOR: Final = "Occupancy Prior"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
