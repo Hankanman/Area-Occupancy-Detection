@@ -26,8 +26,6 @@ from .probabilities import (
     APPLIANCE_PROB_GIVEN_FALSE,
 )
 
-from .historical_analysis import HistoricalAnalysis
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,7 +184,7 @@ async def async_setup_services(hass: HomeAssistant):
 
         try:
             coordinator = hass.data[DOMAIN][call.data["entry_id"]]["coordinator"]
-            historical_analysis = HistoricalAnalysis(hass)
+            calculator = coordinator._calculator
 
             # Get sensors from coordinator or fall back to empty list
             sensors = coordinator.get_configured_sensors() if coordinator else []
@@ -195,7 +193,7 @@ async def async_setup_services(hass: HomeAssistant):
                     "No sensors configured or coordinator not ready"
                 )
 
-            timeslots = await historical_analysis.calculate_timeslots(
+            timeslots = await calculator.calculate_timeslots(
                 sensors, history_period=days
             )
 
