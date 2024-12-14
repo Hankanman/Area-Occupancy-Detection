@@ -6,7 +6,7 @@ from typing import Final, Dict
 # Default decay window
 DEFAULT_DECAY_WINDOW = 600  # seconds
 # Decay lambda such that at half of decay_window probability is 25% of original
-DECAY_LAMBDA = 2.7725888
+DECAY_LAMBDA = 0.866433976
 
 # Motion detection probabilities
 MOTION_SINGLE_SENSOR_PROBABILITY: Final[float] = 0.85
@@ -26,6 +26,7 @@ MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
 # Appliance state probabilities
 APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
     "active": 0.8,
+    "on": 0.8,
     "standby": 0.4,
     "off": 0.1,
     "default": 0.0,
@@ -36,8 +37,8 @@ ENVIRONMENTAL_BASELINE_PERCENT: Final[float] = 0.05  # 5% deviation allowed arou
 ENVIRONMENTAL_MIN_ACTIVE_DURATION: Final[int] = 300  # seconds of active data needed
 
 # Safety bounds
-MIN_PROBABILITY: Final[float] = 0.0
-MAX_PROBABILITY: Final[float] = 1.0
+MIN_PROBABILITY: Final[float] = 0.01
+MAX_PROBABILITY: Final[float] = 0.99
 
 # Default prior probabilities
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
