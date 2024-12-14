@@ -39,7 +39,8 @@ from .const import (
     CONF_HUMIDITY_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_DOOR_SENSORS,
-    CONF_LIGHT_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
     CONF_THRESHOLD,
     CONF_HISTORY_PERIOD,
     CONF_DECAY_ENABLED,
@@ -90,7 +91,7 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
             CONF_DOOR_SENSORS, default=defaults.get(CONF_DOOR_SENSORS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=[Platform.BINARY_SENSOR, Platform.SENSOR],
+                domain=[Platform.BINARY_SENSOR],
                 device_class=[
                     BinarySensorDeviceClass.DOOR,
                     BinarySensorDeviceClass.GARAGE_DOOR,
@@ -99,7 +100,18 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
             ),
         ),
         vol.Optional(
-            CONF_LIGHT_SENSORS, default=defaults.get(CONF_LIGHT_SENSORS, [])
+            CONF_WINDOW_SENSORS, default=defaults.get(CONF_WINDOW_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                domain=[Platform.BINARY_SENSOR],
+                device_class=[
+                    BinarySensorDeviceClass.WINDOW,
+                ],
+                multiple=True,
+            ),
+        ),
+        vol.Optional(
+            CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
         ): EntitySelector(
             EntitySelectorConfig(
                 domain=[Platform.LIGHT, Platform.BINARY_SENSOR, Platform.SWITCH],

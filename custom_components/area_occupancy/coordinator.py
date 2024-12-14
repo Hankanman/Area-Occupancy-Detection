@@ -116,7 +116,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             humidity_sensors=self.options_config.get("humidity_sensors", []),
             temperature_sensors=self.options_config.get("temperature_sensors", []),
             door_sensors=self.options_config.get("door_sensors", []),
-            light_sensors=self.options_config.get("light_sensors", []),
+            window_sensors=self.options_config.get("window_sensors", []),
+            lights=self.options_config.get("lights", []),
             decay_config=self._get_decay_config(),
         )
 
@@ -358,7 +359,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                             "temperature_sensors", []
                         ),
                         "door_sensors": self.options_config.get("door_sensors", []),
-                        "light_sensors": self.options_config.get("light_sensors", []),
+                        "window_sensors": self.options_config.get("window_sensors", []),
+                        "lights": self.options_config.get("lights", []),
                     },
                 }
             )
@@ -418,7 +420,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             + self.options_config.get("humidity_sensors", [])
             + self.options_config.get("temperature_sensors", [])
             + self.options_config.get("door_sensors", [])
-            + self.options_config.get("light_sensors", [])
+            + self.options_config.get("window_sensors", [])
+            + self.options_config.get("lights", [])
         )
 
     async def async_reset(self) -> None:

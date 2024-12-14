@@ -34,6 +34,8 @@ from .probabilities import (
     APPLIANCE_PROB_GIVEN_FALSE,
     DOOR_PROB_GIVEN_TRUE,
     DOOR_PROB_GIVEN_FALSE,
+    WINDOW_PROB_GIVEN_TRUE,
+    WINDOW_PROB_GIVEN_FALSE,
     LIGHT_PROB_GIVEN_TRUE,
     LIGHT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
@@ -80,7 +82,8 @@ class ProbabilityCalculator:
         humidity_sensors: list[str] | None = None,
         temperature_sensors: list[str] | None = None,
         door_sensors: list[str] | None = None,
-        light_sensors: list[str] | None = None,
+        window_sensors: list[str] | None = None,
+        lights: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
         self.coordinator = coordinator
@@ -91,7 +94,8 @@ class ProbabilityCalculator:
         self.humidity_sensors = humidity_sensors or []
         self.temperature_sensors = temperature_sensors or []
         self.door_sensors = door_sensors or []
-        self.light_sensors = light_sensors or []
+        self.window_sensors = window_sensors or []
+        self.lights = lights or []
         self.decay_config = decay_config or DecayConfig()
 
         self.hass = hass
@@ -570,7 +574,9 @@ class ProbabilityCalculator:
             return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
         elif entity_id in self.door_sensors:
             return DOOR_PROB_GIVEN_TRUE, DOOR_PROB_GIVEN_FALSE
-        elif entity_id in self.light_sensors:
+        elif entity_id in self.window_sensors:
+            return WINDOW_PROB_GIVEN_TRUE, WINDOW_PROB_GIVEN_FALSE
+        elif entity_id in self.lights:
             return LIGHT_PROB_GIVEN_TRUE, LIGHT_PROB_GIVEN_FALSE
         # Environmental or unknown: fallback to default
         return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
@@ -611,8 +617,39 @@ class ProbabilityCalculator:
         elif entity_id in self.door_sensors:
             # Doors active if state == off (closed)
             return state in STATE_OFF
-        elif entity_id in self.light_sensors:
+        elif entity_id in self.window_sensors:
+            # Windows active if state == on (open)
+            return state == STATE_ON
+        elif entity_id in self.lights:
             # Lights active if state == on
             return state == STATE_ON
-        # For environmental sensors, instantaneous 'active' determination could be done if desired.
+        # TODO: Store baselines in coordinator and use them here
+        # # Environmental sensors are considered active if their values deviate from baseline
+        # if entity_id in self.illuminance_sensors:
+        #     try:
+        #         value = float(state)
+        #         return (
+        #             abs(value - self.coordinator.get_baseline("illuminance"))
+        #             > ENVIRONMENTAL_BASELINE_PERCENT
+        #         )
+        #     except (ValueError, TypeError):
+        #         return False
+        # elif entity_id in self.humidity_sensors:
+        #     try:
+        #         value = float(state)
+        #         return (
+        #             abs(value - self.coordinator.get_baseline("humidity"))
+        #             > ENVIRONMENTAL_BASELINE_PERCENT
+        #         )
+        #     except (ValueError, TypeError):
+        #         return False
+        # elif entity_id in self.temperature_sensors:
+        #     try:
+        #         value = float(state)
+        #         return (
+        #             abs(value - self.coordinator.get_baseline("temperature"))
+        #             > ENVIRONMENTAL_BASELINE_PERCENT
+        #         )
+        #     except (ValueError, TypeError):
+        #         return False
         return False
