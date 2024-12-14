@@ -27,8 +27,6 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
-    SelectSelector,
-    SelectSelectorConfig,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -44,14 +42,12 @@ from .const import (
     CONF_HISTORY_PERIOD,
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
-    CONF_DECAY_TYPE,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_AREA_ID,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_TYPE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
 )
 
@@ -184,16 +180,6 @@ def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
                 step=60,
                 mode="slider",
                 unit_of_measurement="seconds",
-            ),
-        ),
-        vol.Optional(
-            CONF_DECAY_TYPE,
-            default=defaults.get(CONF_DECAY_TYPE, DEFAULT_DECAY_TYPE),
-        ): SelectSelector(
-            SelectSelectorConfig(
-                options=["linear", "exponential"],
-                mode="dropdown",
-                translation_key="decay_type",
             ),
         ),
         vol.Optional(

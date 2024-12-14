@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from dataclasses import dataclass
-from typing import TypedDict, NotRequired, Literal, Any, Dict, List, Optional
+from typing import TypedDict, NotRequired, Any, Dict, List, Optional
 from homeassistant.util import dt as dt_util
 
 # Type aliases
@@ -33,7 +33,6 @@ class OptionsConfig(TypedDict, total=False):
     history_period: int
     decay_enabled: bool
     decay_window: int
-    decay_type: str
     historical_analysis_enabled: bool
 
 
@@ -200,7 +199,6 @@ class DecayConfig:
 
     enabled: bool = True
     window: int = 600  # seconds
-    type: Literal["linear", "exponential"] = "linear"
 
 
 # Calculation result types

@@ -23,7 +23,6 @@ CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_WINDOW: Final = "decay_window"
-CONF_DECAY_TYPE: Final = "decay_type"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
@@ -42,7 +41,6 @@ DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
-DEFAULT_DECAY_TYPE: Final = "linear"
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
 

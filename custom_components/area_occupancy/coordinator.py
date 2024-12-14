@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
+    DEFAULT_DECAY_WINDOW,
 )
 from .types import (
     ProbabilityResult,
@@ -102,6 +103,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._entity_ids: set[str] = set()
         self.learned_priors: dict[str, dict[str, Any]] = {}
 
+        self._last_positive_trigger = None
+        self._decay_window = options_config.get("decay_window", DEFAULT_DECAY_WINDOW)
+
     def _create_calculator(self) -> ProbabilityCalculator:
         return ProbabilityCalculator(
             self.hass,
@@ -155,6 +159,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             asyncio.TimeoutError,
         ) as err:
             _LOGGER.error("Background setup failed: %s", err)
+
+    def set_last_positive_trigger(self, timestamp: datetime) -> None:
+        self._last_positive_trigger = timestamp
+
+    def get_last_positive_trigger(self) -> datetime | None:
+        return self._last_positive_trigger
+
+    def get_decay_window(self) -> int:
+        return self._decay_window
 
     async def _async_initialize_states(self) -> None:
         """Initialize the state dictionary with current availability."""
@@ -640,7 +653,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return DecayConfig(
             enabled=self.options_config.get("decay_enabled", True),
             window=self.options_config.get("decay_window", 300),
-            type=self.options_config.get("decay_type", "linear"),
         )
 
     def update_learned_priors(
