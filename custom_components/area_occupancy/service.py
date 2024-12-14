@@ -197,9 +197,13 @@ async def async_setup_services(hass: HomeAssistant):
                 sensors, history_period=days
             )
 
-            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-            with open(output_file, "w", encoding="utf-8") as f:
+            # Use hass.config.path() to get the correct output path
+            output_path = hass.config.path(output_file)
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(timeslots, f, indent=4)
+
+            _LOGGER.info("Successfully exported historical analysis to %s", output_path)
 
             hass.components.persistent_notification.create(
                 f"Exported historical analysis to {output_file}", title="Area Occupancy"
