@@ -14,7 +14,10 @@
                 "title": "Device Configuration",
                 "data": {
                     "media_devices": "Media Players",
-                    "appliances": "Appliances"
+                    "appliances": "Appliances",
+                    "lights": "Lights",
+                    "window_sensors": "Window Sensors",
+                    "door_sensors": "Door Sensors"
                 }
             },
             "environmental": {
@@ -49,8 +52,11 @@
             "devices": {
                 "title": "Device Configuration",
                 "data": {
+                    "lights": "Lights",
                     "media_devices": "Media Players",
-                    "appliances": "Appliances"
+                    "appliances": "Appliances",
+                    "window_sensors": "Window Sensors",
+                    "door_sensors": "Door Sensors"
                 }
             },
             "environmental": {
@@ -95,6 +101,15 @@
             },
             "occupancy_prior": {
                 "name": "Occupancy Prior"
+            },
+            "window_prior": {
+                "name": "Window Prior"
+            },
+            "door_prior": {
+                "name": "Door Prior"
+            },
+            "light_prior": {
+                "name": "Light Prior"
             }
         },
         "number": {

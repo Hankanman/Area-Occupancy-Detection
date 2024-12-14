@@ -52,6 +52,10 @@ MOTION_PROB_GIVEN_FALSE: Final[float] = 0.1
 DOOR_PROB_GIVEN_TRUE: Final[float] = 0.65
 DOOR_PROB_GIVEN_FALSE: Final[float] = 0.35
 
+# Window sensor defaults
+WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.65
+WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.35
+
 # Light sensor defaults
 LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.75
 LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.25

@@ -244,7 +244,7 @@ class LightPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("light_sensors", [])
+        return self.coordinator.options_config.get("lights", [])
 
 
 class OccupancyPriorSensor(PriorProbabilitySensorBase):
