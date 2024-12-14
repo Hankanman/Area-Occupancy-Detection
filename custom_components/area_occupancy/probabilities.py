@@ -3,6 +3,11 @@
 from __future__ import annotations
 from typing import Final, Dict
 
+# Default decay window
+DEFAULT_DECAY_WINDOW = 600  # seconds
+# Decay lambda such that at half of decay_window probability is 25% of original
+DECAY_LAMBDA = 2.7725888
+
 # Motion detection probabilities
 MOTION_SINGLE_SENSOR_PROBABILITY: Final[float] = 0.85
 MOTION_MULTIPLE_SENSORS_PROBABILITY: Final[float] = 0.9
@@ -39,12 +44,12 @@ DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
 
 # Motion sensor defaults
-MOTION_PROB_GIVEN_TRUE: Final[float] = 0.85
-MOTION_PROB_GIVEN_FALSE: Final[float] = 0.15
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.9
+MOTION_PROB_GIVEN_FALSE: Final[float] = 0.1
 
 # Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.75
-MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.25
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.8
+MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.2
 
 # Appliance defaults
 APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.7

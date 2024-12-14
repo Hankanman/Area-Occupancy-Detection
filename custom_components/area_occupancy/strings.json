@@ -102,13 +102,5 @@
                 "name": "Occupancy Threshold"
             }
         }
-    },
-    "selector": {
-        "decay_type": {
-            "options": {
-                "linear": "Linear",
-                "exponential": "Exponential"
-            }
-        }
     }
 }

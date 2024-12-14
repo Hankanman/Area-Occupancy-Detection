@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -25,8 +26,6 @@ from .types import (
     Timeslot,
 )
 from .probabilities import (
-    MIN_PROBABILITY,
-    MAX_PROBABILITY,
     MOTION_PROB_GIVEN_TRUE,
     MOTION_PROB_GIVEN_FALSE,
     MEDIA_PROB_GIVEN_TRUE,
@@ -38,6 +37,9 @@ from .probabilities import (
     MIN_ACTIVE_DURATION_FOR_PRIORS,
     ENVIRONMENTAL_BASELINE_PERCENT,
     BASELINE_CACHE_TTL,
+    DECAY_LAMBDA,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -470,10 +472,7 @@ class ProbabilityCalculator:
         motion_timestamps: dict[str, datetime],
         timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
-        """Calculate current occupancy probability by updating from learned priors or timeslots."""
-
         try:
-            # Start from motion-based prior
             motion_active = any(
                 sensor_states.get(sensor_id, {}).get("state") == STATE_ON
                 for sensor_id in self.motion_sensors
@@ -514,9 +513,33 @@ class ProbabilityCalculator:
                     )
                 sensor_probs[entity_id] = current_probability
 
-            final_probability = max(
+            # Clamp intermediate probability to avoid extremes
+            current_probability = max(
                 MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
             )
+
+            now = dt_util.utcnow()
+            if active_triggers:
+                # Reset the last positive trigger time
+                self.coordinator.set_last_positive_trigger(now)
+            else:
+                # Apply exponential decay if no positive triggers since last time
+                last_trigger = self.coordinator.get_last_positive_trigger()
+                if last_trigger is not None:
+                    elapsed = (now - last_trigger).total_seconds()
+                    decay_window = self.coordinator.get_decay_window()
+
+                    if elapsed > 0 and decay_window > 0:
+                        # Apply exponential decay:
+                        # factor = exp(-DECAY_LAMBDA * (elapsed/decay_window))
+                        factor = math.exp(-DECAY_LAMBDA * (elapsed / decay_window))
+                        current_probability = current_probability * factor
+                        # Re-clamp after decay
+                        current_probability = max(
+                            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+                        )
+
+            final_probability = current_probability
 
             return {
                 "probability": final_probability,
