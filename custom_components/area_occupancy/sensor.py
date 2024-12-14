@@ -40,7 +40,6 @@ from .const import (
     NAME_DECAY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .historical_analysis import HistoricalAnalysis
 from .probabilities import (
     MOTION_PROB_GIVEN_TRUE,
     MOTION_PROB_GIVEN_FALSE,
@@ -124,7 +123,7 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self._prob_given_true = DEFAULT_PROB_GIVEN_TRUE
         self._prob_given_false = DEFAULT_PROB_GIVEN_FALSE
         self._last_calculation: datetime | None = None
-        self._analyzer = HistoricalAnalysis(coordinator.hass)
+        self._calculator = coordinator._calculator
 
     @property
     def native_value(self) -> float | None:
@@ -170,7 +169,7 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         )
 
         self._prob_given_true, self._prob_given_false = (
-            await self._analyzer.calculate_prior(self.entity_id, start_time, end_time)
+            await self._calculator.calculate_prior(self.entity_id, start_time, end_time)
         )
         self._last_calculation = dt_util.utcnow()
 
