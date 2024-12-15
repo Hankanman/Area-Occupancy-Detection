@@ -33,9 +33,6 @@ from .const import (
     ATTR_PROB_GIVEN_TRUE,
     ATTR_PROB_GIVEN_FALSE,
     ATTR_LAST_UPDATED,
-    DEVICE_MANUFACTURER,
-    DEVICE_MODEL,
-    DEVICE_SW_VERSION,
     ATTR_ACTIVE_TRIGGERS,
     ATTR_SENSOR_PROBABILITIES,
     CONF_AREA_ID,
@@ -59,6 +56,7 @@ from .probabilities import (
     DEFAULT_PROB_GIVEN_FALSE,
 )
 from .types import ProbabilityResult
+from .helpers import format_float, get_device_info
 
 _LOGGER = logging.getLogger(__name__)
 ROUNDING_PRECISION: Final = 2
@@ -83,20 +81,12 @@ class AreaOccupancySensorBase(
             f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_{name}"
         )
         self._area_name = coordinator.core_config["name"]
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry_id)},
-            "name": self._area_name,
-            "manufacturer": DEVICE_MANUFACTURER,
-            "model": DEVICE_MODEL,
-            "sw_version": DEVICE_SW_VERSION,
-        }
+        self._attr_device_info = get_device_info(entry_id, self._area_name)
 
     @staticmethod
     def _format_float(value: float) -> float:
-        try:
-            return round(float(value), ROUNDING_PRECISION)
-        except (ValueError, TypeError):
-            return 0.0
+        """Format float to consistently show 2 decimal places."""
+        return format_float(value)
 
 
 class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
