@@ -14,6 +14,8 @@ from homeassistant.const import (
     STATE_OFF,
     STATE_PLAYING,
     STATE_PAUSED,
+    STATE_OPEN,
+    STATE_CLOSED,
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
@@ -616,10 +618,10 @@ class ProbabilityCalculator:
             return state == STATE_ON
         elif entity_id in self.door_sensors:
             # Doors active if state == off (closed)
-            return state in STATE_OFF
+            return state in (STATE_OFF, STATE_CLOSED)
         elif entity_id in self.window_sensors:
             # Windows active if state == on (open)
-            return state == STATE_ON
+            return state in (STATE_ON, STATE_OPEN)
         elif entity_id in self.lights:
             # Lights active if state == on
             return state == STATE_ON
