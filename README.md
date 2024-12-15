@@ -1,6 +1,6 @@
 # Area Occupancy Detection for Home Assistant
 
-This integration provides intelligent room occupancy detection by combining multiple sensor inputs using Bayesian probability calculations. It can detect occupancy more accurately than single motion sensors by considering various environmental factors and device states.
+This integration provides advanced room occupancy detection by combining multiple sensors through Bayesian probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data.
 
 ![HACS Default][hacs-shield]
 ![Project Maintenance][maintenance-shield]
@@ -8,121 +8,104 @@ This integration provides intelligent room occupancy detection by combining mult
 
 ## Features
 
-- **Intelligent Occupancy Detection**: Uses multiple sensors for more accurate presence detection
-- **Probability-Based**: Shows both definitive occupancy state and probability percentage
-- **Multi-Sensor Support**:
-  - Motion sensors (primary detection)
-  - Illuminance sensors (light level changes)
-  - Temperature sensors (environmental changes)
-  - Humidity sensors (environmental changes)
-  - Device states (TV, game consoles, etc.)
-- **Adaptive Learning**: Uses historical data for improved accuracy
-- **Configurable Settings**: Customize thresholds, decay times, and sensor weights
-- **Graceful Degradation**: Continues functioning even if some sensors are unavailable
-- **Real-Time Updates**: Immediate response to sensor changes
+- **Intelligent Occupancy Detection**: Uses multiple sensor inputs and Bayesian statistics.
+- **Multiple Sensor Support**:
+  - **Motion Sensors**: Primary input for detecting presence.
+  - **Media Devices**: TV, media players, and similar devices used as activity indicators.
+  - **Appliances**: Sensors or switches representing devices like fans, PCs, or other appliances.
+  - **Environmental Sensors**: Illuminance, humidity, and temperature sensors contribute subtle occupancy clues.
+  - **Doors, Windows, and Lights**: These can influence or correlate with presence.
+- **Probability-Based Output**: Provides an occupancy probability (0-100%) and a binary occupancy status based on a configurable threshold.
+- **Adaptive Historical Analysis**: Learns sensor priors over time, improving accuracy as it gathers data.
+- **Decay Mechanism**: Gradually reduces occupancy probability if no new triggers occur.
+- **Real-Time & Historical Insights**:
+  - On-demand historical analysis.
+  - Exportable calculations and historical data for external review.
+- **Adjustable Parameters**: Fine-tune thresholds, decay windows, and time periods for historical learning.
+- **Friendly Configuration Flow**: Easy setup and subsequent option adjustments via the UI.
 
 ## Installation
 
-### Option 1: HACS Installation (Recommended)
+### Option 1: HACS (Recommended)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection&category=integration)
 
-### Option 2: Manual Installation
+### Option 2: Manual
 
-1. Download the latest release
-2. Copy the `custom_components/area_occupancy` folder to your `config/custom_components` directory
-3. Restart Home Assistant
+1. Download the latest release from GitHub.
+2. Place the `custom_components/area_occupancy` directory in your `config/custom_components` folder.
+3. Restart Home Assistant.
 
 ## Configuration
 
-### Initial Setup
+1. Go to **Settings → Devices & Services**.
+2. Click **+ Add Integration** and search for **Area Occupancy Detection**.
+3. Follow the setup wizard to select your sensors and configure parameters.
 
-1. Go to Settings → Devices & Services
-2. Click "+ Add Integration"
-3. Search for "Area Occupancy Detection"
-4. Follow the configuration flow
+### Key Configuration Options
 
-### Configuration Options
+- **Name & Area ID**: Label your monitored area (e.g., "Living Room").
+- **Motion Sensors**: At least one required. Consider multiple sensors for better accuracy.
+- **Additional Sensors**: Add media players, appliances, doors, windows, lights, or environmental sensors.
+- **Threshold**: Percentage at which the binary sensor indicates occupancy (`on` if probability ≥ threshold).
+- **History Period**: Number of days to consider for learning priors.
+- **Decay Settings**: Enable and configure how the probability decays over time without triggers.
+- **Historical Analysis**: Enable storing and using historical data to refine calculations.
 
-| Option | Description | Required |
-|--------|-------------|----------|
-| Area Name | Name for the monitored area | Yes |
-| Motion Sensors | One or more motion sensors | Yes |
-| Illuminance Sensors | Light level sensors | No |
-| Humidity Sensors | Humidity sensors | No |
-| Temperature Sensors | Temperature sensors | No |
-| Device States | Media players, TVs, etc. | No |
-| Threshold | Occupancy probability threshold (0.0-1.0) | No |
-| History Period | Days of historical data to use | No |
-| Decay Enabled | Enable sensor reading decay | No |
-| Decay Window | How long before sensor readings decay | No |
-| Decay Type | Linear or exponential decay curve | No |
+## Entities Provided
 
-### Entities Created
+| **Entity**                                   | **Description**                                                                                    |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `binary_sensor.{area_name}_occupancy_status` | **State**: `on` (occupied) / `off` (not occupied). Derived from probability and threshold.         |
+| `sensor.{area_name}_occupancy_probability`   | Shows the current occupancy probability (0-100%).                                                  |
+| `sensor.{area_name}_motion_prior`            | Displays learned priors from historical data for motion sensors.                                   |
+| `sensor.{area_name}_media_prior`             | Displays learned priors from historical data for media devices.                                    |
+| `sensor.{area_name}_appliance_prior`         | Displays learned priors from historical data for appliances.                                       |
+| `sensor.{area_name}_door_prior`              | Displays learned priors from historical data for doors.                                            |
+| `sensor.{area_name}_light_prior`             | Displays learned priors from historical data for lights.                                           |
+| `sensor.{area_name}_occupancy_prior`         | Displays learned priors from historical data for overall occupancy.                                |
+| `sensor.{area_name}_decay_status`            | Indicates how much the probability has decayed since last trigger.                                 |
+| `number.{area_name}_occupancy_threshold`     | Adjust the occupancy threshold in real-time. Useful for fine-tuning without editing configuration. |
 
-The integration creates two entities for each configured area:
+## Attributes
 
-1. **Binary Sensor** (`binary_sensor.{area_name}_occupancy_status`)
-   - State: `on` (occupied) or `off` (not occupied)
-   - Indicates definitive occupancy based on probability threshold
+Entity attributes may include:
 
-2. **Probability Sensor** (`sensor.{area_name}_occupancy_probability`)
-   - State: 0-100 percentage
-   - Shows the calculated likelihood of room occupancy
+- `active_triggers`: Sensors currently influencing occupancy.
+- `sensor_probabilities`: Calculated probabilities per sensor.
+- `decay_status`: Amount of decay applied.
+- `learned_prior_sensors_count`: How many sensors have learned priors.
+- `configured_sensors`: Which sensors are involved.
+- `history_period`: How many days of history are considered.
+- `last_occupied`: Timestamp of last confirmed occupancy.
 
-### Entity Attributes
+## Services
 
-Both entities provide detailed attributes:
+The integration provides services to export data for analysis:
 
-- `probability`: Current calculated probability (0-100%)
-- `prior_probability`: Previous probability calculation
-- `active_triggers`: Currently active sensors/triggers
-- `sensor_probabilities`: Individual probability per sensor
-- `decay_status`: Current decay values for sensors
-- `confidence_score`: Reliability of the calculation
-- `sensor_availability`: Status of each configured sensor
-- `last_occupied`: Last time area was occupied
-- `state_duration`: Time in current state
-- `occupancy_rate`: Percentage of time area is occupied
-- `moving_average`: Average probability over time
-- `rate_of_change`: How quickly probability is changing
+- **`area_occupancy.export_calculations`**
+  Export the current probability calculations and sensor states to a JSON file for external review.
 
-## Usage Examples
+  **Service Data:**
 
-### Basic Setup with Motion Only
+  - `entry_id`: Integration instance ID.
+  - `start_time`/`end_time`: Time window for the export (optional).
+  - `output_file`: File path to save the output.
 
-```yaml
-# Example configuration with just motion sensors
-Area Name: Living Room
-Motion Sensors:
-  - binary_sensor.living_room_motion
-  - binary_sensor.living_room_corner
-Threshold: 0.5
-```
+- **`area_occupancy.export_historical_analysis`**
+  Export learned timeslot-based historical analysis.
 
-### Advanced Multi-Sensor Setup
+  **Service Data:**
 
-```yaml
-# Example configuration using all sensor types
-Area Name: Home Office
-Motion Sensors:
-  - binary_sensor.office_motion
-  - binary_sensor.desk_motion
-Illuminance Sensors:
-  - sensor.office_light_level
-Temperature Sensors:
-  - sensor.office_temperature
-Device States:
-  - media_player.office_tv
-  - binary_sensor.computer_power
-Threshold: 0.6
-Decay Window: 300
-Decay Type: exponential
-```
+  - `entry_id`: Integration instance ID.
+  - `days`: Number of days for historical data.
+  - `output_file`: File path to save the output.
 
-## Automation Examples
+These services allow you to review and debug the integration's behavior, analyze sensor performance over time, and tweak settings accordingly.
 
-### Turn Off Lights When Area Empty
+## Example Automations
+
+**Turn Off Lights When Empty**:
 
 ```yaml
 automation:
@@ -131,15 +114,14 @@ automation:
       - platform: state
         entity_id: binary_sensor.office_occupancy_status
         to: "off"
-        for:
-          minutes: 5
+        for: "00:05:00"
     action:
       - service: light.turn_off
         target:
           entity_id: light.office_lights
 ```
 
-### Adjust Based on Probability
+**Adjust Based on Probability**:
 
 ```yaml
 automation:
@@ -156,51 +138,27 @@ automation:
           brightness_pct: 50
 ```
 
-## Troubleshooting
+## Troubleshooting & Tips
 
-### Occupancy Not Detecting Correctly
+- **Check Sensor States**: Validate in Developer Tools that sensors are reporting correctly.
+- **Threshold Tuning**: Adjust the threshold using the threshold number entity to refine occupancy detection.
+- **Decay Settings**: If occupancy lingers too long after triggers stop, shorten the decay window or adjust `decay_min_delay`.
+- **Historical Learning**: Ensure `historical_analysis_enabled` is on and `history_period` is sufficient for stable priors.
+- **Logging**: Enable debug logging in `configuration.yaml` for deeper troubleshooting:
 
-1. Check sensor states in Developer Tools
-2. Verify motion sensors are responding
-3. Lower threshold value if detection is too strict
-4. Increase decay window if state changes too quickly
+  ```yaml
+  logger:
+    default: info
+    logs:
+      custom_components.area_occupancy: debug
+  ```
 
-### Probability Always Low
+## Support & Feedback
 
-1. Verify sensor connections and availability
-2. Check sensor placement and coverage
-3. Ensure device states are updating
-4. Review historical data period setting
+- **Issues**: [GitHub Issues][issues]
+- **Discussions**: [Community Discussion][community]
+- **Releases & Changelog**: [GitHub Releases][releases]
 
-### Delayed Response
-
-1. Reduce decay window setting
-2. Check sensor update intervals
-3. Verify automation trigger conditions
-
-### General Issues
-
-1. Enable debug logging:
-   ```yaml
-   logger:
-     default: info
-     logs:
-       custom_components.area_occupancy: debug
-   ```
-2. Review Home Assistant logs
-3. Check sensor availability attributes
-4. Verify sensor connections and placement
-
-## Support
-
-- Report issues on [GitHub][issues]
-- Join our [Community Discussion][community]
-- View [Release Notes][releases]
-
-[hacs-shield]: https://img.shields.io/badge/HACS-Default-orange.svg
-[maintenance-shield]: https://img.shields.io/badge/maintainer-Seb%20Burrell-blue.svg
-[release-shield]: https://img.shields.io/github/release/Hankanman/Area-Occupancy-Detection.svg
-[release]: https://github.com/Hankanman/Area-Occupancy-Detection/releases
 [issues]: https://github.com/Hankanman/Area-Occupancy-Detection/issues
 [community]: https://github.com/Hankanman/Area-Occupancy-Detection/discussions
 [releases]: https://github.com/Hankanman/Area-Occupancy-Detection/releases

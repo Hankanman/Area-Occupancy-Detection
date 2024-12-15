@@ -2,3 +2,20 @@
 # Example:
 # *.log
 # tmp/
+Example_Slots.json
+CONTRIBUTING.md
+.github
+scripts
+.devcontainer
+.flake8
+.pre-commit-config.yaml
+.pylintrc
+.haconfig
+.repomixignore
+blueprints
+setup.cfg
+LICENSE
+pytest.ini
+repomix.config.json
+tests
+*.sql

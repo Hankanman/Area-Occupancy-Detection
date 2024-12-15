@@ -1,0 +1,168 @@
+# Project Instructions
+
+Use this document as a guideline to build the Home Assistant integration for Area Occupancy Detection.
+
+## Overview
+
+This integration provides intelligent room occupancy detection by combining multiple sensor inputs using Bayesian probability calculations. It detects occupancy more accurately than single motion sensors by considering various environmental factors and device states.
+
+## Tech Stack
+
+- Language: Python
+- Framework: Home Assistant Core
+- Testing: Pytest
+- Linting: Pylint, Flake8
+
+## Project Structure
+
+- `custom_components/occupancy_detection` - Main integration directory
+  - `__init__.py` - Integration setup
+  - `base.py` - Base classes for sensor and binary sensor entities
+  - `binary_sensor.py` - Binary sensor entity definitions
+  - `calculations.py` - Probability calculations
+  - `config_flow.py` - Configuration flow for the integration
+  - `const.py` - Constants used across the integration
+  - `coordinator.py` - Coordinator for the integration
+  - `historical_analysis.py` - Historical data retrieval and analysis
+  - `manifest.json` - Integration metadata
+  - `prior_sensors.py` - Prior sensor data retrieval and sensor creation
+  - `probabilities.py` - Default probability constants
+  - `sensor.py` - Sensor entity definitions
+  - `service.py` - Service creation and
+  - `strings.json` - Integration strings
+  - `types.py` - Type definitions
+  - `services.yaml` - Service definitions
+  - `translations/` - Localized strings
+- `tests/` - Unit tests for the integration
+
+## Rules
+
+Follow these rules strictly to ensure high-quality development.
+
+### General Rules
+
+- Adhere to Home Assistant’s [developer documentation](https://developers.home-assistant.io/).
+- Use built-in Home Assistant utilities and constants where applicable, such as `homeassistant.helpers.entity`, `homeassistant.const`, etc.
+- Avoid custom implementations of functionality already available in Home Assistant.
+- Maintain consistency with Home Assistant patterns and practices.
+- Use snake_case for all file names and variables.
+- Follow PEP8 standards.
+- Use `asyncio.Lock` for state locking.
+- All constants should be defined in `const.py`.
+- All types should be defined in `types.py`.
+
+### Environment Rules
+
+- Ensure `requirements.txt` includes all necessary Python dependencies.
+- Update `manifest.json` with correct metadata, versioning, and dependencies.
+- Use Home Assistant’s core logging facilities for debug and error logs.
+- Avoid excessive use of `try/except` blocks; handle exceptions with specific, targeted error handling.
+- Use f-strings for formatting log messages for consistency.
+
+### Linting Rules
+
+- Run `pylint` and `flake8` before committing code.
+- Address all warnings and errors reported by the linters.
+
+### Testing Rules
+
+- Write unit tests using `pytest`.
+- Cover all entities, services, and configuration flows with appropriate test cases.
+- Use the Home Assistant test harness for mocking core components.
+- Achieve at least 90% test coverage.
+- Test edge cases such as sensor unavailability, invalid configurations, and extreme input values.
+- Structure test cases to include setup, execution, and verification phases clearly.
+
+### Component Rules
+
+#### Sensor Entities
+
+- Inherit from `homeassistant.helpers.entity.SensorEntity`.
+- Use descriptive unique IDs for each sensor.
+- Implement `device_class`, `unit_of_measurement`, and `state_class` where applicable.
+- Include fallback values for attributes in case of missing data.
+
+#### Binary Sensor Entities
+
+- Extend `BinarySensorEntity` and provide specific logic for state determination.
+- Handle decayed states explicitly with time-based thresholds.
+- Use Home Assistant-provided constants for binary sensor states and attributes.
+
+#### Configuration Flow
+
+- Use `homeassistant.config_entries.ConfigFlow` for user setup.
+- Validate user inputs during configuration using Voluptuous schemas.
+- Provide user-friendly error messages and recovery steps.
+
+#### Services
+
+- Define services in `services.yaml`.
+- Use descriptive names and clear schemas for service parameters.
+- Ensure services are idempotent and handle invalid states gracefully.
+
+### Logging Rules
+
+- Use Home Assistant’s `logging.getLogger` for logging.
+- Include relevant context in log messages without exposing sensitive information.
+- Use appropriate log levels: `DEBUG` for development, `INFO` for general logs, `WARNING` for recoverable issues, and `ERROR` for critical failures.
+- Log exceptions with `exc_info=True` for stack traces only when debugging.
+
+### Documentation Rules
+
+- Provide a README with installation instructions, feature explanations, and usage examples.
+- Add comments to explain non-trivial code sections.
+- Use docstrings for all public methods and classes.
+- Document the Bayesian calculation logic explicitly in the code.
+
+### Example Code Snippets
+
+#### Sensor Entity
+
+```python
+from homeassistant.helpers.entity import SensorEntity
+from homeassistant.const import DEVICE_CLASS_OCCUPANCY, UNIT_PERCENTAGE
+
+class OccupancySensor(SensorEntity):
+    """Representation of an Occupancy Sensor."""
+
+    def __init__(self, name, unique_id, state):
+        self._attr_name = name
+        self._attr_unique_id = unique_id
+        self._state = state
+
+    @property
+    def device_class(self):
+        return DEVICE_CLASS_OCCUPANCY
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        return UNIT_PERCENTAGE
+```
+
+#### Config Flow
+
+```python
+from homeassistant import config_entries
+import voluptuous as vol
+
+class OccupancyDetectionConfigFlow(config_entries.ConfigFlow):
+    """Handle a config flow for Occupancy Detection."""
+
+    VERSION = 1
+
+    async def async_step_user(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="Occupancy Detection", data=user_input)
+
+        schema = vol.Schema({
+            vol.Required("name"): str,
+            vol.Optional("motion_sensors"): list,
+        })
+        return self.async_show_form(step_id="user", data_schema=schema)
+```
+
+By adhering to these guidelines, you will create a robust, maintainable, and high-quality integration for Home Assistant.

@@ -32,7 +32,7 @@ async def test_form(hass: HomeAssistant) -> None:
             {
                 CONF_NAME: "Test Area",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_THRESHOLD: 0.5,
+                CONF_THRESHOLD: 50,
             },
         )
         await hass.async_block_till_done()
@@ -42,7 +42,7 @@ async def test_form(hass: HomeAssistant) -> None:
     assert result2["data"] == {
         CONF_NAME: "Test Area",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_THRESHOLD: 0.5,
+        CONF_THRESHOLD: 50,
     }
 
 
