@@ -28,6 +28,7 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
 )
+from homeassistant.helpers import entity_registry
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
@@ -74,6 +75,7 @@ def create_form_schema(defaults: dict[str, Any] | None = None) -> dict:
                 device_class=[
                     BinarySensorDeviceClass.MOTION,
                     BinarySensorDeviceClass.OCCUPANCY,
+                    BinarySensorDeviceClass.PRESENCE,
                 ],
                 multiple=True,
             ),
@@ -81,21 +83,89 @@ def create_form_schema(defaults: dict[str, Any] | None = None) -> dict:
     }
 
 
-def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
+def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
     """Create device configuration schema with optional default values."""
     if defaults is None:
         defaults = {}
+
+    registry = entity_registry.async_get(hass)
+
+    appliance_excluded_classes = [
+        BinarySensorDeviceClass.MOTION,
+        BinarySensorDeviceClass.OCCUPANCY,
+        BinarySensorDeviceClass.PRESENCE,
+        BinarySensorDeviceClass.WINDOW,
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+        BinarySensorDeviceClass.LIGHT,
+    ]
+
+    domains_to_check = ["binary_sensor", "switch", "fan"]
+    entity_ids = []
+    for domain in domains_to_check:
+        entity_ids.extend(hass.states.async_entity_ids(domain))
+
+    include_appliance_entities = []
+    for eid in entity_ids:
+        state = hass.states.get(eid)
+        if state:
+            device_class = state.attributes.get("device_class")
+            if device_class not in appliance_excluded_classes:
+                include_appliance_entities.append(eid)
+
+    include_window_entities = []
+    for entry in registry.entities.values():
+        if entry.domain == Platform.BINARY_SENSOR:
+            if entry.device_class == BinarySensorDeviceClass.WINDOW or (
+                "window" in entry.entity_id.lower()
+                and (
+                    entry.device_class
+                    in [
+                        BinarySensorDeviceClass.DOOR,
+                        BinarySensorDeviceClass.GARAGE_DOOR,
+                        BinarySensorDeviceClass.OPENING,
+                        BinarySensorDeviceClass.WINDOW,
+                    ]
+                    or entry.original_device_class
+                    in [
+                        BinarySensorDeviceClass.DOOR,
+                        BinarySensorDeviceClass.GARAGE_DOOR,
+                        BinarySensorDeviceClass.OPENING,
+                        BinarySensorDeviceClass.WINDOW,
+                    ]
+                )
+            ):
+                include_window_entities.append(entry.entity_id)
+
+    include_door_entities = []
+    for entry in registry.entities.values():
+        if entry.domain == Platform.BINARY_SENSOR:
+            if entry.device_class == BinarySensorDeviceClass.WINDOW or (
+                "window" not in entry.entity_id.lower()
+                and (
+                    entry.device_class
+                    in [
+                        BinarySensorDeviceClass.DOOR,
+                        BinarySensorDeviceClass.GARAGE_DOOR,
+                        BinarySensorDeviceClass.OPENING,
+                    ]
+                    or entry.original_device_class
+                    in [
+                        BinarySensorDeviceClass.DOOR,
+                        BinarySensorDeviceClass.GARAGE_DOOR,
+                        BinarySensorDeviceClass.OPENING,
+                    ]
+                )
+            ):
+                include_door_entities.append(entry.entity_id)
 
     return {
         vol.Optional(
             CONF_DOOR_SENSORS, default=defaults.get(CONF_DOOR_SENSORS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=[Platform.BINARY_SENSOR],
-                device_class=[
-                    BinarySensorDeviceClass.DOOR,
-                    BinarySensorDeviceClass.GARAGE_DOOR,
-                ],
+                include_entities=include_door_entities,
                 multiple=True,
             ),
         ),
@@ -103,10 +173,7 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
             CONF_WINDOW_SENSORS, default=defaults.get(CONF_WINDOW_SENSORS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=[Platform.BINARY_SENSOR],
-                device_class=[
-                    BinarySensorDeviceClass.WINDOW,
-                ],
+                include_entities=include_window_entities,
                 multiple=True,
             ),
         ),
@@ -114,8 +181,7 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
             CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=[Platform.LIGHT, Platform.BINARY_SENSOR, Platform.SWITCH],
-                device_class=["light"],
+                domain=Platform.LIGHT,
                 multiple=True,
             ),
         ),
@@ -131,15 +197,7 @@ def create_device_schema(defaults: dict[str, Any] | None = None) -> dict:
             CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=[Platform.BINARY_SENSOR, Platform.SWITCH],
-                device_class=[
-                    BinarySensorDeviceClass.POWER,
-                    BinarySensorDeviceClass.PLUG,
-                    BinarySensorDeviceClass.GAS,
-                    BinarySensorDeviceClass.HEAT,
-                    BinarySensorDeviceClass.COLD,
-                    BinarySensorDeviceClass.MOISTURE,
-                ],
+                include_entities=include_appliance_entities,
                 multiple=True,
             ),
         ),
@@ -370,7 +428,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle device configuration."""
         return await self._handle_step(
-            "devices", create_device_schema, "environmental", False, user_input
+            "devices",
+            lambda x: create_device_schema(self.hass, x),
+            "environmental",
+            False,
+            user_input,
         )
 
     async def async_step_environmental(
@@ -438,13 +500,16 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
             "motion", lambda x: schema, "devices", True, user_input
         )
 
-    # Reuse the same step methods from config flow
     async def async_step_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle device options."""
         return await self._handle_step(
-            "devices", create_device_schema, "environmental", False, user_input
+            "devices",
+            lambda x: create_device_schema(self.hass, x),
+            "environmental",
+            False,
+            user_input,
         )
 
     async def async_step_environmental(
