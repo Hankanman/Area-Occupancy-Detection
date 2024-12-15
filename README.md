@@ -2,9 +2,9 @@
 
 This integration provides advanced room occupancy detection by combining multiple sensors through Bayesian probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data.
 
-![HACS Default][hacs-shield]
-![Project Maintenance][maintenance-shield]
-[![GitHub Release][release-shield]][release]
+https://img.shields.io/badge/minimum%20HA%20version-2024.11-red
+
+![version_badge](https://img.shields.io/badge/minimum%20HA%20version-2023.4-red)
 
 ## Features
 
