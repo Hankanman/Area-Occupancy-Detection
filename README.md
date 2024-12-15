@@ -4,7 +4,7 @@ This integration provides advanced room occupancy detection by combining multipl
 
 ![version_badge](https://img.shields.io/badge/Minimum%20HA%20version-2024.11-red)
 
-<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="sebburrell" data-color="#5F7FFF" data-emoji="☕"  data-font="Lato" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#ffffff" data-coffee-color="#FFDD00" ></script>
+[![Buy me a coffee][buymeacoffee-shield]][buymeacoffee]
 
 ## Features
 
@@ -162,3 +162,5 @@ automation:
 [issues]: https://github.com/Hankanman/Area-Occupancy-Detection/issues
 [community]: https://github.com/Hankanman/Area-Occupancy-Detection/discussions
 [releases]: https://github.com/Hankanman/Area-Occupancy-Detection/releases
+[buymeacoffee-shield]: https://www.buymeacoffee.com/assets/img/guidelines/download-assets-sm-2.svg
+[buymeacoffee]: https://buymeacoffee.com/sebburrell
