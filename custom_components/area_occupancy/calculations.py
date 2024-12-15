@@ -1,338 +1,715 @@
-"""Probability calculations for Area Occupancy Detection."""
+"""Probability calculations and historical analysis for Area Occupancy Detection."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional, Any
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
-from homeassistant.const import STATE_ON
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.history import get_significant_states
+from homeassistant.const import (
+    STATE_ON,
+    STATE_OFF,
+    STATE_PLAYING,
+    STATE_PAUSED,
+    STATE_OPEN,
+    STATE_CLOSED,
+)
+from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
+from homeassistant.exceptions import HomeAssistantError
+from sqlalchemy.exc import SQLAlchemyError
 
-from .const import (
-    EnvironmentalData,
+from .types import (
     ProbabilityResult,
-    SensorStates,
+    DecayConfig,
+    Timeslot,
+)
+from .probabilities import (
+    MOTION_PROB_GIVEN_TRUE,
+    MOTION_PROB_GIVEN_FALSE,
+    MEDIA_PROB_GIVEN_TRUE,
+    MEDIA_PROB_GIVEN_FALSE,
+    APPLIANCE_PROB_GIVEN_TRUE,
+    APPLIANCE_PROB_GIVEN_FALSE,
+    DOOR_PROB_GIVEN_TRUE,
+    DOOR_PROB_GIVEN_FALSE,
+    WINDOW_PROB_GIVEN_TRUE,
+    WINDOW_PROB_GIVEN_FALSE,
+    LIGHT_PROB_GIVEN_TRUE,
+    LIGHT_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+    DEFAULT_PROB_GIVEN_FALSE,
+    ENVIRONMENTAL_BASELINE_PERCENT,
+    BASELINE_CACHE_TTL,
+    DECAY_LAMBDA,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
+    DEFAULT_PRIOR,
+    MOTION_DEFAULT_PRIOR,
+    MEDIA_DEFAULT_PRIOR,
+    APPLIANCE_DEFAULT_PRIOR,
+    DOOR_DEFAULT_PRIOR,
+    WINDOW_DEFAULT_PRIOR,
+    LIGHT_DEFAULT_PRIOR,
+    ENVIRONMENTAL_PROB_GIVEN_TRUE,
+    ENVIRONMENTAL_PROB_GIVEN_FALSE,
+    ENVIRONMENTAL_DEFAULT_PRIOR,
 )
 
+_LOGGER = logging.getLogger(__name__)
 
-@dataclass
-class DecayConfig:
-    """Configuration for sensor decay calculations."""
-
-    enabled: bool = True
-    window: int = 600  # seconds
-    type: str = "linear"
+VALID_ACTIVE_STATES = {STATE_ON, STATE_PLAYING, STATE_PAUSED, STATE_CLOSED}
+CACHE_DURATION = timedelta(hours=6)
+TIMESLOT_DURATION = timedelta(minutes=30)
 
 
-@dataclass
-class MotionCalculationResult:
-    """Result of motion probability calculation."""
+def update_probability(
+    prior: float,
+    prob_given_true: float,
+    prob_given_false: float,
+) -> float:
+    """Perform a Bayesian update."""
+    # Clamp input probabilities
+    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
+    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
+    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
 
-    probability: float
-    triggers: list[str]
-    decay_status: dict[str, float]
+    numerator = prob_given_true * prior
+    denominator = numerator + prob_given_false * (1 - prior)
+    if denominator == 0:
+        return prior
+
+    # Clamp result
+    result = numerator / denominator
+    return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
 
-@dataclass
-class EnvironmentalCalculationResult:
-    """Result of environmental probability calculation."""
-
-    probability: float
-    triggers: list[str]
+def get_default_prior(entity_id: str, calc) -> float:
+    """Return default prior based on entity category."""
+    if entity_id in calc.motion_sensors:
+        return MOTION_DEFAULT_PRIOR
+    elif entity_id in calc.media_devices:
+        return MEDIA_DEFAULT_PRIOR
+    elif entity_id in calc.appliances:
+        return APPLIANCE_DEFAULT_PRIOR
+    elif entity_id in calc.door_sensors:
+        return DOOR_DEFAULT_PRIOR
+    elif entity_id in calc.window_sensors:
+        return WINDOW_DEFAULT_PRIOR
+    elif entity_id in calc.lights:
+        return LIGHT_DEFAULT_PRIOR
+    elif (
+        entity_id in calc.illuminance_sensors
+        or entity_id in calc.humidity_sensors
+        or entity_id in calc.temperature_sensors
+    ):
+        return ENVIRONMENTAL_DEFAULT_PRIOR
+    return DEFAULT_PRIOR
 
 
 class ProbabilityCalculator:
-    """Handles probability calculations for area occupancy."""
+    """Handles probability calculations and historical analysis."""
 
     def __init__(
         self,
+        hass: HomeAssistant,
+        coordinator,
         motion_sensors: list[str],
+        media_devices: list[str] | None = None,
+        appliances: list[str] | None = None,
         illuminance_sensors: list[str] | None = None,
         humidity_sensors: list[str] | None = None,
         temperature_sensors: list[str] | None = None,
-        device_states: list[str] | None = None,
+        door_sensors: list[str] | None = None,
+        window_sensors: list[str] | None = None,
+        lights: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
-        """Initialize the calculator."""
+        self.coordinator = coordinator
         self.motion_sensors = motion_sensors
+        self.media_devices = media_devices or []
+        self.appliances = appliances or []
         self.illuminance_sensors = illuminance_sensors or []
         self.humidity_sensors = humidity_sensors or []
         self.temperature_sensors = temperature_sensors or []
-        self.device_states = device_states or []
+        self.door_sensors = door_sensors or []
+        self.window_sensors = window_sensors or []
+        self.lights = lights or []
         self.decay_config = decay_config or DecayConfig()
 
-    def calculate(
-        self,
-        sensor_states: SensorStates,
-        motion_timestamps: dict[str, datetime],
-    ) -> ProbabilityResult:
-        """Calculate overall area occupancy probability."""
-        motion_result = self._calculate_motion_probability(
-            sensor_states, motion_timestamps
-        )
-        env_result = self._calculate_environmental_probability(sensor_states)
+        self.hass = hass
+        self._cache: dict[str, dict[str, Any]] = {}
+        self._last_cache_update: datetime | None = None
 
-        # Weight motion more heavily than environmental factors
-        combined_prob = (motion_result.probability * 0.7) + (
-            env_result.probability * 0.3
+        # Baseline cache: {entity_id: {"upper_bound": float, "timestamp": datetime}}
+        self._baseline_cache: dict[str, dict[str, Any]] = {}
+
+    def _needs_cache_update(self) -> bool:
+        return (
+            not self._last_cache_update
+            or dt_util.utcnow() - self._last_cache_update > CACHE_DURATION
         )
 
-        # Calculate confidence based on sensor availability
-        available_sensors = sum(
-            1 for state in sensor_states.values() if state["availability"]
-        )
-        total_sensors = len(self._get_all_configured_sensors())
-        confidence_score = (
-            min(available_sensors / total_sensors, 1.0) if total_sensors > 0 else 0.0
-        )
-
-        return {
-            "probability": combined_prob,
-            "prior_probability": motion_result.probability,
-            "active_triggers": motion_result.triggers + env_result.triggers,
-            "sensor_probabilities": {
-                "motion_probability": motion_result.probability,
-                "environmental_probability": env_result.probability,
-            },
-            "decay_status": motion_result.decay_status,
-            "confidence_score": confidence_score,
-            "sensor_availability": {
-                sensor_id: state["availability"]
-                for sensor_id, state in sensor_states.items()
-            },
-        }
-
-    def _calculate_motion_probability(
-        self,
-        sensor_states: SensorStates,
-        motion_timestamps: dict[str, datetime],
-    ) -> MotionCalculationResult:
-        """Calculate probability based on motion sensors."""
-        active_triggers: list[str] = []
-        decay_status: dict[str, float] = {}
-        now = dt_util.utcnow()
-
-        motion_probability = 0.0
-        total_weight = len(self.motion_sensors)
-
-        if total_weight == 0:
-            return MotionCalculationResult(0.0, [], {})
-
-        for entity_id in self.motion_sensors:
-            if entity_id not in sensor_states:
-                total_weight -= 1
-                continue
-
-            state = sensor_states[entity_id]
-            if not state["availability"]:
-                total_weight -= 1
-                continue
-
-            if state["state"] == STATE_ON:
-                motion_probability += 1.0
-                active_triggers.append(entity_id)
-            elif self.decay_config.enabled and entity_id in motion_timestamps:
-                last_motion = motion_timestamps[entity_id]
-                time_diff = (now - last_motion).total_seconds()
-
-                if time_diff < self.decay_config.window:
-                    decay_factor = self._calculate_decay_factor(
-                        time_diff,
-                        self.decay_config.window,
-                        self.decay_config.type,
-                    )
-                    motion_probability += decay_factor
-                    decay_status[entity_id] = time_diff
-                    if decay_factor > 0.1:
-                        active_triggers.append(
-                            f"{entity_id} (decay: {decay_factor:.2f})"
-                        )
-
-        final_probability = (
-            motion_probability / total_weight if total_weight > 0 else 0.0
-        )
-
-        return MotionCalculationResult(
-            probability=final_probability,
-            triggers=active_triggers,
-            decay_status=decay_status,
-        )
-
-    def _calculate_environmental_probability(
-        self, sensor_states: SensorStates
-    ) -> EnvironmentalCalculationResult:
-        """Calculate probability based on environmental sensors."""
-        active_triggers: list[str] = []
-        total_probability = 0.0
-        total_sensors = 0
-
-        # Process illuminance
-        illuminance_prob = self._process_illuminance_sensors(
-            sensor_states, active_triggers
-        )
-        if illuminance_prob is not None:
-            total_probability += illuminance_prob
-            total_sensors += 1
-
-        # Process temperature and humidity
-        env_data = [
-            EnvironmentalData(
-                current_value=float(state["state"]),
-                baseline=21.0,  # Temperature baseline
-                threshold=1.5,
-                weight=0.6,
+    async def _get_states_from_recorder(
+        self, entity_id: str, start_time: datetime, end_time: datetime
+    ) -> list[State] | None:
+        """Fetch states history from recorder."""
+        try:
+            states = await get_instance(self.hass).async_add_executor_job(
+                lambda: get_significant_states(
+                    self.hass,
+                    start_time,
+                    end_time,
+                    [entity_id],
+                    minimal_response=False,
+                )
             )
-            for entity_id in self.temperature_sensors
-            if (state := sensor_states.get(entity_id))
-            and state["availability"]
-            and self._is_valid_number(state["state"])
-        ]
+            return states.get(entity_id) if states else None
+        except (HomeAssistantError, SQLAlchemyError) as err:
+            _LOGGER.error("Error getting states for %s: %s", entity_id, err)
+            return None
 
-        temp_prob = self._process_environmental_sensors(
-            self.temperature_sensors,
-            env_data,
-            "°C",
-            sensor_states,
-            active_triggers,
-        )
-        if temp_prob is not None:
-            total_probability += temp_prob
-            total_sensors += 1
-
-        # Process humidity
-        humidity_data = [
-            EnvironmentalData(
-                current_value=float(state["state"]),
-                baseline=50.0,  # Humidity baseline
-                threshold=10.0,
-                weight=0.5,
+    async def calculate_prior(
+        self, entity_id: str, start_time: datetime, end_time: datetime
+    ) -> tuple[float, float, float]:
+        """
+        Calculate learned priors for a given entity.
+        Returns (prob_given_true, prob_given_false, prior).
+        If conditions not met, defaults are returned.
+        """
+        # Fetch motion sensor states
+        motion_states = {}
+        for motion_sensor in self.motion_sensors:
+            ms = await self._get_states_from_recorder(
+                motion_sensor, start_time, end_time
             )
-            for entity_id in self.humidity_sensors
-            if (state := sensor_states.get(entity_id))
-            and state["availability"]
-            and self._is_valid_number(state["state"])
-        ]
+            if ms:
+                motion_states[motion_sensor] = ms
 
-        humidity_prob = self._process_environmental_sensors(
-            self.humidity_sensors,
-            humidity_data,
-            "%",
-            sensor_states,
-            active_triggers,
+        if not motion_states:
+            # No motion data, fallback to defaults
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                get_default_prior(entity_id, self),
+            )
+
+        # Fetch entity states
+        entity_states = await self._get_states_from_recorder(
+            entity_id, start_time, end_time
         )
-        if humidity_prob is not None:
-            total_probability += humidity_prob
-            total_sensors += 1
+        if not entity_states:
+            # No entity data, fallback to defaults
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                get_default_prior(entity_id, self),
+            )
 
-        # Process device states
-        device_prob = self._process_device_states(sensor_states, active_triggers)
-        if device_prob is not None:
-            total_probability += device_prob
-            total_sensors += 1
+        # Compute total durations for motion sensor states
+        motion_durations = self._compute_state_durations(
+            motion_states, start_time, end_time
+        )
+        total_motion_active_time = motion_durations.get(STATE_ON, 0.0)
+        total_motion_inactive_time = motion_durations.get(STATE_OFF, 0.0)
+        total_motion_time = total_motion_active_time + total_motion_inactive_time
 
-        final_probability = (
-            total_probability / total_sensors if total_sensors > 0 else 0.0
+        if total_motion_time == 0:
+            # No motion duration data, fallback to defaults
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                get_default_prior(entity_id, self),
+            )
+
+        # Calculate prior probability based on motion sensor and clamp it
+        prior = max(
+            MIN_PROBABILITY,
+            min(total_motion_active_time / total_motion_time, MAX_PROBABILITY),
         )
 
-        return EnvironmentalCalculationResult(
-            probability=final_probability,
-            triggers=active_triggers,
+        # Calculate conditional probabilities
+        prob_given_true = self._calculate_conditional_probability(
+            entity_id, entity_states, motion_states, STATE_ON, start_time, end_time
+        )
+        prob_given_false = self._calculate_conditional_probability(
+            entity_id, entity_states, motion_states, STATE_OFF, start_time, end_time
         )
 
-    def _process_illuminance_sensors(
+        # After computing the probabilities, update learned priors
+        self.coordinator.update_learned_priors(
+            entity_id,
+            prob_given_true,
+            prob_given_false,
+            prior,
+        )
+
+        return prob_given_true, prob_given_false, prior
+
+    async def _get_environmental_baseline(
         self,
-        sensor_states: SensorStates,
-        active_triggers: list[str],
+        entity_id: str,
+        entity_states: list[State],
+        start: datetime,
+        end: datetime,
     ) -> Optional[float]:
-        """Process illuminance sensors and update triggers."""
-        valid_sensors = 0
-        total_prob = 0.0
+        """Get environmental baseline from cache or compute it if expired."""
 
-        for entity_id in self.illuminance_sensors:
-            state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
-                continue
+        now = dt_util.utcnow()
+        cached = self._baseline_cache.get(entity_id)
+        if cached and (now - cached["timestamp"]).total_seconds() < BASELINE_CACHE_TTL:
+            return cached["upper_bound"]
 
+        # Compute new baseline since cache is empty or expired
+        env_upper_bound = self._compute_environmental_baseline(entity_states)
+        self._baseline_cache[entity_id] = {
+            "upper_bound": env_upper_bound,
+            "timestamp": now,
+        }
+        return env_upper_bound
+
+    def _compute_environmental_baseline(self, states: list[State]) -> Optional[float]:
+        """Compute a baseline upper bound for environmental sensors."""
+        values = []
+        for s in states:
             try:
-                current_value = float(state["state"])
-                if current_value > 50:  # Significant light level
-                    total_prob += 0.7
-                    active_triggers.append(f"{entity_id} ({current_value} lx)")
-                valid_sensors += 1
+                val = float(s.state)
+                values.append(val)
             except (ValueError, TypeError):
                 continue
 
-        return total_prob / valid_sensors if valid_sensors > 0 else None
-
-    def _process_environmental_sensors(
-        self,
-        sensor_list: list[str],
-        sensor_data: list[EnvironmentalData],
-        unit: str,
-        sensor_states: SensorStates,
-        active_triggers: list[str],
-    ) -> Optional[float]:
-        """Process environmental sensors and update triggers."""
-        if not sensor_data:
+        if not values:
             return None
 
-        significant_changes = 0
-        weight = 0.0
-        for entity_id, data in zip(sensor_list, sensor_data):
-            if abs(data["current_value"] - data["baseline"]) > data["threshold"]:
-                significant_changes += 1
-                active_triggers.append(f"{entity_id} ({data['current_value']}{unit})")
-                weight = data["weight"]
+        min_val = min(values)
+        max_val = max(values)
+        mean_val = sum(values) / len(values)
 
-        return weight if significant_changes > 0 else 0.0
+        range_val = max_val - min_val
+        if range_val <= 0:
+            return mean_val
 
-    def _process_device_states(
+        threshold_increase = range_val * ENVIRONMENTAL_BASELINE_PERCENT
+        upper_bound = mean_val + threshold_increase
+        return upper_bound
+
+    def _is_entity_active(
         self,
-        sensor_states: SensorStates,
-        active_triggers: list[str],
-    ) -> Optional[float]:
-        """Process device states and update triggers."""
-        valid_devices = 0
-        active_devices = 0
+        entity_id: str,
+        state_val: Any,
+        env_upper_bound: Optional[float] = None,
+        is_environmental: bool = False,
+    ) -> bool:
+        """Check if entity is active in the given interval."""
+        if is_environmental:
+            # Environmental active if value > env_upper_bound
+            if env_upper_bound is None:
+                return False
+            try:
+                val = float(state_val)
+                return val > env_upper_bound
+            except (ValueError, TypeError):
+                return False
+        # Non-environmental logic
+        if entity_id in self.motion_sensors:
+            return state_val == STATE_ON
+        elif entity_id in self.media_devices:
+            return state_val in (STATE_PLAYING, STATE_PAUSED)
+        elif entity_id in self.appliances:
+            return state_val == STATE_ON
+        elif entity_id in self.door_sensors:
+            return state_val in (STATE_ON, STATE_OPEN)
+        elif entity_id in self.window_sensors:
+            return state_val in (STATE_ON, STATE_OPEN)
+        elif entity_id in self.lights:
+            return state_val == STATE_ON
+        return False
 
-        for entity_id in self.device_states:
-            state = sensor_states.get(entity_id)
-            if not state or not state["availability"]:
-                continue
+    def _states_to_intervals(
+        self, states: list[State], start: datetime, end: datetime
+    ) -> list[tuple[datetime, datetime, Any]]:
+        """Convert a list of states into intervals [(start, end, state), ...]."""
+        intervals = []
+        sorted_states = sorted(states, key=lambda s: s.last_changed)
+        current_start = start
+        current_state = None
 
-            valid_devices += 1
-            if state["state"] == STATE_ON:
-                active_devices += 1
-                active_triggers.append(entity_id)
+        for s in sorted_states:
+            s_start = s.last_changed
+            if s_start < start:
+                s_start = start
+            if current_state is None:
+                current_state = s.state
+                current_start = s_start
+            else:
+                if s_start > current_start:
+                    intervals.append((current_start, s_start, current_state))
+                current_state = s.state
+                current_start = s_start
 
-        return 0.8 * (active_devices / valid_devices) if valid_devices > 0 else None
+        if current_start < end:
+            intervals.append((current_start, end, current_state))
 
-    def _calculate_decay_factor(
-        self, time_diff: float, window: float, decay_type: str
+        return intervals
+
+    def _combine_motion_intervals(
+        self, motion_states: dict[str, list[State]], start: datetime, end: datetime
+    ) -> list[tuple[datetime, datetime]]:
+        """Combine all motion sensor ON intervals into a unified motion-active timeline."""
+        all_intervals = []
+
+        for sensor_states in motion_states.values():
+            sensor_intervals = self._states_to_intervals(sensor_states, start, end)
+            on_intervals = [
+                (st, en) for (st, en, val) in sensor_intervals if val == STATE_ON
+            ]
+            all_intervals.extend(on_intervals)
+
+        all_intervals.sort(key=lambda x: x[0])
+        merged = []
+        for interval in all_intervals:
+            if not merged:
+                merged.append(interval)
+            else:
+                last = merged[-1]
+                if interval[0] <= last[1]:
+                    merged[-1] = (last[0], max(last[1], interval[1]))
+                else:
+                    merged.append(interval)
+
+        return merged
+
+    def _was_motion_active_during(
+        self,
+        start: datetime,
+        end: datetime,
+        motion_intervals: list[tuple[datetime, datetime]],
+    ) -> bool:
+        """Check if any motion interval overlaps with [start, end]."""
+        for m_start, m_end in motion_intervals:
+            if m_start < end and m_end > start:
+                return True
+        return False
+
+    async def calculate_timeslots(
+        self, entity_ids: list[str], history_period: int
+    ) -> dict[str, Any]:
+        """Calculate timeslot-based probabilities (fallback logic)."""
+        if not self._needs_cache_update():
+            return self._cache
+
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=history_period)
+        timeslots = {}
+
+        for hour in range(24):
+            for minute in (0, 30):
+                slot_data = await self._process_timeslot(
+                    entity_ids, start_time, end_time, hour, minute
+                )
+                time_key = f"{hour:02d}:{minute:02d}"
+                timeslots[time_key] = self._cache[time_key] = slot_data
+
+        self._last_cache_update = dt_util.utcnow()
+        return {"slots": timeslots, "last_updated": self._last_cache_update}
+
+    async def _process_timeslot(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        hour: int,
+        minute: int,
+    ) -> dict[str, Any]:
+        """Compute average priors for a given timeslot over the historical period."""
+        slot_data = {"entities": []}
+        combined_true = 1.0
+        combined_false = 1.0
+
+        for entity_id in entity_ids:
+            daily_probs = []
+            current = start_time
+
+            while current < end_time:
+                slot_start = current.replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+                slot_end = slot_start + TIMESLOT_DURATION
+
+                if slot_end > end_time:
+                    break
+
+                p_true, p_false, _ = await self.calculate_prior(
+                    entity_id, slot_start, slot_end
+                )
+                daily_probs.append((p_true, p_false))
+                current += timedelta(days=1)
+
+            if daily_probs:
+                avg_prob_true = max(
+                    MIN_PROBABILITY,
+                    min(
+                        sum(p[0] for p in daily_probs) / len(daily_probs),
+                        MAX_PROBABILITY,
+                    ),
+                )
+                avg_prob_false = max(
+                    MIN_PROBABILITY,
+                    min(
+                        sum(p[1] for p in daily_probs) / len(daily_probs),
+                        MAX_PROBABILITY,
+                    ),
+                )
+
+                slot_data["entities"].append(
+                    {
+                        "id": entity_id,
+                        "prob_given_true": round(avg_prob_true, 4),
+                        "prob_given_false": round(avg_prob_false, 4),
+                    }
+                )
+
+                combined_true *= avg_prob_true
+                combined_false *= avg_prob_false
+
+        if slot_data["entities"]:
+            # Clamp the combined probabilities
+            combined_true = max(MIN_PROBABILITY, min(combined_true, MAX_PROBABILITY))
+            combined_false = max(MIN_PROBABILITY, min(combined_false, MAX_PROBABILITY))
+
+            slot_data.update(
+                {
+                    "prob_given_true": round(combined_true, 4),
+                    "prob_given_false": round(combined_false, 4),
+                }
+            )
+
+        return slot_data
+
+    async def calculate(
+        self,
+        sensor_states: dict[str, dict[str, Any]],
+        motion_timestamps: dict[str, datetime],
+        timeslot: Timeslot | None = None,
+    ) -> ProbabilityResult:
+        try:
+            decay_min_delay = self.coordinator.get_decay_min_delay()
+
+            # Determine prior
+            if self.coordinator.data and "probability" in self.coordinator.data:
+                previous_probability = self.coordinator.data["probability"]
+            else:
+                # No previous probability, use DEFAULT_PRIOR as a global starting prior
+                previous_probability = DEFAULT_PRIOR
+
+            current_probability = previous_probability
+            active_triggers = []
+            sensor_probs = {}
+
+            for entity_id, state in sensor_states.items():
+                if not state or not state.get("availability", False):
+                    continue
+
+                p_true, p_false = self._get_sensor_priors_from_history(entity_id)
+                prior_val = self._get_sensor_prior(entity_id)
+                if p_true is None or p_false is None:
+                    p_true, p_false = self.get_timeslot_probabilities(
+                        entity_id, timeslot
+                    )
+                    if p_true is None or p_false is None:
+                        p_true, p_false = self.get_sensor_priors(entity_id)
+                        prior_val = get_default_prior(entity_id, self)
+
+                is_active = self._is_active_now(entity_id, state["state"])
+                if is_active:
+                    active_triggers.append(entity_id)
+                    # Use Bayesian update: current_probability is our running posterior -> next prior
+                    current_probability = update_probability(prior_val, p_true, p_false)
+
+                sensor_probs[entity_id] = current_probability
+
+            current_probability = max(
+                MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+            )
+
+            now = dt_util.utcnow()
+            decay_status = {}
+
+            if active_triggers:
+                self.coordinator.set_last_positive_trigger(now)
+                decay_status["global_decay"] = 0.0
+            else:
+                last_trigger = self.coordinator.get_last_positive_trigger()
+                if last_trigger is not None:
+                    elapsed = (now - last_trigger).total_seconds()
+                    decay_window = self.coordinator.get_decay_window()
+                    if elapsed > decay_min_delay and elapsed > 0 and decay_window > 0:
+                        decay_factor = math.exp(
+                            -DECAY_LAMBDA * (elapsed / decay_window)
+                        )
+                        current_probability *= decay_factor
+                        current_probability = max(
+                            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+                        )
+                        decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+                    else:
+                        decay_status["global_decay"] = 0.0
+                else:
+                    decay_status["global_decay"] = 0.0
+
+            final_probability = current_probability
+
+            return {
+                "probability": final_probability,
+                "prior_probability": 0.0,
+                "active_triggers": active_triggers,
+                "sensor_probabilities": sensor_probs,
+                "device_states": {},
+                "decay_status": decay_status,
+                "sensor_availability": {
+                    k: v.get("availability", False) for k, v in sensor_states.items()
+                },
+                "is_occupied": final_probability
+                >= self.coordinator.get_threshold_decimal(),
+            }
+
+        except (HomeAssistantError, ValueError, AttributeError, KeyError) as err:
+            _LOGGER.error("Error in probability calculation: %s", err)
+            raise HomeAssistantError(
+                "Failed to calculate occupancy probability"
+            ) from err
+
+    def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
+        """Return default priors for a sensor based on its category."""
+        if entity_id in self.motion_sensors:
+            return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
+        elif entity_id in self.media_devices:
+            return MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
+        elif entity_id in self.appliances:
+            return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
+        elif entity_id in self.door_sensors:
+            return DOOR_PROB_GIVEN_TRUE, DOOR_PROB_GIVEN_FALSE
+        elif entity_id in self.window_sensors:
+            return WINDOW_PROB_GIVEN_TRUE, WINDOW_PROB_GIVEN_FALSE
+        elif entity_id in self.lights:
+            return LIGHT_PROB_GIVEN_TRUE, LIGHT_PROB_GIVEN_FALSE
+        elif (
+            entity_id in self.illuminance_sensors
+            or entity_id in self.humidity_sensors
+            or entity_id in self.temperature_sensors
+        ):
+            return ENVIRONMENTAL_PROB_GIVEN_TRUE, ENVIRONMENTAL_PROB_GIVEN_FALSE
+        return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
+
+    def _get_sensor_priors_from_history(
+        self, entity_id: str
+    ) -> tuple[float, float] | tuple[None, None]:
+        """Attempt to retrieve learned priors for a sensor from coordinator data."""
+        priors = self.coordinator.learned_priors.get(entity_id)
+        if priors:
+            return priors["prob_given_true"], priors["prob_given_false"]
+        return None, None
+
+    def get_timeslot_probabilities(
+        self, entity_id: str, timeslot: Timeslot | None
+    ) -> tuple[float, float] | tuple[None, None]:
+        """Get probability from timeslot data if learned priors are unavailable."""
+        if timeslot and "entities" in timeslot:
+            entity_data = next(
+                (e for e in timeslot["entities"] if e["id"] == entity_id),
+                None,
+            )
+            if entity_data:
+                return entity_data["prob_given_true"], entity_data["prob_given_false"]
+        return None, None
+
+    def _get_sensor_prior(self, entity_id: str) -> float:
+        priors = self.coordinator.learned_priors.get(entity_id)
+        if priors and "prior" in priors:
+            return priors["prior"]
+        return get_default_prior(entity_id, self)
+
+    def _is_active_now(self, entity_id: str, state: str) -> bool:
+        if entity_id in self.motion_sensors:
+            return state == STATE_ON
+        elif entity_id in self.media_devices:
+            return state in (STATE_PLAYING, STATE_PAUSED)
+        elif entity_id in self.appliances:
+            return state == STATE_ON
+        elif entity_id in self.door_sensors:
+            return state in (STATE_OFF, STATE_CLOSED)
+        elif entity_id in self.window_sensors:
+            return state in (STATE_ON, STATE_OPEN)
+        elif entity_id in self.lights:
+            return state == STATE_ON
+        return False
+
+    def _compute_state_durations(
+        self,
+        states_dict: dict[str, list[State]],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[str, float]:
+        """Compute total durations for each state."""
+        durations = {}
+        for states in states_dict.values():
+            intervals = self._states_to_intervals(states, start_time, end_time)
+            for interval_start, interval_end, state_val in intervals:
+                duration = (interval_end - interval_start).total_seconds()
+                durations[state_val] = durations.get(state_val, 0.0) + duration
+        return durations
+
+    def _calculate_conditional_probability(
+        self,
+        entity_id: str,
+        entity_states: list[State],
+        motion_states: dict[str, list[State]],
+        motion_state_filter: str,
+        start_time: datetime,
+        end_time: datetime,
     ) -> float:
-        """Calculate the decay factor based on time difference."""
-        if decay_type == "linear":
-            return 1.0 - (time_diff / window)
-        # Exponential decay
-        return math.exp(-3.0 * time_diff / window)
+        """Calculate P(entity_active | motion_state)."""
+        # Combine motion intervals for the specified motion state
+        motion_intervals = []
+        for states in motion_states.values():
+            intervals = self._states_to_intervals(states, start_time, end_time)
+            motion_intervals.extend(
+                (start, end)
+                for start, end, state in intervals
+                if state == motion_state_filter
+            )
 
-    def _get_all_configured_sensors(self) -> list[str]:
-        """Get list of all configured sensor entity IDs."""
-        return [
-            *self.motion_sensors,
-            *self.illuminance_sensors,
-            *self.humidity_sensors,
-            *self.temperature_sensors,
-            *self.device_states,
+        total_motion_duration = sum(
+            (end - start).total_seconds() for start, end in motion_intervals
+        )
+        if total_motion_duration == 0:
+            return (
+                DEFAULT_PROB_GIVEN_TRUE
+                if motion_state_filter == STATE_ON
+                else DEFAULT_PROB_GIVEN_FALSE
+            )
+
+        # Get entity active intervals
+        entity_intervals = [
+            (start, end)
+            for start, end, state in self._states_to_intervals(
+                entity_states, start_time, end_time
+            )
+            if self._is_entity_active(entity_id, state)
         ]
 
-    @staticmethod
-    def _is_valid_number(value: Any) -> bool:
-        """Check if a value can be converted to a float."""
-        try:
-            float(value)
-            return True
-        except (ValueError, TypeError):
-            return False
+        # Calculate the overlap duration
+        overlap_duration = 0.0
+        for e_start, e_end in entity_intervals:
+            for m_start, m_end in motion_intervals:
+                overlap_start = max(e_start, m_start)
+                overlap_end = min(e_end, m_end)
+                if overlap_start < overlap_end:
+                    overlap_duration += (overlap_end - overlap_start).total_seconds()
+
+        # Clamp the final probability before returning
+        result = overlap_duration / total_motion_duration
+        return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))

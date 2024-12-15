@@ -2,28 +2,120 @@
     "config": {
         "step": {
             "user": {
-                "title": "Area Occupancy Detection Setup",
-                "description": "Configure area occupancy detection using multiple sensors",
+                "title": "Area Occupancy Detection",
+                "description": "Set up area occupancy detection with motion sensors",
                 "data": {
-                    "name": "Area Name",
-                    "motion_sensors": "Motion Sensors",
+                    "name": "Name",
+                    "area_id": "Area ID",
+                    "motion_sensors": "Motion Sensors"
+                }
+            },
+            "devices": {
+                "title": "Device Configuration",
+                "data": {
+                    "media_devices": "Media Players",
+                    "appliances": "Appliances",
+                    "lights": "Lights",
+                    "window_sensors": "Window Sensors",
+                    "door_sensors": "Door Sensors"
+                }
+            },
+            "environmental": {
+                "title": "Environmental Sensors",
+                "data": {
                     "illuminance_sensors": "Illuminance Sensors",
                     "humidity_sensors": "Humidity Sensors",
-                    "temperature_sensors": "Temperature Sensors",
-                    "device_states": "Device States",
-                    "threshold": "Occupancy Threshold",
-                    "history_period": "Historical Data Period",
-                    "decay_enabled": "Enable Sensor Decay",
-                    "decay_window": "Decay Time Window",
-                    "decay_type": "Decay Type"
+                    "temperature_sensors": "Temperature Sensors"
+                }
+            },
+            "parameters": {
+                "title": "Area Occupancy Parameters",
+                "data": {
+                    "threshold": "Occupancy Threshold (%)",
+                    "history_period": "History Period (days)",
+                    "decay_enabled": "Enable Time Decay",
+                    "decay_window": "Decay Window (seconds)",
+                    "decay_min_delay": "Delay Before Starting Decay (seconds)",
+                    "historical_analysis_enabled": "Enable Historical Analysis"
                 }
             }
+        }
+    },
+    "options": {
+        "step": {
+            "motion": {
+                "title": "Motion Sensors",
+                "data": {
+                    "motion_sensors": "Motion Sensors"
+                }
+            },
+            "devices": {
+                "title": "Device Configuration",
+                "data": {
+                    "lights": "Lights",
+                    "media_devices": "Media Players",
+                    "appliances": "Appliances",
+                    "window_sensors": "Window Sensors",
+                    "door_sensors": "Door Sensors"
+                }
+            },
+            "environmental": {
+                "title": "Environmental Sensors",
+                "data": {
+                    "illuminance_sensors": "Illuminance Sensors",
+                    "humidity_sensors": "Humidity Sensors",
+                    "temperature_sensors": "Temperature Sensors"
+                }
+            },
+            "parameters": {
+                "title": "Area Occupancy Parameters",
+                "data": {
+                    "threshold": "Occupancy Threshold (%)",
+                    "history_period": "History Period (days)",
+                    "decay_enabled": "Enable Motion Decay",
+                    "decay_window": "Decay Window (seconds)",
+                    "decay_type": "Decay Type",
+                    "historical_analysis_enabled": "Enable Historical Analysis"
+                }
+            }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "occupancy_status": {
+                "name": "Occupancy Status"
+            }
         },
-        "error": {
-            "unknown": "Unexpected error occurred"
+        "sensor": {
+            "occupancy_probability": {
+                "name": "Occupancy Probability"
+            },
+            "motion_prior": {
+                "name": "Motion Prior"
+            },
+            "media_prior": {
+                "name": "Media Prior"
+            },
+            "appliance_prior": {
+                "name": "Appliance Prior"
+            },
+            "occupancy_prior": {
+                "name": "Occupancy Prior"
+            },
+            "window_prior": {
+                "name": "Window Prior"
+            },
+            "door_prior": {
+                "name": "Door Prior"
+            },
+            "light_prior": {
+                "name": "Light Prior"
+            }
         },
-        "abort": {
-            "already_configured": "This area is already configured"
+        "number": {
+            "threshold": {
+                "name": "Occupancy Threshold"
+            }
         }
     }
 }

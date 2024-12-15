@@ -1,14 +1,13 @@
 {
-  "python.linting.enabled": true,
-  "python.linting.flake8Enabled": true,
-  "python.testing.pytestArgs": ["tests"],
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter"
   },
-  "python.formatting.provider": "none",
   "files.associations": {
-    "*.yaml": "home-assistant"
+    "*.yaml": "yaml"
   }
 }
