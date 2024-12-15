@@ -41,36 +41,36 @@ MIN_PROBABILITY: Final[float] = 0.01
 MAX_PROBABILITY: Final[float] = 0.99
 
 # Default prior probabilities
-DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.8
-DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.2
+DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
+DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Motion sensor defaults
-MOTION_PROB_GIVEN_TRUE: Final[float] = 0.9
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.4
 MOTION_PROB_GIVEN_FALSE: Final[float] = 0.1
 
 # Door sensor defaults
-DOOR_PROB_GIVEN_TRUE: Final[float] = 0.65
-DOOR_PROB_GIVEN_FALSE: Final[float] = 0.35
+DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
+DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Window sensor defaults
-WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.65
-WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.35
+WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
+WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Light sensor defaults
-LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.75
-LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.25
+LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
+LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.8
-MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.2
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.4
+MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Appliance defaults
-APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.7
-APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.3
+APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
+APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Environmental defaults
-ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.6
-ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.4
+ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
+ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
 
 # Minimum active duration for storing learned priors
 MIN_ACTIVE_DURATION_FOR_PRIORS: Final[int] = 300

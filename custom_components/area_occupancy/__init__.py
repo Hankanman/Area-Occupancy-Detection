@@ -103,6 +103,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Initialize states without blocking historical analysis
         await coordinator.async_initialize_states()
 
+        # Schedule periodic historical analysis
+        coordinator.schedule_periodic_historical_analysis()
+
         # Save references
         hass.data[DOMAIN][entry.entry_id] = {
             "coordinator": coordinator,
@@ -129,6 +132,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     try:
+        # Get the coordinator
+        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+        # Cancel the periodic task using public method
+        await coordinator.async_stop_periodic_task()
+
+        # Continue with unloading
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         if unload_ok:
             storage = hass.data[DOMAIN][entry.entry_id].get("storage")

@@ -10,7 +10,10 @@ from collections import deque
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
@@ -101,6 +104,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._last_positive_trigger = None
         self._decay_window = options_config.get("decay_window", DEFAULT_DECAY_WINDOW)
+
+        self._remove_periodic_task = None
+        self._historical_analysis_lock = asyncio.Lock()
 
     def _create_calculator(self) -> ProbabilityCalculator:
         return ProbabilityCalculator(
@@ -199,14 +205,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._setup_entity_tracking()
 
-    async def async_run_historical_analysis_task(self):
-        """Run historical analysis and initial priors after HA is started."""
-        try:
-            await self._compute_initial_priors()
-            await self._async_historical_analysis()
-            await self.async_refresh()
-        except (HomeAssistantError, ValueError, RuntimeError, IOError, KeyError) as err:
-            _LOGGER.error("Error running historical analysis after HA start: %s", err)
+    def schedule_periodic_historical_analysis(self):
+        """Schedule the historical analysis to run every 6 hours."""
+
+        async def periodic_task(now):
+            await self.async_run_historical_analysis_task()
+
+        # Schedule the task to run every 6 hours
+        self._remove_periodic_task = async_track_time_interval(
+            self.hass, periodic_task, timedelta(hours=6)
+        )
+
+    async def async_run_historical_analysis_task(self) -> None:
+        """Run historical analysis and initial priors."""
+        async with self._historical_analysis_lock:
+            try:
+                await self._compute_initial_priors()
+                await self._async_historical_analysis()
+                await self.async_refresh()
+            except Exception as err:
+                _LOGGER.error("Error running historical analysis: %s", err)
 
     def set_last_positive_trigger(self, timestamp: datetime) -> None:
         self._last_positive_trigger = timestamp
@@ -625,6 +643,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         await self.async_save_state()
         _LOGGER.debug("Initial priors computed and saved.")
 
+        # Notify sensors to update
+        self.async_update_listeners()
+
     async def async_save_state(self) -> None:
         now = dt_util.utcnow()
         if now - self._last_save < self._save_interval:
@@ -673,3 +694,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             await self.storage.async_save(data)
         except (IOError, ValueError, HomeAssistantError) as err:
             _LOGGER.error("Error saving data: %s", err)
+
+    async def async_stop_periodic_task(self) -> None:
+        """Stop the periodic task."""
+        if self._remove_periodic_task:
+            self._remove_periodic_task()

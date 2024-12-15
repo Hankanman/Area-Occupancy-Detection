@@ -116,11 +116,7 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         raise NotImplementedError
 
     def _get_aggregated_learned_priors(self) -> tuple[float, float]:
-        """Compute aggregated learned priors for all sensors in this category.
-
-        If learned priors are found for one or more sensors, we average them.
-        If none are found, fallback to defaults.
-        """
+        """Compute aggregated learned priors for all sensors in this category."""
         sensor_list = self._get_sensor_list()
         learned = self.coordinator.learned_priors
 
