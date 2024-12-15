@@ -10,3 +10,7 @@ custom_components/hacs
 x_*
 .haconfig
 ha-area-occupancy-code.md
+scripts/*.py
+scripts/*.csv
+repomix*.md
+*.sql

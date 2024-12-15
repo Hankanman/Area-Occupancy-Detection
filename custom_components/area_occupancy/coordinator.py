@@ -28,9 +28,6 @@ from .const import (
 )
 from .types import (
     ProbabilityResult,
-    SensorId,
-    SensorStates,
-    StorageData,
     CoreConfig,
     OptionsConfig,
     TimeslotData,
@@ -79,8 +76,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.options_config = options_config
 
         self._state_lock = asyncio.Lock()
-        self._sensor_states: SensorStates = {}
-        self._motion_timestamps: dict[SensorId, datetime] = {}
+        self._sensor_states = {}
+        self._motion_timestamps = {}
 
         self._probability_history = deque(maxlen=12)
         self._occupancy_history = deque([False] * 288, maxlen=288)
@@ -133,27 +130,28 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         try:
             stored_data = await self.storage.async_load()
             if stored_data:
-                self._last_known_values = stored_data["data"]
+                loaded_data = stored_data["data"]
+                self._last_known_values = {}
                 self._probability_history = deque(
-                    stored_data.get("probability_history", []), maxlen=12
+                    loaded_data.get("probability_history", []), maxlen=12
                 )
                 self._occupancy_history = deque(
-                    stored_data.get("occupancy_history", [False] * 288), maxlen=288
+                    loaded_data.get("occupancy_history", [False] * 288), maxlen=288
                 )
 
-                last_occupied = stored_data.get("last_occupied")
+                last_occupied = loaded_data.get("last_occupied")
                 self._last_occupied = (
                     dt_util.parse_datetime(last_occupied) if last_occupied else None
                 )
 
-                last_state_change = stored_data.get("last_state_change")
+                last_state_change = loaded_data.get("last_state_change")
                 self._last_state_change = (
                     dt_util.parse_datetime(last_state_change)
                     if last_state_change
                     else None
                 )
 
-                self.learned_priors = stored_data.get("learned_priors", {})
+                self.learned_priors = loaded_data.get("learned_priors", {})
 
             else:
                 self._reset_state()
@@ -199,7 +197,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.error("Error initializing states: %s", err)
             self._sensor_states = {}
 
-        # Set up entity tracking after state initialization
         self._setup_entity_tracking()
 
     async def async_run_historical_analysis_task(self):
@@ -594,17 +591,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     def update_learned_priors(
-        self, entity_id: str, p_true: float, p_false: float
+        self, entity_id: str, p_true: float, p_false: float, prior: float
     ) -> None:
         self.learned_priors[entity_id] = {
             "prob_given_true": p_true,
             "prob_given_false": p_false,
+            "prior": prior,
             "last_updated": dt_util.utcnow().isoformat(),
         }
         self.hass.async_create_task(self.async_save_state())
 
     async def _compute_initial_priors(self) -> None:
-        """Compute initial learned priors at startup if historical analysis is enabled."""
         if not self.options_config.get("historical_analysis_enabled", True):
             return
 
@@ -614,10 +611,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         sensor_ids = self._get_all_configured_sensors()
 
         for entity_id in sensor_ids:
-            p_true, p_false = await self._calculator.calculate_prior(
+            p_true, p_false, prior = await self._calculator.calculate_prior(
                 entity_id, start_time, end_time
             )
-            _LOGGER.debug("Computed priors for %s: %s, %s", entity_id, p_true, p_false)
+            _LOGGER.debug(
+                "Computed priors for %s: %s, %s, prior: %s",
+                entity_id,
+                p_true,
+                p_false,
+                prior,
+            )
 
         await self.async_save_state()
         _LOGGER.debug("Initial priors computed and saved.")
@@ -634,7 +637,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             except (IOError, ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Failed to save state: %s", err)
 
-    async def async_restore_state(self, stored_data: StorageData) -> None:
+    async def async_restore_state(self, stored_data: dict) -> None:
         try:
             if not isinstance(stored_data, dict):
                 raise ValueError("Invalid storage data format")
