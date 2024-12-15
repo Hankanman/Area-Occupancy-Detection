@@ -4,6 +4,8 @@ This integration provides advanced room occupancy detection by combining multipl
 
 ![version_badge](https://img.shields.io/badge/Minimum%20HA%20version-2024.11-red)
 
+<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="sebburrell" data-color="#5F7FFF" data-emoji="☕"  data-font="Lato" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#ffffff" data-coffee-color="#FFDD00" ></script>
+
 ## Features
 
 - **Intelligent Occupancy Detection**: Uses multiple sensor inputs and Bayesian statistics.
