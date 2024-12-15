@@ -26,7 +26,7 @@ This integration provides advanced room occupancy detection by combining multipl
 
 ### Option 1: HACS (Recommended)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection&category=integration&owner=Hankanman)
 
 ### Option 2: Manual
 
