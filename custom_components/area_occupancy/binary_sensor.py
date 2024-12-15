@@ -11,6 +11,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.const import PERCENTAGE
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -55,6 +56,8 @@ class AreaOccupancyBinarySensor(
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._threshold = threshold
         self._area_name = coordinator.core_config["name"]
+        self._attr_entity_category = None
+        self._attr_native_unit_of_measurement = PERCENTAGE
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry_id)},
@@ -73,15 +76,15 @@ class AreaOccupancyBinarySensor(
             return 0.0
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool:
         """Return true if the area is occupied."""
         try:
             if not self.coordinator.data:
-                return None
+                return False
             return self.coordinator.data.get("is_occupied", False)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("Error determining occupancy state: %s", err)
-            return None
+            return False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
