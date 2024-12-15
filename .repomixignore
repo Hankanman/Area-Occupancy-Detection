@@ -18,3 +18,4 @@ LICENSE
 pytest.ini
 repomix.config.json
 tests
+*.sql

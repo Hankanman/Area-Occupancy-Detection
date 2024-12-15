@@ -77,3 +77,13 @@ MIN_ACTIVE_DURATION_FOR_PRIORS: Final[int] = 300
 
 # Baseline cache TTL (to avoid hitting DB repeatedly)
 BASELINE_CACHE_TTL: Final[int] = 21600  # 6 hours in seconds
+
+# Default Priors
+DEFAULT_PRIOR: Final[float] = 0.1713
+MOTION_DEFAULT_PRIOR: Final[float] = 0.7692
+MEDIA_DEFAULT_PRIOR: Final[float] = 0.6923
+APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
+DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
+WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
+LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
+ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
