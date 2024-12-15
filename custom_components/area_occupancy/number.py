@@ -7,7 +7,7 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
+from homeassistant.const import CONF_NAME, PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -43,11 +43,12 @@ class AreaOccupancyThreshold(
         self._attr_unique_id = (
             f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_threshold"
         )
-        self._attr_native_min_value = 0.0
-        self._attr_native_max_value = 100.0
+        self._attr_native_min_value = 1.0
+        self._attr_native_max_value = 99.0
         self._attr_native_step = 5.0
-        self._attr_mode = NumberMode.SLIDER
-        self._attr_native_unit_of_measurement = "%"
+        self._attr_mode = NumberMode.BOX
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_entity_category = EntityCategory.CONFIG
         self._area_name = coordinator.core_config[CONF_NAME]
 
         # Device info

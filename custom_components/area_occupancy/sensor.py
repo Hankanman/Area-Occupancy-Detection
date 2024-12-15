@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -27,6 +27,7 @@ from .const import (
     NAME_APPLIANCE_PRIOR_SENSOR,
     NAME_OCCUPANCY_PRIOR_SENSOR,
     NAME_DOOR_PRIOR_SENSOR,
+    NAME_WINDOW_PRIOR_SENSOR,
     NAME_LIGHT_PRIOR_SENSOR,
     ATTR_TOTAL_PERIOD,
     ATTR_PROB_GIVEN_TRUE,
@@ -44,6 +45,8 @@ from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
     DOOR_PROB_GIVEN_TRUE,
     DOOR_PROB_GIVEN_FALSE,
+    WINDOW_PROB_GIVEN_TRUE,
+    WINDOW_PROB_GIVEN_FALSE,
     LIGHT_PROB_GIVEN_TRUE,
     LIGHT_PROB_GIVEN_FALSE,
     MOTION_PROB_GIVEN_TRUE,
@@ -111,6 +114,7 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
         # Store default probabilities for fallback
         self._default_p_true = default_p_true
@@ -231,6 +235,22 @@ class DoorPriorSensor(PriorProbabilitySensorBase):
         return self.coordinator.options_config.get("door_sensors", [])
 
 
+class WindowPriorSensor(PriorProbabilitySensorBase):
+    """Sensor for aggregated window prior probability."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+        super().__init__(
+            coordinator,
+            entry_id,
+            NAME_WINDOW_PRIOR_SENSOR,
+            default_p_true=WINDOW_PROB_GIVEN_TRUE,
+            default_p_false=WINDOW_PROB_GIVEN_FALSE,
+        )
+
+    def _get_sensor_list(self) -> list[str]:
+        return self.coordinator.options_config.get("window_sensors", [])
+
+
 class LightPriorSensor(PriorProbabilitySensorBase):
     """Sensor for aggregated light prior probability."""
 
@@ -275,6 +295,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = None
 
     @property
     def native_value(self) -> float | None:
@@ -329,6 +350,7 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self) -> float | None:
@@ -397,6 +419,9 @@ async def async_setup_entry(
                 MotionPriorSensor,
                 MediaPriorSensor,
                 AppliancePriorSensor,
+                WindowPriorSensor,
+                DoorPriorSensor,
+                LightPriorSensor,
                 OccupancyPriorSensor,
             ]
             entities.extend(
