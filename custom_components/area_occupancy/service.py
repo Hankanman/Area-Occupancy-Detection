@@ -65,6 +65,9 @@ async def async_setup_services(hass: HomeAssistant):
                     "prob_given_false": round(p_false, 4),
                 }
 
+            # Fetch learned priors
+            learned_priors = coordinator.learned_priors
+
             # Prepare detailed calculation data
             export_data = {
                 "calculation_time": now.isoformat(),
@@ -91,6 +94,7 @@ async def async_setup_services(hass: HomeAssistant):
                     sensor: round(value, 4)
                     for sensor, value in result["decay_status"].items()
                 },
+                "learned_priors": learned_priors,
             }
 
             # Calculate rolled up probabilities by type
@@ -228,4 +232,30 @@ async def async_setup_services(hass: HomeAssistant):
         "export_historical_analysis",
         export_historical_analysis,
         schema=vol.Schema(service_schema_historical),
+    )
+
+    async def run_historical_analysis(call):
+        """Manually trigger the historical analysis."""
+        entry_id = call.data["entry_id"]
+        coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
+
+        await coordinator.async_run_historical_analysis_task()
+
+        hass.components.persistent_notification.create(
+            f"Historical analysis run for entry {entry_id}",
+            title="Area Occupancy",
+        )
+        _LOGGER.info("Historical analysis manually triggered for entry %s", entry_id)
+
+    service_schema = vol.Schema(
+        {
+            vol.Required("entry_id"): str,
+        }
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "run_historical_analysis",
+        run_historical_analysis,
+        schema=service_schema,
     )

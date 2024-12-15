@@ -42,7 +42,6 @@ from .probabilities import (
     LIGHT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
     DEFAULT_PROB_GIVEN_FALSE,
-    MIN_ACTIVE_DURATION_FOR_PRIORS,
     ENVIRONMENTAL_BASELINE_PERCENT,
     BASELINE_CACHE_TTL,
     DECAY_LAMBDA,
@@ -73,11 +72,19 @@ def update_probability(
     prob_given_false: float,
 ) -> float:
     """Perform a Bayesian update."""
+    # Clamp input probabilities
+    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
+    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
+    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
+
     numerator = prob_given_true * prior
     denominator = numerator + prob_given_false * (1 - prior)
     if denominator == 0:
         return prior
-    return numerator / denominator
+
+    # Clamp result
+    result = numerator / denominator
+    return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
 
 def get_default_prior(entity_id: str, calc) -> float:
@@ -173,6 +180,7 @@ class ProbabilityCalculator:
         Returns (prob_given_true, prob_given_false, prior).
         If conditions not met, defaults are returned.
         """
+        # Fetch motion sensor states
         motion_states = {}
         for motion_sensor in self.motion_sensors:
             ms = await self._get_states_from_recorder(
@@ -189,6 +197,7 @@ class ProbabilityCalculator:
                 get_default_prior(entity_id, self),
             )
 
+        # Fetch entity states
         entity_states = await self._get_states_from_recorder(
             entity_id, start_time, end_time
         )
@@ -200,81 +209,45 @@ class ProbabilityCalculator:
                 get_default_prior(entity_id, self),
             )
 
-        is_environmental = entity_id in (
-            self.illuminance_sensors + self.humidity_sensors + self.temperature_sensors
-        )
-
-        # If environmental, get cached or computed baseline
-        env_upper_bound = None
-        if is_environmental:
-            env_upper_bound = await self._get_environmental_baseline(
-                entity_id, entity_states, start_time, end_time
-            )
-
-        intervals = self._states_to_intervals(entity_states, start_time, end_time)
-        motion_intervals = self._combine_motion_intervals(
+        # Compute total durations for motion sensor states
+        motion_durations = self._compute_state_durations(
             motion_states, start_time, end_time
         )
+        total_motion_active_time = motion_durations.get(STATE_ON, 0.0)
+        total_motion_inactive_time = motion_durations.get(STATE_OFF, 0.0)
+        total_motion_time = total_motion_active_time + total_motion_inactive_time
 
-        active_with_motion = 0.0
-        active_without_motion = 0.0
-        total_motion_active_time = 0.0
-        total_motion_inactive_time = 0.0
-
-        for interval_start, interval_end, state_val in intervals:
-            interval_duration = (interval_end - interval_start).total_seconds()
-            motion_active = self._was_motion_active_during(
-                interval_start, interval_end, motion_intervals
-            )
-
-            # Determine if entity is active in this interval
-            entity_active = self._is_entity_active(
-                entity_id, state_val, env_upper_bound, is_environmental
-            )
-
-            # Accumulate
-            if motion_active:
-                total_motion_active_time += interval_duration
-                if entity_active:
-                    active_with_motion += interval_duration
-            else:
-                total_motion_inactive_time += interval_duration
-                if entity_active:
-                    active_without_motion += interval_duration
-
-        # Compute probabilities
-        prob_given_true = DEFAULT_PROB_GIVEN_TRUE
-        prob_given_false = DEFAULT_PROB_GIVEN_FALSE
-
-        if total_motion_active_time > 0:
-            prob_given_true = max(
-                min(active_with_motion / total_motion_active_time, 0.99), 0.01
-            )
-        if total_motion_inactive_time > 0:
-            prob_given_false = max(
-                min(active_without_motion / total_motion_inactive_time, 0.99), 0.01
-            )
-
-        total_active_time = active_with_motion + active_without_motion
-        if total_active_time >= MIN_ACTIVE_DURATION_FOR_PRIORS:
-            # We have learned priors
-            prior = get_default_prior(entity_id, self)  # You can refine this if needed
-            self.coordinator.update_learned_priors(
-                entity_id, prob_given_true, prob_given_false, prior
-            )
-        else:
-            # Not enough data, store defaults anyway
-            prob_given_true, prob_given_false = (
+        if total_motion_time == 0:
+            # No motion duration data, fallback to defaults
+            return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
-            )
-            prior = get_default_prior(entity_id, self)
-            # Still store them so learned_priors is never empty
-            self.coordinator.update_learned_priors(
-                entity_id, prob_given_true, prob_given_false, prior
+                get_default_prior(entity_id, self),
             )
 
-        return round(prob_given_true, 4), round(prob_given_false, 4), prior
+        # Calculate prior probability based on motion sensor and clamp it
+        prior = max(
+            MIN_PROBABILITY,
+            min(total_motion_active_time / total_motion_time, MAX_PROBABILITY),
+        )
+
+        # Calculate conditional probabilities
+        prob_given_true = self._calculate_conditional_probability(
+            entity_id, entity_states, motion_states, STATE_ON, start_time, end_time
+        )
+        prob_given_false = self._calculate_conditional_probability(
+            entity_id, entity_states, motion_states, STATE_OFF, start_time, end_time
+        )
+
+        # After computing the probabilities, update learned priors
+        self.coordinator.update_learned_priors(
+            entity_id,
+            prob_given_true,
+            prob_given_false,
+            prior,
+        )
+
+        return prob_given_true, prob_given_false, prior
 
     async def _get_environmental_baseline(
         self,
@@ -327,8 +300,8 @@ class ProbabilityCalculator:
         self,
         entity_id: str,
         state_val: Any,
-        env_upper_bound: Optional[float],
-        is_environmental: bool,
+        env_upper_bound: Optional[float] = None,
+        is_environmental: bool = False,
     ) -> bool:
         """Check if entity is active in the given interval."""
         if is_environmental:
@@ -340,7 +313,6 @@ class ProbabilityCalculator:
                 return val > env_upper_bound
             except (ValueError, TypeError):
                 return False
-
         # Non-environmental logic
         if entity_id in self.motion_sensors:
             return state_val == STATE_ON
@@ -349,7 +321,6 @@ class ProbabilityCalculator:
         elif entity_id in self.appliances:
             return state_val == STATE_ON
         elif entity_id in self.door_sensors:
-            # Doors "active"? This logic can vary, assume open means active?
             return state_val in (STATE_ON, STATE_OPEN)
         elif entity_id in self.window_sensors:
             return state_val in (STATE_ON, STATE_OPEN)
@@ -478,18 +449,26 @@ class ProbabilityCalculator:
                 current += timedelta(days=1)
 
             if daily_probs:
-                avg_prob_true = round(
-                    sum(p[0] for p in daily_probs) / len(daily_probs), 4
+                avg_prob_true = max(
+                    MIN_PROBABILITY,
+                    min(
+                        sum(p[0] for p in daily_probs) / len(daily_probs),
+                        MAX_PROBABILITY,
+                    ),
                 )
-                avg_prob_false = round(
-                    sum(p[1] for p in daily_probs) / len(daily_probs), 4
+                avg_prob_false = max(
+                    MIN_PROBABILITY,
+                    min(
+                        sum(p[1] for p in daily_probs) / len(daily_probs),
+                        MAX_PROBABILITY,
+                    ),
                 )
 
                 slot_data["entities"].append(
                     {
                         "id": entity_id,
-                        "prob_given_true": avg_prob_true,
-                        "prob_given_false": avg_prob_false,
+                        "prob_given_true": round(avg_prob_true, 4),
+                        "prob_given_false": round(avg_prob_false, 4),
                     }
                 )
 
@@ -497,6 +476,10 @@ class ProbabilityCalculator:
                 combined_false *= avg_prob_false
 
         if slot_data["entities"]:
+            # Clamp the combined probabilities
+            combined_true = max(MIN_PROBABILITY, min(combined_true, MAX_PROBABILITY))
+            combined_false = max(MIN_PROBABILITY, min(combined_false, MAX_PROBABILITY))
+
             slot_data.update(
                 {
                     "prob_given_true": round(combined_true, 4),
@@ -663,3 +646,70 @@ class ProbabilityCalculator:
         elif entity_id in self.lights:
             return state == STATE_ON
         return False
+
+    def _compute_state_durations(
+        self,
+        states_dict: dict[str, list[State]],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[str, float]:
+        """Compute total durations for each state."""
+        durations = {}
+        for states in states_dict.values():
+            intervals = self._states_to_intervals(states, start_time, end_time)
+            for interval_start, interval_end, state_val in intervals:
+                duration = (interval_end - interval_start).total_seconds()
+                durations[state_val] = durations.get(state_val, 0.0) + duration
+        return durations
+
+    def _calculate_conditional_probability(
+        self,
+        entity_id: str,
+        entity_states: list[State],
+        motion_states: dict[str, list[State]],
+        motion_state_filter: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> float:
+        """Calculate P(entity_active | motion_state)."""
+        # Combine motion intervals for the specified motion state
+        motion_intervals = []
+        for states in motion_states.values():
+            intervals = self._states_to_intervals(states, start_time, end_time)
+            motion_intervals.extend(
+                (start, end)
+                for start, end, state in intervals
+                if state == motion_state_filter
+            )
+
+        total_motion_duration = sum(
+            (end - start).total_seconds() for start, end in motion_intervals
+        )
+        if total_motion_duration == 0:
+            return (
+                DEFAULT_PROB_GIVEN_TRUE
+                if motion_state_filter == STATE_ON
+                else DEFAULT_PROB_GIVEN_FALSE
+            )
+
+        # Get entity active intervals
+        entity_intervals = [
+            (start, end)
+            for start, end, state in self._states_to_intervals(
+                entity_states, start_time, end_time
+            )
+            if self._is_entity_active(entity_id, state)
+        ]
+
+        # Calculate the overlap duration
+        overlap_duration = 0.0
+        for e_start, e_end in entity_intervals:
+            for m_start, m_end in motion_intervals:
+                overlap_start = max(e_start, m_start)
+                overlap_end = min(e_end, m_end)
+                if overlap_start < overlap_end:
+                    overlap_duration += (overlap_end - overlap_start).total_seconds()
+
+        # Clamp the final probability before returning
+        result = overlap_duration / total_motion_duration
+        return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
