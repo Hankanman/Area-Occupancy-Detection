@@ -35,7 +35,7 @@
                     "history_period": "History Period (days)",
                     "decay_enabled": "Enable Time Decay",
                     "decay_window": "Decay Window (seconds)",
-                    "decay_type": "Decay Type",
+                    "decay_min_delay": "Delay Before Starting Decay (seconds)",
                     "historical_analysis_enabled": "Enable Historical Analysis"
                 }
             }
