@@ -8,12 +8,11 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_NAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
 from .const import (
     DOMAIN,
@@ -92,54 +91,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Configurations validated")
 
         _LOGGER.debug("Initializing AreaOccupancyStorage")
-        store = AreaOccupancyStorage(hass, entry.entry_id)
 
-        _LOGGER.debug("Initializing AreaOccupancyCoordinator")
+        # Check if the coordinator is already initialized
+        if entry.entry_id in hass.data[DOMAIN]:
+            _LOGGER.debug("Coordinator already initialized")
+            return True
+
+        # Initialize the coordinator
         coordinator = AreaOccupancyCoordinator(
-            hass=hass,
-            entry_id=entry.entry_id,
-            core_config=CoreConfig(**entry.data),
+            hass,
+            entry.entry_id,
+            core_config=entry.data,
             options_config=entry.options,
         )
 
-        # Load stored data
-        _LOGGER.debug("Initializing stored data")
+        # Load stored data and initialize states
         await coordinator.async_load_stored_data()
-
-        # Initialize states without blocking
-        _LOGGER.debug("Initializing states")
         await coordinator.async_initialize_states()
 
-        # Save references
-        _LOGGER.debug("Initializing references")
-        hass.data[DOMAIN][entry.entry_id] = {
-            "coordinator": coordinator,
-            "store": store,
-        }
-        _LOGGER.debug("References initialized")
+        # Mark initialization as complete and trigger the first refresh
+        await coordinator.mark_initialization_complete()
 
-        _LOGGER.debug("Adding update listener")
-        entry.async_on_unload(entry.add_update_listener(async_update_options))
-        _LOGGER.debug("Update listener added")
+        # Add the coordinator to hass data
+        hass.data[DOMAIN][entry.entry_id] = coordinator
 
-        _LOGGER.debug("Forwarding entry setups")
+        # Setup platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        _LOGGER.debug("Forwarding entry setups completed")
-
-        # Schedule both periodic tasks and initial historical analysis after HA start
-        @callback
-        def schedule_startup_tasks(_event):
-            """Schedule startup tasks after HA has fully started."""
-            _LOGGER.debug("Home Assistant started, scheduling startup tasks")
-
-            async def async_complete_setup():
-                await coordinator.mark_initialization_complete()
-                coordinator.schedule_periodic_historical_analysis()
-                await coordinator.async_run_historical_analysis_task()
-
-            hass.async_create_task(async_complete_setup())
-
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, schedule_startup_tasks)
 
         return True
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any
-from collections import deque
+from typing import Any, Optional
+import threading
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback, State
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -24,17 +24,33 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
+    STORAGE_VERSION,
+    STORAGE_VERSION_MINOR,
+    CONF_NAME,
     CONF_AREA_ID,
-    DEFAULT_HISTORY_PERIOD,
+    CONF_HISTORY_PERIOD,
     CONF_THRESHOLD,
+    CONF_DECAY_WINDOW,
+    CONF_APPLIANCES,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_DOOR_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_DECAY_ENABLED,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_THRESHOLD,
     DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_HISTORY_PERIOD,
 )
 from .types import (
     ProbabilityResult,
     CoreConfig,
     OptionsConfig,
-    TimeslotData,
     DecayConfig,
 )
 from .calculations import ProbabilityCalculator
@@ -73,7 +89,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             update_method=self._async_update_data,
         )
 
-        if not core_config.get("motion_sensors"):
+        if not core_config.get(CONF_MOTION_SENSORS):
             raise HomeAssistantError("No motion sensors configured")
 
         self.entry_id = entry_id
@@ -84,28 +100,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._sensor_states = {}
         self._motion_timestamps = {}
 
-        self._probability_history = deque(maxlen=12)
-        self._occupancy_history = deque([False] * 288, maxlen=288)
         self._last_occupied: datetime | None = None
         self._last_state_change: datetime | None = None
 
-        self._timeslot_data: TimeslotData = {
-            "slots": {},
-            "last_updated": dt_util.utcnow(),
-        }
         self._historical_analysis_ready = asyncio.Event()
-
         self._calculator = self._create_calculator()
 
         self._storage_lock = asyncio.Lock()
         self._last_save = dt_util.utcnow()
-        self._save_interval = timedelta(minutes=5)
+        self._save_interval = timedelta(seconds=10)
 
         self._entity_ids: set[str] = set()
         self.learned_priors: dict[str, dict[str, Any]] = {}
 
         self._last_positive_trigger = None
-        self._decay_window = options_config.get("decay_window", DEFAULT_DECAY_WINDOW)
+        self._decay_window = options_config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
 
         self._remove_periodic_task = None
         self._historical_analysis_lock = asyncio.Lock()
@@ -124,20 +133,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._initialization_complete = False
         self._startup_lock = asyncio.Lock()
 
+        self._thread_lock = threading.Lock()
+
+        self._registered_entities: set[str] = set()
+
     def _create_calculator(self) -> ProbabilityCalculator:
         _LOGGER.debug("Creating ProbabilityCalculator")
         return ProbabilityCalculator(
             hass=self.hass,
             coordinator=self,
-            motion_sensors=self.core_config["motion_sensors"],
-            media_devices=self.options_config.get("media_devices", []),
-            appliances=self.options_config.get("appliances", []),
-            illuminance_sensors=self.options_config.get("illuminance_sensors", []),
-            humidity_sensors=self.options_config.get("humidity_sensors", []),
-            temperature_sensors=self.options_config.get("temperature_sensors", []),
-            door_sensors=self.options_config.get("door_sensors", []),
-            window_sensors=self.options_config.get("window_sensors", []),
-            lights=self.options_config.get("lights", []),
+            motion_sensors=self.core_config[CONF_MOTION_SENSORS],
+            media_devices=self.options_config.get(CONF_MEDIA_DEVICES, []),
+            appliances=self.options_config.get(CONF_APPLIANCES, []),
+            illuminance_sensors=self.options_config.get(CONF_ILLUMINANCE_SENSORS, []),
+            humidity_sensors=self.options_config.get(CONF_HUMIDITY_SENSORS, []),
+            temperature_sensors=self.options_config.get(CONF_TEMPERATURE_SENSORS, []),
+            door_sensors=self.options_config.get(CONF_DOOR_SENSORS, []),
+            window_sensors=self.options_config.get(CONF_WINDOW_SENSORS, []),
+            lights=self.options_config.get(CONF_LIGHTS, []),
             decay_config=self._get_decay_config(),
         )
 
@@ -146,44 +159,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Setting up AreaOccupancyCoordinator")
 
     async def async_load_stored_data(self) -> None:
-        """Load stored data from storage.
-
-        This should be called by __init__.py after coordinator creation,
-        but before async_initialize_states is called.
-        """
+        """Load stored data from storage."""
         _LOGGER.debug("Loading stored data")
         try:
             stored_data = await self.storage.async_load()
             if stored_data:
-                loaded_data = stored_data["data"]
                 self._last_known_values = {}
-                self._probability_history = deque(
-                    loaded_data.get("probability_history", []), maxlen=12
-                )
-                self._occupancy_history = deque(
-                    loaded_data.get("occupancy_history", [False] * 288), maxlen=288
-                )
 
-                last_occupied = loaded_data.get("last_occupied")
                 self._last_occupied = (
-                    dt_util.parse_datetime(last_occupied) if last_occupied else None
-                )
-
-                last_state_change = loaded_data.get("last_state_change")
-                self._last_state_change = (
-                    dt_util.parse_datetime(last_state_change)
-                    if last_state_change
+                    dt_util.parse_datetime(stored_data.get("last_occupied"))
+                    if stored_data.get("last_occupied")
                     else None
                 )
 
-                self.learned_priors = loaded_data.get("learned_priors", {})
+                self._last_state_change = (
+                    dt_util.parse_datetime(stored_data.get("last_state_change"))
+                    if stored_data.get("last_state_change")
+                    else None
+                )
 
+                self.learned_priors = stored_data.get("learned_priors", {})
             else:
                 self._reset_state()
-
-            _LOGGER.debug("Loaded stored data successfully")
-
-        except (IOError, ValueError, KeyError, HomeAssistantError) as err:
+        except (ValueError, TypeError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error loading stored data: %s", err)
             self._reset_state()
 
@@ -211,7 +209,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                     }
 
                     if (
-                        entity_id in self.core_config["motion_sensors"]
+                        entity_id in self.core_config[CONF_MOTION_SENSORS]
                         and is_available
                         and state.state == STATE_ON
                     ):
@@ -241,22 +239,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Running historical analysis task")
         async with self._historical_analysis_lock:
             try:
-                await self._compute_initial_priors()
+                await self.async_refresh()
                 await self._async_historical_analysis()
                 await self.async_refresh()
             except (ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Error running historical analysis: %s", err)
 
     async def set_last_positive_trigger(self, timestamp: datetime) -> None:
-        """Set the timestamp of the last positive trigger."""
-        _LOGGER.debug("Setting last positive trigger to %s", timestamp)
+        """Asynchronously set the timestamp of the last positive trigger."""
+        _LOGGER.debug("Setting last positive trigger asynchronously to %s", timestamp)
         async with self._state_lock:
             self._last_positive_trigger = timestamp
 
+    def set_last_positive_trigger_sync(self, timestamp: datetime) -> None:
+        """Synchronously set the timestamp of the last positive trigger."""
+        _LOGGER.debug("Setting last positive trigger synchronously to %s", timestamp)
+        with self._thread_lock:
+            self._last_positive_trigger = timestamp
+
     async def get_last_positive_trigger(self) -> datetime | None:
-        """Get the timestamp of the last positive trigger."""
-        _LOGGER.debug("Getting last positive trigger")
+        """Asynchronously get the timestamp of the last positive trigger."""
+        _LOGGER.debug("Getting last positive trigger asynchronously")
         async with self._state_lock:
+            return self._last_positive_trigger
+
+    def get_last_positive_trigger_sync(self) -> datetime | None:
+        """Synchronously get the timestamp of the last positive trigger."""
+        _LOGGER.debug("Getting last positive trigger synchronously")
+        with self._thread_lock:
             return self._last_positive_trigger
 
     def get_decay_window(self) -> int:
@@ -279,20 +289,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         @callback
         def async_state_changed_listener(event) -> None:
             """Handle state changes."""
-            _LOGGER.debug(
-                "Handling state change for entity: %s", event.data.get("entity_id")
-            )
             entity_id = event.data.get("entity_id")
             new_state = event.data.get("new_state")
 
             if not new_state or entity_id not in entities:
                 return
 
-            is_available = bool(
-                new_state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
-            )
-
-            # Update states without async lock since this is a callback
+            # Update sensor states
+            is_available = new_state.state not in [
+                STATE_UNAVAILABLE,
+                STATE_UNKNOWN,
+                None,
+                "",
+            ]
             self._sensor_states[entity_id] = {
                 "state": new_state.state if is_available else None,
                 "last_changed": (
@@ -304,15 +313,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             }
 
             if (
-                entity_id in self.core_config["motion_sensors"]
+                entity_id in self.core_config[CONF_MOTION_SENSORS]
                 and is_available
                 and new_state.state == STATE_ON
             ):
                 self._motion_timestamps[entity_id] = dt_util.utcnow()
 
             # Schedule the refresh
+            _LOGGER.debug("Scheduling refresh due to state change of %s", entity_id)
             self.hass.async_create_task(self._debouncer.async_call())
 
+        # Set up the state change listener
         self._remove_state_listener = async_track_state_change_event(
             self.hass,
             entities,
@@ -324,69 +335,47 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Debounced refresh called")
         await self.async_refresh()
 
-    async def _async_historical_analysis(self) -> None:
-        """Run historical analysis to prepare timeslot data in the background."""
-        _LOGGER.info("Running historical analysis")
-        async with self._historical_analysis_lock:
-            try:
-                if not self.options_config.get("historical_analysis_enabled", True):
-                    self._historical_analysis_ready.set()
-                    return
-
-                self._timeslot_data = await self._calculator.calculate_timeslots(
-                    self._get_all_configured_sensors(),
-                    self.options_config.get("history_period", DEFAULT_HISTORY_PERIOD),
-                )
-
-            except (ValueError, TypeError, HomeAssistantError) as err:
-                _LOGGER.error("Historical analysis failed: %s", err)
-            finally:
-                _LOGGER.info("Historical analysis complete")
-                self._historical_analysis_ready.set()
-
     async def _async_update_data(self) -> ProbabilityResult:
         """Update data by recalculating current probability."""
         async with self._state_lock:
             try:
-                current_slot = {}
-                if self._historical_analysis_ready.is_set():
-                    current_time = dt_util.utcnow()
-                    slot_key = f"{current_time.hour:02d}:{(current_time.minute // 30) * 30:02d}"
-                    current_slot = self._timeslot_data.get("slots", {}).get(
-                        slot_key, {}
-                    )
-
-                result = await self._calculator.calculate(
-                    self._sensor_states,
-                    self._motion_timestamps,
-                    current_slot,
+                # Offload heavy calculations to the executor
+                result = await self.hass.async_add_executor_job(
+                    self._calculate_probability
                 )
 
                 self._update_historical_tracking(result)
-                await self._save_data(result)
+                await self._async_store_result(result)
+
                 return result
 
             except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
                 _LOGGER.error("Error updating data: %s", err, exc_info=True)
                 raise UpdateFailed(f"Error updating data: {err}") from err
 
+    def _calculate_probability(self) -> ProbabilityResult:
+        """Synchronous method to perform heavy calculations."""
+        try:
+            # Perform the heavy computation synchronously
+            result = self._calculator.calculate_sync(
+                self._sensor_states,
+                self._motion_timestamps,
+            )
+            return result
+
+        except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
+            _LOGGER.error("Error in synchronous calculation: %s", err)
+            raise UpdateFailed(f"Error in synchronous calculation: {err}") from err
+
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
         """Update historical tracking data."""
         _LOGGER.debug("Updating historical tracking")
         now = dt_util.utcnow()
 
-        self._probability_history.append(result["probability"])
         is_occupied = result["probability"] >= self.options_config["threshold"]
-        self._occupancy_history.append(is_occupied)
 
         if is_occupied:
             self._last_occupied = now
-
-        if not self._last_state_change or (
-            len(self._occupancy_history) > 1
-            and self._occupancy_history[-2] != is_occupied
-        ):
-            self._last_state_change = now
 
     async def _async_store_result(self, result: ProbabilityResult) -> None:
         _LOGGER.debug("Storing result")
@@ -401,24 +390,37 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 {
                     "last_updated": dt_util.utcnow().isoformat(),
                     "last_probability": result["probability"],
-                    "historical_metrics": self._get_historical_metrics(),
                     "configuration": {
-                        "motion_sensors": self.core_config["motion_sensors"],
-                        "media_devices": self.options_config.get("media_devices", []),
-                        "appliances": self.options_config.get("appliances", []),
+                        "motion_sensors": self.core_config[CONF_MOTION_SENSORS],
+                        "media_devices": self.options_config.get(
+                            CONF_MEDIA_DEVICES, []
+                        ),
+                        "appliances": self.options_config.get(CONF_APPLIANCES, []),
                         "illuminance_sensors": self.options_config.get(
-                            "illuminance_sensors", []
+                            CONF_ILLUMINANCE_SENSORS, []
                         ),
                         "humidity_sensors": self.options_config.get(
-                            "humidity_sensors", []
+                            CONF_HUMIDITY_SENSORS, []
                         ),
                         "temperature_sensors": self.options_config.get(
-                            "temperature_sensors", []
+                            CONF_TEMPERATURE_SENSORS, []
                         ),
-                        "door_sensors": self.options_config.get("door_sensors", []),
-                        "window_sensors": self.options_config.get("window_sensors", []),
-                        "lights": self.options_config.get("lights", []),
+                        "door_sensors": self.options_config.get(CONF_DOOR_SENSORS, []),
+                        "window_sensors": self.options_config.get(
+                            CONF_WINDOW_SENSORS, []
+                        ),
+                        "lights": self.options_config.get(CONF_LIGHTS, []),
                     },
+                    "last_known_values": self._last_known_values,
+                    "last_occupied": (
+                        self._last_occupied.isoformat() if self._last_occupied else None
+                    ),
+                    "last_state_change": (
+                        self._last_state_change.isoformat()
+                        if self._last_state_change
+                        else None
+                    ),
+                    "learned_priors": self.learned_priors,
                 }
             )
 
@@ -427,60 +429,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         except (HomeAssistantError, ValueError, KeyError, IOError) as err:
             _LOGGER.error("Error storing result: %s", err)
 
-    def _get_historical_metrics(self) -> dict[str, Any]:
-        _LOGGER.debug("Getting historical metrics")
-        now = dt_util.utcnow()
-
-        moving_avg = (
-            sum(self._probability_history) / len(self._probability_history)
-            if self._probability_history
-            else 0.0
-        )
-
-        rate_of_change = 0.0
-        if len(self._probability_history) >= 2:
-            change = self._probability_history[-1] - self._probability_history[0]
-            time_window = len(self._probability_history) * 5
-            rate_of_change = (change / time_window) * 60
-
-        occupancy_rate = (
-            sum(1 for x in self._occupancy_history if x) / len(self._occupancy_history)
-            if self._occupancy_history
-            else 0.0
-        )
-
-        state_duration = 0.0
-        if self._last_state_change:
-            state_duration = (now - self._last_state_change).total_seconds()
-
-        return {
-            "moving_average": moving_avg,
-            "rate_of_change": rate_of_change,
-            "occupancy_rate": occupancy_rate,
-            "state_duration": state_duration,
-            "min_probability": (
-                min(self._probability_history) if self._probability_history else 0.0
-            ),
-            "max_probability": (
-                max(self._probability_history) if self._probability_history else 0.0
-            ),
-            "last_occupied": (
-                self._last_occupied.isoformat() if self._last_occupied else None
-            ),
-        }
-
     def _get_all_configured_sensors(self) -> list[str]:
         _LOGGER.debug("Getting all configured sensors")
         return (
-            self.core_config["motion_sensors"]
-            + self.options_config.get("media_devices", [])
-            + self.options_config.get("appliances", [])
-            + self.options_config.get("illuminance_sensors", [])
-            + self.options_config.get("humidity_sensors", [])
-            + self.options_config.get("temperature_sensors", [])
-            + self.options_config.get("door_sensors", [])
-            + self.options_config.get("window_sensors", [])
-            + self.options_config.get("lights", [])
+            self.core_config.get(CONF_MOTION_SENSORS, [])
+            + self.options_config.get(CONF_MEDIA_DEVICES, [])
+            + self.options_config.get(CONF_APPLIANCES, [])
+            + self.options_config.get(CONF_ILLUMINANCE_SENSORS, [])
+            + self.options_config.get(CONF_HUMIDITY_SENSORS, [])
+            + self.options_config.get(CONF_TEMPERATURE_SENSORS, [])
+            + self.options_config.get(CONF_DOOR_SENSORS, [])
+            + self.options_config.get(CONF_WINDOW_SENSORS, [])
+            + self.options_config.get(CONF_LIGHTS, [])
         )
 
     async def async_reset(self) -> None:
@@ -488,13 +448,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Resetting coordinator")
         self._sensor_states.clear()
         self._motion_timestamps.clear()
-        self._probability_history.clear()
-        self._occupancy_history.extend([False] * self._occupancy_history.maxlen)
         self._last_occupied = None
         self._last_state_change = None
 
         self._historical_analysis_ready.clear()
-        self._timeslot_data = {"slots": {}, "last_updated": dt_util.utcnow()}
+        self._last_save = dt_util.utcnow()
         self.learned_priors.clear()
 
         await self.async_refresh()
@@ -534,24 +492,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         try:
             self.options_config = options_config
             self._calculator = self._create_calculator()
+            self._decay_window = self.options_config.get(
+                CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
+            )
 
-            current_sensors = set(self._get_all_configured_sensors())
-            self._sensor_states = {
-                entity_id: state
-                for entity_id, state in self._sensor_states.items()
-                if entity_id in current_sensors
-            }
-            self._motion_timestamps = {
-                entity_id: timestamp
-                for entity_id, timestamp in self._motion_timestamps.items()
-                if entity_id in self.core_config["motion_sensors"]
-            }
-
+            # Re-setup entity tracking with new sensors
             self._setup_entity_tracking()
+
+            # Re-initialize states and refresh data
+            self.hass.async_create_task(self._async_reinitialize_states())
 
             _LOGGER.debug(
                 "Updated coordinator options for %s",
-                self.core_config["name"],
+                self.core_config[CONF_NAME],
             )
         except (ValueError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error updating coordinator options: %s", err)
@@ -561,7 +514,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     @property
     def available(self) -> bool:
-        motion_sensors = self.core_config.get("motion_sensors", [])
+        motion_sensors = self.core_config.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
             return False
         return any(
@@ -569,48 +522,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             for sensor_id in motion_sensors
         )
 
-    def get_diagnostics(self) -> dict[str, Any]:
-        _LOGGER.debug("Getting diagnostics")
-        try:
-            timeslot_data = {}
-            if self._timeslot_data:
-                last_updated = self._timeslot_data.get("last_updated")
-                if isinstance(last_updated, str):
-                    last_updated = dt_util.parse_datetime(last_updated)
-
-                timeslot_data = {
-                    "slot_count": len(self._timeslot_data.get("slots", {})),
-                    "last_updated": last_updated.isoformat() if last_updated else None,
-                }
-
-            return {
-                "core_config": self.core_config,
-                "options_config": self.options_config,
-                "sensor_states": self._sensor_states,
-                "historical_data": {
-                    "probability_history": list(self._probability_history),
-                    "occupancy_history": list(self._occupancy_history),
-                    "last_occupied": (
-                        self._last_occupied.isoformat() if self._last_occupied else None
-                    ),
-                    "last_state_change": (
-                        self._last_state_change.isoformat()
-                        if self._last_state_change
-                        else None
-                    ),
-                },
-                "timeslot_data": timeslot_data,
-                "learned_priors": self.learned_priors,
-            }
-        except (ValueError, TypeError, KeyError, HomeAssistantError) as err:
-            _LOGGER.error("Error getting diagnostics: %s", err)
-            return {}
-
     @property
     def device_info(self) -> dict[str, Any]:
         return {
             "identifiers": {(DOMAIN, self.entry_id)},
-            "name": self.core_config["name"],
+            "name": self.core_config[CONF_NAME],
             "manufacturer": DEVICE_MANUFACTURER,
             "model": DEVICE_MODEL,
             "sw_version": DEVICE_SW_VERSION,
@@ -619,19 +535,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def _reset_state(self) -> None:
         _LOGGER.debug("Resetting state")
         self._last_known_values = {}
-        self._probability_history = deque(maxlen=12)
-        self._occupancy_history = deque([False] * 288, maxlen=288)
         self._last_occupied = None
         self._last_state_change = None
         self._last_save = dt_util.utcnow()
         self.learned_priors.clear()
 
-    def get_storage_data(self) -> dict:
-        _LOGGER.debug("Getting storage data")
-        return {
-            "last_known_values": self._last_known_values,
-            "probability_history": list(self._probability_history),
-            "occupancy_history": list(self._occupancy_history),
+    def get_storage_data(self) -> dict[str, Any]:
+        """Prepare data to be saved in storage."""
+        _LOGGER.debug("Preparing storage data")
+
+        # Construct the data to be saved
+        storage_data = {
             "last_occupied": (
                 self._last_occupied.isoformat() if self._last_occupied else None
             ),
@@ -639,7 +553,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self._last_state_change.isoformat() if self._last_state_change else None
             ),
             "learned_priors": self.learned_priors,
+            "version": STORAGE_VERSION,
+            "version_minor": STORAGE_VERSION_MINOR,
+            "last_updated": dt_util.utcnow().isoformat(),
         }
+
+        return storage_data
 
     @property
     def entity_ids(self) -> set[str]:
@@ -655,16 +574,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_refresh(self) -> None:
         """Refresh data, deferring heavy calculations until after startup."""
+
         if not self._initialization_complete:
-            # During startup, use minimal calculation
+            _LOGGER.debug("Using minimal update during initialization")
             async with self._state_lock:
                 result = await self._async_minimal_update()
                 self.async_set_updated_data(result)
             return
 
-        # Normal refresh after startup
-        async with self._state_lock:
-            await super().async_refresh()
+        await super().async_refresh()
 
     async def _async_minimal_update(self) -> ProbabilityResult:
         """Perform minimal update during startup."""
@@ -682,9 +600,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         }
 
     async def mark_initialization_complete(self):
-        """Mark the coordinator as fully initialized."""
+        """Mark the coordinator as fully initialized and start background tasks."""
         async with self._startup_lock:
             self._initialization_complete = True
+            # Schedule historical analysis without blocking startup
+            self.hass.create_task(self._async_historical_analysis())
             await self.async_refresh()  # Perform first full refresh
 
     async def async_update_threshold(self, value: float) -> None:
@@ -713,8 +633,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def _get_decay_config(self) -> DecayConfig:
         _LOGGER.debug("Getting decay config")
         return DecayConfig(
-            enabled=self.options_config.get("decay_enabled", True),
-            window=self.options_config.get("decay_window", 300),
+            enabled=self.options_config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+            window=self.options_config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
         )
 
     def update_learned_priors(
@@ -731,10 +651,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def _compute_initial_priors(self) -> None:
         _LOGGER.debug("Computing initial priors")
-        if not self.options_config.get("historical_analysis_enabled", True):
+        if not self.options_config.get(CONF_HISTORICAL_ANALYSIS_ENABLED, True):
             return
 
-        history_period = self.options_config.get("history_period", 7)
+        history_period = self.options_config.get(
+            CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+        )
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=history_period)
         sensor_ids = self._get_all_configured_sensors()
@@ -765,7 +687,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         async with self._storage_lock:
             try:
-                await self.storage.async_save(self.get_storage_data())
+                storage_data = self.get_storage_data()
+                await self.storage.async_save(storage_data)
                 self._last_save = now
             except (IOError, ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Failed to save state: %s", err)
@@ -777,12 +700,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 raise ValueError("Invalid storage data format")
 
             self._last_known_values = stored_data.get("last_known_values", {})
-            self._probability_history = deque(
-                stored_data.get("probability_history", []), maxlen=12
-            )
-            self._occupancy_history = deque(
-                stored_data.get("occupancy_history", [False] * 288), maxlen=288
-            )
 
             last_occupied = stored_data.get("last_occupied")
             self._last_occupied = (
@@ -814,3 +731,90 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Stopping periodic task")
         if self._remove_periodic_task:
             self._remove_periodic_task()
+
+    async def _async_historical_analysis(self) -> None:
+        """Run historical analysis."""
+        _LOGGER.info("Running historical analysis")
+        async with self._historical_analysis_lock:
+            try:
+                if not self.options_config.get(CONF_HISTORICAL_ANALYSIS_ENABLED, True):
+                    self._historical_analysis_ready.set()
+                    return
+
+                await self._compute_initial_priors()
+                self._historical_analysis_ready.set()
+
+            except (ValueError, TypeError, HomeAssistantError) as err:
+                _LOGGER.error("Historical analysis failed: %s", err)
+            finally:
+                _LOGGER.info("Historical analysis complete")
+                self._historical_analysis_ready.set()
+
+    async def _async_reinitialize_states(self) -> None:
+        """Re-initialize states after options have been updated."""
+        await self.async_initialize_states()
+        await self.async_refresh()
+
+    async def async_register_entity(self, entity_id: str) -> None:
+        """Register an entity for state change tracking."""
+        if entity_id in self._registered_entities:
+            _LOGGER.debug(
+                "Entity %s is already registered for state tracking", entity_id
+            )
+            return  # Prevent duplicate registration
+
+        _LOGGER.debug("Registering entity: %s", entity_id)
+        self._entity_ids.add(entity_id)
+        self._registered_entities.add(entity_id)  # Keep track of registered entities
+
+        @callback
+        def _handle_sensor_state_change(event):
+            """Handle the state change of a sensor."""
+            entity = event.data.get("entity_id")
+            new_state = event.data.get("new_state")
+            old_state = event.data.get("old_state")
+            _LOGGER.debug(
+                "State change detected for %s: from %s to %s",
+                entity,
+                old_state.state if old_state else None,
+                new_state.state if new_state else None,
+            )
+            self._handle_sensor_state_update(entity, old_state, new_state)
+
+        # Register the state change listener
+        self.hass.helpers.event.async_track_state_change_event(
+            entity_id, _handle_sensor_state_change
+        )
+
+    async def async_unregister_entity(self, entity_id: str) -> None:
+        """Unregister an entity from state change tracking."""
+        _LOGGER.debug("Unregistering entity: %s", entity_id)
+        self._entity_ids.discard(entity_id)
+        self._registered_entities.discard(entity_id)  # Remove from the set
+        # Additional code to remove the event listener if needed
+
+    def _handle_sensor_state_update(
+        self,
+        entity_id: str,
+        old_state: Optional[State],
+        new_state: Optional[State],
+    ) -> None:
+        """Handle updates to sensor states."""
+        _LOGGER.debug(
+            "Handling state update for %s: from %s to %s",
+            entity_id,
+            old_state.state if old_state else None,
+            new_state.state if new_state else None,
+        )
+
+        # Update the sensor state in the coordinator
+        self._sensor_states[entity_id] = {
+            "state": new_state.state if new_state else None,
+            "attributes": new_state.attributes if new_state else {},
+            "availability": new_state is not None
+            and new_state.state != STATE_UNAVAILABLE,
+        }
+
+        # Optionally, schedule a refresh
+        if self._initialization_complete:
+            self.hass.async_create_task(self.async_refresh())

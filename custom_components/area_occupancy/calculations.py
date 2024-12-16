@@ -26,7 +26,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from .types import (
     ProbabilityResult,
     DecayConfig,
-    Timeslot,
 )
 from .probabilities import (
     MOTION_PROB_GIVEN_TRUE,
@@ -73,6 +72,12 @@ def update_probability(
     prob_given_false: float,
 ) -> float:
     """Perform a Bayesian update."""
+    _LOGGER.debug(
+        "Updating probability with prior: %s, prob_given_true: %s, prob_given_false: %s",
+        prior,
+        prob_given_true,
+        prob_given_false,
+    )
     # Clamp input probabilities
     prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
     prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
@@ -129,6 +134,7 @@ class ProbabilityCalculator:
         lights: list[str] | None = None,
         decay_config: DecayConfig | None = None,
     ) -> None:
+        _LOGGER.debug("Initializing ProbabilityCalculator")
         self.coordinator = coordinator
         self.motion_sensors = motion_sensors
         self.media_devices = media_devices or []
@@ -150,6 +156,7 @@ class ProbabilityCalculator:
         self._baseline_cache_max_size = 100  # Set an appropriate size limit
 
     def _needs_cache_update(self) -> bool:
+        _LOGGER.debug("Checking if cache needs update")
         return (
             not self._last_cache_update
             or dt_util.utcnow() - self._last_cache_update > CACHE_DURATION
@@ -177,11 +184,8 @@ class ProbabilityCalculator:
     async def calculate_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
     ) -> tuple[float, float, float]:
-        """
-        Calculate learned priors for a given entity.
-        Returns (prob_given_true, prob_given_false, prior).
-        If conditions not met, defaults are returned.
-        """
+        """Calculate learned priors for a given entity."""
+        _LOGGER.debug("Calculating prior for %s", entity_id)
         # Fetch motion sensor states
         motion_states = {}
         for motion_sensor in self.motion_sensors:
@@ -211,9 +215,15 @@ class ProbabilityCalculator:
                 get_default_prior(entity_id, self),
             )
 
-        # Compute total durations for motion sensor states
-        motion_durations = self._compute_state_durations(
-            motion_states, start_time, end_time
+        # Compute intervals for motion sensors once
+        motion_intervals_by_sensor = {}
+        for sensor_id, states in motion_states.items():
+            intervals = self._states_to_intervals(states, start_time, end_time)
+            motion_intervals_by_sensor[sensor_id] = intervals
+
+        # Compute total durations for motion sensors from precomputed intervals
+        motion_durations = self._compute_state_durations_from_intervals(
+            motion_intervals_by_sensor
         )
         total_motion_active_time = motion_durations.get(STATE_ON, 0.0)
         total_motion_inactive_time = motion_durations.get(STATE_OFF, 0.0)
@@ -233,12 +243,17 @@ class ProbabilityCalculator:
             min(total_motion_active_time / total_motion_time, MAX_PROBABILITY),
         )
 
-        # Calculate conditional probabilities
-        prob_given_true = self._calculate_conditional_probability(
-            entity_id, entity_states, motion_states, STATE_ON, start_time, end_time
+        # Compute intervals for the entity once
+        entity_intervals = self._states_to_intervals(
+            entity_states, start_time, end_time
         )
-        prob_given_false = self._calculate_conditional_probability(
-            entity_id, entity_states, motion_states, STATE_OFF, start_time, end_time
+
+        # Calculate conditional probabilities using precomputed intervals
+        prob_given_true = self._calculate_conditional_probability_with_intervals(
+            entity_id, entity_intervals, motion_intervals_by_sensor, STATE_ON
+        )
+        prob_given_false = self._calculate_conditional_probability_with_intervals(
+            entity_id, entity_intervals, motion_intervals_by_sensor, STATE_OFF
         )
 
         # After computing the probabilities, update learned priors
@@ -259,7 +274,7 @@ class ProbabilityCalculator:
         end: datetime,
     ) -> Optional[float]:
         """Get environmental baseline from cache or compute it if expired."""
-
+        _LOGGER.debug("Getting environmental baseline for %s", entity_id)
         now = dt_util.utcnow()
         cached = self._baseline_cache.get(entity_id)
         if cached and (now - cached["timestamp"]).total_seconds() < BASELINE_CACHE_TTL:
@@ -282,6 +297,7 @@ class ProbabilityCalculator:
 
     def _compute_environmental_baseline(self, states: list[State]) -> Optional[float]:
         """Compute a baseline upper bound for environmental sensors."""
+        _LOGGER.debug("Computing environmental baseline")
         values = []
         for s in states:
             try:
@@ -341,6 +357,7 @@ class ProbabilityCalculator:
         self, states: list[State], start: datetime, end: datetime
     ) -> list[tuple[datetime, datetime, Any]]:
         """Convert a list of states into intervals [(start, end, state), ...]."""
+        _LOGGER.debug("Converting states to intervals")
         intervals = []
         sorted_states = sorted(states, key=lambda s: s.last_changed)
         current_start = start
@@ -368,6 +385,7 @@ class ProbabilityCalculator:
         self, motion_states: dict[str, list[State]], start: datetime, end: datetime
     ) -> list[tuple[datetime, datetime]]:
         """Combine all motion sensor ON intervals into a unified motion-active timeline."""
+        _LOGGER.debug("Combining motion intervals")
         all_intervals = []
 
         for sensor_states in motion_states.values():
@@ -398,192 +416,115 @@ class ProbabilityCalculator:
         motion_intervals: list[tuple[datetime, datetime]],
     ) -> bool:
         """Check if any motion interval overlaps with [start, end]."""
+        _LOGGER.debug("Checking if motion intervals overlap with %s to %s", start, end)
         for m_start, m_end in motion_intervals:
             if m_start < end and m_end > start:
                 return True
         return False
 
-    async def calculate_timeslots(
-        self, entity_ids: list[str], history_period: int
-    ) -> dict[str, Any]:
-        """Calculate timeslot-based probabilities (fallback logic)."""
-        if not self._needs_cache_update():
-            return self._cache
-
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=history_period)
-        timeslots = {}
-
-        for hour in range(24):
-            for minute in (0, 30):
-                slot_data = await self._process_timeslot(
-                    entity_ids, start_time, end_time, hour, minute
-                )
-                time_key = f"{hour:02d}:{minute:02d}"
-                timeslots[time_key] = self._cache[time_key] = slot_data
-
-        self._last_cache_update = dt_util.utcnow()
-        return {"slots": timeslots, "last_updated": self._last_cache_update}
-
-    async def _process_timeslot(
+    def _perform_calculation_logic(
         self,
-        entity_ids: list[str],
-        start_time: datetime,
-        end_time: datetime,
-        hour: int,
-        minute: int,
-    ) -> dict[str, Any]:
-        """Compute average priors for a given timeslot over the historical period."""
-        slot_data = {"entities": []}
-        combined_true = 1.0
-        combined_false = 1.0
+        sensor_states: dict[str, Any],
+        current_probability: float,
+        now: datetime,
+        is_sync: bool = False,
+    ) -> ProbabilityResult:
+        """Core calculation logic shared between sync and async methods."""
+        active_triggers = []
+        sensor_probs = {}
+        decay_status = {}
 
-        for entity_id in entity_ids:
-            daily_probs = []
-            current = start_time
+        for entity_id, state in sensor_states.items():
+            if not state or not state.get("availability", False):
+                continue
 
-            while current < end_time:
-                slot_start = current.replace(
-                    hour=hour, minute=minute, second=0, microsecond=0
+            p_true, p_false = self._get_sensor_priors_from_history(entity_id)
+            prior_val = self._get_sensor_prior(entity_id)
+            if p_true is None or p_false is None:
+                p_true, p_false = self.get_sensor_priors(entity_id)
+                prior_val = get_default_prior(entity_id, self)
+
+            is_active = self._is_active_now(entity_id, state["state"])
+            if is_active:
+                active_triggers.append(entity_id)
+                current_probability = update_probability(prior_val, p_true, p_false)
+
+            sensor_probs[entity_id] = current_probability
+
+        current_probability = max(
+            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+        )
+
+        if active_triggers:
+            decay_status["global_decay"] = 0.0
+            if is_sync:
+                self.coordinator.set_last_positive_trigger_sync(now)
+            else:
+                # Schedule asynchronously
+                self.hass.async_create_task(
+                    self.coordinator.set_last_positive_trigger(now)
                 )
-                slot_end = slot_start + TIMESLOT_DURATION
+        else:
+            if is_sync:
+                last_trigger = self.coordinator.get_last_positive_trigger_sync()
+            else:
+                last_trigger = self.coordinator.get_last_positive_trigger_sync()
 
-                if slot_end > end_time:
-                    break
+            if last_trigger is not None:
+                elapsed = (now - last_trigger).total_seconds()
+                decay_window = self.coordinator.get_decay_window()
+                decay_min_delay = self.coordinator.get_decay_min_delay()
 
-                p_true, p_false, _ = await self.calculate_prior(
-                    entity_id, slot_start, slot_end
-                )
-                daily_probs.append((p_true, p_false))
-                current += timedelta(days=1)
+                if elapsed > decay_min_delay and elapsed > 0 and decay_window > 0:
+                    decay_factor = math.exp(-DECAY_LAMBDA * (elapsed / decay_window))
+                    current_probability *= decay_factor
+                    current_probability = max(
+                        MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+                    )
+                    decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+                else:
+                    decay_status["global_decay"] = 0.0
+            else:
+                decay_status["global_decay"] = 0.0
 
-            if daily_probs:
-                avg_prob_true = max(
-                    MIN_PROBABILITY,
-                    min(
-                        sum(p[0] for p in daily_probs) / len(daily_probs),
-                        MAX_PROBABILITY,
-                    ),
-                )
-                avg_prob_false = max(
-                    MIN_PROBABILITY,
-                    min(
-                        sum(p[1] for p in daily_probs) / len(daily_probs),
-                        MAX_PROBABILITY,
-                    ),
-                )
+        final_probability = current_probability
 
-                slot_data["entities"].append(
-                    {
-                        "id": entity_id,
-                        "prob_given_true": round(avg_prob_true, 4),
-                        "prob_given_false": round(avg_prob_false, 4),
-                    }
-                )
-
-                combined_true *= avg_prob_true
-                combined_false *= avg_prob_false
-
-        if slot_data["entities"]:
-            # Clamp the combined probabilities
-            combined_true = max(MIN_PROBABILITY, min(combined_true, MAX_PROBABILITY))
-            combined_false = max(MIN_PROBABILITY, min(combined_false, MAX_PROBABILITY))
-
-            slot_data.update(
-                {
-                    "prob_given_true": round(combined_true, 4),
-                    "prob_given_false": round(combined_false, 4),
-                }
-            )
-
-        return slot_data
+        return {
+            "probability": final_probability,
+            "prior_probability": 0.0,
+            "active_triggers": active_triggers,
+            "sensor_probabilities": sensor_probs,
+            "device_states": {},
+            "decay_status": decay_status,
+            "sensor_availability": {
+                k: v.get("availability", False) for k, v in sensor_states.items()
+            },
+            "is_occupied": final_probability
+            >= self.coordinator.get_threshold_decimal(),
+        }
 
     async def calculate(
         self,
         sensor_states: dict[str, dict[str, Any]],
         motion_timestamps: dict[str, datetime],
-        timeslot: Timeslot | None = None,
     ) -> ProbabilityResult:
+        """Asynchronous method to calculate occupancy probability."""
+        _LOGGER.debug("Calculating occupancy probability asynchronously")
         try:
-            decay_min_delay = self.coordinator.get_decay_min_delay()
-
             # Determine prior
             if self.coordinator.data and "probability" in self.coordinator.data:
                 previous_probability = self.coordinator.data["probability"]
             else:
-                # No previous probability, use DEFAULT_PRIOR as a global starting prior
                 previous_probability = DEFAULT_PRIOR
 
-            current_probability = previous_probability
-            active_triggers = []
-            sensor_probs = {}
+            now = dt_util.utcnow()
 
-            for entity_id, state in sensor_states.items():
-                if not state or not state.get("availability", False):
-                    continue
-
-                p_true, p_false = self._get_sensor_priors_from_history(entity_id)
-                prior_val = self._get_sensor_prior(entity_id)
-                if p_true is None or p_false is None:
-                    p_true, p_false = self.get_timeslot_probabilities(
-                        entity_id, timeslot
-                    )
-                    if p_true is None or p_false is None:
-                        p_true, p_false = self.get_sensor_priors(entity_id)
-                        prior_val = get_default_prior(entity_id, self)
-
-                is_active = self._is_active_now(entity_id, state["state"])
-                if is_active:
-                    active_triggers.append(entity_id)
-                    # Use Bayesian update: current_probability is our running posterior -> next prior
-                    current_probability = update_probability(prior_val, p_true, p_false)
-
-                sensor_probs[entity_id] = current_probability
-
-            current_probability = max(
-                MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+            # Use the shared calculation logic
+            result = self._perform_calculation_logic(
+                sensor_states, previous_probability, now, is_sync=False
             )
 
-            now = dt_util.utcnow()
-            decay_status = {}
-
-            if active_triggers:
-                await self.coordinator.set_last_positive_trigger(now)
-                decay_status["global_decay"] = 0.0
-            else:
-                last_trigger = await self.coordinator.get_last_positive_trigger()
-                if last_trigger is not None:
-                    elapsed = (now - last_trigger).total_seconds()
-                    decay_window = self.coordinator.get_decay_window()
-                    if elapsed > decay_min_delay and elapsed > 0 and decay_window > 0:
-                        decay_factor = math.exp(
-                            -DECAY_LAMBDA * (elapsed / decay_window)
-                        )
-                        current_probability *= decay_factor
-                        current_probability = max(
-                            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
-                        )
-                        decay_status["global_decay"] = round(1.0 - decay_factor, 4)
-                    else:
-                        decay_status["global_decay"] = 0.0
-                else:
-                    decay_status["global_decay"] = 0.0
-
-            final_probability = current_probability
-
-            return {
-                "probability": final_probability,
-                "prior_probability": 0.0,
-                "active_triggers": active_triggers,
-                "sensor_probabilities": sensor_probs,
-                "device_states": {},
-                "decay_status": decay_status,
-                "sensor_availability": {
-                    k: v.get("availability", False) for k, v in sensor_states.items()
-                },
-                "is_occupied": final_probability
-                >= self.coordinator.get_threshold_decimal(),
-            }
+            return result
 
         except (HomeAssistantError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error in probability calculation: %s", err)
@@ -591,8 +532,38 @@ class ProbabilityCalculator:
                 "Failed to calculate occupancy probability"
             ) from err
 
+    def calculate_sync(
+        self,
+        sensor_states: dict[str, Any],
+        motion_timestamps: dict[str, datetime],
+    ) -> ProbabilityResult:
+        """Synchronous method to calculate occupancy probability."""
+        _LOGGER.debug("Calculating occupancy probability synchronously")
+        try:
+            # Determine prior
+            if self.coordinator.data and "probability" in self.coordinator.data:
+                previous_probability = self.coordinator.data["probability"]
+            else:
+                previous_probability = DEFAULT_PRIOR
+
+            now = dt_util.utcnow()
+
+            # Use the shared calculation logic
+            result = self._perform_calculation_logic(
+                sensor_states, previous_probability, now, is_sync=True
+            )
+
+            return result
+
+        except (HomeAssistantError, ValueError, AttributeError, KeyError) as err:
+            _LOGGER.error("Error in synchronous probability calculation: %s", err)
+            raise HomeAssistantError(
+                "Failed to calculate occupancy probability synchronously"
+            ) from err
+
     def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
         """Return default priors for a sensor based on its category."""
+        _LOGGER.debug("Getting sensor priors for %s", entity_id)
         if entity_id in self.motion_sensors:
             return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
         elif entity_id in self.media_devices:
@@ -616,26 +587,17 @@ class ProbabilityCalculator:
     def _get_sensor_priors_from_history(
         self, entity_id: str
     ) -> tuple[float, float] | tuple[None, None]:
-        """Attempt to retrieve learned priors for a sensor from coordinator data."""
+        """Retrieve learned priors for a sensor from coordinator data."""
+        _LOGGER.debug("Getting sensor priors from history for %s", entity_id)
         priors = self.coordinator.learned_priors.get(entity_id)
         if priors:
             return priors["prob_given_true"], priors["prob_given_false"]
-        return None, None
-
-    def get_timeslot_probabilities(
-        self, entity_id: str, timeslot: Timeslot | None
-    ) -> tuple[float, float] | tuple[None, None]:
-        """Get probability from timeslot data if learned priors are unavailable."""
-        if timeslot and "entities" in timeslot:
-            entity_data = next(
-                (e for e in timeslot["entities"] if e["id"] == entity_id),
-                None,
-            )
-            if entity_data:
-                return entity_data["prob_given_true"], entity_data["prob_given_false"]
-        return None, None
+        else:
+            # Use default priors if learned priors are not available
+            return None, None
 
     def _get_sensor_prior(self, entity_id: str) -> float:
+        _LOGGER.debug("Getting sensor prior for %s", entity_id)
         priors = self.coordinator.learned_priors.get(entity_id)
         if priors and "prior" in priors:
             return priors["prior"]
@@ -656,35 +618,30 @@ class ProbabilityCalculator:
             return state == STATE_ON
         return False
 
-    def _compute_state_durations(
-        self,
-        states_dict: dict[str, list[State]],
-        start_time: datetime,
-        end_time: datetime,
+    def _compute_state_durations_from_intervals(
+        self, intervals_dict: dict[str, list[tuple[datetime, datetime, Any]]]
     ) -> dict[str, float]:
-        """Compute total durations for each state."""
+        """Compute total durations for each state from precomputed intervals."""
+        _LOGGER.debug("Computing state durations from intervals")
         durations = {}
-        for states in states_dict.values():
-            intervals = self._states_to_intervals(states, start_time, end_time)
+        for intervals in intervals_dict.values():
             for interval_start, interval_end, state_val in intervals:
                 duration = (interval_end - interval_start).total_seconds()
                 durations[state_val] = durations.get(state_val, 0.0) + duration
         return durations
 
-    def _calculate_conditional_probability(
+    def _calculate_conditional_probability_with_intervals(
         self,
         entity_id: str,
-        entity_states: list[State],
-        motion_states: dict[str, list[State]],
+        entity_intervals: list[tuple[datetime, datetime, Any]],
+        motion_intervals_by_sensor: dict[str, list[tuple[datetime, datetime, Any]]],
         motion_state_filter: str,
-        start_time: datetime,
-        end_time: datetime,
     ) -> float:
-        """Calculate P(entity_active | motion_state)."""
+        """Calculate P(entity_active | motion_state) using precomputed intervals."""
+        _LOGGER.debug("Calculating conditional probability for %s", entity_id)
         # Combine motion intervals for the specified motion state
         motion_intervals = []
-        for states in motion_states.values():
-            intervals = self._states_to_intervals(states, start_time, end_time)
+        for intervals in motion_intervals_by_sensor.values():
             motion_intervals.extend(
                 (start, end)
                 for start, end, state in intervals
@@ -702,17 +659,15 @@ class ProbabilityCalculator:
             )
 
         # Get entity active intervals
-        entity_intervals = [
+        entity_active_intervals = [
             (start, end)
-            for start, end, state in self._states_to_intervals(
-                entity_states, start_time, end_time
-            )
+            for start, end, state in entity_intervals
             if self._is_entity_active(entity_id, state)
         ]
 
         # Calculate the overlap duration
         overlap_duration = 0.0
-        for e_start, e_end in entity_intervals:
+        for e_start, e_end in entity_active_intervals:
             for m_start, m_end in motion_intervals:
                 overlap_start = max(e_start, m_start)
                 overlap_end = min(e_end, m_end)
