@@ -498,6 +498,23 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 )
             )
         }
+
+        if user_input is not None:
+            # Update both options and core config data
+            self._options_data.update(user_input)
+
+            # Create new data dict with updated motion sensors
+            new_data = dict(self.config_entry.data)
+            new_data[CONF_MOTION_SENSORS] = user_input[CONF_MOTION_SENSORS]
+
+            # Update the config entry
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=new_data,
+            )
+
+            return await self.async_step_devices()
+
         return await self._handle_step(
             "motion",
             lambda x: schema,
