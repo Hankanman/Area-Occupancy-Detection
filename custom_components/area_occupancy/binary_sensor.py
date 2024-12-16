@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Final
 
 from homeassistant.components.binary_sensor import (
@@ -11,61 +10,55 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.const import PERCENTAGE
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    NAME_BINARY_SENSOR,
     CONF_AREA_ID,
+    CONF_NAME,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
+    NAME_BINARY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .helpers import get_device_info, get_sensor_attributes
 
-_LOGGER = logging.getLogger(__name__)
 ROUNDING_PRECISION: Final = 2
 
 
 class AreaOccupancyBinarySensor(
     CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity
 ):
-    """Binary sensor for area occupancy."""
+    """Binary sensor indicating occupancy status."""
 
     def __init__(
         self,
         coordinator: AreaOccupancyCoordinator,
         entry_id: str,
-        threshold: float,
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator)
-
-        self._attr_has_entity_name = True
-        self._attr_should_poll = False
-        self._attr_name = NAME_BINARY_SENSOR
+        self.coordinator = coordinator
+        self.entry_id = entry_id
         self._attr_unique_id = (
             f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_occupancy"
         )
+        self._attr_name = f"{coordinator.core_config[CONF_NAME]} {NAME_BINARY_SENSOR}"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._threshold = threshold
-        self._area_name = coordinator.core_config["name"]
-        self._attr_entity_category = None
-        self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_device_info = get_device_info(entry_id, self._area_name)
+        self._attr_device_info = get_device_info(
+            entry_id, coordinator.core_config[CONF_NAME]
+        )
 
     @property
     def is_on(self) -> bool:
-        """Return true if the area is occupied."""
-        try:
-            if not self.coordinator.data:
-                return False
-            return self.coordinator.data.get("is_occupied", False)
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("Error determining occupancy state: %s", err)
-            return False
+        """Return True if the area is currently occupied."""
+        threshold = (
+            self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+            / 100.0
+        )
+        probability = self.coordinator.data.get("probability", 0.0)
+        return probability >= threshold
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -82,15 +75,11 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    threshold = coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
 
-    async_add_entities(
-        [
-            AreaOccupancyBinarySensor(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-                threshold=threshold,
-            )
-        ],
-        False,
+    # Create a new binary sensor entity
+    binary_sensor = AreaOccupancyBinarySensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
     )
+
+    async_add_entities([binary_sensor], update_before_add=True)

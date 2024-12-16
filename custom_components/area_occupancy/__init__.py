@@ -90,14 +90,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         validate_config(dict(entry.options), validate_core=False)
         _LOGGER.debug("Configurations validated")
 
-        _LOGGER.debug("Initializing AreaOccupancyStorage")
+        _LOGGER.debug("Initializing AreaOccupancyCoordinator")
 
-        # Check if the coordinator is already initialized
+        # Remove existing coordinator if any to ensure options are reloaded
         if entry.entry_id in hass.data[DOMAIN]:
-            _LOGGER.debug("Coordinator already initialized")
-            return True
+            _LOGGER.debug("Coordinator already initialized, reloading")
+            await async_unload_entry(hass, entry)
+            hass.data[DOMAIN].pop(entry.entry_id)
 
-        # Initialize the coordinator
+        # Initialize the coordinator with the updated configuration
         coordinator = AreaOccupancyCoordinator(
             hass,
             entry.entry_id,
@@ -112,11 +113,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Mark initialization as complete and trigger the first refresh
         await coordinator.mark_initialization_complete()
 
-        # Add the coordinator to hass data
-        hass.data[DOMAIN][entry.entry_id] = coordinator
+        # Store the coordinator for future use
+        hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
 
         # Setup platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Add an update listener to handle options updates
+        entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
         return True
 
@@ -125,27 +129,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(err)) from err
 
 
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload entry when options are changed."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    try:
-        # Get the coordinator
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-
-        # Cancel the periodic task using public method
-        await coordinator.async_stop_periodic_task()
-
-        # Continue with unloading
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-        if unload_ok:
-            storage = hass.data[DOMAIN][entry.entry_id].get("storage")
-            if storage:
-                await storage.async_remove()
-            hass.data[DOMAIN].pop(entry.entry_id)
-        return unload_ok
-
-    except (IOError, HomeAssistantError) as err:
-        _LOGGER.error("Error unloading entry: %s", err)
-        return False
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return unload_ok
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
