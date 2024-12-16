@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 import voluptuous as vol
@@ -349,33 +348,15 @@ class BaseOccupancyFlow:
                 if validate:
                     self._validate_config(user_input)
 
-                if step_id == "user":
-                    # Special handling for initial step
-                    area_id = str(uuid.uuid4())
-                    await self.async_set_unique_id(area_id)
-                    self._abort_if_unique_id_configured()
-                    self._core_data = {
-                        CONF_NAME: user_input[CONF_NAME],
-                        CONF_AREA_ID: area_id,
-                        CONF_MOTION_SENSORS: user_input[CONF_MOTION_SENSORS],
-                    }
-                elif step_id == "parameters":
-                    # Special handling for final step
-                    self._options_data.update(user_input)
-                    if isinstance(self, OptionsFlowWithConfigEntry):
-                        return self.async_create_entry(
-                            title="", data=self._options_data
-                        )
-                    return self.async_create_entry(
-                        title=self._core_data.get(CONF_NAME, ""),
-                        data=self._core_data,
-                        options=self._options_data,
-                    )
-                else:
-                    self._options_data.update(user_input)
+                self._data.update(user_input)
 
                 if next_step:
                     return await getattr(self, f"async_step_{next_step}")()
+
+                return self.async_create_entry(
+                    title=self._data.get(CONF_NAME, ""),
+                    data=self._data,
+                )
 
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
@@ -384,17 +365,13 @@ class BaseOccupancyFlow:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
-        schema = schema_func(
-            self._options_data if hasattr(self, "_options_data") else None
-        )
+        schema = schema_func(self._data if hasattr(self, "_data") else None)
         return self.async_show_form(
             step_id=step_id,
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders=(
-                {"name": self._core_data.get(CONF_NAME)}
-                if hasattr(self, "_core_data")
-                else None
+                {"name": self._data.get(CONF_NAME)} if hasattr(self, "_data") else None
             ),
         )
 
@@ -406,12 +383,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """Initialize config flow."""
-        self._core_data: dict[str, Any] = {}
-        self._options_data: dict[str, Any] = {}
+        self._data: dict[str, Any] = {}
 
     def is_matching(self, other_flow: ConfigEntry) -> bool:
         """Check if the entry matches the current flow."""
-        return other_flow.data.get(CONF_AREA_ID) == getattr(self, "_core_data", {}).get(
+        return other_flow.data.get(CONF_AREA_ID) == getattr(self, "_data", {}).get(
             CONF_AREA_ID
         )
 
@@ -468,7 +444,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self._options_data = dict(config_entry.options)
+        self._data = dict(config_entry.data)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -483,7 +459,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         schema = {
             vol.Required(
                 CONF_MOTION_SENSORS,
-                default=self._options_data.get(
+                default=self._data.get(
                     CONF_MOTION_SENSORS,
                     self.config_entry.data.get(CONF_MOTION_SENSORS, []),
                 ),
@@ -517,7 +493,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 self.hass,
                 defaults={
                     **self.config_entry.data,  # Use initial data as defaults
-                    **self._options_data,  # Override with any existing options
+                    **self._data,  # Override with any existing options
                 },
             ),
             "environmental",

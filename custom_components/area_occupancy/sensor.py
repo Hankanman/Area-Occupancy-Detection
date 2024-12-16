@@ -37,7 +37,6 @@ from .const import (
     ATTR_LAST_UPDATED,
     ATTR_ACTIVE_TRIGGERS,
     ATTR_SENSOR_PROBABILITIES,
-    CONF_AREA_ID,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
@@ -47,6 +46,7 @@ from .const import (
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
     NAME_DECAY_SENSOR,
+    CONF_NAME,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
@@ -87,10 +87,8 @@ class AreaOccupancySensorBase(
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._attr_name = name
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_{name}"
-        )
-        self._area_name = coordinator.core_config["name"]
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{name}"
+        self._area_name = coordinator.config[CONF_NAME]
         self._attr_device_info = get_device_info(entry_id, self._area_name)
 
     @staticmethod
@@ -159,7 +157,11 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         p_true, p_false = self._get_aggregated_learned_priors()
         return {
             ATTR_TOTAL_PERIOD: str(
-                timedelta(days=self.coordinator.options_config[CONF_HISTORY_PERIOD])
+                timedelta(
+                    days=self.coordinator.config.get(
+                        CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                    )
+                )
             ),
             ATTR_PROB_GIVEN_TRUE: p_true,
             ATTR_PROB_GIVEN_FALSE: p_false,
@@ -180,7 +182,7 @@ class MotionPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.core_config.get(CONF_MOTION_SENSORS, [])
+        return self.coordinator.config.get(CONF_MOTION_SENSORS, [])
 
 
 class MediaPriorSensor(PriorProbabilitySensorBase):
@@ -196,7 +198,7 @@ class MediaPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get(CONF_MEDIA_DEVICES, [])
+        return self.coordinator.config.get(CONF_MEDIA_DEVICES, [])
 
 
 class AppliancePriorSensor(PriorProbabilitySensorBase):
@@ -212,7 +214,7 @@ class AppliancePriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get(CONF_APPLIANCES, [])
+        return self.coordinator.config.get(CONF_APPLIANCES, [])
 
 
 class DoorPriorSensor(PriorProbabilitySensorBase):
@@ -228,7 +230,7 @@ class DoorPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get(CONF_DOOR_SENSORS, [])
+        return self.coordinator.config.get(CONF_DOOR_SENSORS, [])
 
 
 class WindowPriorSensor(PriorProbabilitySensorBase):
@@ -244,7 +246,7 @@ class WindowPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get(CONF_WINDOW_SENSORS, [])
+        return self.coordinator.config.get(CONF_WINDOW_SENSORS, [])
 
 
 class LightPriorSensor(PriorProbabilitySensorBase):
@@ -260,7 +262,7 @@ class LightPriorSensor(PriorProbabilitySensorBase):
         )
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get(CONF_LIGHTS, [])
+        return self.coordinator.config.get(CONF_LIGHTS, [])
 
 
 class OccupancyPriorSensor(PriorProbabilitySensorBase):
@@ -285,9 +287,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         super().__init__(coordinator, entry_id, NAME_PROBABILITY_SENSOR)
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_probability"
-        )
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_probability"
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -342,7 +342,7 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         super().__init__(coordinator, entry_id, NAME_DECAY_SENSOR)
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_decay"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_decay"
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -411,23 +411,21 @@ async def async_setup_entry(
     sensors.append(AreaOccupancyDecaySensor(coordinator, entry.entry_id))
 
     # Create prior sensors if history period is configured and greater than 0
-    history_period = coordinator.options_config.get(
-        CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-    )
+    history_period = coordinator.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
     if history_period > 0:
         prior_sensor_classes = []
 
-        if coordinator.core_config.get(CONF_MOTION_SENSORS):
+        if coordinator.config.get(CONF_MOTION_SENSORS):
             prior_sensor_classes.append(MotionPriorSensor)
-        if coordinator.options_config.get(CONF_MEDIA_DEVICES):
+        if coordinator.config.get(CONF_MEDIA_DEVICES):
             prior_sensor_classes.append(MediaPriorSensor)
-        if coordinator.options_config.get(CONF_APPLIANCES):
+        if coordinator.config.get(CONF_APPLIANCES):
             prior_sensor_classes.append(AppliancePriorSensor)
-        if coordinator.options_config.get(CONF_DOOR_SENSORS):
+        if coordinator.config.get(CONF_DOOR_SENSORS):
             prior_sensor_classes.append(DoorPriorSensor)
-        if coordinator.options_config.get(CONF_WINDOW_SENSORS):
+        if coordinator.config.get(CONF_WINDOW_SENSORS):
             prior_sensor_classes.append(WindowPriorSensor)
-        if coordinator.options_config.get(CONF_LIGHTS):
+        if coordinator.config.get(CONF_LIGHTS):
             prior_sensor_classes.append(LightPriorSensor)
 
         # If any prior sensors are being added, include the OccupancyPriorSensor

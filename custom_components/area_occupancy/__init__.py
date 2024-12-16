@@ -33,20 +33,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         hass.data.setdefault(DOMAIN, {})
 
-        # Initialize the coordinator with the updated configuration
+        # Initialize the coordinator with the unified configuration
         coordinator = AreaOccupancyCoordinator(
             hass,
             entry.entry_id,
-            core_config=entry.data,
-            options_config=entry.options,
+            config=entry.data,  # Unified configuration
         )
 
         # Load stored data and initialize states
         await coordinator.async_load_stored_data()
         await coordinator.async_initialize_states()
 
-        # Mark initialization as complete and trigger the first refresh
-        await coordinator.mark_initialization_complete()
+        # Trigger an initial refresh
+        await coordinator.async_refresh()
 
         # Store the coordinator for future use
         hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}

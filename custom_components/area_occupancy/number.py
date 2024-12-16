@@ -16,7 +16,6 @@ from .const import (
     DOMAIN,
     NAME_THRESHOLD_NUMBER,
     CONF_THRESHOLD,
-    CONF_AREA_ID,
     DEFAULT_THRESHOLD,
 )
 from .coordinator import AreaOccupancyCoordinator
@@ -38,22 +37,20 @@ class AreaOccupancyThreshold(
 
         self._attr_has_entity_name = True
         self._attr_name = NAME_THRESHOLD_NUMBER
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_threshold"
-        )
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_threshold"
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 99.0
-        self._attr_native_step = 5.0
+        self._attr_native_step = 1.0
         self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
-        self._area_name = coordinator.core_config[CONF_NAME]
+        self._area_name = coordinator.config[CONF_NAME]
         self._attr_device_info = get_device_info(entry_id, self._area_name)
 
     @property
     def native_value(self) -> float:
         """Return the current threshold value as a percentage."""
-        return self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        return self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""

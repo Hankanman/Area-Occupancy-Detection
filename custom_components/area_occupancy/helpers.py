@@ -49,16 +49,18 @@ def get_sensor_attributes(
         }
 
         # Add configured sensors info
-        options_config = coordinator.options_config
-        core_config = coordinator.core_config
+        config = coordinator.config
 
         configured_sensors = {
-            "Motion": core_config.get("motion_sensors", []),
-            "Media": options_config.get("media_devices", []),
-            "Appliances": options_config.get("appliances", []),
-            "Illuminance": options_config.get("illuminance_sensors", []),
-            "Humidity": options_config.get("humidity_sensors", []),
-            "Temperature": options_config.get("temperature_sensors", []),
+            "Motion": config.get("motion_sensors", []),
+            "Media": config.get("media_devices", []),
+            "Appliances": config.get("appliances", []),
+            "Illuminance": config.get("illuminance_sensors", []),
+            "Humidity": config.get("humidity_sensors", []),
+            "Temperature": config.get("temperature_sensors", []),
+            "Door": config.get("door_sensors", []),
+            "Window": config.get("window_sensors", []),
+            "Lights": config.get("lights", []),
         }
 
         # Flatten all sensors to count how many have learned priors
