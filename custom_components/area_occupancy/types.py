@@ -199,6 +199,7 @@ class DecayConfig:
 
     enabled: bool = True
     window: int = 600  # seconds
+    min_delay: int = 60  # seconds
 
 
 # Calculation result types

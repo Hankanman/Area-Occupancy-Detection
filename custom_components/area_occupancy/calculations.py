@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 import collections
 
@@ -58,12 +58,11 @@ from .probabilities import (
     ENVIRONMENTAL_PROB_GIVEN_FALSE,
     ENVIRONMENTAL_DEFAULT_PRIOR,
 )
+from .const import (
+    CACHE_DURATION,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-VALID_ACTIVE_STATES = {STATE_ON, STATE_PLAYING, STATE_PAUSED, STATE_CLOSED}
-CACHE_DURATION = timedelta(hours=6)
-TIMESLOT_DURATION = timedelta(minutes=30)
 
 
 def update_probability(
@@ -434,6 +433,7 @@ class ProbabilityCalculator:
         sensor_probs = {}
         decay_status = {}
 
+        # First pass - identify active triggers and update probabilities
         for entity_id, state in sensor_states.items():
             if not state or not state.get("availability", False):
                 continue
@@ -451,20 +451,12 @@ class ProbabilityCalculator:
 
             sensor_probs[entity_id] = current_probability
 
-        current_probability = max(
-            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
-        )
-
-        if active_triggers:
-            decay_status["global_decay"] = 0.0
-            if is_sync:
-                self.coordinator.set_last_positive_trigger_sync(now)
-            else:
-                # Schedule asynchronously
-                self.hass.async_create_task(
-                    self.coordinator.set_last_positive_trigger(now)
-                )
-        else:
+        # Apply decay only if:
+        # 1. No active triggers
+        # 2. Decay is enabled
+        # 3. Minimum delay has passed since last trigger
+        decay_factor = 1.0
+        if not active_triggers:
             if is_sync:
                 last_trigger = self.coordinator.get_last_positive_trigger_sync()
             else:
@@ -475,8 +467,12 @@ class ProbabilityCalculator:
                 decay_window = self.coordinator.get_decay_window()
                 decay_min_delay = self.coordinator.get_decay_min_delay()
 
-                if elapsed > decay_min_delay and elapsed > 0 and decay_window > 0:
-                    decay_factor = math.exp(-DECAY_LAMBDA * (elapsed / decay_window))
+                # Only start decay after min_delay has passed
+                if elapsed > decay_min_delay and decay_window > 0:
+                    # Calculate time since decay should have started
+                    decay_time = elapsed - decay_min_delay
+                    # Apply exponential decay based on time since decay started
+                    decay_factor = math.exp(-DECAY_LAMBDA * (decay_time / decay_window))
                     current_probability *= decay_factor
                     current_probability = max(
                         MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
@@ -486,6 +482,15 @@ class ProbabilityCalculator:
                     decay_status["global_decay"] = 0.0
             else:
                 decay_status["global_decay"] = 0.0
+        else:
+            # Reset decay when there are active triggers
+            decay_status["global_decay"] = 0.0
+            if is_sync:
+                self.coordinator.set_last_positive_trigger_sync(now)
+            else:
+                self.hass.async_create_task(
+                    self.coordinator.set_last_positive_trigger(now)
+                )
 
         final_probability = current_probability
 
