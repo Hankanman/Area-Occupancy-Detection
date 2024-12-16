@@ -426,9 +426,8 @@ class ProbabilityCalculator:
         sensor_states: dict[str, Any],
         current_probability: float,
         now: datetime,
-        is_sync: bool = False,
     ) -> ProbabilityResult:
-        """Core calculation logic shared between sync and async methods."""
+        """Core calculation logic."""
         active_triggers = []
         sensor_probs = {}
         decay_status = {}
@@ -457,10 +456,7 @@ class ProbabilityCalculator:
         # 3. Minimum delay has passed since last trigger
         decay_factor = 1.0
         if not active_triggers:
-            if is_sync:
-                last_trigger = self.coordinator.get_last_positive_trigger_sync()
-            else:
-                last_trigger = self.coordinator.get_last_positive_trigger_sync()
+            last_trigger = self.coordinator.get_last_positive_trigger()
 
             if last_trigger is not None:
                 elapsed = (now - last_trigger).total_seconds()
@@ -485,12 +481,7 @@ class ProbabilityCalculator:
         else:
             # Reset decay when there are active triggers
             decay_status["global_decay"] = 0.0
-            if is_sync:
-                self.coordinator.set_last_positive_trigger_sync(now)
-            else:
-                self.hass.async_create_task(
-                    self.coordinator.set_last_positive_trigger(now)
-                )
+            self.coordinator.set_last_positive_trigger(now)
 
         final_probability = current_probability
 
@@ -508,13 +499,13 @@ class ProbabilityCalculator:
             >= self.coordinator.get_threshold_decimal(),
         }
 
-    async def calculate(
+    def calculate(
         self,
-        sensor_states: dict[str, dict[str, Any]],
+        sensor_states: dict[str, Any],
         motion_timestamps: dict[str, datetime],
     ) -> ProbabilityResult:
-        """Asynchronous method to calculate occupancy probability."""
-        _LOGGER.debug("Calculating occupancy probability asynchronously")
+        """Calculate occupancy probability."""
+        _LOGGER.debug("Calculating occupancy probability")
         try:
             # Determine prior
             if self.coordinator.data and "probability" in self.coordinator.data:
@@ -526,7 +517,7 @@ class ProbabilityCalculator:
 
             # Use the shared calculation logic
             result = self._perform_calculation_logic(
-                sensor_states, previous_probability, now, is_sync=False
+                sensor_states, previous_probability, now
             )
 
             return result
@@ -535,35 +526,6 @@ class ProbabilityCalculator:
             _LOGGER.error("Error in probability calculation: %s", err)
             raise HomeAssistantError(
                 "Failed to calculate occupancy probability"
-            ) from err
-
-    def calculate_sync(
-        self,
-        sensor_states: dict[str, Any],
-        motion_timestamps: dict[str, datetime],
-    ) -> ProbabilityResult:
-        """Synchronous method to calculate occupancy probability."""
-        _LOGGER.debug("Calculating occupancy probability synchronously")
-        try:
-            # Determine prior
-            if self.coordinator.data and "probability" in self.coordinator.data:
-                previous_probability = self.coordinator.data["probability"]
-            else:
-                previous_probability = DEFAULT_PRIOR
-
-            now = dt_util.utcnow()
-
-            # Use the shared calculation logic
-            result = self._perform_calculation_logic(
-                sensor_states, previous_probability, now, is_sync=True
-            )
-
-            return result
-
-        except (HomeAssistantError, ValueError, AttributeError, KeyError) as err:
-            _LOGGER.error("Error in synchronous probability calculation: %s", err)
-            raise HomeAssistantError(
-                "Failed to calculate occupancy probability synchronously"
             ) from err
 
     def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
