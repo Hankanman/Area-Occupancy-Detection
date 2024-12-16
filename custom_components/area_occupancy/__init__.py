@@ -74,6 +74,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Area Occupancy Detection integration."""
     hass.data.setdefault(DOMAIN, {})
 
+    # Check all existing entries for motion sensor migration
+    entries = hass.config_entries.async_entries(DOMAIN)
+    for entry in entries:
+        try:
+            await async_migrate_motion_sensors(hass, entry)
+        except (HomeAssistantError, ValueError, KeyError) as err:
+            _LOGGER.error(
+                "Error migrating motion sensors for entry %s: %s", entry.entry_id, err
+            )
+
     # Set up services
     await async_setup_services(hass)
     return True
@@ -83,6 +93,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Area Occupancy Detection from a config entry."""
     try:
         hass.data.setdefault(DOMAIN, {})
+
+        # Ensure motion sensors are properly migrated
+        await async_migrate_motion_sensors(hass, entry)
 
         # Validate configurations
         _LOGGER.debug("Validating configurations")
@@ -131,6 +144,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload entry when options are changed."""
+    _LOGGER.debug(
+        "Reloading Area Occupancy entry %s with motion sensors: %s",
+        entry.entry_id,
+        entry.data.get(CONF_MOTION_SENSORS, []),
+    )
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -209,6 +227,48 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     except (IOError, ValueError, KeyError, HomeAssistantError) as err:
         _LOGGER.error("Error migrating Area Occupancy configuration: %s", err)
         return False
+
+
+async def async_migrate_motion_sensors(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Ensure motion sensors from options are properly migrated to core config.
+
+    Returns True if changes were made, False otherwise.
+    """
+    options_sensors = entry.options.get(CONF_MOTION_SENSORS, [])
+    data_sensors = set(entry.data.get(CONF_MOTION_SENSORS, []))
+
+    if not options_sensors:
+        return False
+
+    # Combine existing and new sensors, maintaining order but removing duplicates
+    combined_sensors = []
+    seen = set()
+    for sensor in entry.data.get(CONF_MOTION_SENSORS, []) + options_sensors:
+        if sensor not in seen:
+            combined_sensors.append(sensor)
+            seen.add(sensor)
+
+    # Only update if there are changes
+    if set(combined_sensors) != data_sensors:
+        _LOGGER.debug(
+            "Migrating motion sensors from options to core config: %s", combined_sensors
+        )
+        new_data = dict(entry.data)
+        new_data[CONF_MOTION_SENSORS] = combined_sensors
+
+        # Update entry data
+        hass.config_entries.async_update_entry(
+            entry,
+            data=new_data,
+        )
+
+        # Clear motion sensors from options since they're now in core config
+        new_options = dict(entry.options)
+        new_options.pop(CONF_MOTION_SENSORS, None)
+        entry.options = new_options
+        return True
+
+    return False
 
 
 def migrate_legacy_config(config: dict[str, Any]) -> tuple[CoreConfig, OptionsConfig]:
