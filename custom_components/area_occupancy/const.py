@@ -13,6 +13,7 @@ DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2024.12.1"
 
 # Configuration constants
+CONF_NAME: Final = "name"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
@@ -32,8 +33,6 @@ CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
 # File paths and configuration
-STORAGE_KEY_HISTORY: Final = "area_occupancy_history"
-STORAGE_KEY_PATTERNS: Final = "area_occupancy_patterns"
 STORAGE_VERSION: Final = 2
 STORAGE_VERSION_MINOR: Final = 1
 STORAGE_CLEANUP_INTERVAL: Final = timedelta(days=7)

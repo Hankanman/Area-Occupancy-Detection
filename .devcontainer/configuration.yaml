@@ -1,10 +1,6 @@
 # Loads default set of integrations. Do not remove.
 default_config:
 
-# Load frontend themes from the themes folder
-frontend:
-  themes: !include_dir_merge_named themes
-
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
@@ -14,7 +10,7 @@ logger:
   logs:
     custom_components.area_occupancy: debug
 
-debugpy:
+# debugpy:
 
 # Input controls for testing
 input_boolean:
@@ -165,24 +161,3 @@ sensor:
         device_class: humidity
         unit_of_measurement: "%"
         value_template: "{{ states('input_number.mock_humidity_2') | float }}"
-
-# Media Player mock
-media_player:
-  - platform: template
-    media_players:
-      area_tv:
-        friendly_name: "Area TV"
-        value_template: >
-          {% if states('input_boolean.mock_tv') == 'on' %}
-            playing
-          {% else %}
-            off
-          {% endif %}
-        turn_on:
-          service: input_boolean.turn_on
-          data:
-            entity_id: input_boolean.mock_tv
-        turn_off:
-          service: input_boolean.turn_off
-          data:
-            entity_id: input_boolean.mock_tv

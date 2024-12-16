@@ -468,7 +468,6 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self._core_data = dict(config_entry.data)
         self._options_data = dict(config_entry.options)
 
     async def async_step_init(
@@ -484,7 +483,10 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         schema = {
             vol.Required(
                 CONF_MOTION_SENSORS,
-                default=self._core_data.get(CONF_MOTION_SENSORS, []),
+                default=self._options_data.get(
+                    CONF_MOTION_SENSORS,
+                    self.config_entry.data.get(CONF_MOTION_SENSORS, []),
+                ),
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.BINARY_SENSOR,
@@ -497,7 +499,11 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
             )
         }
         return await self._handle_step(
-            "motion", lambda x: schema, "devices", True, user_input
+            "motion",
+            lambda x: schema,
+            "devices",
+            True,
+            user_input,
         )
 
     async def async_step_devices(
@@ -506,7 +512,13 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         """Handle device options."""
         return await self._handle_step(
             "devices",
-            lambda x: create_device_schema(self.hass, x),
+            lambda x: create_device_schema(
+                self.hass,
+                defaults={
+                    **self.config_entry.data,  # Use initial data as defaults
+                    **self._options_data,  # Override with any existing options
+                },
+            ),
             "environmental",
             False,
             user_input,
