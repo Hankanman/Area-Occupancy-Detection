@@ -247,25 +247,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             except (ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Error running historical analysis: %s", err)
 
-    async def set_last_positive_trigger(self, timestamp: datetime) -> None:
-        """Asynchronously set the timestamp of the last positive trigger."""
-        _LOGGER.debug("Setting last positive trigger asynchronously to %s", timestamp)
-        async with self._state_lock:
-            self._last_positive_trigger = timestamp
-
-    def set_last_positive_trigger_sync(self, timestamp: datetime) -> None:
+    def set_last_positive_trigger(self, timestamp: datetime) -> None:
         """Synchronously set the timestamp of the last positive trigger."""
         _LOGGER.debug("Setting last positive trigger synchronously to %s", timestamp)
         with self._thread_lock:
             self._last_positive_trigger = timestamp
 
-    async def get_last_positive_trigger(self) -> datetime | None:
-        """Asynchronously get the timestamp of the last positive trigger."""
-        _LOGGER.debug("Getting last positive trigger asynchronously")
-        async with self._state_lock:
-            return self._last_positive_trigger
-
-    def get_last_positive_trigger_sync(self) -> datetime | None:
+    def get_last_positive_trigger(self) -> datetime | None:
         """Synchronously get the timestamp of the last positive trigger."""
         _LOGGER.debug("Getting last positive trigger synchronously")
         with self._thread_lock:
@@ -343,7 +331,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             try:
                 # Offload heavy calculations to the executor
                 result = await self.hass.async_add_executor_job(
-                    self._calculate_probability
+                    self._calculator.calculate,
+                    self._sensor_states,
+                    self._motion_timestamps,
                 )
 
                 self._update_historical_tracking(result)
@@ -354,20 +344,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
                 _LOGGER.error("Error updating data: %s", err, exc_info=True)
                 raise UpdateFailed(f"Error updating data: {err}") from err
-
-    def _calculate_probability(self) -> ProbabilityResult:
-        """Synchronous method to perform heavy calculations."""
-        try:
-            # Perform the heavy computation synchronously
-            result = self._calculator.calculate_sync(
-                self._sensor_states,
-                self._motion_timestamps,
-            )
-            return result
-
-        except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
-            _LOGGER.error("Error in synchronous calculation: %s", err)
-            raise UpdateFailed(f"Error in synchronous calculation: {err}") from err
 
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
         """Update historical tracking data."""
