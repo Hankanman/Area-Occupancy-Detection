@@ -131,6 +131,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             function=self.async_refresh,
         )
 
+        # Initialize the save debouncer
+        self._save_debouncer = Debouncer(
+            hass,
+            _LOGGER,
+            cooldown=30.0,  # Wait 30 seconds before saving
+            immediate=False,
+            function=self._save_debounced_data,
+        )
+
+        # Initialize stored data variable
+        self._stored_data = None
+
         # Add a flag to track initialization status
         self._initialization_complete = False
         self._startup_lock = asyncio.Lock()
@@ -361,54 +373,67 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             stored_data = await self.storage.async_load() or {}
             area_id = self.core_config[CONF_AREA_ID]
 
+            # Prepare the new data
+            new_area_data = {
+                "last_updated": dt_util.utcnow().isoformat(),
+                "last_probability": result["probability"],
+                "configuration": {
+                    "motion_sensors": self.core_config[CONF_MOTION_SENSORS],
+                    "media_devices": self.options_config.get(CONF_MEDIA_DEVICES, []),
+                    "appliances": self.options_config.get(CONF_APPLIANCES, []),
+                    "illuminance_sensors": self.options_config.get(
+                        CONF_ILLUMINANCE_SENSORS, []
+                    ),
+                    "humidity_sensors": self.options_config.get(
+                        CONF_HUMIDITY_SENSORS, []
+                    ),
+                    "temperature_sensors": self.options_config.get(
+                        CONF_TEMPERATURE_SENSORS, []
+                    ),
+                    "door_sensors": self.options_config.get(CONF_DOOR_SENSORS, []),
+                    "window_sensors": self.options_config.get(CONF_WINDOW_SENSORS, []),
+                    "lights": self.options_config.get(CONF_LIGHTS, []),
+                },
+                "last_known_values": self._last_known_values,
+                "last_occupied": (
+                    self._last_occupied.isoformat() if self._last_occupied else None
+                ),
+                "last_state_change": (
+                    self._last_state_change.isoformat()
+                    if self._last_state_change
+                    else None
+                ),
+                "learned_priors": self.learned_priors,
+            }
+
+            # Compare with existing data excluding 'last_updated'
+            existing_area_data = stored_data.get("areas", {}).get(area_id, {}).copy()
+            existing_area_data.pop("last_updated", None)
+
+            new_area_data_to_compare = new_area_data.copy()
+            new_area_data_to_compare.pop("last_updated", None)
+
+            if existing_area_data == new_area_data_to_compare:
+                _LOGGER.debug("No significant changes detected; skipping save.")
+                return  # Data hasn't changed; no need to save
+
+            # Update the stored data with the new result
             stored_data.setdefault("areas", {})
-            stored_data["areas"].setdefault(area_id, {})
+            stored_data["areas"][area_id] = new_area_data
 
-            stored_data["areas"][area_id].update(
-                {
-                    "last_updated": dt_util.utcnow().isoformat(),
-                    "last_probability": result["probability"],
-                    "configuration": {
-                        "motion_sensors": self.core_config[CONF_MOTION_SENSORS],
-                        "media_devices": self.options_config.get(
-                            CONF_MEDIA_DEVICES, []
-                        ),
-                        "appliances": self.options_config.get(CONF_APPLIANCES, []),
-                        "illuminance_sensors": self.options_config.get(
-                            CONF_ILLUMINANCE_SENSORS, []
-                        ),
-                        "humidity_sensors": self.options_config.get(
-                            CONF_HUMIDITY_SENSORS, []
-                        ),
-                        "temperature_sensors": self.options_config.get(
-                            CONF_TEMPERATURE_SENSORS, []
-                        ),
-                        "door_sensors": self.options_config.get(CONF_DOOR_SENSORS, []),
-                        "window_sensors": self.options_config.get(
-                            CONF_WINDOW_SENSORS, []
-                        ),
-                        "lights": self.options_config.get(CONF_LIGHTS, []),
-                    },
-                    "last_known_values": self._last_known_values,
-                    "last_occupied": (
-                        self._last_occupied.isoformat() if self._last_occupied else None
-                    ),
-                    "last_state_change": (
-                        self._last_state_change.isoformat()
-                        if self._last_state_change
-                        else None
-                    ),
-                    "learned_priors": self.learned_priors,
-                }
-            )
+            # Log the stored data after the update
+            _LOGGER.debug("Stored data after update: %s", stored_data)
 
-            await self.storage.async_save(stored_data)
+            # Save stored_data to an instance variable for access in debounced save
+            self._stored_data = stored_data
+
+            # Instead of saving immediately, schedule a debounced save
+            await self._save_debouncer.async_call()
 
         except (HomeAssistantError, ValueError, KeyError, IOError) as err:
             _LOGGER.error("Error storing result: %s", err)
 
     def _get_all_configured_sensors(self) -> list[str]:
-        _LOGGER.debug("Getting all configured sensors")
         return (
             self.core_config.get(CONF_MOTION_SENSORS, [])
             + self.options_config.get(CONF_MEDIA_DEVICES, [])
@@ -450,8 +475,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def async_unload(self) -> None:
         """Unload the coordinator."""
         _LOGGER.debug("Unloading coordinator")
-        if self.data:
-            await self._save_data(self.data)
+        await self._save_debounced_data()
 
         if self._remove_state_listener is not None:
             self._remove_state_listener()
@@ -605,7 +629,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return threshold / 100.0
 
     def get_configured_sensors(self) -> list[str]:
-        _LOGGER.debug("Getting configured sensors")
         return self._get_all_configured_sensors()
 
     def _get_decay_config(self) -> DecayConfig:
@@ -698,14 +721,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.error("Error restoring state: %s", err)
             self._reset_state()
 
-    async def _save_data(self, data: ProbabilityResult) -> None:
-        _LOGGER.debug("Saving data")
-        try:
-            if not data:
-                return
-            await self.storage.async_save(data)
-        except (IOError, ValueError, HomeAssistantError) as err:
-            _LOGGER.error("Error saving data: %s", err)
+    async def _save_debounced_data(self):
+        """Debounced method to save data to storage."""
+        if hasattr(self, "_stored_data"):
+            try:
+                await self.storage.async_save(self._stored_data)
+                _LOGGER.debug("Debounced save completed")
+                del self._stored_data  # Clean up after saving
+            except (IOError, ValueError, HomeAssistantError) as err:
+                _LOGGER.error("Error during debounced save: %s", err)
 
     async def async_stop_periodic_task(self) -> None:
         """Stop the periodic task."""

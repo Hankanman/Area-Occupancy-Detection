@@ -530,7 +530,6 @@ class ProbabilityCalculator:
 
     def get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
         """Return default priors for a sensor based on its category."""
-        _LOGGER.debug("Getting sensor priors for %s", entity_id)
         if entity_id in self.motion_sensors:
             return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
         elif entity_id in self.media_devices:
@@ -555,7 +554,6 @@ class ProbabilityCalculator:
         self, entity_id: str
     ) -> tuple[float, float] | tuple[None, None]:
         """Retrieve learned priors for a sensor from coordinator data."""
-        _LOGGER.debug("Getting sensor priors from history for %s", entity_id)
         priors = self.coordinator.learned_priors.get(entity_id)
         if priors:
             return priors["prob_given_true"], priors["prob_given_false"]
@@ -564,7 +562,6 @@ class ProbabilityCalculator:
             return None, None
 
     def _get_sensor_prior(self, entity_id: str) -> float:
-        _LOGGER.debug("Getting sensor prior for %s", entity_id)
         priors = self.coordinator.learned_priors.get(entity_id)
         if priors and "prior" in priors:
             return priors["prior"]
