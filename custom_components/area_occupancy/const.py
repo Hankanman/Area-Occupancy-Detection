@@ -38,6 +38,7 @@ STORAGE_VERSION_MINOR: Final = 1
 STORAGE_CLEANUP_INTERVAL: Final = timedelta(days=7)
 STORAGE_MAX_CACHE_AGE: Final = timedelta(days=30)
 STORAGE_SAVE_DELAY: Final = 60  # seconds
+CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
 DEFAULT_THRESHOLD: Final = 50.0

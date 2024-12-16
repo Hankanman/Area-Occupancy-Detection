@@ -31,6 +31,8 @@ from .const import (
     CONF_HISTORY_PERIOD,
     CONF_THRESHOLD,
     CONF_DECAY_WINDOW,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_MIN_DELAY,
     CONF_APPLIANCES,
     CONF_ILLUMINANCE_SENSORS,
     CONF_HUMIDITY_SENSORS,
@@ -40,11 +42,11 @@ from .const import (
     CONF_LIGHTS,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
-    CONF_DECAY_ENABLED,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_THRESHOLD,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_HISTORY_PERIOD,
 )
 from .types import (
@@ -275,7 +277,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def get_decay_min_delay(self) -> int:
         _LOGGER.debug("Getting decay min delay")
-        return self.options_config.get("decay_min_delay", 60)
+        return self.options_config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -635,6 +637,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return DecayConfig(
             enabled=self.options_config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
             window=self.options_config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+            min_delay=self.options_config.get(
+                CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
+            ),
         )
 
     def update_learned_priors(
