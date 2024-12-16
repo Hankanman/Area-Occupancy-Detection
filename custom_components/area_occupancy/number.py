@@ -70,12 +70,10 @@ async def async_setup_entry(
         "coordinator"
     ]
 
-    async_add_entities(
-        [
-            AreaOccupancyThreshold(
-                coordinator=coordinator,
-                entry_id=entry.entry_id,
-            )
-        ],
-        False,
+    # Create a new number entity for the threshold
+    number_entity = AreaOccupancyThreshold(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
     )
+
+    async_add_entities([number_entity], update_before_add=True)
