@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
+    async_call_later,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -107,6 +108,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._remove_periodic_task = None
         self._historical_analysis_lock = asyncio.Lock()
+        self._remove_state_listener = None
 
     def _create_calculator(self) -> ProbabilityCalculator:
         return ProbabilityCalculator(
@@ -223,7 +225,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 await self._compute_initial_priors()
                 await self._async_historical_analysis()
                 await self.async_refresh()
-            except Exception as err:
+            except (ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Error running historical analysis: %s", err)
 
     def set_last_positive_trigger(self, timestamp: datetime) -> None:
@@ -242,6 +244,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Set up event listener to track entity state changes and debounce updates."""
         entities = self._get_all_configured_sensors()
         _LOGGER.debug("Setting up entity tracking for: %s", entities)
+
+        if self._remove_state_listener is not None:
+            self._remove_state_listener()
+            self._remove_state_listener = None
 
         self._debounce_refresh = None
 
@@ -274,36 +280,43 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             ):
                 self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-            if self._debounce_refresh:
-                self._debounce_refresh.cancel()
+            if self._debounce_refresh is not None:
+                self._debounce_refresh()
+                self._debounce_refresh = None
 
-            self._debounce_refresh = self.hass.loop.call_later(
+            self._debounce_refresh = async_call_later(
+                self.hass,
                 0.1,
-                lambda: self.hass.async_create_task(self.async_refresh()),
+                self._async_debounced_refresh,
             )
 
-        async_track_state_change_event(
+        self._remove_state_listener = async_track_state_change_event(
             self.hass,
             entities,
             async_state_changed_listener,
         )
 
+    async def _async_debounced_refresh(self, _now):
+        """Asynchronous debounced refresh."""
+        await self.async_refresh()
+
     async def _async_historical_analysis(self) -> None:
         """Run historical analysis to prepare timeslot data in the background."""
-        try:
-            if not self.options_config.get("historical_analysis_enabled", True):
+        async with self._historical_analysis_lock:
+            try:
+                if not self.options_config.get("historical_analysis_enabled", True):
+                    self._historical_analysis_ready.set()
+                    return
+
+                self._timeslot_data = await self._calculator.calculate_timeslots(
+                    self._get_all_configured_sensors(),
+                    self.options_config.get("history_period", DEFAULT_HISTORY_PERIOD),
+                )
+
+            except (ValueError, TypeError, HomeAssistantError) as err:
+                _LOGGER.error("Historical analysis failed: %s", err)
+            finally:
                 self._historical_analysis_ready.set()
-                return
-
-            self._timeslot_data = await self._calculator.calculate_timeslots(
-                self._get_all_configured_sensors(),
-                self.options_config.get("history_period", DEFAULT_HISTORY_PERIOD),
-            )
-
-        except (ValueError, TypeError, HomeAssistantError) as err:
-            _LOGGER.error("Historical analysis failed: %s", err)
-        finally:
-            self._historical_analysis_ready.set()
 
     async def _async_update_data(self) -> ProbabilityResult:
         """Update data by recalculating current probability."""
@@ -453,9 +466,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         await self.async_refresh()
 
+        if self._remove_state_listener is not None:
+            self._remove_state_listener()
+            self._remove_state_listener = None
+
+        if self._debounce_refresh is not None:
+            self._debounce_refresh()
+            self._debounce_refresh = None
+
     async def async_unload(self) -> None:
         if self.data:
             await self._save_data(self.data)
+
+        if self._remove_state_listener is not None:
+            self._remove_state_listener()
+            self._remove_state_listener = None
+
+        if self._debounce_refresh is not None:
+            self._debounce_refresh()
+            self._debounce_refresh = None
 
     def update_options(self, options_config: OptionsConfig) -> None:
         try:
@@ -480,7 +509,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 "Updated coordinator options for %s",
                 self.core_config["name"],
             )
-        except Exception as err:
+        except (ValueError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error updating coordinator options: %s", err)
             raise HomeAssistantError(
                 f"Failed to update coordinator options: {err}"
