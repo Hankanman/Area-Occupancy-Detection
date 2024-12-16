@@ -60,6 +60,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         core_config: CoreConfig,
         options_config: OptionsConfig,
     ) -> None:
+        _LOGGER.debug("Initializing AreaOccupancyCoordinator")
         self.storage = AreaOccupancyStorage(hass, entry_id)
         self._last_known_values: dict[str, Any] = {}
         self._debounce_refresh = None
@@ -119,7 +120,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             function=self.async_refresh,
         )
 
+        # Add a flag to track initialization status
+        self._initialization_complete = False
+        self._startup_lock = asyncio.Lock()
+
     def _create_calculator(self) -> ProbabilityCalculator:
+        _LOGGER.debug("Creating ProbabilityCalculator")
         return ProbabilityCalculator(
             hass=self.hass,
             coordinator=self,
@@ -137,6 +143,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_setup(self) -> None:
         """Minimal setup. No heavy tasks here."""
+        _LOGGER.debug("Setting up AreaOccupancyCoordinator")
 
     async def async_load_stored_data(self) -> None:
         """Load stored data from storage.
@@ -144,6 +151,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         This should be called by __init__.py after coordinator creation,
         but before async_initialize_states is called.
         """
+        _LOGGER.debug("Loading stored data")
         try:
             stored_data = await self.storage.async_load()
             if stored_data:
@@ -181,6 +189,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_initialize_states(self) -> None:
         """Initialize sensor states."""
+        _LOGGER.debug("Initializing sensor states")
         async with self._state_lock:
             try:
                 sensors = self._get_all_configured_sensors()
@@ -217,6 +226,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def schedule_periodic_historical_analysis(self):
         """Schedule the historical analysis to run every 6 hours."""
+        _LOGGER.debug("Scheduling periodic historical analysis")
 
         async def periodic_task(now):
             await self.async_run_historical_analysis_task()
@@ -228,6 +238,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_run_historical_analysis_task(self) -> None:
         """Run historical analysis and initial priors."""
+        _LOGGER.debug("Running historical analysis task")
         async with self._historical_analysis_lock:
             try:
                 await self._compute_initial_priors()
@@ -238,18 +249,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def set_last_positive_trigger(self, timestamp: datetime) -> None:
         """Set the timestamp of the last positive trigger."""
+        _LOGGER.debug("Setting last positive trigger to %s", timestamp)
         async with self._state_lock:
             self._last_positive_trigger = timestamp
 
     async def get_last_positive_trigger(self) -> datetime | None:
         """Get the timestamp of the last positive trigger."""
+        _LOGGER.debug("Getting last positive trigger")
         async with self._state_lock:
             return self._last_positive_trigger
 
     def get_decay_window(self) -> int:
+        _LOGGER.debug("Getting decay window")
         return self._decay_window
 
     def get_decay_min_delay(self) -> int:
+        _LOGGER.debug("Getting decay min delay")
         return self.options_config.get("decay_min_delay", 60)
 
     def _setup_entity_tracking(self) -> None:
@@ -264,6 +279,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         @callback
         def async_state_changed_listener(event) -> None:
             """Handle state changes."""
+            _LOGGER.debug(
+                "Handling state change for entity: %s", event.data.get("entity_id")
+            )
             entity_id = event.data.get("entity_id")
             new_state = event.data.get("new_state")
 
@@ -303,10 +321,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def _async_debounced_refresh(self, _now):
         """Asynchronous debounced refresh."""
+        _LOGGER.debug("Debounced refresh called")
         await self.async_refresh()
 
     async def _async_historical_analysis(self) -> None:
         """Run historical analysis to prepare timeslot data in the background."""
+        _LOGGER.info("Running historical analysis")
         async with self._historical_analysis_lock:
             try:
                 if not self.options_config.get("historical_analysis_enabled", True):
@@ -321,6 +341,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             except (ValueError, TypeError, HomeAssistantError) as err:
                 _LOGGER.error("Historical analysis failed: %s", err)
             finally:
+                _LOGGER.info("Historical analysis complete")
                 self._historical_analysis_ready.set()
 
     async def _async_update_data(self) -> ProbabilityResult:
@@ -351,6 +372,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
         """Update historical tracking data."""
+        _LOGGER.debug("Updating historical tracking")
         now = dt_util.utcnow()
 
         self._probability_history.append(result["probability"])
@@ -367,6 +389,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._last_state_change = now
 
     async def _async_store_result(self, result: ProbabilityResult) -> None:
+        _LOGGER.debug("Storing result")
         try:
             stored_data = await self.storage.async_load() or {}
             area_id = self.core_config[CONF_AREA_ID]
@@ -405,6 +428,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.error("Error storing result: %s", err)
 
     def _get_historical_metrics(self) -> dict[str, Any]:
+        _LOGGER.debug("Getting historical metrics")
         now = dt_util.utcnow()
 
         moving_avg = (
@@ -446,6 +470,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         }
 
     def _get_all_configured_sensors(self) -> list[str]:
+        _LOGGER.debug("Getting all configured sensors")
         return (
             self.core_config["motion_sensors"]
             + self.options_config.get("media_devices", [])
@@ -460,6 +485,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_reset(self) -> None:
         """Reset the coordinator."""
+        _LOGGER.debug("Resetting coordinator")
         self._sensor_states.clear()
         self._motion_timestamps.clear()
         self._probability_history.clear()
@@ -487,6 +513,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_unload(self) -> None:
         """Unload the coordinator."""
+        _LOGGER.debug("Unloading coordinator")
         if self.data:
             await self._save_data(self.data)
 
@@ -503,6 +530,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._remove_periodic_task = None
 
     def update_options(self, options_config: OptionsConfig) -> None:
+        _LOGGER.debug("Updating options")
         try:
             self.options_config = options_config
             self._calculator = self._create_calculator()
@@ -542,6 +570,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     def get_diagnostics(self) -> dict[str, Any]:
+        _LOGGER.debug("Getting diagnostics")
         try:
             timeslot_data = {}
             if self._timeslot_data:
@@ -588,6 +617,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         }
 
     def _reset_state(self) -> None:
+        _LOGGER.debug("Resetting state")
         self._last_known_values = {}
         self._probability_history = deque(maxlen=12)
         self._occupancy_history = deque([False] * 288, maxlen=288)
@@ -597,6 +627,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.learned_priors.clear()
 
     def get_storage_data(self) -> dict:
+        _LOGGER.debug("Getting storage data")
         return {
             "last_known_values": self._last_known_values,
             "probability_history": list(self._probability_history),
@@ -615,17 +646,49 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return self._entity_ids
 
     def register_entity(self, entity_id: str) -> None:
+        _LOGGER.debug("Registering entity: %s", entity_id)
         self._entity_ids.add(entity_id)
 
     def unregister_entity(self, entity_id: str) -> None:
+        _LOGGER.debug("Unregistering entity: %s", entity_id)
         self._entity_ids.discard(entity_id)
 
     async def async_refresh(self) -> None:
-        """Refresh data, ensuring thread safety."""
+        """Refresh data, deferring heavy calculations until after startup."""
+        if not self._initialization_complete:
+            # During startup, use minimal calculation
+            async with self._state_lock:
+                result = await self._async_minimal_update()
+                self.async_set_updated_data(result)
+            return
+
+        # Normal refresh after startup
         async with self._state_lock:
             await super().async_refresh()
 
+    async def _async_minimal_update(self) -> ProbabilityResult:
+        """Perform minimal update during startup."""
+        return {
+            "probability": 0.0,
+            "prior_probability": 0.0,
+            "active_triggers": [],
+            "sensor_probabilities": {},
+            "device_states": {},
+            "decay_status": {"global_decay": 0.0},
+            "sensor_availability": {
+                k: v.get("availability", False) for k, v in self._sensor_states.items()
+            },
+            "is_occupied": False,
+        }
+
+    async def mark_initialization_complete(self):
+        """Mark the coordinator as fully initialized."""
+        async with self._startup_lock:
+            self._initialization_complete = True
+            await self.async_refresh()  # Perform first full refresh
+
     async def async_update_threshold(self, value: float) -> None:
+        _LOGGER.debug("Updating threshold")
         if not 0 <= value <= 100:
             raise ValueError("Threshold must be between 0 and 100")
         old_threshold = self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
@@ -639,13 +702,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         await self.async_refresh()
 
     def get_threshold_decimal(self) -> float:
+        _LOGGER.debug("Getting threshold decimal")
         threshold = self.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
         return threshold / 100.0
 
     def get_configured_sensors(self) -> list[str]:
+        _LOGGER.debug("Getting configured sensors")
         return self._get_all_configured_sensors()
 
     def _get_decay_config(self) -> DecayConfig:
+        _LOGGER.debug("Getting decay config")
         return DecayConfig(
             enabled=self.options_config.get("decay_enabled", True),
             window=self.options_config.get("decay_window", 300),
@@ -654,6 +720,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def update_learned_priors(
         self, entity_id: str, p_true: float, p_false: float, prior: float
     ) -> None:
+        _LOGGER.debug("Updating learned priors")
         self.learned_priors[entity_id] = {
             "prob_given_true": p_true,
             "prob_given_false": p_false,
@@ -663,6 +730,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.hass.async_create_task(self.async_save_state())
 
     async def _compute_initial_priors(self) -> None:
+        _LOGGER.debug("Computing initial priors")
         if not self.options_config.get("historical_analysis_enabled", True):
             return
 
@@ -690,6 +758,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.async_update_listeners()
 
     async def async_save_state(self) -> None:
+        _LOGGER.debug("Saving state")
         now = dt_util.utcnow()
         if now - self._last_save < self._save_interval:
             return
@@ -702,6 +771,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 _LOGGER.error("Failed to save state: %s", err)
 
     async def async_restore_state(self, stored_data: dict) -> None:
+        _LOGGER.debug("Restoring state")
         try:
             if not isinstance(stored_data, dict):
                 raise ValueError("Invalid storage data format")
@@ -731,6 +801,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._reset_state()
 
     async def _save_data(self, data: ProbabilityResult) -> None:
+        _LOGGER.debug("Saving data")
         try:
             if not data:
                 return
@@ -740,5 +811,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_stop_periodic_task(self) -> None:
         """Stop the periodic task."""
+        _LOGGER.debug("Stopping periodic task")
         if self._remove_periodic_task:
             self._remove_periodic_task()

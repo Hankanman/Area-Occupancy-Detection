@@ -86,11 +86,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.setdefault(DOMAIN, {})
 
         # Validate configurations
+        _LOGGER.debug("Validating configurations")
         validate_config(entry.data, validate_core=True)
         validate_config(dict(entry.options), validate_core=False)
+        _LOGGER.debug("Configurations validated")
 
+        _LOGGER.debug("Initializing AreaOccupancyStorage")
         store = AreaOccupancyStorage(hass, entry.entry_id)
 
+        _LOGGER.debug("Initializing AreaOccupancyCoordinator")
         coordinator = AreaOccupancyCoordinator(
             hass=hass,
             entry_id=entry.entry_id,
@@ -99,28 +103,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         # Load stored data
+        _LOGGER.debug("Initializing stored data")
         await coordinator.async_load_stored_data()
-        # Initialize states without blocking historical analysis
+
+        # Initialize states without blocking
+        _LOGGER.debug("Initializing states")
         await coordinator.async_initialize_states()
 
-        # Schedule periodic historical analysis
-        coordinator.schedule_periodic_historical_analysis()
-
         # Save references
+        _LOGGER.debug("Initializing references")
         hass.data[DOMAIN][entry.entry_id] = {
             "coordinator": coordinator,
             "store": store,
         }
+        _LOGGER.debug("References initialized")
 
+        _LOGGER.debug("Adding update listener")
         entry.async_on_unload(entry.add_update_listener(async_update_options))
+        _LOGGER.debug("Update listener added")
+
+        _LOGGER.debug("Forwarding entry setups")
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        _LOGGER.debug("Forwarding entry setups completed")
 
-        # Schedule the historical analysis after HA has fully started
+        # Schedule both periodic tasks and initial historical analysis after HA start
         @callback
-        async def after_startup(event):
-            await coordinator.async_run_historical_analysis_task()
+        def schedule_startup_tasks(_event):
+            """Schedule startup tasks after HA has fully started."""
+            _LOGGER.debug("Home Assistant started, scheduling startup tasks")
 
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, after_startup)
+            async def async_complete_setup():
+                await coordinator.mark_initialization_complete()
+                coordinator.schedule_periodic_historical_analysis()
+                await coordinator.async_run_historical_analysis_task()
+
+            hass.async_create_task(async_complete_setup())
+
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, schedule_startup_tasks)
 
         return True
 
@@ -169,9 +188,7 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
-    _LOGGER.debug(
-        "Migrating Area Occupancy entry from version %s", config_entry.version
-    )
+    _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
 
     try:
         if config_entry.version == 1:
