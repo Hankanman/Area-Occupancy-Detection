@@ -13,11 +13,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
-    async_call_later,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.debounce import Debouncer
 
 from .const import (
     DOMAIN,
@@ -110,6 +110,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._historical_analysis_lock = asyncio.Lock()
         self._remove_state_listener = None
 
+        # Initialize the debouncer
+        self._debouncer = Debouncer(
+            hass,
+            _LOGGER,
+            cooldown=0.1,
+            immediate=True,
+            function=self.async_refresh,
+        )
+
     def _create_calculator(self) -> ProbabilityCalculator:
         return ProbabilityCalculator(
             hass=self.hass,
@@ -171,41 +180,40 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._reset_state()
 
     async def async_initialize_states(self) -> None:
-        """Initialize sensor states.
+        """Initialize sensor states."""
+        async with self._state_lock:
+            try:
+                sensors = self._get_all_configured_sensors()
+                for entity_id in sensors:
+                    state = self.hass.states.get(entity_id)
+                    is_available = bool(
+                        state
+                        and state.state
+                        not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
+                    )
+                    self._sensor_states[entity_id] = {
+                        "state": state.state if is_available else None,
+                        "last_changed": (
+                            state.last_changed.isoformat()
+                            if state and state.last_changed
+                            else dt_util.utcnow().isoformat()
+                        ),
+                        "availability": is_available,
+                    }
 
-        Call this after async_load_stored_data() in __init__.py.
-        """
-        try:
-            sensors = self._get_all_configured_sensors()
-            for entity_id in sensors:
-                state = self.hass.states.get(entity_id)
-                is_available = bool(
-                    state
-                    and state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
-                )
-                self._sensor_states[entity_id] = {
-                    "state": state.state if is_available else None,
-                    "last_changed": (
-                        state.last_changed.isoformat()
-                        if state and state.last_changed
-                        else dt_util.utcnow().isoformat()
-                    ),
-                    "availability": is_available,
-                }
+                    if (
+                        entity_id in self.core_config["motion_sensors"]
+                        and is_available
+                        and state.state == STATE_ON
+                    ):
+                        self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-                if (
-                    entity_id in self.core_config["motion_sensors"]
-                    and is_available
-                    and state.state == STATE_ON
-                ):
-                    self._motion_timestamps[entity_id] = dt_util.utcnow()
+                _LOGGER.info("Initialized states for sensors: %s", sensors)
+            except (HomeAssistantError, ValueError, LookupError) as err:
+                _LOGGER.error("Error initializing states: %s", err)
+                self._sensor_states = {}
 
-            _LOGGER.info("Initialized states for sensors: %s", sensors)
-        except (HomeAssistantError, ValueError, LookupError) as err:
-            _LOGGER.error("Error initializing states: %s", err)
-            self._sensor_states = {}
-
-        self._setup_entity_tracking()
+            self._setup_entity_tracking()
 
     def schedule_periodic_historical_analysis(self):
         """Schedule the historical analysis to run every 6 hours."""
@@ -228,11 +236,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             except (ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Error running historical analysis: %s", err)
 
-    def set_last_positive_trigger(self, timestamp: datetime) -> None:
-        self._last_positive_trigger = timestamp
+    async def set_last_positive_trigger(self, timestamp: datetime) -> None:
+        """Set the timestamp of the last positive trigger."""
+        async with self._state_lock:
+            self._last_positive_trigger = timestamp
 
-    def get_last_positive_trigger(self) -> datetime | None:
-        return self._last_positive_trigger
+    async def get_last_positive_trigger(self) -> datetime | None:
+        """Get the timestamp of the last positive trigger."""
+        async with self._state_lock:
+            return self._last_positive_trigger
 
     def get_decay_window(self) -> int:
         return self._decay_window
@@ -241,7 +253,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return self.options_config.get("decay_min_delay", 60)
 
     def _setup_entity_tracking(self) -> None:
-        """Set up event listener to track entity state changes and debounce updates."""
+        """Set up event listener to track entity state changes."""
         entities = self._get_all_configured_sensors()
         _LOGGER.debug("Setting up entity tracking for: %s", entities)
 
@@ -249,10 +261,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._remove_state_listener()
             self._remove_state_listener = None
 
-        self._debounce_refresh = None
-
         @callback
         def async_state_changed_listener(event) -> None:
+            """Handle state changes."""
             entity_id = event.data.get("entity_id")
             new_state = event.data.get("new_state")
 
@@ -263,6 +274,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 new_state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""]
             )
 
+            # Update states without async lock since this is a callback
             self._sensor_states[entity_id] = {
                 "state": new_state.state if is_available else None,
                 "last_changed": (
@@ -280,15 +292,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             ):
                 self._motion_timestamps[entity_id] = dt_util.utcnow()
 
-            if self._debounce_refresh is not None:
-                self._debounce_refresh()
-                self._debounce_refresh = None
-
-            self._debounce_refresh = async_call_later(
-                self.hass,
-                0.1,
-                self._async_debounced_refresh,
-            )
+            # Schedule the refresh
+            self.hass.async_create_task(self._debouncer.async_call())
 
         self._remove_state_listener = async_track_state_change_event(
             self.hass,
@@ -320,8 +325,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def _async_update_data(self) -> ProbabilityResult:
         """Update data by recalculating current probability."""
-        try:
-            async with self._state_lock:
+        async with self._state_lock:
+            try:
                 current_slot = {}
                 if self._historical_analysis_ready.is_set():
                     current_time = dt_util.utcnow()
@@ -340,11 +345,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 await self._save_data(result)
                 return result
 
-        except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
-            _LOGGER.error("Error updating data: %s", err, exc_info=True)
-            raise UpdateFailed(f"Error updating data: {err}") from err
+            except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
+                _LOGGER.error("Error updating data: %s", err, exc_info=True)
+                raise UpdateFailed(f"Error updating data: {err}") from err
 
     def _update_historical_tracking(self, result: ProbabilityResult) -> None:
+        """Update historical tracking data."""
         now = dt_util.utcnow()
 
         self._probability_history.append(result["probability"])
@@ -453,6 +459,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     async def async_reset(self) -> None:
+        """Reset the coordinator."""
         self._sensor_states.clear()
         self._motion_timestamps.clear()
         self._probability_history.clear()
@@ -470,11 +477,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._remove_state_listener()
             self._remove_state_listener = None
 
-        if self._debounce_refresh is not None:
-            self._debounce_refresh()
-            self._debounce_refresh = None
+        if self._debouncer is not None:
+            await self._debouncer.async_shutdown()
+            self._debouncer = None
+
+        if self._remove_periodic_task:
+            self._remove_periodic_task()
+            self._remove_periodic_task = None
 
     async def async_unload(self) -> None:
+        """Unload the coordinator."""
         if self.data:
             await self._save_data(self.data)
 
@@ -482,9 +494,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._remove_state_listener()
             self._remove_state_listener = None
 
-        if self._debounce_refresh is not None:
-            self._debounce_refresh()
-            self._debounce_refresh = None
+        if self._debouncer is not None:
+            await self._debouncer.async_shutdown()
+            self._debouncer = None
+
+        if self._remove_periodic_task:
+            self._remove_periodic_task()
+            self._remove_periodic_task = None
 
     def update_options(self, options_config: OptionsConfig) -> None:
         try:
@@ -605,11 +621,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._entity_ids.discard(entity_id)
 
     async def async_refresh(self) -> None:
-        try:
-            result = await self._async_update_data()
-            self.async_set_updated_data(result)
-        except (HomeAssistantError, ValueError, RuntimeError) as err:
-            _LOGGER.error("Error during refresh: %s", err, exc_info=True)
+        """Refresh data, ensuring thread safety."""
+        async with self._state_lock:
+            await super().async_refresh()
 
     async def async_update_threshold(self, value: float) -> None:
         if not 0 <= value <= 100:
