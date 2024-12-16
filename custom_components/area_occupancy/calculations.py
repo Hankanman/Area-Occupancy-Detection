@@ -6,6 +6,7 @@ import math
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
+import collections
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
@@ -144,8 +145,9 @@ class ProbabilityCalculator:
         self._cache: dict[str, dict[str, Any]] = {}
         self._last_cache_update: datetime | None = None
 
-        # Baseline cache: {entity_id: {"upper_bound": float, "timestamp": datetime}}
-        self._baseline_cache: dict[str, dict[str, Any]] = {}
+        # Use an OrderedDict with a maximum size for the baseline cache
+        self._baseline_cache = collections.OrderedDict()
+        self._baseline_cache_max_size = 100  # Set an appropriate size limit
 
     def _needs_cache_update(self) -> bool:
         return (
@@ -261,14 +263,21 @@ class ProbabilityCalculator:
         now = dt_util.utcnow()
         cached = self._baseline_cache.get(entity_id)
         if cached and (now - cached["timestamp"]).total_seconds() < BASELINE_CACHE_TTL:
+            # Move the key to the end to indicate recent use
+            self._baseline_cache.move_to_end(entity_id)
             return cached["upper_bound"]
 
         # Compute new baseline since cache is empty or expired
         env_upper_bound = self._compute_environmental_baseline(entity_states)
-        self._baseline_cache[entity_id] = {
-            "upper_bound": env_upper_bound,
-            "timestamp": now,
-        }
+        if env_upper_bound is not None:
+            # Before adding to cache, check size and evict oldest if necessary
+            if len(self._baseline_cache) >= self._baseline_cache_max_size:
+                self._baseline_cache.popitem(last=False)  # Remove oldest item
+
+            self._baseline_cache[entity_id] = {
+                "upper_bound": env_upper_bound,
+                "timestamp": now,
+            }
         return env_upper_bound
 
     def _compute_environmental_baseline(self, states: list[State]) -> Optional[float]:
@@ -539,10 +548,10 @@ class ProbabilityCalculator:
             decay_status = {}
 
             if active_triggers:
-                self.coordinator.set_last_positive_trigger(now)
+                await self.coordinator.set_last_positive_trigger(now)
                 decay_status["global_decay"] = 0.0
             else:
-                last_trigger = self.coordinator.get_last_positive_trigger()
+                last_trigger = await self.coordinator.get_last_positive_trigger()
                 if last_trigger is not None:
                     elapsed = (now - last_trigger).total_seconds()
                     decay_window = self.coordinator.get_decay_window()
