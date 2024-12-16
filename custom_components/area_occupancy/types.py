@@ -12,27 +12,29 @@ SensorId = str
 SensorStates = Dict[SensorId, "SensorState"]
 
 
-# Core configuration types
-class CoreConfig(TypedDict):
-    """Core configuration that cannot be changed after setup."""
+# Unified configuration type
+class Config(TypedDict, total=False):
+    """Unified configuration for the integration."""
 
+    # Required fields
     name: str
     area_id: str
     motion_sensors: list[str]
 
-
-class OptionsConfig(TypedDict, total=False):
-    """Optional configuration that can be updated."""
-
+    # Optional fields
     media_devices: list[str]
     appliances: list[str]
     illuminance_sensors: list[str]
     humidity_sensors: list[str]
     temperature_sensors: list[str]
+    door_sensors: list[str]
+    window_sensors: list[str]
+    lights: list[str]
     threshold: float
     history_period: int
     decay_enabled: bool
     decay_window: int
+    decay_min_delay: int
     historical_analysis_enabled: bool
 
 

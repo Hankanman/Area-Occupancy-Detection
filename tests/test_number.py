@@ -31,4 +31,4 @@ async def test_threshold_number(hass: HomeAssistant, init_integration):
 
     # Verify coordinator was updated with percentage value
     coordinator = hass.data[DOMAIN][init_integration.entry_id]["coordinator"]
-    assert coordinator.options_config[CONF_THRESHOLD] == 70.0
+    assert coordinator.config[CONF_THRESHOLD] == 70.0

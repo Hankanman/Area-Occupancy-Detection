@@ -25,7 +25,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .types import (
     ProbabilityResult,
-    DecayConfig,
 )
 from .probabilities import (
     MOTION_PROB_GIVEN_TRUE,
@@ -59,6 +58,15 @@ from .probabilities import (
     ENVIRONMENTAL_DEFAULT_PRIOR,
 )
 from .const import (
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_DOOR_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
     CACHE_DURATION,
 )
 
@@ -122,29 +130,22 @@ class ProbabilityCalculator:
         self,
         hass: HomeAssistant,
         coordinator,
-        motion_sensors: list[str],
-        media_devices: list[str] | None = None,
-        appliances: list[str] | None = None,
-        illuminance_sensors: list[str] | None = None,
-        humidity_sensors: list[str] | None = None,
-        temperature_sensors: list[str] | None = None,
-        door_sensors: list[str] | None = None,
-        window_sensors: list[str] | None = None,
-        lights: list[str] | None = None,
-        decay_config: DecayConfig | None = None,
+        config: dict[str, Any],  # Unified configuration
     ) -> None:
         _LOGGER.debug("Initializing ProbabilityCalculator")
         self.coordinator = coordinator
-        self.motion_sensors = motion_sensors
-        self.media_devices = media_devices or []
-        self.appliances = appliances or []
-        self.illuminance_sensors = illuminance_sensors or []
-        self.humidity_sensors = humidity_sensors or []
-        self.temperature_sensors = temperature_sensors or []
-        self.door_sensors = door_sensors or []
-        self.window_sensors = window_sensors or []
-        self.lights = lights or []
-        self.decay_config = decay_config or DecayConfig()
+        self.config = config
+
+        # Use self.config to extract sensor lists
+        self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
+        self.media_devices = self.config.get(CONF_MEDIA_DEVICES, [])
+        self.appliances = self.config.get(CONF_APPLIANCES, [])
+        self.illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
+        self.humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
+        self.temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
+        self.door_sensors = self.config.get(CONF_DOOR_SENSORS, [])
+        self.window_sensors = self.config.get(CONF_WINDOW_SENSORS, [])
+        self.lights = self.config.get(CONF_LIGHTS, [])
 
         self.hass = hass
         self._cache: dict[str, dict[str, Any]] = {}

@@ -15,10 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    CONF_AREA_ID,
     CONF_NAME,
-    CONF_THRESHOLD,
-    DEFAULT_THRESHOLD,
     NAME_BINARY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
@@ -41,22 +38,17 @@ class AreaOccupancyBinarySensor(
         super().__init__(coordinator)
         self.coordinator = coordinator
         self.entry_id = entry_id
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_occupancy"
-        )
-        self._attr_name = f"{coordinator.core_config[CONF_NAME]} {NAME_BINARY_SENSOR}"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_occupancy"
+        self._attr_name = f"{coordinator.config[CONF_NAME]} {NAME_BINARY_SENSOR}"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_device_info = get_device_info(
-            entry_id, coordinator.core_config[CONF_NAME]
+            entry_id, coordinator.config[CONF_NAME]
         )
 
     @property
     def is_on(self) -> bool:
         """Return True if the area is currently occupied."""
-        threshold = (
-            self.coordinator.options_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-            / 100.0
-        )
+        threshold = self.coordinator.get_threshold_decimal()
         probability = self.coordinator.data.get("probability", 0.0)
         return probability >= threshold
 
