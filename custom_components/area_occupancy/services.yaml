@@ -1,74 +1,20 @@
-export_calculations:
-  name: Export calculations
-  description: "Export area occupancy probability calculations to a JSON file."
+update_priors:
+  name: Update Priors
+  description: "Manually trigger an update of the learned prior probabilities for all configured sensors."
   fields:
     entry_id:
       name: Entry ID
-      description: "Select the Area Occupancy instance"
+      description: "Select the Area Occupancy instance to update priors for."
       required: true
       selector:
         config_entry:
           integration: area_occupancy
-    start_time:
-      name: Start Time
-      description: "Start time for the calculations (defaults to 7 days ago)"
+    history_period:
+      name: History Period
+      description: "Number of days of history to analyze (defaults to configured history period)"
       required: false
-      selector:
-        datetime:
-    end_time:
-      name: End Time
-      description: "End time for the calculations (defaults to now)"
-      required: false
-      selector:
-        datetime:
-    output_file:
-      name: Output File
-      description: "The output file path."
-      required: false
-      default: "occupancy_calculations.json"
-      example: "/config/occupancy_calculations.json"
-      selector:
-        text:
-
-export_historical_analysis:
-  name: Export historical analysis
-  description: "Export historical analysis of area occupancy to a JSON file."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance"
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-    days:
-      name: Days
-      description: "Number of days for the historical analysis."
-      required: false
-      default: 7
-      example: 7
       selector:
         number:
           min: 1
           max: 30
           step: 1
-    output_file:
-      name: Output File
-      description: "The output file path."
-      required: false
-      default: "historical_analysis.json"
-      example: "/config/historical_analysis.json"
-      selector:
-        text:
-
-run_historical_analysis:
-  name: Run Historical Analysis
-  description: "Manually trigger the historical analysis for the Area Occupancy Detection integration."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to run the analysis for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
