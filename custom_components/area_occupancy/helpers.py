@@ -6,9 +6,28 @@ import logging
 from typing import Any, Final
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.config_entries import ConfigEntry
 
 from .coordinator import AreaOccupancyCoordinator
-from .const import DOMAIN, DEVICE_MANUFACTURER, DEVICE_MODEL, DEVICE_SW_VERSION
+from .const import (
+    DOMAIN,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
+    CONF_AREA_ID,
+    NAME_PROBABILITY_SENSOR,
+    NAME_DECAY_SENSOR,
+    NAME_MOTION_PRIOR_SENSOR,
+    NAME_MEDIA_PRIOR_SENSOR,
+    NAME_APPLIANCE_PRIOR_SENSOR,
+    NAME_DOOR_PRIOR_SENSOR,
+    NAME_WINDOW_PRIOR_SENSOR,
+    NAME_LIGHT_PRIOR_SENSOR,
+    NAME_OCCUPANCY_PRIOR_SENSOR,
+    NAME_BINARY_SENSOR,
+    NAME_THRESHOLD_NUMBER,
+)
 from .types import ProbabilityResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,16 +68,18 @@ def get_sensor_attributes(
         }
 
         # Add configured sensors info
-        options_config = coordinator.options_config
-        core_config = coordinator.core_config
+        config = coordinator.config
 
         configured_sensors = {
-            "Motion": core_config.get("motion_sensors", []),
-            "Media": options_config.get("media_devices", []),
-            "Appliances": options_config.get("appliances", []),
-            "Illuminance": options_config.get("illuminance_sensors", []),
-            "Humidity": options_config.get("humidity_sensors", []),
-            "Temperature": options_config.get("temperature_sensors", []),
+            "Motion": config.get("motion_sensors", []),
+            "Media": config.get("media_devices", []),
+            "Appliances": config.get("appliances", []),
+            "Illuminance": config.get("illuminance_sensors", []),
+            "Humidity": config.get("humidity_sensors", []),
+            "Temperature": config.get("temperature_sensors", []),
+            "Door": config.get("door_sensors", []),
+            "Window": config.get("window_sensors", []),
+            "Lights": config.get("lights", []),
         }
 
         # Flatten all sensors to count how many have learned priors
@@ -95,3 +116,72 @@ def get_device_info(entry_id: str, area_name: str) -> dict[str, Any]:
         "model": DEVICE_MODEL,
         "sw_version": DEVICE_SW_VERSION,
     }
+
+
+def generate_migration_map(
+    area_id: str, entry_id: str, platform: str
+) -> dict[str, str]:
+    """Generate migration map for unique IDs based on platform."""
+    if platform == "sensor":
+        return {
+            f"{DOMAIN}_{area_id}_probability": f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_decay": f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_motion_prior": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_MOTION_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_media_prior": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_MEDIA_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_appliance_prior": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_APPLIANCE_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_door_prior": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_DOOR_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_window_prior": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_WINDOW_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_light_prior": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_LIGHT_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_occupancy_prior": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_OCCUPANCY_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
+        }
+    elif platform == "binary_sensor":
+        return {
+            f"{DOMAIN}_{area_id}_occupancy": f"{DOMAIN}_{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
+        }
+    elif platform == "number":
+        return {
+            f"{DOMAIN}_{area_id}_threshold": f"{DOMAIN}_{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}",
+        }
+    return {}
+
+
+async def async_migrate_unique_ids(
+    hass, config_entry: ConfigEntry, platform: str
+) -> None:
+    """Migrate unique IDs of entities in the entity registry."""
+    entity_registry = async_get_entity_registry(hass)
+    updated_entries = 0
+
+    # Get area_id from config entry data
+    area_id = config_entry.data.get(CONF_AREA_ID)
+    entry_id = config_entry.entry_id
+
+    # Generate the migration map for this specific entry
+    migration_map = generate_migration_map(area_id, entry_id, platform)
+
+    for entity_id, entity_entry in entity_registry.entities.items():
+        old_unique_id = entity_entry.unique_id
+        if old_unique_id in migration_map:
+            new_unique_id = migration_map[old_unique_id]
+
+            # Update the unique ID in the registry
+            _LOGGER.info(
+                "Migrating unique ID for %s: %s -> %s",
+                entity_id,
+                old_unique_id,
+                new_unique_id,
+            )
+            entity_registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+            updated_entries += 1
+
+    if updated_entries > 0:
+        _LOGGER.info(
+            "Completed migrating %s unique IDs for area %s", updated_entries, area_id
+        )

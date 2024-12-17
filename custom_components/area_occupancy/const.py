@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from typing import Final
 from datetime import timedelta
+from homeassistant.const import Platform
 
 DOMAIN: Final = "area_occupancy"
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2024.12.1"
+DEVICE_SW_VERSION: Final = "2024.12.2"
 
 # Configuration constants
+CONF_NAME: Final = "name"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
@@ -32,13 +35,10 @@ CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
 # File paths and configuration
-STORAGE_KEY_HISTORY: Final = "area_occupancy_history"
-STORAGE_KEY_PATTERNS: Final = "area_occupancy_patterns"
-STORAGE_VERSION: Final = 2
+CONF_VERSION: Final = 3
+STORAGE_VERSION: Final = 4
 STORAGE_VERSION_MINOR: Final = 1
-STORAGE_CLEANUP_INTERVAL: Final = timedelta(days=7)
-STORAGE_MAX_CACHE_AGE: Final = timedelta(days=30)
-STORAGE_SAVE_DELAY: Final = 60  # seconds
+CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
 DEFAULT_THRESHOLD: Final = 50.0
@@ -46,7 +46,6 @@ DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
-DEFAULT_CACHE_TTL: Final = 3600  # seconds (1 hour)
 DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 
 # Entity naming

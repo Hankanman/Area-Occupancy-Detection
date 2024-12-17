@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 import voluptuous as vol
@@ -48,7 +47,7 @@ from .const import (
     CONF_DECAY_WINDOW,
     CONF_DECAY_MIN_DELAY,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_AREA_ID,
+    CONF_VERSION,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
@@ -181,7 +180,7 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
             CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=Platform.LIGHT,
+                domain=[Platform.LIGHT, Platform.SWITCH],
                 multiple=True,
             ),
         ),
@@ -349,33 +348,15 @@ class BaseOccupancyFlow:
                 if validate:
                     self._validate_config(user_input)
 
-                if step_id == "user":
-                    # Special handling for initial step
-                    area_id = str(uuid.uuid4())
-                    await self.async_set_unique_id(area_id)
-                    self._abort_if_unique_id_configured()
-                    self._core_data = {
-                        CONF_NAME: user_input[CONF_NAME],
-                        CONF_AREA_ID: area_id,
-                        CONF_MOTION_SENSORS: user_input[CONF_MOTION_SENSORS],
-                    }
-                elif step_id == "parameters":
-                    # Special handling for final step
-                    self._options_data.update(user_input)
-                    if isinstance(self, OptionsFlowWithConfigEntry):
-                        return self.async_create_entry(
-                            title="", data=self._options_data
-                        )
-                    return self.async_create_entry(
-                        title=self._core_data.get(CONF_NAME, ""),
-                        data=self._core_data,
-                        options=self._options_data,
-                    )
-                else:
-                    self._options_data.update(user_input)
+                self._data.update(user_input)
 
                 if next_step:
                     return await getattr(self, f"async_step_{next_step}")()
+
+                return self.async_create_entry(
+                    title=self._data.get(CONF_NAME, ""),
+                    data=self._data,
+                )
 
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
@@ -384,17 +365,13 @@ class BaseOccupancyFlow:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
-        schema = schema_func(
-            self._options_data if hasattr(self, "_options_data") else None
-        )
+        schema = schema_func(self._data if hasattr(self, "_data") else None)
         return self.async_show_form(
             step_id=step_id,
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders=(
-                {"name": self._core_data.get(CONF_NAME)}
-                if hasattr(self, "_core_data")
-                else None
+                {"name": self._data.get(step_id)} if hasattr(self, "_data") else None
             ),
         )
 
@@ -402,18 +379,15 @@ class BaseOccupancyFlow:
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection."""
 
-    VERSION = 2
+    VERSION = CONF_VERSION
 
     def __init__(self) -> None:
         """Initialize config flow."""
-        self._core_data: dict[str, Any] = {}
-        self._options_data: dict[str, Any] = {}
+        self._data: dict[str, Any] = {}
 
     def is_matching(self, other_flow: ConfigEntry) -> bool:
         """Check if the entry matches the current flow."""
-        return other_flow.data.get(CONF_AREA_ID) == getattr(self, "_core_data", {}).get(
-            CONF_AREA_ID
-        )
+        return other_flow.entry_id == getattr(self, "entry_id", None)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -439,9 +413,10 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor configuration."""
+        defaults = self._data.copy()
         return await self._handle_step(
             "environmental",
-            create_environmental_schema,
+            lambda x: create_environmental_schema(defaults),
             "parameters",
             False,
             user_input,
@@ -451,8 +426,13 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter configuration."""
+        defaults = self._data.copy()
         return await self._handle_step(
-            "parameters", create_parameters_schema, None, True, user_input
+            "parameters",
+            lambda x: create_parameters_schema(defaults),
+            None,
+            True,
+            user_input,
         )
 
     @staticmethod
@@ -468,8 +448,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self._core_data = dict(config_entry.data)
-        self._options_data = dict(config_entry.options)
+        self._data = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -481,10 +460,15 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle motion sensor options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         schema = {
             vol.Required(
                 CONF_MOTION_SENSORS,
-                default=self._core_data.get(CONF_MOTION_SENSORS, []),
+                default=defaults.get(CONF_MOTION_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.BINARY_SENSOR,
@@ -496,17 +480,30 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 )
             )
         }
+
         return await self._handle_step(
-            "motion", lambda x: schema, "devices", True, user_input
+            "motion",
+            lambda x: schema,
+            "devices",
+            True,
+            user_input,
         )
 
     async def async_step_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle device options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
             "devices",
-            lambda x: create_device_schema(self.hass, x),
+            lambda x: create_device_schema(
+                self.hass,
+                defaults=defaults,
+            ),
             "environmental",
             False,
             user_input,
@@ -516,9 +513,14 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
             "environmental",
-            create_environmental_schema,
+            lambda x: create_environmental_schema(defaults),
             "parameters",
             False,
             user_input,
@@ -528,6 +530,15 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
-            "parameters", create_parameters_schema, None, True, user_input
+            "parameters",
+            lambda x: create_parameters_schema(defaults),
+            None,
+            True,
+            user_input,
         )

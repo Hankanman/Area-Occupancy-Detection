@@ -30,10 +30,10 @@ assignees: Hankanman
 ### Debug Information
 
 **Home Assistant version:**
-<!-- e.g., 2024.1.1 -->
+<!-- e.g., 2024.12.1 -->
 
 **Integration version:**
-<!-- e.g., 2024.12.1 -->
+<!-- e.g., 2024.12.2 -->
 
 **Integration configuration:**
 
@@ -43,6 +43,9 @@ assignees: Hankanman
 * [ ] Illuminance sensors
 * [ ] Humidity sensors
 * [ ] Temperature sensors
+* [ ] Door sensors
+* [ ] Window sensors
+* [ ] Lights
 
 **Relevant logs:**
 ```
