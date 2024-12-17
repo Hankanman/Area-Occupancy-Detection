@@ -48,6 +48,7 @@ from .const import (
     CONF_DECAY_MIN_DELAY,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_AREA_ID,
+    CONF_VERSION,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
@@ -379,7 +380,7 @@ class BaseOccupancyFlow:
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection."""
 
-    VERSION = 2
+    VERSION = CONF_VERSION
 
     def __init__(self) -> None:
         """Initialize config flow."""
