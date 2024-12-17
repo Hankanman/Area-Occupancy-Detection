@@ -27,7 +27,6 @@ from .const import (
     STORAGE_VERSION,
     STORAGE_VERSION_MINOR,
     CONF_NAME,
-    CONF_AREA_ID,
     CONF_THRESHOLD,
     CONF_DECAY_WINDOW,
     CONF_DECAY_ENABLED,
@@ -160,7 +159,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             try:
                 _LOGGER.debug("Updating learned priors for all sensors")
                 await self._update_learned_priors()
-            except Exception as err:
+            except (HomeAssistantError, ValueError, RuntimeError) as err:
                 _LOGGER.error("Error updating learned priors: %s", err)
             # Wait for the specified interval before the next update
             await asyncio.sleep(self._prior_update_interval.total_seconds())
@@ -367,10 +366,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Storing result")
         try:
             stored_data = await self.storage.async_load() or {}
-            area_id = self.config[CONF_AREA_ID]
 
             # Prepare the new data
-            new_area_data = {
+            new_data = {
                 "last_updated": dt_util.utcnow().isoformat(),
                 "last_probability": result["probability"],
                 "configuration": {
@@ -401,22 +399,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             }
 
             # Compare with existing data excluding 'last_updated'
-            existing_area_data = stored_data.get("areas", {}).get(area_id, {}).copy()
-            existing_area_data.pop("last_updated", None)
+            existing_data = stored_data.copy()
+            existing_data.pop("last_updated", None)
 
-            new_area_data_to_compare = new_area_data.copy()
-            new_area_data_to_compare.pop("last_updated", None)
+            new_data_to_compare = new_data.copy()
+            new_data_to_compare.pop("last_updated", None)
 
-            if existing_area_data == new_area_data_to_compare:
+            if existing_data == new_data_to_compare:
                 _LOGGER.debug("No significant changes detected; skipping save.")
                 return  # Data hasn't changed; no need to save
 
             # Update the stored data with the new result
-            stored_data.setdefault("areas", {})
-            stored_data["areas"][area_id] = new_area_data
-
-            # Save stored_data to an instance variable for access in debounced save
-            self._stored_data = stored_data
+            self._stored_data = new_data
 
             # Instead of saving immediately, schedule a debounced save
             await self._save_debouncer.async_call()

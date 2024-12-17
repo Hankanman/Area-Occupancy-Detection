@@ -127,12 +127,19 @@ def generate_migration_map(
             f"{DOMAIN}_{area_id}_probability": f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_decay": f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_motion_prior": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_motion_prior": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_media_prior": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_MEDIA_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_appliance_prior": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_APPLIANCE_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_door_prior": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_DOOR_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_window_prior": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_WINDOW_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_light_prior": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_LIGHT_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
             f"{DOMAIN}_{area_id}_occupancy_prior": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
+            f"{DOMAIN}_{area_id}_{NAME_OCCUPANCY_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
         }
     elif platform == "binary_sensor":
         return {
