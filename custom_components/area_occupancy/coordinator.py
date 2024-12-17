@@ -28,9 +28,6 @@ from .const import (
     STORAGE_VERSION_MINOR,
     CONF_NAME,
     CONF_THRESHOLD,
-    CONF_DECAY_WINDOW,
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_MIN_DELAY,
     CONF_APPLIANCES,
     CONF_ILLUMINANCE_SENSORS,
     CONF_HUMIDITY_SENSORS,
@@ -41,15 +38,11 @@ from .const import (
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     DEFAULT_THRESHOLD,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
 )
 from .types import (
     ProbabilityResult,
-    DecayConfig,
 )
 from .calculations import ProbabilityCalculator
 from .storage import AreaOccupancyStorage
@@ -101,7 +94,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._entity_ids: set[str] = set()
         self._last_positive_trigger = None
-        self._decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
 
         self._remove_state_listener = None
 
@@ -265,14 +257,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Synchronously get the timestamp of the last positive trigger."""
         with self._thread_lock:
             return self._last_positive_trigger
-
-    def get_decay_window(self) -> int:
-        _LOGGER.debug("Getting decay window")
-        return self._decay_window
-
-    def get_decay_min_delay(self) -> int:
-        _LOGGER.debug("Getting decay min delay")
-        return self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -473,9 +457,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 **self.config_entry.options,
             }  # Reload config
             self._calculator = self._create_calculator()
-            self._decay_window = self.config.get(
-                CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
-            )
 
             # Re-setup entity tracking with new sensors
             self._setup_entity_tracking()
@@ -582,14 +563,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def get_configured_sensors(self) -> list[str]:
         return self._get_all_configured_sensors()
-
-    def _get_decay_config(self) -> DecayConfig:
-        _LOGGER.debug("Getting decay config")
-        return DecayConfig(
-            enabled=self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-            window=self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
-            min_delay=self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY),
-        )
 
     def update_learned_priors(
         self, entity_id: str, p_true: float, p_false: float, prior: float
