@@ -71,6 +71,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
         self.config = {**config_entry.data, **config_entry.options}
 
+        # Initialize learned_priors before super().__init__
+        self.learned_priors: dict[str, dict[str, Any]] = {}
+
         super().__init__(
             hass,
             _LOGGER,
@@ -98,8 +101,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._save_interval = timedelta(seconds=10)
 
         self._entity_ids: set[str] = set()
-        self.learned_priors: dict[str, dict[str, Any]] = {}
-
         self._last_positive_trigger = None
         self._decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
 
@@ -129,7 +130,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._thread_lock = threading.Lock()
 
     def _create_calculator(self) -> ProbabilityCalculator:
-        _LOGGER.debug("Creating ProbabilityCalculator")
+        """Create probability calculator with learned priors."""
+        _LOGGER.debug(
+            "Creating ProbabilityCalculator with learned priors: %s",
+            self.learned_priors,
+        )
         return ProbabilityCalculator(
             hass=self.hass,
             coordinator=self,
@@ -137,10 +142,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     async def async_setup(self) -> None:
-        """Minimal setup. No heavy tasks here."""
+        """Setup the coordinator and load stored data."""
         _LOGGER.debug("Setting up AreaOccupancyCoordinator")
 
-        # Adjust the interval as needed
+        # Load stored data first
+        await self.async_load_stored_data()
+
+        # Initialize states after loading stored data
+        await self.async_initialize_states()
+
+        # Schedule prior updates
         self.hass.loop.create_task(self._schedule_prior_updates())
 
     async def _schedule_prior_updates(self):
@@ -169,22 +180,41 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         try:
             stored_data = await self.storage.async_load()
             if stored_data:
-                self._last_known_values = {}
+                _LOGGER.debug("Found stored data: %s", stored_data)
 
-                self._last_occupied = (
-                    dt_util.parse_datetime(stored_data.get("last_occupied"))
-                    if stored_data.get("last_occupied")
-                    else None
-                )
+                # Restore learned priors first
+                if "learned_priors" in stored_data:
+                    self.learned_priors = stored_data["learned_priors"]
+                    _LOGGER.debug("Restored learned priors: %s", self.learned_priors)
 
-                self._last_state_change = (
-                    dt_util.parse_datetime(stored_data.get("last_state_change"))
-                    if stored_data.get("last_state_change")
-                    else None
-                )
+                self._last_known_values = stored_data.get("last_known_values", {})
 
-                self.learned_priors = stored_data.get("learned_priors", {})
+                # Safely parse last_occupied datetime
+                last_occupied = stored_data.get("last_occupied")
+                if last_occupied and isinstance(last_occupied, str):
+                    try:
+                        self._last_occupied = dt_util.parse_datetime(last_occupied)
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning(
+                            "Failed to parse last_occupied datetime: %s", err
+                        )
+                        self._last_occupied = None
+
+                # Safely parse last_state_change datetime
+                last_state_change = stored_data.get("last_state_change")
+                if last_state_change and isinstance(last_state_change, str):
+                    try:
+                        self._last_state_change = dt_util.parse_datetime(
+                            last_state_change
+                        )
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning(
+                            "Failed to parse last_state_change datetime: %s", err
+                        )
+                        self._last_state_change = None
+
             else:
+                _LOGGER.debug("No stored data found, resetting state")
                 self._reset_state()
         except (ValueError, TypeError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error loading stored data: %s", err)
@@ -229,13 +259,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def set_last_positive_trigger(self, timestamp: datetime) -> None:
         """Synchronously set the timestamp of the last positive trigger."""
-        _LOGGER.debug("Setting last positive trigger synchronously to %s", timestamp)
         with self._thread_lock:
             self._last_positive_trigger = timestamp
 
     def get_last_positive_trigger(self) -> datetime | None:
         """Synchronously get the timestamp of the last positive trigger."""
-        _LOGGER.debug("Getting last positive trigger synchronously")
         with self._thread_lock:
             return self._last_positive_trigger
 
