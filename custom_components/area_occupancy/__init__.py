@@ -12,9 +12,11 @@ from .const import (
     DOMAIN,
     STORAGE_VERSION,
     PLATFORMS,
+    CONF_AREA_ID,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .service import async_setup_services
+from .helpers import async_migrate_unique_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,14 +84,29 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
 
     if config_entry.version < STORAGE_VERSION:
-        new_version = STORAGE_VERSION
-        config_entry.version = new_version
+        # Get existing data
+        data = {**config_entry.data}
+        options = {**config_entry.options}
 
-        _LOGGER.info(
-            "Successfully migrated Area Occupancy entry %s to version %s",
-            config_entry.entry_id,
-            new_version,
-        )
-        return True
+        # If we have an area_id in the old config, use it for migration
+        if CONF_AREA_ID in data:
+            # Run the unique ID migrations first
+            for platform in PLATFORMS:
+                await async_migrate_unique_ids(hass, config_entry, platform)
+
+            # Remove area_id from data after migration
+            data.pop(CONF_AREA_ID)
+
+            # Update the config entry without the area_id
+            hass.config_entries.async_update_entry(
+                config_entry, data=data, options=options, version=STORAGE_VERSION
+            )
+
+            _LOGGER.info(
+                "Successfully migrated Area Occupancy entry %s to version %s",
+                config_entry.entry_id,
+                STORAGE_VERSION,
+            )
+            return True
 
     return True
