@@ -1,10 +1,25 @@
 # Project Instructions
 
-Use this document as a guideline to build the Home Assistant integration for Area Occupancy Detection.
+Use this document as a guideline to build the Home Assistant integration for Area Occupancy Detection. All modifications should align with the Integration Goal
 
 ## Overview
 
 This integration provides intelligent room occupancy detection by combining multiple sensor inputs using Bayesian probability calculations. It detects occupancy more accurately than single motion sensors by considering various environmental factors and device states.
+
+## Integration Goal
+
+Take the input entities from the configuration (motion/occupancy sensors, appliances/other devices, media devices, lights, doors, windows and environmental factors) as defined in the configuration flow, figuring out their priors based on a strong indicator such as an existing motion or occupancy sensor, so for example we should look at the history of say a media device and determine how much the "playing" or "paused" state coincides with a valid occupancy sensor being "on" over the configure history period for example the last 7 days, it should interrogate the recorder or statistics integration to do this.
+
+There are constants stored in probabilities.py as defaults, they should be overridden by the "true" data found in the coordinator for a prob_given_false, prob_given_true and prior_probability. These values should then be passed into a composite bayesian calculation alongside the given sensors current state to determine the current probability of a given area being occupied based upon the input sensors of from the configuration
+
+The Occupancy Probability sensor is the overall bayesian probability calculation shown as a percentage.
+
+The Occupancy Status sensor is a binary sensor that is on if the Occupancy Probability is above the threshold and off if it is below the threshold.
+
+The Occupancy Prior sensor is the prior probability of the area being occupied based upon the input sensors from the configuration.
+
+The individual prior sensors are the prior probabilities of the input sensors from the configuration for each given category (motion, media, appliances, doors, windows, lights and environmental factors).
+
 
 ## Tech Stack
 
@@ -15,17 +30,14 @@ This integration provides intelligent room occupancy detection by combining mult
 
 ## Project Structure
 
-- `custom_components/occupancy_detection` - Main integration directory
+- `custom_components/area_occupancy` - Main integration directory
   - `__init__.py` - Integration setup
-  - `base.py` - Base classes for sensor and binary sensor entities
   - `binary_sensor.py` - Binary sensor entity definitions
   - `calculations.py` - Probability calculations
   - `config_flow.py` - Configuration flow for the integration
   - `const.py` - Constants used across the integration
   - `coordinator.py` - Coordinator for the integration
-  - `historical_analysis.py` - Historical data retrieval and analysis
   - `manifest.json` - Integration metadata
-  - `prior_sensors.py` - Prior sensor data retrieval and sensor creation
   - `probabilities.py` - Default probability constants
   - `sensor.py` - Sensor entity definitions
   - `service.py` - Service creation and
@@ -113,56 +125,5 @@ Follow these rules strictly to ensure high-quality development.
 - Add comments to explain non-trivial code sections.
 - Use docstrings for all public methods and classes.
 - Document the Bayesian calculation logic explicitly in the code.
-
-### Example Code Snippets
-
-#### Sensor Entity
-
-```python
-from homeassistant.helpers.entity import SensorEntity
-from homeassistant.const import DEVICE_CLASS_OCCUPANCY, UNIT_PERCENTAGE
-
-class OccupancySensor(SensorEntity):
-    """Representation of an Occupancy Sensor."""
-
-    def __init__(self, name, unique_id, state):
-        self._attr_name = name
-        self._attr_unique_id = unique_id
-        self._state = state
-
-    @property
-    def device_class(self):
-        return DEVICE_CLASS_OCCUPANCY
-
-    @property
-    def state(self):
-        return self._state
-
-    @property
-    def unit_of_measurement(self):
-        return UNIT_PERCENTAGE
-```
-
-#### Config Flow
-
-```python
-from homeassistant import config_entries
-import voluptuous as vol
-
-class OccupancyDetectionConfigFlow(config_entries.ConfigFlow):
-    """Handle a config flow for Occupancy Detection."""
-
-    VERSION = 1
-
-    async def async_step_user(self, user_input=None):
-        if user_input is not None:
-            return self.async_create_entry(title="Occupancy Detection", data=user_input)
-
-        schema = vol.Schema({
-            vol.Required("name"): str,
-            vol.Optional("motion_sensors"): list,
-        })
-        return self.async_show_form(step_id="user", data_schema=schema)
-```
 
 By adhering to these guidelines, you will create a robust, maintainable, and high-quality integration for Home Assistant.
