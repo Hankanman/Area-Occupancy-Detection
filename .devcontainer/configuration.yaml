@@ -1,19 +1,37 @@
-# Loads default set of integrations. Do not remove.
+# # Loads default set of integrations. Do not remove.
 default_config:
 
-automation: !include automations.yaml
-script: !include scripts.yaml
-scene: !include scenes.yaml
+# automation: !include automations.yaml
+# script: !include scripts.yaml
+# scene: !include scenes.yaml
 
 logger:
   default: CRITICAL
   logs:
-    custom_components.area_occupancy: debug
+    custom_components.area_occupancy: DEBUG
 
 # debugpy:
 
 # Input controls for testing
+
+# Add to input_select section (create if it doesn't exist)
+input_select:
+  mock_media_state:
+    name: Mock Media Player State
+    options:
+      - playing
+      - paused
+      - idle
+      - off
+    initial: off
 input_boolean:
+  # Door and window controls
+  mock_door:
+    name: Mock Door State
+    initial: off
+  mock_window:
+    name: Mock Window State
+    initial: off
   # Motion sensor controls
   mock_motion_1:
     name: Mock Motion Sensor 1
@@ -40,6 +58,12 @@ input_boolean:
     initial: off
 
 input_number:
+  mock_media_volume:
+    name: Mock Media Volume
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
   # Environmental sensor controls
   mock_illuminance_1:
     name: Mock Illuminance 1
@@ -88,18 +112,21 @@ binary_sensor:
       motion_sensor_1:
         friendly_name: "Motion Sensor 1"
         device_class: motion
+        unique_id: "motion_sensor_1"
         value_template: "{{ states('input_boolean.mock_motion_1') }}"
         availability_template: "true"
 
       motion_sensor_2:
         friendly_name: "Motion Sensor 2"
         device_class: motion
+        unique_id: "motion_sensor_2"
         value_template: "{{ states('input_boolean.mock_motion_2') }}"
         availability_template: "true"
 
       motion_sensor_3:
         friendly_name: "Motion Sensor 3"
         device_class: motion
+        unique_id: "motion_sensor_3"
         value_template: "{{ states('input_boolean.mock_motion_3') }}"
         availability_template: "{{ now().second < 50 }}" # Simulates periodic unavailability
 
@@ -107,17 +134,35 @@ binary_sensor:
       tv_power_sensor:
         friendly_name: "TV Power State"
         device_class: power
+        unique_id: "tv_power_sensor"
         value_template: "{{ states('input_boolean.mock_tv') }}"
 
       computer_power_sensor:
         friendly_name: "Computer Power State"
         device_class: power
+        unique_id: "computer_power_sensor"
         value_template: "{{ states('input_boolean.mock_computer') }}"
 
       game_console_power_sensor:
         friendly_name: "Game Console Power State"
         device_class: power
+        unique_id: "game_console_power_sensor"
         value_template: "{{ states('input_boolean.mock_game_console') }}"
+
+      # Door and window sensors
+      door_sensor:
+        friendly_name: "Door Sensor"
+        device_class: door
+        unique_id: "door_sensor"
+        value_template: "{{ states('input_boolean.mock_door') }}"
+        availability_template: "true"
+
+      window_sensor:
+        friendly_name: "Window Sensor"
+        device_class: window
+        unique_id: "window_sensor"
+        value_template: "{{ states('input_boolean.mock_window') }}"
+        availability_template: "true"
 
 sensor:
   - platform: template
@@ -128,12 +173,13 @@ sensor:
         device_class: illuminance
         unit_of_measurement: "lx"
         value_template: "{{ states('input_number.mock_illuminance_1') | float }}"
-
+        unique_id: "illuminance_sensor_1"
       illuminance_sensor_2:
         friendly_name: "Illuminance Sensor 2"
         device_class: illuminance
         unit_of_measurement: "lx"
         value_template: "{{ states('input_number.mock_illuminance_2') | float }}"
+        unique_id: "illuminance_sensor_2"
         availability_template: "{{ now().minute < 55 }}" # Simulates periodic unavailability
 
       # Temperature sensors
@@ -142,22 +188,76 @@ sensor:
         device_class: temperature
         unit_of_measurement: "°C"
         value_template: "{{ states('input_number.mock_temperature_1') | float }}"
-
+        unique_id: "temperature_sensor_1"
       temperature_sensor_2:
         friendly_name: "Temperature Sensor 2"
         device_class: temperature
         unit_of_measurement: "°C"
         value_template: "{{ states('input_number.mock_temperature_2') | float }}"
-
+        unique_id: "temperature_sensor_2"
       # Humidity sensors
       humidity_sensor_1:
         friendly_name: "Humidity Sensor 1"
         device_class: humidity
         unit_of_measurement: "%"
         value_template: "{{ states('input_number.mock_humidity_1') | float }}"
-
+        unique_id: "humidity_sensor_1"
       humidity_sensor_2:
         friendly_name: "Humidity Sensor 2"
         device_class: humidity
         unit_of_measurement: "%"
         value_template: "{{ states('input_number.mock_humidity_2') | float }}"
+        unique_id: "humidity_sensor_2"
+media_player:
+  - platform: universal
+    name: Mock TV Player
+    state_template: >-
+      {% if is_state('input_select.mock_media_state', 'playing') %}
+        playing
+      {% elif is_state('input_select.mock_media_state', 'paused') %}
+        paused
+      {% elif is_state('input_select.mock_media_state', 'idle') %}
+        idle
+      {% else %}
+        off
+      {% endif %}
+    volume_level: "{{ states('input_number.mock_media_volume') | float / 100 }}"
+    commands:
+      turn_on:
+        service: input_select.select_option
+        data:
+          entity_id: input_select.mock_media_state
+          option: idle
+      turn_off:
+        service: input_select.select_option
+        data:
+          entity_id: input_select.mock_media_state
+          option: off
+      volume_up:
+        service: input_number.increment
+        data:
+          entity_id: input_number.mock_media_volume
+      volume_down:
+        service: input_number.decrement
+        data:
+          entity_id: input_number.mock_media_volume
+      volume_set:
+        service: input_number.set_value
+        data_template:
+          entity_id: input_number.mock_media_volume
+          value: "{{ volume_level * 100 }}"
+      media_play:
+        service: input_select.select_option
+        data:
+          entity_id: input_select.mock_media_state
+          option: playing
+      media_pause:
+        service: input_select.select_option
+        data:
+          entity_id: input_select.mock_media_state
+          option: paused
+      media_stop:
+        service: input_select.select_option
+        data:
+          entity_id: input_select.mock_media_state
+          option: idle
