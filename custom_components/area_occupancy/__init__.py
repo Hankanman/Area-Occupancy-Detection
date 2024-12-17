@@ -35,6 +35,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         hass.data.setdefault(DOMAIN, {})
 
+        # Check if area_id is present and needs migration
+        if CONF_AREA_ID in entry.data:
+            if not await async_migrate_entry(hass, entry):
+                return False
+
         # Initialize the coordinator with the unified configuration
         coordinator = AreaOccupancyCoordinator(hass, entry)
 
@@ -83,30 +88,29 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     """Migrate old entry to the new version."""
     _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
 
-    if config_entry.version < STORAGE_VERSION:
-        # Get existing data
-        data = {**config_entry.data}
-        options = {**config_entry.options}
+    # Get existing data
+    data = {**config_entry.data}
+    options = {**config_entry.options}
 
-        # If we have an area_id in the old config, use it for migration
-        if CONF_AREA_ID in data:
-            # Run the unique ID migrations first
-            for platform in PLATFORMS:
-                await async_migrate_unique_ids(hass, config_entry, platform)
+    # If we have an area_id in the old config, use it for migration
+    if CONF_AREA_ID in data:
+        # Run the unique ID migrations first
+        for platform in PLATFORMS:
+            await async_migrate_unique_ids(hass, config_entry, platform)
 
-            # Remove area_id from data after migration
-            data.pop(CONF_AREA_ID)
+        # Remove area_id from data after migration
+        data.pop(CONF_AREA_ID)
 
-            # Update the config entry without the area_id
-            hass.config_entries.async_update_entry(
-                config_entry, data=data, options=options, version=STORAGE_VERSION
-            )
+        # Update the config entry without the area_id
+        hass.config_entries.async_update_entry(
+            config_entry, data=data, options=options, version=STORAGE_VERSION
+        )
 
-            _LOGGER.info(
-                "Successfully migrated Area Occupancy entry %s to version %s",
-                config_entry.entry_id,
-                STORAGE_VERSION,
-            )
-            return True
+        _LOGGER.info(
+            "Successfully migrated Area Occupancy entry %s to version %s",
+            config_entry.entry_id,
+            STORAGE_VERSION,
+        )
+        return True
 
     return True

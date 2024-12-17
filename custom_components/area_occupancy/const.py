@@ -35,7 +35,8 @@ CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
 # File paths and configuration
-STORAGE_VERSION: Final = 3
+CONF_VERSION: Final = 3
+STORAGE_VERSION: Final = 4
 STORAGE_VERSION_MINOR: Final = 1
 CACHE_DURATION: Final = timedelta(hours=6)
 
