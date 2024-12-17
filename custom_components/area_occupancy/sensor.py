@@ -12,9 +12,11 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -35,8 +37,16 @@ from .const import (
     ATTR_LAST_UPDATED,
     ATTR_ACTIVE_TRIGGERS,
     ATTR_SENSOR_PROBABILITIES,
-    CONF_AREA_ID,
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_DOOR_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
+    CONF_HISTORY_PERIOD,
+    DEFAULT_HISTORY_PERIOD,
     NAME_DECAY_SENSOR,
+    CONF_NAME,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
@@ -71,16 +81,11 @@ class AreaOccupancySensorBase(
         self,
         coordinator: AreaOccupancyCoordinator,
         entry_id: str,
-        name: str,
     ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_name = name
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_{name}"
-        )
-        self._area_name = coordinator.core_config["name"]
+        self._area_name = coordinator.config[CONF_NAME]
         self._attr_device_info = get_device_info(entry_id, self._area_name)
 
     @staticmethod
@@ -96,11 +101,10 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         self,
         coordinator: AreaOccupancyCoordinator,
         entry_id: str,
-        name: str,
         default_p_true: float = DEFAULT_PROB_GIVEN_TRUE,
         default_p_false: float = DEFAULT_PROB_GIVEN_FALSE,
     ) -> None:
-        super().__init__(coordinator, entry_id, name)
+        super().__init__(coordinator, entry_id)
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -149,7 +153,11 @@ class PriorProbabilitySensorBase(AreaOccupancySensorBase, SensorEntity):
         p_true, p_false = self._get_aggregated_learned_priors()
         return {
             ATTR_TOTAL_PERIOD: str(
-                timedelta(days=self.coordinator.options_config["history_period"])
+                timedelta(
+                    days=self.coordinator.config.get(
+                        CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                    )
+                )
             ),
             ATTR_PROB_GIVEN_TRUE: p_true,
             ATTR_PROB_GIVEN_FALSE: p_false,
@@ -164,13 +172,14 @@ class MotionPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_MOTION_PRIOR_SENSOR,
             default_p_true=MOTION_PROB_GIVEN_TRUE,
             default_p_false=MOTION_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_MOTION_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.core_config["motion_sensors"]
+        return self.coordinator.config.get(CONF_MOTION_SENSORS, [])
 
 
 class MediaPriorSensor(PriorProbabilitySensorBase):
@@ -180,13 +189,14 @@ class MediaPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_MEDIA_PRIOR_SENSOR,
             default_p_true=MEDIA_PROB_GIVEN_TRUE,
             default_p_false=MEDIA_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_MEDIA_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("media_devices", [])
+        return self.coordinator.config.get(CONF_MEDIA_DEVICES, [])
 
 
 class AppliancePriorSensor(PriorProbabilitySensorBase):
@@ -196,13 +206,14 @@ class AppliancePriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_APPLIANCE_PRIOR_SENSOR,
             default_p_true=APPLIANCE_PROB_GIVEN_TRUE,
             default_p_false=APPLIANCE_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_APPLIANCE_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("appliances", [])
+        return self.coordinator.config.get(CONF_APPLIANCES, [])
 
 
 class DoorPriorSensor(PriorProbabilitySensorBase):
@@ -212,13 +223,14 @@ class DoorPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_DOOR_PRIOR_SENSOR,
             default_p_true=DOOR_PROB_GIVEN_TRUE,
             default_p_false=DOOR_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_DOOR_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("door_sensors", [])
+        return self.coordinator.config.get(CONF_DOOR_SENSORS, [])
 
 
 class WindowPriorSensor(PriorProbabilitySensorBase):
@@ -228,13 +240,14 @@ class WindowPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_WINDOW_PRIOR_SENSOR,
             default_p_true=WINDOW_PROB_GIVEN_TRUE,
             default_p_false=WINDOW_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_WINDOW_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("window_sensors", [])
+        return self.coordinator.config.get(CONF_WINDOW_SENSORS, [])
 
 
 class LightPriorSensor(PriorProbabilitySensorBase):
@@ -244,13 +257,14 @@ class LightPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_LIGHT_PRIOR_SENSOR,
             default_p_true=LIGHT_PROB_GIVEN_TRUE,
             default_p_false=LIGHT_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_LIGHT_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
-        return self.coordinator.options_config.get("lights", [])
+        return self.coordinator.config.get(CONF_LIGHTS, [])
 
 
 class OccupancyPriorSensor(PriorProbabilitySensorBase):
@@ -260,10 +274,11 @@ class OccupancyPriorSensor(PriorProbabilitySensorBase):
         super().__init__(
             coordinator,
             entry_id,
-            NAME_OCCUPANCY_PRIOR_SENSOR,
             default_p_true=DEFAULT_PROB_GIVEN_TRUE,
             default_p_false=DEFAULT_PROB_GIVEN_FALSE,
         )
+        self._attr_name = NAME_OCCUPANCY_PRIOR_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}"
 
     def _get_sensor_list(self) -> list[str]:
         # All configured sensors
@@ -274,10 +289,9 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
     """Probability sensor for current area occupancy."""
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
-        super().__init__(coordinator, entry_id, NAME_PROBABILITY_SENSOR)
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_probability"
-        )
+        super().__init__(coordinator, entry_id)
+        self._attr_name = NAME_PROBABILITY_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -331,8 +345,9 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
     """Decay status sensor for area occupancy."""
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
-        super().__init__(coordinator, entry_id, NAME_DECAY_SENSOR)
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.core_config[CONF_AREA_ID]}_decay"
+        super().__init__(coordinator, entry_id)
+        self._attr_name = NAME_DECAY_SENSOR
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -389,35 +404,41 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Area Occupancy sensors based on a config entry."""
-    try:
-        coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
-            "coordinator"
-        ]
-        entities = [
-            AreaOccupancyProbabilitySensor(coordinator, entry.entry_id),
-            AreaOccupancyDecaySensor(coordinator, entry.entry_id),
-        ]
+    """Set up the Area Occupancy sensors based on a config entry."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
 
-        # Create prior sensors if history period is configured
-        if coordinator.options_config.get("history_period"):
-            prior_sensor_classes = [
-                MotionPriorSensor,
-                MediaPriorSensor,
-                AppliancePriorSensor,
-                WindowPriorSensor,
-                DoorPriorSensor,
-                LightPriorSensor,
-                OccupancyPriorSensor,
-            ]
-            entities.extend(
-                cls(coordinator, entry.entry_id) for cls in prior_sensor_classes
-            )
+    sensors = []
 
-        async_add_entities(entities, False)
+    # Always create the core sensors
+    sensors.append(AreaOccupancyProbabilitySensor(coordinator, entry.entry_id))
+    sensors.append(AreaOccupancyDecaySensor(coordinator, entry.entry_id))
 
-    except Exception as err:
-        _LOGGER.error("Error setting up sensors: %s", err)
-        raise HomeAssistantError(
-            f"Failed to set up Area Occupancy sensors: {err}"
-        ) from err
+    # Create prior sensors if history period is configured and greater than 0
+    history_period = coordinator.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+    if history_period > 0:
+        prior_sensor_classes = []
+
+        if coordinator.config.get(CONF_MOTION_SENSORS):
+            prior_sensor_classes.append(MotionPriorSensor)
+        if coordinator.config.get(CONF_MEDIA_DEVICES):
+            prior_sensor_classes.append(MediaPriorSensor)
+        if coordinator.config.get(CONF_APPLIANCES):
+            prior_sensor_classes.append(AppliancePriorSensor)
+        if coordinator.config.get(CONF_DOOR_SENSORS):
+            prior_sensor_classes.append(DoorPriorSensor)
+        if coordinator.config.get(CONF_WINDOW_SENSORS):
+            prior_sensor_classes.append(WindowPriorSensor)
+        if coordinator.config.get(CONF_LIGHTS):
+            prior_sensor_classes.append(LightPriorSensor)
+
+        # If any prior sensors are being added, include the OccupancyPriorSensor
+        if prior_sensor_classes:
+            prior_sensor_classes.append(OccupancyPriorSensor)
+
+        sensors.extend(
+            cls(coordinator, entry_id=entry.entry_id) for cls in prior_sensor_classes
+        )
+
+    async_add_entities(sensors, update_before_add=True)

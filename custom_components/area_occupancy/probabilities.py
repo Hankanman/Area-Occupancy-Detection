@@ -45,8 +45,8 @@ DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Motion sensor defaults
-MOTION_PROB_GIVEN_TRUE: Final[float] = 0.4
-MOTION_PROB_GIVEN_FALSE: Final[float] = 0.1
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
+MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
 
 # Door sensor defaults
 DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
@@ -61,7 +61,7 @@ LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
 LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.4
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
 MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Appliance defaults
@@ -80,10 +80,21 @@ BASELINE_CACHE_TTL: Final[int] = 21600  # 6 hours in seconds
 
 # Default Priors
 DEFAULT_PRIOR: Final[float] = 0.1713
-MOTION_DEFAULT_PRIOR: Final[float] = 0.7692
-MEDIA_DEFAULT_PRIOR: Final[float] = 0.6923
+MOTION_DEFAULT_PRIOR: Final[float] = 0.35
+MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
 APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
 DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
 WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
 LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
 ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
+
+# Sensor type weights (higher weight = more impact)
+SENSOR_WEIGHTS: Final[Dict[str, float]] = {
+    "motion": 0.8,
+    "media": 0.5,
+    "appliance": 0.3,
+    "door": 0.3,
+    "window": 0.2,
+    "light": 0.2,
+    "environmental": 0.1,
+}
