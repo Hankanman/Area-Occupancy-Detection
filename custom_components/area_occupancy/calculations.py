@@ -95,8 +95,9 @@ def update_probability(
     if denominator == 0:
         return prior
 
-    # Clamp result
+    # Calculate the updated probability
     result = numerator / denominator
+    # Clamp result
     return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
 
@@ -438,15 +439,18 @@ class ProbabilityCalculator:
             if not state or not state.get("availability", False):
                 continue
 
+            # Retrieve learned priors
             p_true, p_false = self._get_sensor_priors_from_history(entity_id)
             prior_val = self._get_sensor_prior(entity_id)
             if p_true is None or p_false is None:
+                # Use default priors if learned priors are not available
                 p_true, p_false = self.get_sensor_priors(entity_id)
                 prior_val = get_default_prior(entity_id, self)
 
             is_active = self._is_active_now(entity_id, state["state"])
             if is_active:
                 active_triggers.append(entity_id)
+                # Update the probability using the learned priors
                 current_probability = update_probability(prior_val, p_true, p_false)
 
             sensor_probs[entity_id] = current_probability

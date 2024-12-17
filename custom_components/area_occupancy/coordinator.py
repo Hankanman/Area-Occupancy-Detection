@@ -44,6 +44,8 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_MIN_DELAY,
+    CONF_HISTORY_PERIOD,
+    DEFAULT_HISTORY_PERIOD,
 )
 from .types import (
     ProbabilityResult,
@@ -138,6 +140,32 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def async_setup(self) -> None:
         """Minimal setup. No heavy tasks here."""
         _LOGGER.debug("Setting up AreaOccupancyCoordinator")
+
+        # Schedule periodic update of learned priors
+        self._prior_update_interval = timedelta(
+            hours=1
+        )  # Adjust the interval as needed
+        self.hass.loop.create_task(self._schedule_prior_updates())
+
+    async def _schedule_prior_updates(self):
+        """Schedule periodic updates of learned priors."""
+        while True:
+            try:
+                _LOGGER.debug("Updating learned priors for all sensors")
+                await self._update_learned_priors()
+            except Exception as err:
+                _LOGGER.error("Error updating learned priors: %s", err)
+            # Wait for the specified interval before the next update
+            await asyncio.sleep(self._prior_update_interval.total_seconds())
+
+    async def _update_learned_priors(self):
+        """Update learned priors by calculating them for all configured sensors."""
+        start_time = dt_util.utcnow() - timedelta(
+            days=self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+        )
+        end_time = dt_util.utcnow()
+        for entity_id in self._get_all_configured_sensors():
+            await self._calculator.calculate_prior(entity_id, start_time, end_time)
 
     async def async_load_stored_data(self) -> None:
         """Load stored data from storage."""
@@ -362,9 +390,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             # Update the stored data with the new result
             stored_data.setdefault("areas", {})
             stored_data["areas"][area_id] = new_area_data
-
-            # Log the stored data after the update
-            _LOGGER.debug("Stored data after update: %s", stored_data)
 
             # Save stored_data to an instance variable for access in debounced save
             self._stored_data = stored_data
