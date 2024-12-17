@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.debounce import Debouncer
+from homeassistant.config_entries import ConfigEntry
 
 from .const import (
     DOMAIN,
@@ -49,7 +50,6 @@ from .const import (
 )
 from .types import (
     ProbabilityResult,
-    Config,
     DecayConfig,
 )
 from .calculations import ProbabilityCalculator
@@ -64,12 +64,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def __init__(
         self,
         hass: HomeAssistant,
-        entry_id: str,
-        config: dict[str, Any],
+        config_entry: ConfigEntry,
     ) -> None:
         _LOGGER.debug("Initializing AreaOccupancyCoordinator")
-        self.storage = AreaOccupancyStorage(hass, entry_id)
-        self._last_known_values: dict[str, Any] = {}
+        self.config_entry = config_entry
+        self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
+        self.config = {**config_entry.data, **config_entry.options}
 
         super().__init__(
             hass,
@@ -79,15 +79,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             update_method=self._async_update_data,
         )
 
-        if not config.get(CONF_MOTION_SENSORS):
-            raise HomeAssistantError("No motion sensors configured")
-
-        self.entry_id = entry_id
-        self.config = config
+        self.entry_id = config_entry.entry_id
+        self._last_known_values: dict[str, Any] = {}
 
         self._state_lock = asyncio.Lock()
         self._sensor_states = {}
         self._motion_timestamps = {}
+
+        self._prior_update_interval = timedelta(hours=1)
 
         self._last_occupied: datetime | None = None
         self._last_state_change: datetime | None = None
@@ -102,7 +101,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self.learned_priors: dict[str, dict[str, Any]] = {}
 
         self._last_positive_trigger = None
-        self._decay_window = config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
+        self._decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
 
         self._remove_state_listener = None
 
@@ -141,10 +140,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Minimal setup. No heavy tasks here."""
         _LOGGER.debug("Setting up AreaOccupancyCoordinator")
 
-        # Schedule periodic update of learned priors
-        self._prior_update_interval = timedelta(
-            hours=1
-        )  # Adjust the interval as needed
+        # Adjust the interval as needed
         self.hass.loop.create_task(self._schedule_prior_updates())
 
     async def _schedule_prior_updates(self):
@@ -447,10 +443,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             await self._debouncer.async_shutdown()
             self._debouncer = None
 
-    def update_options(self, config: Config) -> None:
+    def update_options(self) -> None:
         _LOGGER.debug("Updating options")
         try:
-            self.config = config
+            self.config = {
+                **self.config_entry.data,
+                **self.config_entry.options,
+            }  # Reload config
             self._calculator = self._create_calculator()
             self._decay_window = self.config.get(
                 CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
