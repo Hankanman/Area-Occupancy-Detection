@@ -56,6 +56,7 @@ from .probabilities import (
     ENVIRONMENTAL_PROB_GIVEN_TRUE,
     ENVIRONMENTAL_PROB_GIVEN_FALSE,
     ENVIRONMENTAL_DEFAULT_PRIOR,
+    SENSOR_WEIGHTS,
 )
 from .const import (
     CONF_MOTION_SENSORS,
@@ -68,6 +69,10 @@ from .const import (
     CONF_WINDOW_SENSORS,
     CONF_LIGHTS,
     CACHE_DURATION,
+    CONF_DECAY_WINDOW,
+    CONF_DECAY_MIN_DELAY,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_MIN_DELAY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,57 +80,7 @@ _LOGGER = logging.getLogger(__name__)
 # Define age thresholds (in hours)
 FRESH_THRESHOLD = 24  # Priors less than 24 hours old are considered fresh
 MAX_AGE = 168  # Priors older than 168 hours (1 week) are considered stale
-
-
-def update_probability(
-    prior: float,
-    prob_given_true: float,
-    prob_given_false: float,
-) -> float:
-    """Perform a Bayesian update."""
-    _LOGGER.debug(
-        "Updating probability with prior: %s, prob_given_true: %s, prob_given_false: %s",
-        prior,
-        prob_given_true,
-        prob_given_false,
-    )
-    # Clamp input probabilities
-    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
-    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
-    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
-
-    numerator = prob_given_true * prior
-    denominator = numerator + prob_given_false * (1 - prior)
-    if denominator == 0:
-        return prior
-
-    # Calculate the updated probability
-    result = numerator / denominator
-    # Clamp result
-    return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
-
-
-def get_default_prior(entity_id: str, calc) -> float:
-    """Return default prior based on entity category."""
-    if entity_id in calc.motion_sensors:
-        return MOTION_DEFAULT_PRIOR
-    elif entity_id in calc.media_devices:
-        return MEDIA_DEFAULT_PRIOR
-    elif entity_id in calc.appliances:
-        return APPLIANCE_DEFAULT_PRIOR
-    elif entity_id in calc.door_sensors:
-        return DOOR_DEFAULT_PRIOR
-    elif entity_id in calc.window_sensors:
-        return WINDOW_DEFAULT_PRIOR
-    elif entity_id in calc.lights:
-        return LIGHT_DEFAULT_PRIOR
-    elif (
-        entity_id in calc.illuminance_sensors
-        or entity_id in calc.humidity_sensors
-        or entity_id in calc.temperature_sensors
-    ):
-        return ENVIRONMENTAL_DEFAULT_PRIOR
-    return DEFAULT_PRIOR
+PROBABILITY_DROP_DELAY = 5  # Seconds after a trigger to drop probability
 
 
 class ProbabilityCalculator:
@@ -140,6 +95,13 @@ class ProbabilityCalculator:
         _LOGGER.debug("Initializing ProbabilityCalculator")
         self.coordinator = coordinator
         self.config = config
+
+        # Initialize probability tracking
+        self.current_probability = MIN_PROBABILITY
+        self.previous_probability = MIN_PROBABILITY
+        self._last_high_probability_time = (
+            None  # Track when we last had a higher probability
+        )
 
         # Use self.config to extract sensor lists
         self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
@@ -362,7 +324,6 @@ class ProbabilityCalculator:
         self, states: list[State], start: datetime, end: datetime
     ) -> list[tuple[datetime, datetime, Any]]:
         """Convert a list of states into intervals [(start, end, state), ...]."""
-        _LOGGER.debug("Converting states to intervals")
         intervals = []
         sorted_states = sorted(states, key=lambda s: s.last_changed)
         current_start = start
@@ -427,6 +388,139 @@ class ProbabilityCalculator:
                 return True
         return False
 
+    def _get_sensor_weight(self, entity_id: str) -> float:
+        """Get the weight for a sensor based on its type."""
+        if entity_id in self.motion_sensors:
+            return SENSOR_WEIGHTS["motion"]
+        elif entity_id in self.media_devices:
+            return SENSOR_WEIGHTS["media"]
+        elif entity_id in self.appliances:
+            return SENSOR_WEIGHTS["appliance"]
+        elif entity_id in self.door_sensors:
+            return SENSOR_WEIGHTS["door"]
+        elif entity_id in self.window_sensors:
+            return SENSOR_WEIGHTS["window"]
+        elif entity_id in self.lights:
+            return SENSOR_WEIGHTS["light"]
+        elif (
+            entity_id in self.illuminance_sensors
+            or entity_id in self.humidity_sensors
+            or entity_id in self.temperature_sensors
+        ):
+            return SENSOR_WEIGHTS["environmental"]
+        return 1.0  # Default weight
+
+    def _calculate_sensor_probability(
+        self, entity_id: str, state: dict[str, Any], now: datetime
+    ) -> tuple[float, bool]:
+        """Calculate probability contribution from a single sensor."""
+        if not state or not state.get("availability", False):
+            return 0.0, False
+
+        # Get the weight for this sensor type
+        sensor_weight = self._get_sensor_weight(entity_id)
+
+        # Retrieve learned priors with age consideration
+        p_true, p_false, learned_prior = self._get_sensor_priors_from_history(entity_id)
+
+        # Check if we have valid learned priors
+        using_learned_priors = p_true is not None and p_false is not None
+
+        if not using_learned_priors:
+            # Use default priors if learned priors are not available
+            p_true, p_false = self.get_sensor_priors(entity_id)
+            prior_val = get_default_prior(entity_id, self)
+        else:
+            prior_val = (
+                learned_prior
+                if learned_prior is not None
+                else get_default_prior(entity_id, self)
+            )
+
+        is_active = self._is_active_now(entity_id, state["state"])
+        if is_active:
+            # Calculate this sensor's contribution
+            sensor_prob = update_probability(prior_val, p_true, p_false)
+            # Apply weight to the sensor's contribution
+            weighted_prob = sensor_prob * sensor_weight
+            return weighted_prob, True
+
+        return 0.0, False
+
+    def _apply_decay(
+        self,
+        current_probability: float,
+        previous_probability: float,
+        threshold: float,
+        now: datetime,
+        active_triggers: list[str],
+    ) -> tuple[float, float, dict]:
+        """Apply decay to the probability if needed."""
+        decay_status = {}
+        decay_factor = 1.0
+
+        if not active_triggers:
+            last_trigger = self.coordinator.get_last_positive_trigger()
+            if last_trigger is not None:
+                current_probability, decay_factor = self._calculate_decay(
+                    current_probability,
+                    previous_probability,
+                    threshold,
+                    last_trigger,
+                    now,
+                )
+            else:
+                decay_status["global_decay"] = 0.0
+                current_probability = MIN_PROBABILITY
+        else:
+            decay_status["global_decay"] = 0.0
+            self.coordinator.set_last_positive_trigger(now)
+
+        decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+        return current_probability, decay_status
+
+    def _calculate_decay(
+        self,
+        current_probability: float,
+        previous_probability: float,
+        threshold: float,
+        last_trigger: datetime,
+        now: datetime,
+    ) -> tuple[float, float]:
+        """Calculate decay factor and apply it to probability."""
+        elapsed = (now - last_trigger).total_seconds()
+        decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
+        decay_min_delay = self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
+
+        # Only start decay after min_delay has passed
+        if elapsed > decay_min_delay and decay_window > 0:
+            # Calculate time since decay should have started
+            decay_time = elapsed - decay_min_delay
+            # Apply exponential decay based on time since decay started
+            decay_factor = math.exp(-DECAY_LAMBDA * (decay_time / decay_window))
+
+            # If we were previously above threshold, decay from previous probability
+            if previous_probability >= threshold:
+                current_probability = previous_probability * decay_factor
+            else:
+                current_probability *= decay_factor
+
+            current_probability = max(
+                MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+            )
+
+            # Reset decay if we've fallen below threshold or fully decayed
+            if current_probability < threshold or decay_factor <= 0.01:
+                self.coordinator.set_last_positive_trigger(None)
+                current_probability = MIN_PROBABILITY
+        else:
+            decay_factor = 1.0
+            # Maintain previous probability during min_delay if above threshold
+            if previous_probability >= threshold:
+                current_probability = previous_probability
+
+        return current_probability, decay_factor
+
     def _perform_calculation_logic(
         self,
         sensor_states: dict[str, Any],
@@ -436,111 +530,58 @@ class ProbabilityCalculator:
         """Core calculation logic."""
         active_triggers = []
         sensor_probs = {}
-        decay_status = {}
-        high_confidence_trigger = False
+        threshold = self.coordinator.get_threshold_decimal()
 
-        # First pass - identify active triggers and update probabilities
+        # Store the previous probability for decay logic
+        self.previous_probability = self.current_probability
+
+        # Reset the base probability when calculating new state
+        calculated_probability = MIN_PROBABILITY
+
+        # Process all sensors
         for entity_id, state in sensor_states.items():
-            if not state or not state.get("availability", False):
-                continue
-
-            # Retrieve learned priors with age consideration
-            p_true, p_false, learned_prior = self._get_sensor_priors_from_history(
-                entity_id
+            weighted_prob, is_active = self._calculate_sensor_probability(
+                entity_id, state, now
             )
-
-            # Check if we have valid learned priors
-            using_learned_priors = p_true is not None and p_false is not None
-
-            if not using_learned_priors:
-                # Use default priors if learned priors are not available
-                p_true, p_false = self.get_sensor_priors(entity_id)
-                prior_val = get_default_prior(entity_id, self)
-            else:
-                prior_val = (
-                    learned_prior
-                    if learned_prior is not None
-                    else get_default_prior(entity_id, self)
-                )
-
-            is_active = self._is_active_now(entity_id, state["state"])
             if is_active:
                 active_triggers.append(entity_id)
-                # Calculate this sensor's contribution
-                sensor_prob = update_probability(prior_val, p_true, p_false)
-                sensor_probs[entity_id] = sensor_prob
+                sensor_probs[entity_id] = weighted_prob
+                # Stack probabilities using complementary probability
+                calculated_probability = 1.0 - (
+                    (1.0 - calculated_probability) * (1.0 - weighted_prob)
+                )
+                calculated_probability = min(calculated_probability, MAX_PROBABILITY)
 
-                # Stack probabilities - use the maximum between current and new probability
-                current_probability = max(current_probability, sensor_prob)
+        # Apply decay if needed
+        calculated_probability, decay_status = self._apply_decay(
+            calculated_probability,
+            self.previous_probability,
+            threshold,
+            now,
+            active_triggers,
+        )
 
-                # Ensure we don't exceed MAX_PROBABILITY
-                current_probability = min(current_probability, MAX_PROBABILITY)
-
-                # Mark as high confidence if using fresh learned priors
-                if using_learned_priors:
-                    default_p_true, default_p_false = self.get_sensor_priors(entity_id)
-                    prior_difference = abs(p_true - default_p_true) + abs(
-                        p_false - default_p_false
-                    )
-
-                    # Get age of priors
-                    priors = self.coordinator.learned_priors.get(entity_id, {})
-                    last_updated = priors.get("last_updated")
-                    if last_updated:
-                        try:
-                            if isinstance(last_updated, str):
-                                last_updated = dt_util.parse_datetime(last_updated)
-                            if last_updated:
-                                age_hours = (now - last_updated).total_seconds() / 3600
-                                if (
-                                    prior_difference > 0.1
-                                    and age_hours <= 24
-                                ):
-                                    high_confidence_trigger = True
-                        except (ValueError, TypeError):
-                            _LOGGER.warning(
-                                "Invalid last_updated timestamp for entity %s: %s",
-                                entity_id,
-                                last_updated,
-                            )
-
-        # Apply decay only if:
-        # 1. No active triggers OR no high confidence triggers
-        # 2. Decay is enabled
-        # 3. Minimum delay has passed since last trigger
-        decay_factor = 1.0
-        if not active_triggers or not high_confidence_trigger:
-            last_trigger = self.coordinator.get_last_positive_trigger()
-
-            if last_trigger is not None:
-                elapsed = (now - last_trigger).total_seconds()
-                decay_window = self.coordinator.get_decay_window()
-                decay_min_delay = self.coordinator.get_decay_min_delay()
-
-                # Only start decay after min_delay has passed
-                if elapsed > decay_min_delay and decay_window > 0:
-                    # Calculate time since decay should have started
-                    decay_time = elapsed - decay_min_delay
-                    # Apply exponential decay based on time since decay started
-                    decay_factor = math.exp(-DECAY_LAMBDA * (decay_time / decay_window))
-                    current_probability *= decay_factor
-                    current_probability = max(
-                        MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
-                    )
-                    decay_status["global_decay"] = round(1.0 - decay_factor, 4)
-                else:
-                    decay_status["global_decay"] = 0.0
+        # Handle probability drops with delay
+        if calculated_probability < self.previous_probability:
+            # If this is the first drop, record the time
+            if self._last_high_probability_time is None:
+                self._last_high_probability_time = now
+                self.current_probability = self.previous_probability
             else:
-                decay_status["global_decay"] = 0.0
+                # Check if enough time has passed since the first drop
+                elapsed = (now - self._last_high_probability_time).total_seconds()
+                if elapsed >= PROBABILITY_DROP_DELAY:
+                    self.current_probability = calculated_probability
+                    self._last_high_probability_time = None  # Reset the timer
+                else:
+                    self.current_probability = self.previous_probability
         else:
-            # Reset decay only when there are high confidence active triggers
-            decay_status["global_decay"] = 0.0
-            self.coordinator.set_last_positive_trigger(now)
-
-        final_probability = current_probability
+            # If probability increased or stayed the same, update immediately
+            self.current_probability = calculated_probability
+            self._last_high_probability_time = None  # Reset the timer
 
         return {
-            "probability": final_probability,
+            "probability": self.current_probability,
             "prior_probability": 0.0,
             "active_triggers": active_triggers,
             "sensor_probabilities": sensor_probs,
@@ -549,8 +590,7 @@ class ProbabilityCalculator:
             "sensor_availability": {
                 k: v.get("availability", False) for k, v in sensor_states.items()
             },
-            "is_occupied": final_probability
-            >= self.coordinator.get_threshold_decimal(),
+            "is_occupied": self.current_probability >= threshold,
         }
 
     def calculate(
@@ -561,17 +601,17 @@ class ProbabilityCalculator:
         """Calculate occupancy probability."""
         _LOGGER.debug("Calculating occupancy probability")
         try:
-            # Determine prior
+            # Update previous probability from coordinator data
             if self.coordinator.data and "probability" in self.coordinator.data:
-                previous_probability = self.coordinator.data["probability"]
+                self.previous_probability = self.coordinator.data["probability"]
             else:
-                previous_probability = DEFAULT_PRIOR
+                self.previous_probability = DEFAULT_PRIOR
 
             now = dt_util.utcnow()
 
             # Use the shared calculation logic
             result = self._perform_calculation_logic(
-                sensor_states, previous_probability, now
+                sensor_states, self.current_probability, now
             )
 
             return result
@@ -741,3 +781,54 @@ class ProbabilityCalculator:
         # Clamp the final probability before returning
         result = overlap_duration / total_motion_duration
         return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
+
+
+def update_probability(
+    prior: float,
+    prob_given_true: float,
+    prob_given_false: float,
+) -> float:
+    """Perform a Bayesian update."""
+    _LOGGER.debug(
+        "Updating probability with prior: %s, prob_given_true: %s, prob_given_false: %s",
+        prior,
+        prob_given_true,
+        prob_given_false,
+    )
+    # Clamp input probabilities
+    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
+    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
+    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
+
+    numerator = prob_given_true * prior
+    denominator = numerator + prob_given_false * (1 - prior)
+    if denominator == 0:
+        return prior
+
+    # Calculate the updated probability
+    result = numerator / denominator
+    # Clamp result
+    return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
+
+
+def get_default_prior(entity_id: str, calc) -> float:
+    """Return default prior based on entity category."""
+    if entity_id in calc.motion_sensors:
+        return MOTION_DEFAULT_PRIOR
+    elif entity_id in calc.media_devices:
+        return MEDIA_DEFAULT_PRIOR
+    elif entity_id in calc.appliances:
+        return APPLIANCE_DEFAULT_PRIOR
+    elif entity_id in calc.door_sensors:
+        return DOOR_DEFAULT_PRIOR
+    elif entity_id in calc.window_sensors:
+        return WINDOW_DEFAULT_PRIOR
+    elif entity_id in calc.lights:
+        return LIGHT_DEFAULT_PRIOR
+    elif (
+        entity_id in calc.illuminance_sensors
+        or entity_id in calc.humidity_sensors
+        or entity_id in calc.temperature_sensors
+    ):
+        return ENVIRONMENTAL_DEFAULT_PRIOR
+    return DEFAULT_PRIOR
