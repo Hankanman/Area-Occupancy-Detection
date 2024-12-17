@@ -72,6 +72,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Define age thresholds (in hours)
+FRESH_THRESHOLD = 24  # Priors less than 24 hours old are considered fresh
+MAX_AGE = 168  # Priors older than 168 hours (1 week) are considered stale
+
 
 def update_probability(
     prior: float,
@@ -433,34 +437,77 @@ class ProbabilityCalculator:
         active_triggers = []
         sensor_probs = {}
         decay_status = {}
+        high_confidence_trigger = False
 
         # First pass - identify active triggers and update probabilities
         for entity_id, state in sensor_states.items():
             if not state or not state.get("availability", False):
                 continue
 
-            # Retrieve learned priors
-            p_true, p_false = self._get_sensor_priors_from_history(entity_id)
-            prior_val = self._get_sensor_prior(entity_id)
-            if p_true is None or p_false is None:
+            # Retrieve learned priors with age consideration
+            p_true, p_false, learned_prior = self._get_sensor_priors_from_history(
+                entity_id
+            )
+
+            # Check if we have valid learned priors
+            using_learned_priors = p_true is not None and p_false is not None
+
+            if not using_learned_priors:
                 # Use default priors if learned priors are not available
                 p_true, p_false = self.get_sensor_priors(entity_id)
                 prior_val = get_default_prior(entity_id, self)
+            else:
+                prior_val = (
+                    learned_prior
+                    if learned_prior is not None
+                    else get_default_prior(entity_id, self)
+                )
 
             is_active = self._is_active_now(entity_id, state["state"])
             if is_active:
                 active_triggers.append(entity_id)
-                # Update the probability using the learned priors
+                # Update the probability using the priors
                 current_probability = update_probability(prior_val, p_true, p_false)
+
+                # Mark as high confidence if using fresh learned priors
+                if using_learned_priors:
+                    default_p_true, default_p_false = self.get_sensor_priors(entity_id)
+                    prior_difference = abs(p_true - default_p_true) + abs(
+                        p_false - default_p_false
+                    )
+
+                    # Get age of priors
+                    priors = self.coordinator.learned_priors.get(entity_id, {})
+                    last_updated = priors.get("last_updated")
+                    if last_updated:
+                        # Convert string timestamp to datetime if necessary
+                        try:
+                            if isinstance(last_updated, str):
+                                last_updated = dt_util.parse_datetime(last_updated)
+                            if last_updated:
+                                age_hours = (now - last_updated).total_seconds() / 3600
+                                # Consider both difference from defaults and age
+                                if (
+                                    prior_difference > 0.1
+                                    and age_hours
+                                    <= 24  # Only trust recent priors for high confidence
+                                ):
+                                    high_confidence_trigger = True
+                        except (ValueError, TypeError):
+                            _LOGGER.warning(
+                                "Invalid last_updated timestamp for entity %s: %s",
+                                entity_id,
+                                last_updated,
+                            )
 
             sensor_probs[entity_id] = current_probability
 
         # Apply decay only if:
-        # 1. No active triggers
+        # 1. No active triggers OR no high confidence triggers
         # 2. Decay is enabled
         # 3. Minimum delay has passed since last trigger
         decay_factor = 1.0
-        if not active_triggers:
+        if not active_triggers or not high_confidence_trigger:
             last_trigger = self.coordinator.get_last_positive_trigger()
 
             if last_trigger is not None:
@@ -484,7 +531,7 @@ class ProbabilityCalculator:
             else:
                 decay_status["global_decay"] = 0.0
         else:
-            # Reset decay when there are active triggers
+            # Reset decay only when there are high confidence active triggers
             decay_status["global_decay"] = 0.0
             self.coordinator.set_last_positive_trigger(now)
 
@@ -557,14 +604,60 @@ class ProbabilityCalculator:
 
     def _get_sensor_priors_from_history(
         self, entity_id: str
-    ) -> tuple[float, float] | tuple[None, None]:
-        """Retrieve learned priors for a sensor from coordinator data."""
+    ) -> tuple[float | None, float | None, float | None]:
+        """Retrieve learned priors for a sensor from coordinator data, considering age."""
         priors = self.coordinator.learned_priors.get(entity_id)
-        if priors:
-            return priors["prob_given_true"], priors["prob_given_false"]
-        else:
-            # Use default priors if learned priors are not available
-            return None, None
+        if not priors:
+            return None, None, None
+
+        # Get the timestamp when these priors were last updated
+        last_updated = priors.get("last_updated")
+        if not last_updated:
+            return None, None, None
+
+        # Convert string timestamp to datetime if necessary
+        try:
+            if isinstance(last_updated, str):
+                last_updated = dt_util.parse_datetime(last_updated)
+            if not last_updated:
+                return None, None, None
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Invalid last_updated timestamp for entity %s: %s",
+                entity_id,
+                last_updated,
+            )
+            return None, None, None
+
+        # Calculate age of priors in hours
+        now = dt_util.utcnow()
+        age_hours = (now - last_updated).total_seconds() / 3600
+
+        if age_hours > MAX_AGE:
+            return None, None, None
+
+        prob_given_true = priors["prob_given_true"]
+        prob_given_false = priors["prob_given_false"]
+        prior = priors["prior"]
+
+        if age_hours <= FRESH_THRESHOLD:
+            # Fresh priors - use as is
+            return prob_given_true, prob_given_false, prior
+
+        # Calculate weight based on age (linear decay between FRESH_THRESHOLD and MAX_AGE)
+        weight = 1.0 - ((age_hours - FRESH_THRESHOLD) / (MAX_AGE - FRESH_THRESHOLD))
+        weight = max(0.0, min(1.0, weight))
+
+        # Get default values
+        default_true, default_false = self.get_sensor_priors(entity_id)
+        default_prior = get_default_prior(entity_id, self)
+
+        # Blend learned and default values based on weight
+        blended_true = (weight * prob_given_true) + ((1 - weight) * default_true)
+        blended_false = (weight * prob_given_false) + ((1 - weight) * default_false)
+        blended_prior = (weight * prior) + ((1 - weight) * default_prior)
+
+        return blended_true, blended_false, blended_prior
 
     def _get_sensor_prior(self, entity_id: str) -> float:
         priors = self.coordinator.learned_priors.get(entity_id)
