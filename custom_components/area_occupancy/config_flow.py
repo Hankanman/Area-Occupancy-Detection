@@ -180,7 +180,7 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
             CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
         ): EntitySelector(
             EntitySelectorConfig(
-                domain=Platform.LIGHT,
+                domain=[Platform.LIGHT, Platform.SWITCH],
                 multiple=True,
             ),
         ),
