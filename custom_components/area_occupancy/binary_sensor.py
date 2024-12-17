@@ -38,7 +38,7 @@ class AreaOccupancyBinarySensor(
         super().__init__(coordinator)
         self.coordinator = coordinator
         self.entry_id = entry_id
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_occupancy"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
         self._attr_name = f"{coordinator.config[CONF_NAME]} {NAME_BINARY_SENSOR}"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_device_info = get_device_info(

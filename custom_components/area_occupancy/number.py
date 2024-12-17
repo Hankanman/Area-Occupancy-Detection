@@ -37,7 +37,7 @@ class AreaOccupancyThreshold(
 
         self._attr_has_entity_name = True
         self._attr_name = NAME_THRESHOLD_NUMBER
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_threshold"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 99.0
         self._attr_native_step = 1.0
