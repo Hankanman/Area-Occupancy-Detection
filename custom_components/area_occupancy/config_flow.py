@@ -415,9 +415,10 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor configuration."""
+        defaults = self._data.copy()
         return await self._handle_step(
             "environmental",
-            create_environmental_schema,
+            lambda x: create_environmental_schema(defaults),
             "parameters",
             False,
             user_input,
@@ -427,8 +428,13 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter configuration."""
+        defaults = self._data.copy()
         return await self._handle_step(
-            "parameters", create_parameters_schema, None, True, user_input
+            "parameters",
+            lambda x: create_parameters_schema(defaults),
+            None,
+            True,
+            user_input,
         )
 
     @staticmethod
@@ -444,7 +450,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self._data = dict(config_entry.data)
+        self._data = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -456,13 +462,15 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle motion sensor options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         schema = {
             vol.Required(
                 CONF_MOTION_SENSORS,
-                default=self._data.get(
-                    CONF_MOTION_SENSORS,
-                    self.config_entry.data.get(CONF_MOTION_SENSORS, []),
-                ),
+                default=defaults.get(CONF_MOTION_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.BINARY_SENSOR,
@@ -487,14 +495,16 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle device options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
             "devices",
             lambda x: create_device_schema(
                 self.hass,
-                defaults={
-                    **self.config_entry.data,  # Use initial data as defaults
-                    **self._data,  # Override with any existing options
-                },
+                defaults=defaults,
             ),
             "environmental",
             False,
@@ -505,9 +515,14 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle environmental sensor options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
             "environmental",
-            create_environmental_schema,
+            lambda x: create_environmental_schema(defaults),
             "parameters",
             False,
             user_input,
@@ -517,6 +532,15 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle parameter options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
         return await self._handle_step(
-            "parameters", create_parameters_schema, None, True, user_input
+            "parameters",
+            lambda x: create_parameters_schema(defaults),
+            None,
+            True,
+            user_input,
         )

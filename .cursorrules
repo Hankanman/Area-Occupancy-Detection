@@ -62,6 +62,13 @@ Follow these rules strictly to ensure high-quality development.
 - Use `asyncio.Lock` for state locking.
 - All constants should be defined in `const.py`.
 - All types should be defined in `types.py`.
+- All configuration should be defined in `config_flow.py`.
+- All services should be defined in `services.py`.
+- All sensors should be defined in `sensor.py`.
+- All binary sensors should be defined in `binary_sensor.py`.
+- All calculations should be defined in `calculations.py`.
+- NEVER truncate your code, always use the full codebase to complete the task.
+- NEVER use placeholders like "... existing logic ..." in your code, always implement the full logic.
 
 ### Environment Rules
 
