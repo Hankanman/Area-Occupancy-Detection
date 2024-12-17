@@ -19,7 +19,7 @@ from .const import (
     NAME_BINARY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .helpers import get_device_info, get_sensor_attributes
+from .helpers import get_device_info, get_sensor_attributes, async_migrate_unique_ids
 
 ROUNDING_PRECISION: Final = 2
 
@@ -67,6 +67,9 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
+
+    # Run the migration before adding entities
+    await async_migrate_unique_ids(hass, entry, "binary_sensor")
 
     # Create a new binary sensor entity
     binary_sensor = AreaOccupancyBinarySensor(
