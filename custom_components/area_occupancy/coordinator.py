@@ -628,3 +628,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 del self._stored_data  # Clean up after saving
             except (IOError, ValueError, HomeAssistantError) as err:
                 _LOGGER.error("Error during debounced save: %s", err)
+
+    async def calculate_sensor_prior(
+        self, entity_id: str, start_time: datetime, end_time: datetime
+    ):
+        """Public method to calculate prior for a sensor."""
+        return await self._calculator.calculate_prior(entity_id, start_time, end_time)
