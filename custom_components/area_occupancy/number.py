@@ -19,7 +19,7 @@ from .const import (
     DEFAULT_THRESHOLD,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .helpers import get_device_info
+from .helpers import get_device_info, async_migrate_unique_ids
 
 
 class AreaOccupancyThreshold(
@@ -66,6 +66,9 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
+
+    # Run the migration before adding entities
+    await async_migrate_unique_ids(hass, entry, "number")
 
     # Create a new number entity for the threshold
     number_entity = AreaOccupancyThreshold(

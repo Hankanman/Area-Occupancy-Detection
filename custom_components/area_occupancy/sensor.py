@@ -66,7 +66,7 @@ from .probabilities import (
     DEFAULT_PROB_GIVEN_FALSE,
 )
 from .types import ProbabilityResult
-from .helpers import format_float, get_device_info
+from .helpers import format_float, get_device_info, async_migrate_unique_ids
 
 _LOGGER = logging.getLogger(__name__)
 ROUNDING_PRECISION: Final = 2
@@ -403,6 +403,9 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
+
+    # Run the migration before adding entities
+    await async_migrate_unique_ids(hass, entry, "sensor")
 
     sensors = []
 
