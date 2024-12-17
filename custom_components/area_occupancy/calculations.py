@@ -466,8 +466,15 @@ class ProbabilityCalculator:
             is_active = self._is_active_now(entity_id, state["state"])
             if is_active:
                 active_triggers.append(entity_id)
-                # Update the probability using the priors
-                current_probability = update_probability(prior_val, p_true, p_false)
+                # Calculate this sensor's contribution
+                sensor_prob = update_probability(prior_val, p_true, p_false)
+                sensor_probs[entity_id] = sensor_prob
+
+                # Stack probabilities - use the maximum between current and new probability
+                current_probability = max(current_probability, sensor_prob)
+
+                # Ensure we don't exceed MAX_PROBABILITY
+                current_probability = min(current_probability, MAX_PROBABILITY)
 
                 # Mark as high confidence if using fresh learned priors
                 if using_learned_priors:
@@ -480,17 +487,14 @@ class ProbabilityCalculator:
                     priors = self.coordinator.learned_priors.get(entity_id, {})
                     last_updated = priors.get("last_updated")
                     if last_updated:
-                        # Convert string timestamp to datetime if necessary
                         try:
                             if isinstance(last_updated, str):
                                 last_updated = dt_util.parse_datetime(last_updated)
                             if last_updated:
                                 age_hours = (now - last_updated).total_seconds() / 3600
-                                # Consider both difference from defaults and age
                                 if (
                                     prior_difference > 0.1
-                                    and age_hours
-                                    <= 24  # Only trust recent priors for high confidence
+                                    and age_hours <= 24
                                 ):
                                     high_confidence_trigger = True
                         except (ValueError, TypeError):
@@ -499,8 +503,6 @@ class ProbabilityCalculator:
                                 entity_id,
                                 last_updated,
                             )
-
-            sensor_probs[entity_id] = current_probability
 
         # Apply decay only if:
         # 1. No active triggers OR no high confidence triggers
