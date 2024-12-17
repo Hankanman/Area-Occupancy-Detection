@@ -47,7 +47,6 @@ from .const import (
     CONF_DECAY_WINDOW,
     CONF_DECAY_MIN_DELAY,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_AREA_ID,
     CONF_VERSION,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
@@ -372,7 +371,7 @@ class BaseOccupancyFlow:
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders=(
-                {"name": self._data.get(CONF_NAME)} if hasattr(self, "_data") else None
+                {"name": self._data.get(step_id)} if hasattr(self, "_data") else None
             ),
         )
 
@@ -388,9 +387,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
     def is_matching(self, other_flow: ConfigEntry) -> bool:
         """Check if the entry matches the current flow."""
-        return other_flow.data.get(CONF_AREA_ID) == getattr(self, "_data", {}).get(
-            CONF_AREA_ID
-        )
+        return other_flow.entry_id == getattr(self, "entry_id", None)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
