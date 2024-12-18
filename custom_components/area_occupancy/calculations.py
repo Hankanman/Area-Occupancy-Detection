@@ -388,37 +388,15 @@ class ProbabilityCalculator:
                 return True
         return False
 
-    def _get_sensor_weight(self, entity_id: str) -> float:
-        """Get the weight for a sensor based on its type."""
-        if entity_id in self.motion_sensors:
-            return SENSOR_WEIGHTS["motion"]
-        elif entity_id in self.media_devices:
-            return SENSOR_WEIGHTS["media"]
-        elif entity_id in self.appliances:
-            return SENSOR_WEIGHTS["appliance"]
-        elif entity_id in self.door_sensors:
-            return SENSOR_WEIGHTS["door"]
-        elif entity_id in self.window_sensors:
-            return SENSOR_WEIGHTS["window"]
-        elif entity_id in self.lights:
-            return SENSOR_WEIGHTS["light"]
-        elif (
-            entity_id in self.illuminance_sensors
-            or entity_id in self.humidity_sensors
-            or entity_id in self.temperature_sensors
-        ):
-            return SENSOR_WEIGHTS["environmental"]
-        return 1.0  # Default weight
-
     def _calculate_sensor_probability(
         self, entity_id: str, state: dict[str, Any], now: datetime
-    ) -> tuple[float, bool]:
+    ) -> tuple[float, bool, dict[str, float]]:
         """Calculate probability contribution from a single sensor."""
         if not state or not state.get("availability", False):
-            return 0.0, False
+            return 0.0, False, {}
 
-        # Get the weight for this sensor type
-        sensor_weight = self._get_sensor_weight(entity_id)
+        # Get the weight for this sensor type using the helper function
+        sensor_weight = get_sensor_weight(entity_id, self.config)
 
         # Retrieve learned priors with age consideration
         p_true, p_false, learned_prior = self._get_sensor_priors_from_history(entity_id)
@@ -440,12 +418,17 @@ class ProbabilityCalculator:
         is_active = self._is_active_now(entity_id, state["state"])
         if is_active:
             # Calculate this sensor's contribution
-            sensor_prob = update_probability(prior_val, p_true, p_false)
+            unweighted_prob = update_probability(prior_val, p_true, p_false)
             # Apply weight to the sensor's contribution
-            weighted_prob = sensor_prob * sensor_weight
-            return weighted_prob, True
+            weighted_prob = unweighted_prob * sensor_weight
+            prob_details = {
+                "probability": unweighted_prob,
+                "weight": sensor_weight,
+                "weighted_probability": weighted_prob,
+            }
+            return weighted_prob, True, prob_details
 
-        return 0.0, False
+        return 0.0, False, {}
 
     def _apply_decay(
         self,
@@ -540,12 +523,12 @@ class ProbabilityCalculator:
 
         # Process all sensors
         for entity_id, state in sensor_states.items():
-            weighted_prob, is_active = self._calculate_sensor_probability(
+            weighted_prob, is_active, prob_details = self._calculate_sensor_probability(
                 entity_id, state, now
             )
             if is_active:
                 active_triggers.append(entity_id)
-                sensor_probs[entity_id] = weighted_prob
+                sensor_probs[entity_id] = prob_details
                 # Stack probabilities using complementary probability
                 calculated_probability = 1.0 - (
                     (1.0 - calculated_probability) * (1.0 - weighted_prob)
@@ -832,3 +815,26 @@ def get_default_prior(entity_id: str, calc) -> float:
     ):
         return ENVIRONMENTAL_DEFAULT_PRIOR
     return DEFAULT_PRIOR
+
+
+def get_sensor_weight(entity_id: str, config: dict[str, Any]) -> float:
+    """Get the weight for a sensor based on its type."""
+    if entity_id in config.get(CONF_MOTION_SENSORS, []):
+        return SENSOR_WEIGHTS["motion"]
+    elif entity_id in config.get(CONF_MEDIA_DEVICES, []):
+        return SENSOR_WEIGHTS["media"]
+    elif entity_id in config.get(CONF_APPLIANCES, []):
+        return SENSOR_WEIGHTS["appliance"]
+    elif entity_id in config.get(CONF_DOOR_SENSORS, []):
+        return SENSOR_WEIGHTS["door"]
+    elif entity_id in config.get(CONF_WINDOW_SENSORS, []):
+        return SENSOR_WEIGHTS["window"]
+    elif entity_id in config.get(CONF_LIGHTS, []):
+        return SENSOR_WEIGHTS["light"]
+    elif entity_id in (
+        config.get(CONF_ILLUMINANCE_SENSORS, [])
+        + config.get(CONF_HUMIDITY_SENSORS, [])
+        + config.get(CONF_TEMPERATURE_SENSORS, [])
+    ):
+        return SENSOR_WEIGHTS["environmental"]
+    return 1.0
