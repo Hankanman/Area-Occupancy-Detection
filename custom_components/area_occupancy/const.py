@@ -34,6 +34,15 @@ CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
+# Configured Weights
+CONF_WEIGHT_MOTION: Final = "weight_motion"
+CONF_WEIGHT_MEDIA: Final = "weight_media"
+CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
+CONF_WEIGHT_DOOR: Final = "weight_door"
+CONF_WEIGHT_WINDOW: Final = "weight_window"
+CONF_WEIGHT_LIGHT: Final = "weight_light"
+CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
+
 # File paths and configuration
 CONF_VERSION: Final = 4
 STORAGE_VERSION: Final = 4
@@ -47,6 +56,15 @@ DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
+
+# Default weights
+DEFAULT_WEIGHT_MOTION: Final = 0.85
+DEFAULT_WEIGHT_MEDIA: Final = 0.7
+DEFAULT_WEIGHT_APPLIANCE: Final = 0.3
+DEFAULT_WEIGHT_DOOR: Final = 0.3
+DEFAULT_WEIGHT_WINDOW: Final = 0.2
+DEFAULT_WEIGHT_LIGHT: Final = 0.2
+DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
@@ -73,3 +91,12 @@ ATTR_DOOR_PRIOR: Final = "door_prior"
 ATTR_WINDOW_PRIOR: Final = "window_prior"
 ATTR_LIGHT_PRIOR: Final = "light_prior"
 ATTR_OCCUPANCY_PRIOR: Final = "occupancy_prior"
+
+# Decay lambda such that at half of decay_window probability is 25% of original
+DECAY_LAMBDA = 0.866433976
+
+# Safety bounds
+MIN_PROBABILITY: Final[float] = 0.01
+MAX_PROBABILITY: Final[float] = 0.99
+
+DEFAULT_PRIOR: Final[float] = 0.1713

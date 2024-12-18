@@ -47,6 +47,7 @@ from .types import (
 from .calculations import ProbabilityCalculator
 from .storage import AreaOccupancyStorage
 from .calculate_prior import PriorCalculator
+from .probabilities import Probabilities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,13 +60,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         hass: HomeAssistant,
         config_entry: ConfigEntry,
     ) -> None:
-        _LOGGER.debug("Initializing AreaOccupancyCoordinator")
+        """Initialize the coordinator."""
         self.config_entry = config_entry
-        self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
         self.config = {**config_entry.data, **config_entry.options}
 
-        # Initialize learned_priors before super().__init__
+        # Initialize storage and learned_priors first
+        self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
         self.learned_priors: dict[str, dict[str, Any]] = {}
+
+        # Initialize probabilities before calculator
+        self._probabilities = Probabilities(config=self.config)
 
         super().__init__(
             hass,
@@ -73,6 +77,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             name=DOMAIN,
             update_interval=timedelta(seconds=10),
             update_method=self._async_update_data,
+        )
+
+        # Initialize calculator after super().__init__
+        self._calculator = ProbabilityCalculator(
+            coordinator=self,
+            probabilities=self._probabilities,
         )
 
         self.entry_id = config_entry.entry_id
@@ -86,8 +96,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._last_occupied: datetime | None = None
         self._last_state_change: datetime | None = None
 
-        self._calculator = ProbabilityCalculator(coordinator=self)
-        self._prior_calculator = PriorCalculator(coordinator=self)
+        self._prior_calculator = PriorCalculator(
+            coordinator=self,
+            probabilities=self._probabilities,
+        )
 
         self._storage_lock = asyncio.Lock()
         self._last_save = dt_util.utcnow()
@@ -432,8 +444,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 **self.config_entry.data,
                 **self.config_entry.options,
             }
-            self._calculator = ProbabilityCalculator(coordinator=self)
-            self._prior_calculator = PriorCalculator(coordinator=self)
+            self._probabilities = Probabilities(config=self.config)
+            self._calculator = ProbabilityCalculator(
+                coordinator=self,
+                probabilities=self._probabilities,
+            )
+            self._prior_calculator = PriorCalculator(
+                coordinator=self,
+                probabilities=self._probabilities,
+            )
 
             # Re-setup entity tracking with new sensors
             self._setup_entity_tracking()
