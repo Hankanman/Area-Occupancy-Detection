@@ -11,7 +11,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.exceptions import HomeAssistantError
 
-from .coordinator import AreaOccupancyCoordinator
 from .const import (
     DOMAIN,
     STORAGE_VERSION,
@@ -26,9 +25,9 @@ from .const import (
     NAME_THRESHOLD_NUMBER,
     NAME_PRIORS_SENSOR,
 )
-from .types import ProbabilityResult
 
 _LOGGER = logging.getLogger(__name__)
+
 ROUNDING_PRECISION: Final = 2
 
 
@@ -47,62 +46,6 @@ def get_friendly_names(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
         for entity_id in entity_ids
         if hass.states.get(entity_id)
     ]
-
-
-def get_sensor_attributes(
-    hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
-) -> dict[str, Any]:
-    """Get common sensor attributes."""
-    if not coordinator.data:
-        return {}
-
-    try:
-        data: ProbabilityResult = coordinator.data
-
-        attributes = {
-            "active_triggers": get_friendly_names(
-                hass, data.get("active_triggers", [])
-            ),
-        }
-
-        # Add configured sensors info
-        config = coordinator.config
-
-        configured_sensors = {
-            "Motion": config.get("motion_sensors", []),
-            "Media": config.get("media_devices", []),
-            "Appliances": config.get("appliances", []),
-            "Illuminance": config.get("illuminance_sensors", []),
-            "Humidity": config.get("humidity_sensors", []),
-            "Temperature": config.get("temperature_sensors", []),
-            "Door": config.get("door_sensors", []),
-            "Window": config.get("window_sensors", []),
-            "Lights": config.get("lights", []),
-        }
-
-        # Flatten all sensors to count how many have learned priors
-        all_sensors = []
-        for sensor_list in configured_sensors.values():
-            all_sensors.extend(sensor_list)
-
-        learned_count = sum(
-            1 for sensor in all_sensors if sensor in coordinator.learned_priors
-        )
-
-        attributes["configured_sensors"] = {
-            cat: get_friendly_names(hass, slist)
-            for cat, slist in configured_sensors.items()
-        }
-
-        # Show how many sensors have learned priors
-        attributes["learned_prior_sensors_count"] = learned_count
-        attributes["total_sensors_count"] = len(all_sensors)
-
-        return attributes
-
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.error("Error getting entity attributes: %s", err)
-        return {}
 
 
 def get_device_info(entry_id: str, area_name: str) -> dict[str, Any]:
