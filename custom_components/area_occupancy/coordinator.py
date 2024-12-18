@@ -99,6 +99,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._prior_calculator = PriorCalculator(
             coordinator=self,
             probabilities=self._probabilities,
+            hass=self.hass,
         )
 
         self._storage_lock = asyncio.Lock()
@@ -452,6 +453,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._prior_calculator = PriorCalculator(
                 coordinator=self,
                 probabilities=self._probabilities,
+                hass=self.hass,
             )
 
             # Re-setup entity tracking with new sensors
