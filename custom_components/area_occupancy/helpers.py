@@ -198,3 +198,30 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         STORAGE_VERSION,
     )
     return True
+
+
+def is_entity_active(
+    entity_id: str,
+    state: str,
+    entity_types: dict[str, str],
+    type_configs: dict[str, dict[str, Any]],
+) -> bool:
+    """Check if an entity is in an active state.
+
+    Args:
+        entity_id: The entity ID to check
+        state: The current state of the entity
+        entity_types: Dictionary mapping entity IDs to their sensor types
+
+    Returns:
+        bool: True if the entity is considered active, False otherwise
+    """
+    sensor_type = entity_types.get(entity_id)
+    if not sensor_type:
+        return False
+
+    sensor_config = type_configs.get(sensor_type, {})
+    if not sensor_config:
+        return False
+
+    return state in sensor_config["active_states"]
