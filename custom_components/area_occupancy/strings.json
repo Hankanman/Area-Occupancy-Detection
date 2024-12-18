@@ -28,6 +28,18 @@
                     "temperature_sensors": "Temperature Sensors"
                 }
             },
+            "weights": {
+                "title": "Area Occupancy Weights",
+                "data": {
+                    "weight_motion": "Motion Weight",
+                    "weight_media": "Media Weight",
+                    "weight_appliance": "Appliance Weight",
+                    "weight_door": "Door Weight",
+                    "weight_window": "Window Weight",
+                    "weight_light": "Light Weight",
+                    "weight_environmental": "Environmental Weight"
+                }
+            },
             "parameters": {
                 "title": "Area Occupancy Parameters",
                 "data": {
@@ -67,6 +79,18 @@
                     "temperature_sensors": "Temperature Sensors"
                 }
             },
+            "weights": {
+                "title": "Area Occupancy Weights",
+                "data": {
+                    "weight_motion": "Motion Weight",
+                    "weight_media": "Media Weight",
+                    "weight_appliance": "Appliance Weight",
+                    "weight_door": "Door Weight",
+                    "weight_window": "Window Weight",
+                    "weight_light": "Light Weight",
+                    "weight_environmental": "Environmental Weight"
+                }
+            },
             "parameters": {
                 "title": "Area Occupancy Parameters",
                 "data": {
@@ -90,26 +114,11 @@
             "occupancy_probability": {
                 "name": "Occupancy Probability"
             },
-            "motion_prior": {
-                "name": "Motion Prior"
+            "prior_probability": {
+                "name": "Prior Probability"
             },
-            "media_prior": {
-                "name": "Media Prior"
-            },
-            "appliance_prior": {
-                "name": "Appliance Prior"
-            },
-            "occupancy_prior": {
-                "name": "Occupancy Prior"
-            },
-            "window_prior": {
-                "name": "Window Prior"
-            },
-            "door_prior": {
-                "name": "Door Prior"
-            },
-            "light_prior": {
-                "name": "Light Prior"
+            "decay_status": {
+                "name": "Decay Status"
             }
         },
         "number": {
