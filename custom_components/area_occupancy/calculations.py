@@ -5,51 +5,19 @@ from __future__ import annotations
 import math
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
-from homeassistant.const import (
-    STATE_ON,
-    STATE_OFF,
-    STATE_PLAYING,
-    STATE_PAUSED,
-    STATE_OPEN,
-    STATE_CLOSED,
-)
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
-from .types import (
-    ProbabilityResult,
-)
+from .types import ProbabilityResult
 from .probabilities import (
-    MOTION_PROB_GIVEN_TRUE,
-    MOTION_PROB_GIVEN_FALSE,
-    MEDIA_PROB_GIVEN_TRUE,
-    MEDIA_PROB_GIVEN_FALSE,
-    APPLIANCE_PROB_GIVEN_TRUE,
-    APPLIANCE_PROB_GIVEN_FALSE,
-    DOOR_PROB_GIVEN_TRUE,
-    DOOR_PROB_GIVEN_FALSE,
-    WINDOW_PROB_GIVEN_TRUE,
-    WINDOW_PROB_GIVEN_FALSE,
-    LIGHT_PROB_GIVEN_TRUE,
-    LIGHT_PROB_GIVEN_FALSE,
-    DEFAULT_PROB_GIVEN_TRUE,
-    DEFAULT_PROB_GIVEN_FALSE,
+    SensorType,
+    DEFAULT_PRIOR,
     DECAY_LAMBDA,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
-    DEFAULT_PRIOR,
-    MOTION_DEFAULT_PRIOR,
-    MEDIA_DEFAULT_PRIOR,
-    APPLIANCE_DEFAULT_PRIOR,
-    DOOR_DEFAULT_PRIOR,
-    WINDOW_DEFAULT_PRIOR,
-    LIGHT_DEFAULT_PRIOR,
-    ENVIRONMENTAL_PROB_GIVEN_TRUE,
-    ENVIRONMENTAL_PROB_GIVEN_FALSE,
-    ENVIRONMENTAL_DEFAULT_PRIOR,
-    SENSOR_WEIGHTS,
+    SENSOR_TYPE_CONFIGS,
 )
 from .const import (
     CONF_MOTION_SENSORS,
@@ -68,35 +36,140 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_MIN_DELAY,
 )
+from .helpers import is_entity_active
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class SensorProbability(TypedDict):
+    """Type for sensor probability details."""
+
+    probability: float
+    weight: float
+    weighted_probability: float
 
 
 class ProbabilityCalculator:
     """Handles probability calculations and historical analysis."""
 
-    def __init__(
-        self,
-        coordinator,
-    ) -> None:
-        _LOGGER.debug("Initializing ProbabilityCalculator")
+    def __init__(self, coordinator) -> None:
+        """Initialize the calculator."""
         self.coordinator = coordinator
-        self.config = self.coordinator.config
+        self.config = coordinator.config
 
-        self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
-        self.media_devices = self.config.get(CONF_MEDIA_DEVICES, [])
-        self.appliances = self.config.get(CONF_APPLIANCES, [])
-        self.illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
-        self.humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
-        self.temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
-        self.door_sensors = self.config.get(CONF_DOOR_SENSORS, [])
-        self.window_sensors = self.config.get(CONF_WINDOW_SENSORS, [])
-        self.lights = self.config.get(CONF_LIGHTS, [])
+        # Map entity IDs to their sensor types for faster lookup
+        self.entity_types: dict[str, SensorType] = {}
+        self._map_entities_to_types()
 
         self.current_probability = MIN_PROBABILITY
         self.previous_probability = MIN_PROBABILITY
         self.decay_enabled = self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         self.decay_start_time: Optional[datetime] = None
+
+    def _map_entities_to_types(self) -> None:
+        """Create mapping of entity IDs to their sensor types."""
+        mappings = [
+            (CONF_MOTION_SENSORS, "motion"),
+            (CONF_MEDIA_DEVICES, "media"),
+            (CONF_APPLIANCES, "appliance"),
+            (CONF_DOOR_SENSORS, "door"),
+            (CONF_WINDOW_SENSORS, "window"),
+            (CONF_LIGHTS, "light"),
+            (CONF_ILLUMINANCE_SENSORS, "environmental"),
+            (CONF_HUMIDITY_SENSORS, "environmental"),
+            (CONF_TEMPERATURE_SENSORS, "environmental"),
+        ]
+
+        for config_key, sensor_type in mappings:
+            for entity_id in self.config.get(config_key, []):
+                self.entity_types[entity_id] = sensor_type
+
+    def _get_sensor_config(self, entity_id: str) -> dict[str, Any]:
+        """Get sensor configuration based on entity type."""
+        sensor_type = self.entity_types.get(entity_id)
+        return SENSOR_TYPE_CONFIGS.get(sensor_type, {})
+
+    def _calculate_sensor_probability(
+        self, entity_id: str, state: dict[str, Any]
+    ) -> tuple[float, bool, SensorProbability]:
+        """Calculate probability contribution from a single sensor."""
+        if not state.get("availability", False):
+            return (
+                0.0,
+                False,
+                {"probability": 0.0, "weight": 0.0, "weighted_probability": 0.0},
+            )
+
+        sensor_config = self._get_sensor_config(entity_id)
+        if not sensor_config:
+            return (
+                0.0,
+                False,
+                {"probability": 0.0, "weight": 0.0, "weighted_probability": 0.0},
+            )
+
+        # Get learned or default priors
+        learned_data = self.coordinator.learned_priors.get(entity_id, {})
+        p_true = learned_data.get("prob_given_true", sensor_config["prob_given_true"])
+        p_false = learned_data.get(
+            "prob_given_false", sensor_config["prob_given_false"]
+        )
+        prior = learned_data.get("prior", sensor_config["default_prior"])
+
+        # Use the helper function instead of class method
+        if not is_entity_active(
+            entity_id, state["state"], self.entity_types, SENSOR_TYPE_CONFIGS
+        ):
+            return (
+                0.0,
+                False,
+                {"probability": 0.0, "weight": 0.0, "weighted_probability": 0.0},
+            )
+
+        # Calculate probability
+        unweighted_prob = update_probability(prior, p_true, p_false)
+        weighted_prob = unweighted_prob * sensor_config["weight"]
+
+        return (
+            weighted_prob,
+            True,
+            {
+                "probability": unweighted_prob,
+                "weight": sensor_config["weight"],
+                "weighted_probability": weighted_prob,
+            },
+        )
+
+    def _calculate_decay(
+        self,
+        current_probability: float,
+        previous_probability: float,
+        threshold: float,
+        now: datetime,
+    ) -> tuple[float, float]:
+        """Calculate decay factor and apply it to probability."""
+        if not self.decay_start_time:
+            return current_probability, 1.0
+
+        elapsed = (now - self.decay_start_time).total_seconds()
+        min_delay = self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
+        actual_decay_time = max(0, elapsed - min_delay)
+
+        if actual_decay_time <= 0:
+            return previous_probability, 1.0
+
+        decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
+        decay_factor = math.exp(-DECAY_LAMBDA * (actual_decay_time / decay_window))
+
+        decayed_probability = max(
+            MIN_PROBABILITY, min(previous_probability * decay_factor, MAX_PROBABILITY)
+        )
+
+        if decayed_probability < threshold:
+            self.decay_start_time = None
+            return current_probability, decay_factor
+
+        return decayed_probability, decay_factor
 
     def calculate(
         self,
@@ -234,7 +307,7 @@ class ProbabilityCalculator:
         for entity_id, state in sensor_states.items():
             _LOGGER.debug("Processing sensor: %s with state: %s", entity_id, state)
             weighted_prob, is_active, prob_details = self._calculate_sensor_probability(
-                entity_id, state, now
+                entity_id, state
             )
             if is_active:
                 active_triggers.append(entity_id)
@@ -254,157 +327,6 @@ class ProbabilityCalculator:
                 )
 
         return calculated_probability
-
-    def _calculate_sensor_probability(
-        self, entity_id: str, state: dict[str, Any], now: datetime
-    ) -> tuple[float, bool, dict[str, float]]:
-        """Calculate probability contribution from a single sensor."""
-        if not state or not state.get("availability", False):
-            return 0.0, False, {}
-
-        # Get the weight for this sensor type using the helper function
-        sensor_weight = self._get_sensor_weight(entity_id)
-
-        # Retrieve learned priors with age consideration
-        learned_data = self.coordinator.learned_priors.get(entity_id, {})
-        p_true = learned_data.get("prob_given_true")
-        p_false = learned_data.get("prob_given_false")
-        learned_prior = learned_data.get("prior")
-
-        # Check if we have valid learned priors
-        using_learned_priors = p_true is not None and p_false is not None
-
-        if not using_learned_priors:
-            # Use default priors if learned priors are not available
-            p_true, p_false = self._get_sensor_priors(entity_id)
-            prior_val = self._get_default_prior(entity_id)
-        else:
-            prior_val = (
-                learned_prior
-                if learned_prior is not None
-                else self._get_default_prior(entity_id)
-            )
-
-        is_active = is_entity_active(entity_id, state["state"], self)
-        if is_active:
-            # Calculate this sensor's contribution
-            unweighted_prob = update_probability(prior_val, p_true, p_false)
-            # Apply weight to the sensor's contribution
-            weighted_prob = unweighted_prob * sensor_weight
-            prob_details = {
-                "probability": unweighted_prob,
-                "weight": sensor_weight,
-                "weighted_probability": weighted_prob,
-            }
-            return weighted_prob, True, prob_details
-
-        return 0.0, False, {}
-
-    def _get_sensor_weight(self, entity_id: str) -> float:
-        """Get the weight for a sensor based on its type."""
-        if entity_id in self.motion_sensors:
-            return SENSOR_WEIGHTS["motion"]
-        elif entity_id in self.media_devices:
-            return SENSOR_WEIGHTS["media"]
-        elif entity_id in self.appliances:
-            return SENSOR_WEIGHTS["appliance"]
-        elif entity_id in self.door_sensors:
-            return SENSOR_WEIGHTS["door"]
-        elif entity_id in self.window_sensors:
-            return SENSOR_WEIGHTS["window"]
-        elif entity_id in self.lights:
-            return SENSOR_WEIGHTS["light"]
-        elif entity_id in (
-            self.illuminance_sensors + self.humidity_sensors + self.temperature_sensors
-        ):
-            return SENSOR_WEIGHTS["environmental"]
-        return 1.0
-
-    def _get_sensor_priors(self, entity_id: str) -> tuple[float, float]:
-        """Return default priors for a sensor based on its category."""
-        if entity_id in self.motion_sensors:
-            return MOTION_PROB_GIVEN_TRUE, MOTION_PROB_GIVEN_FALSE
-        elif entity_id in self.media_devices:
-            return MEDIA_PROB_GIVEN_TRUE, MEDIA_PROB_GIVEN_FALSE
-        elif entity_id in self.appliances:
-            return APPLIANCE_PROB_GIVEN_TRUE, APPLIANCE_PROB_GIVEN_FALSE
-        elif entity_id in self.door_sensors:
-            return DOOR_PROB_GIVEN_TRUE, DOOR_PROB_GIVEN_FALSE
-        elif entity_id in self.window_sensors:
-            return WINDOW_PROB_GIVEN_TRUE, WINDOW_PROB_GIVEN_FALSE
-        elif entity_id in self.lights:
-            return LIGHT_PROB_GIVEN_TRUE, LIGHT_PROB_GIVEN_FALSE
-        elif (
-            entity_id in self.illuminance_sensors
-            or entity_id in self.humidity_sensors
-            or entity_id in self.temperature_sensors
-        ):
-            return ENVIRONMENTAL_PROB_GIVEN_TRUE, ENVIRONMENTAL_PROB_GIVEN_FALSE
-        return DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
-
-    def _get_default_prior(self, entity_id: str) -> float:
-        """Return default prior based on entity category."""
-        if entity_id in self.motion_sensors:
-            return MOTION_DEFAULT_PRIOR
-        elif entity_id in self.media_devices:
-            return MEDIA_DEFAULT_PRIOR
-        elif entity_id in self.appliances:
-            return APPLIANCE_DEFAULT_PRIOR
-        elif entity_id in self.door_sensors:
-            return DOOR_DEFAULT_PRIOR
-        elif entity_id in self.window_sensors:
-            return WINDOW_DEFAULT_PRIOR
-        elif entity_id in self.lights:
-            return LIGHT_DEFAULT_PRIOR
-        elif (
-            entity_id in self.illuminance_sensors
-            or entity_id in self.humidity_sensors
-            or entity_id in self.temperature_sensors
-        ):
-            return ENVIRONMENTAL_DEFAULT_PRIOR
-        return DEFAULT_PRIOR
-
-    def _calculate_decay(
-        self,
-        current_probability: float,
-        previous_probability: float,
-        threshold: float,
-        now: datetime,
-    ) -> tuple[float, float]:
-        """Calculate decay factor and apply it to probability."""
-        elapsed = (now - self.decay_start_time).total_seconds()
-        _LOGGER.debug(
-            "Calculating decay. Elapsed time since decay start: %s seconds", elapsed
-        )
-
-        # Subtract minimum delay from elapsed time since we only want to decay
-        # after the minimum delay period
-        min_delay = self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
-        actual_decay_time = elapsed - min_delay
-
-        decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
-        _LOGGER.debug("Decay window: %s seconds", decay_window)
-
-        # Apply exponential decay based on actual decay time
-        decay_factor = math.exp(-DECAY_LAMBDA * (actual_decay_time / decay_window))
-        _LOGGER.debug("Decay factor: %s", decay_factor)
-
-        # Decay from previous probability
-        decayed_probability = previous_probability * decay_factor
-        _LOGGER.debug("After decay: decayed_probability=%s", decayed_probability)
-
-        # Clamp the result
-        decayed_probability = max(
-            MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
-        )
-
-        # If decayed below threshold, reset to minimum
-        if decayed_probability < threshold:
-            _LOGGER.debug("Decayed below threshold - resetting to minimum")
-            self.decay_start_time = None
-            return current_probability, decay_factor
-
-        return decayed_probability, decay_factor
 
 
 def update_probability(
@@ -433,19 +355,3 @@ def update_probability(
     result = numerator / denominator
     # Clamp result
     return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
-
-
-def is_entity_active(entity_id: str, state: str, calc: ProbabilityCalculator) -> bool:
-    if entity_id in calc.motion_sensors:
-        return state == STATE_ON
-    elif entity_id in calc.media_devices:
-        return state in (STATE_PLAYING, STATE_PAUSED)
-    elif entity_id in calc.appliances:
-        return state == STATE_ON
-    elif entity_id in calc.door_sensors:
-        return state in (STATE_OFF, STATE_CLOSED)
-    elif entity_id in calc.window_sensors:
-        return state in (STATE_ON, STATE_OPEN)
-    elif entity_id in calc.lights:
-        return state == STATE_ON
-    return False

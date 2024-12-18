@@ -8,10 +8,12 @@ from homeassistant.const import (
 )
 
 from .probabilities import (
+    SensorType,
     DEFAULT_PROB_GIVEN_TRUE,
     DEFAULT_PROB_GIVEN_FALSE,
     MIN_PROBABILITY,
     MAX_PROBABILITY,
+    SENSOR_TYPE_CONFIGS,
 )
 
 from .const import (
@@ -26,7 +28,7 @@ from .const import (
     CONF_LIGHTS,
 )
 
-from .calculations import is_entity_active
+from .helpers import is_entity_active
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class PriorCalculator:
         """Initialize the calculator."""
         self.coordinator = coordinator
         self.config = self.coordinator.config
+        self.entity_types: dict[str, SensorType] = {}
         self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
         self.media_devices = self.config.get(CONF_MEDIA_DEVICES, [])
         self.appliances = self.config.get(CONF_APPLIANCES, [])
@@ -150,7 +153,10 @@ class PriorCalculator:
                 if last_state is not None:
                     duration = (state.last_changed - last_time).total_seconds()
                     is_active = is_entity_active(
-                        entity_id, last_state.state, self.coordinator.calculator
+                        entity_id,
+                        last_state.state,
+                        self.entity_types,
+                        SENSOR_TYPE_CONFIGS,
                     )
                     if is_active:
                         # Check if any motion was active during this period
