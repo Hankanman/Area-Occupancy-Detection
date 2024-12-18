@@ -58,6 +58,7 @@ NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 # Attribute keys
 ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
 ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
+ATTR_THRESHOLD: Final = "threshold"
 ATTR_PROB_GIVEN_TRUE: Final = "prob_given_true"
 ATTR_PROB_GIVEN_FALSE: Final = "prob_given_false"
 ATTR_LAST_UPDATED: Final = "last_updated"

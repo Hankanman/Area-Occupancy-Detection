@@ -539,18 +539,43 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         await self.async_refresh()
 
     async def async_update_threshold(self, value: float) -> None:
-        _LOGGER.debug("Updating threshold")
+        """Update threshold value and persist it to config entry."""
+        _LOGGER.debug("Updating threshold to %.2f", value)
+
         if not 0 <= value <= 100:
             raise ValueError("Threshold must be between 0 and 100")
+
         old_threshold = self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+
+        # Update runtime config
         self.config[CONF_THRESHOLD] = value
-        _LOGGER.debug(
-            "Updated threshold from %.2f to %.2f (decimal: %.3f)",
-            old_threshold,
-            value,
-            self.get_threshold_decimal(),
-        )
-        await self.async_refresh()
+
+        # Update config entry options
+        new_options = dict(self.config_entry.options)
+        new_options[CONF_THRESHOLD] = value
+
+        try:
+            # Update the config entry with new options
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                options=new_options,
+            )
+
+            _LOGGER.debug(
+                "Updated threshold from %.2f to %.2f (decimal: %.3f)",
+                old_threshold,
+                value,
+                self.get_threshold_decimal(),
+            )
+
+            # Trigger an update
+            await self.async_refresh()
+
+        except ValueError as err:
+            _LOGGER.error("Error updating threshold: %s", err)
+            # Revert runtime config if update failed
+            self.config[CONF_THRESHOLD] = old_threshold
+            raise HomeAssistantError(f"Failed to update threshold: {err}") from err
 
     def get_threshold_decimal(self) -> float:
         threshold = self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)

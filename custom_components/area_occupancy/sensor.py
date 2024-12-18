@@ -29,6 +29,7 @@ from .const import (
     ATTR_LAST_UPDATED,
     ATTR_ACTIVE_TRIGGERS,
     ATTR_SENSOR_PROBABILITIES,
+    ATTR_THRESHOLD,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
@@ -45,6 +46,8 @@ from .const import (
     ATTR_DOOR_PRIOR,
     ATTR_WINDOW_PRIOR,
     ATTR_LIGHT_PRIOR,
+    CONF_THRESHOLD,
+    DEFAULT_THRESHOLD,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
@@ -237,8 +240,24 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         try:
             data: ProbabilityResult = self.coordinator.data
 
-            def format_percentage(value: float) -> float:
-                return self._format_float(value * 100)
+            # Create formatted probability entries with details
+            sensor_probabilities = set()  # Use a set instead of dict
+            for entity_id, prob_details in data.get("sensor_probabilities", {}).items():
+                friendly_name = (
+                    self.hass.states.get(entity_id).attributes.get(
+                        "friendly_name", entity_id
+                    )
+                    if self.hass.states.get(entity_id)
+                    else entity_id
+                )
+
+                formatted_entry = (
+                    f"{friendly_name} | "
+                    f"W: {self._format_float(prob_details['weight'])} | "
+                    f"P: {self._format_float(prob_details['probability'])} | "
+                    f"WP: {self._format_float(prob_details['weighted_probability'])}"
+                )
+                sensor_probabilities.add(formatted_entry)
 
             return {
                 ATTR_ACTIVE_TRIGGERS: [
@@ -248,14 +267,8 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                     for entity_id in data.get("active_triggers", [])
                     if self.hass.states.get(entity_id)
                 ],
-                ATTR_SENSOR_PROBABILITIES: {
-                    (
-                        self.hass.states.get(k).attributes.get("friendly_name", k)
-                        if self.hass.states.get(k)
-                        else k
-                    ): format_percentage(v)
-                    for k, v in data.get("sensor_probabilities", {}).items()
-                },
+                ATTR_SENSOR_PROBABILITIES: sensor_probabilities,
+                ATTR_THRESHOLD: f"{self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)}%",
             }
         except (TypeError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting probability attributes: %s", err)
