@@ -35,7 +35,7 @@ CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
 # File paths and configuration
-CONF_VERSION: Final = 3
+CONF_VERSION: Final = 4
 STORAGE_VERSION: Final = 4
 STORAGE_VERSION_MINOR: Final = 1
 CACHE_DURATION: Final = timedelta(hours=6)
@@ -51,14 +51,7 @@ DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
 NAME_BINARY_SENSOR: Final = "Occupancy Status"
-NAME_MOTION_PRIOR_SENSOR: Final = "Motion Prior"
-NAME_ENVIRONMENTAL_PRIOR_SENSOR: Final = "Environmental Prior"
-NAME_MEDIA_PRIOR_SENSOR: Final = "Media Prior"
-NAME_APPLIANCE_PRIOR_SENSOR: Final = "Appliance Prior"
-NAME_DOOR_PRIOR_SENSOR: Final = "Door Prior"
-NAME_WINDOW_PRIOR_SENSOR: Final = "Window Prior"
-NAME_LIGHT_PRIOR_SENSOR: Final = "Light Prior"
-NAME_OCCUPANCY_PRIOR_SENSOR: Final = "Occupancy Prior"
+NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
@@ -72,3 +65,10 @@ ATTR_TOTAL_PERIOD: Final = "total_period"
 ATTR_START_TIME: Final = "start_time"
 ATTR_END_TIME: Final = "end_time"
 ATTR_OUTPUT_FILE: Final = "output_file"
+ATTR_MOTION_PRIOR: Final = "motion_prior"
+ATTR_MEDIA_PRIOR: Final = "media_prior"
+ATTR_APPLIANCE_PRIOR: Final = "appliance_prior"
+ATTR_DOOR_PRIOR: Final = "door_prior"
+ATTR_WINDOW_PRIOR: Final = "window_prior"
+ATTR_LIGHT_PRIOR: Final = "light_prior"
+ATTR_OCCUPANCY_PRIOR: Final = "occupancy_prior"

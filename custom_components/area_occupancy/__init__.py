@@ -10,13 +10,12 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
     DOMAIN,
-    STORAGE_VERSION,
     PLATFORMS,
-    CONF_AREA_ID,
+    CONF_VERSION,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .service import async_setup_services
-from .helpers import async_migrate_unique_ids
+from .helpers import async_migrate_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.setdefault(DOMAIN, {})
 
         # Check if area_id is present and needs migration
-        if CONF_AREA_ID in entry.data:
+        if entry.version < CONF_VERSION or not entry.version:
             if not await async_migrate_entry(hass, entry):
                 return False
 
@@ -57,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Add an update listener to handle configuration updates
-        entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+        entry.async_on_unload(entry.add_update_listener(async_update_options))
 
         return True
 
@@ -84,33 +83,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate old entry to the new version."""
-    _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
-
-    # Get existing data
-    data = {**config_entry.data}
-    options = {**config_entry.options}
-
-    # If we have an area_id in the old config, use it for migration
-    if CONF_AREA_ID in data:
-        # Run the unique ID migrations first
-        for platform in PLATFORMS:
-            await async_migrate_unique_ids(hass, config_entry, platform)
-
-        # Remove area_id from data after migration
-        data.pop(CONF_AREA_ID)
-
-        # Update the config entry without the area_id
-        hass.config_entries.async_update_entry(
-            config_entry, data=data, options=options, version=STORAGE_VERSION
-        )
-
-        _LOGGER.info(
-            "Successfully migrated Area Occupancy entry %s to version %s",
-            config_entry.entry_id,
-            STORAGE_VERSION,
-        )
-        return True
-
-    return True
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update options when config entry is updated."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    await coordinator.async_update_options()
