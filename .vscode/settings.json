@@ -9,5 +9,8 @@
   },
   "files.associations": {
     "*.yaml": "yaml"
-  }
+  },
+  "logViewer.watch": [
+    ".haconfig/home-assistant.log"
+  ]
 }
