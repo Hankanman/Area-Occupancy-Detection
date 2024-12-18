@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 import threading
 
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -46,6 +46,7 @@ from .types import (
 )
 from .calculations import ProbabilityCalculator
 from .storage import AreaOccupancyStorage
+from .calculate_prior import PriorCalculator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,14 +80,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._state_lock = asyncio.Lock()
         self._sensor_states = {}
-        self._motion_timestamps = {}
 
         self._prior_update_interval = timedelta(hours=1)
 
         self._last_occupied: datetime | None = None
         self._last_state_change: datetime | None = None
 
-        self._calculator = self._create_calculator()
+        self._calculator = ProbabilityCalculator(coordinator=self)
+        self._prior_calculator = PriorCalculator(coordinator=self)
 
         self._storage_lock = asyncio.Lock()
         self._last_save = dt_util.utcnow()
@@ -120,18 +121,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._thread_lock = threading.Lock()
 
-    def _create_calculator(self) -> ProbabilityCalculator:
-        """Create probability calculator with learned priors."""
-        _LOGGER.debug(
-            "Creating ProbabilityCalculator with learned priors: %s",
-            self.learned_priors,
-        )
-        return ProbabilityCalculator(
-            hass=self.hass,
-            coordinator=self,
-            config=self.config,
-        )
-
     async def async_setup(self) -> None:
         """Setup the coordinator and load stored data."""
         _LOGGER.debug("Setting up AreaOccupancyCoordinator")
@@ -163,7 +152,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
         end_time = dt_util.utcnow()
         for entity_id in self._get_all_configured_sensors():
-            await self._calculator.calculate_prior(entity_id, start_time, end_time)
+            await self._prior_calculator.calculate_prior(
+                entity_id, start_time, end_time
+            )
 
     async def async_load_stored_data(self) -> None:
         """Load stored data from storage."""
@@ -234,13 +225,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                         "availability": is_available,
                     }
 
-                    if (
-                        entity_id in self.config[CONF_MOTION_SENSORS]
-                        and is_available
-                        and state.state == STATE_ON
-                    ):
-                        self._motion_timestamps[entity_id] = dt_util.utcnow()
-
                 _LOGGER.info("Initialized states for sensors: %s", sensors)
             except (HomeAssistantError, ValueError, LookupError) as err:
                 _LOGGER.error("Error initializing states: %s", err)
@@ -293,13 +277,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 "availability": is_available,
             }
 
-            if (
-                entity_id in self.config[CONF_MOTION_SENSORS]
-                and is_available
-                and new_state.state == STATE_ON
-            ):
-                self._motion_timestamps[entity_id] = dt_util.utcnow()
-
             # Schedule the refresh
             _LOGGER.debug("Scheduling refresh due to state change of %s", entity_id)
             self.hass.async_create_task(self._debouncer.async_call())
@@ -324,7 +301,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 result = await self.hass.async_add_executor_job(
                     self._calculator.calculate,
                     self._sensor_states,
-                    self._motion_timestamps,
                 )
 
                 self._update_historical_tracking(result)
@@ -419,7 +395,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         """Reset the coordinator."""
         _LOGGER.debug("Resetting coordinator")
         self._sensor_states.clear()
-        self._motion_timestamps.clear()
         self._last_occupied = None
         self._last_state_change = None
 
@@ -457,7 +432,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 **self.config_entry.data,
                 **self.config_entry.options,
             }
-            self._calculator = self._create_calculator()
+            self._calculator = ProbabilityCalculator(coordinator=self)
+            self._prior_calculator = PriorCalculator(coordinator=self)
 
             # Re-setup entity tracking with new sensors
             self._setup_entity_tracking()
@@ -652,4 +628,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self, entity_id: str, start_time: datetime, end_time: datetime
     ):
         """Public method to calculate prior for a sensor."""
-        return await self._calculator.calculate_prior(entity_id, start_time, end_time)
+        return await self._prior_calculator.calculate_prior(
+            entity_id, start_time, end_time
+        )
+
+    @property
+    def calculator(self) -> ProbabilityCalculator:
+        """Get the probability calculator."""
+        return self._calculator
