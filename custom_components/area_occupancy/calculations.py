@@ -5,21 +5,17 @@ from __future__ import annotations
 import math
 import logging
 from datetime import datetime
-from typing import Any, Optional, TypedDict
+from typing import Any, Optional, TypedDict, Literal
 
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
 from .types import ProbabilityResult
-from .probabilities import (
-    SensorType,
+from .const import (
     DEFAULT_PRIOR,
     DECAY_LAMBDA,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
-    SENSOR_TYPE_CONFIGS,
-)
-from .const import (
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
@@ -49,13 +45,25 @@ class SensorProbability(TypedDict):
     weighted_probability: float
 
 
+SensorType = Literal[
+    "motion",
+    "media",
+    "appliance",
+    "door",
+    "window",
+    "light",
+    "environmental",
+]
+
+
 class ProbabilityCalculator:
     """Handles probability calculations and historical analysis."""
 
-    def __init__(self, coordinator) -> None:
+    def __init__(self, coordinator, probabilities) -> None:
         """Initialize the calculator."""
         self.coordinator = coordinator
         self.config = coordinator.config
+        self.probabilities = probabilities
 
         # Map entity IDs to their sensor types for faster lookup
         self.entity_types: dict[str, SensorType] = {}
@@ -87,7 +95,7 @@ class ProbabilityCalculator:
     def _get_sensor_config(self, entity_id: str) -> dict[str, Any]:
         """Get sensor configuration based on entity type."""
         sensor_type = self.entity_types.get(entity_id)
-        return SENSOR_TYPE_CONFIGS.get(sensor_type, {})
+        return self.probabilities.sensor_configs.get(sensor_type, {})
 
     def _calculate_sensor_probability(
         self, entity_id: str, state: dict[str, Any]
@@ -118,7 +126,10 @@ class ProbabilityCalculator:
 
         # Use the helper function instead of class method
         if not is_entity_active(
-            entity_id, state["state"], self.entity_types, SENSOR_TYPE_CONFIGS
+            entity_id,
+            state["state"],
+            self.entity_types,
+            self.probabilities.sensor_configs,
         ):
             return (
                 0.0,
