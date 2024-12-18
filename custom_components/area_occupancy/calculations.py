@@ -122,6 +122,8 @@ class ProbabilityCalculator:
         self._baseline_cache = collections.OrderedDict()
         self._baseline_cache_max_size = 100  # Set an appropriate size limit
 
+        self._decay_start_time: Optional[datetime] = None
+
     def _needs_cache_update(self) -> bool:
         _LOGGER.debug("Checking if cache needs update")
         return (
@@ -437,29 +439,53 @@ class ProbabilityCalculator:
         threshold: float,
         now: datetime,
         active_triggers: list[str],
-    ) -> tuple[float, float, dict]:
+    ) -> tuple[float, dict]:
         """Apply decay to the probability if needed."""
         decay_status = {}
         decay_factor = 1.0
 
-        if not active_triggers:
-            last_trigger = self.coordinator.get_last_positive_trigger()
-            if last_trigger is not None:
-                current_probability, decay_factor = self._calculate_decay(
-                    current_probability,
-                    previous_probability,
-                    threshold,
-                    last_trigger,
-                    now,
+        # Check if current calculated probability is above threshold
+        if current_probability < threshold:
+            _LOGGER.debug(
+                "Current calculated probability %s is below threshold %s - applying decay",
+                current_probability,
+                threshold,
+            )
+            if self._decay_start_time is None:
+                _LOGGER.debug(
+                    "Decay start time not set. Setting to current time: %s", now
                 )
-            else:
+                self._decay_start_time = now
+                # Return previous probability without decay on first detection
                 decay_status["global_decay"] = 0.0
-                current_probability = MIN_PROBABILITY
+                return previous_probability, decay_status
+            else:
+                elapsed = (now - self._decay_start_time).total_seconds()
+                if elapsed > self.config.get(
+                    CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
+                ):
+                    _LOGGER.debug(
+                        "Decay start time has passed min delay. Calculating decay."
+                    )
+                    decayed_probability, decay_factor = self._calculate_decay(
+                        previous_probability,  # Decay from previous probability
+                        previous_probability,
+                        threshold,
+                        now,
+                    )
+                    decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+                    return decayed_probability, decay_status
         else:
-            decay_status["global_decay"] = 0.0
+            _LOGGER.debug(
+                "Current calculated probability %s is above threshold %s - resetting decay",
+                current_probability,
+                threshold,
+            )
+            self._decay_start_time = None
             self.coordinator.set_last_positive_trigger(now)
 
-        decay_status["global_decay"] = round(1.0 - decay_factor, 4)
+        # If we haven't returned yet, return the current probability
+        decay_status["global_decay"] = 0.0
         return current_probability, decay_status
 
     def _calculate_decay(
@@ -467,41 +493,38 @@ class ProbabilityCalculator:
         current_probability: float,
         previous_probability: float,
         threshold: float,
-        last_trigger: datetime,
         now: datetime,
     ) -> tuple[float, float]:
         """Calculate decay factor and apply it to probability."""
-        elapsed = (now - last_trigger).total_seconds()
+        elapsed = (now - self._decay_start_time).total_seconds()
+        _LOGGER.debug(
+            "Calculating decay. Elapsed time since decay start: %s seconds", elapsed
+        )
         decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
-        decay_min_delay = self.config.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
+        _LOGGER.debug("Decay window: %s seconds", decay_window)
 
-        # Only start decay after min_delay has passed
-        if elapsed > decay_min_delay and decay_window > 0:
-            # Calculate time since decay should have started
-            decay_time = elapsed - decay_min_delay
-            # Apply exponential decay based on time since decay started
-            decay_factor = math.exp(-DECAY_LAMBDA * (decay_time / decay_window))
+        # Apply exponential decay based on elapsed time
+        decay_factor = math.exp(-DECAY_LAMBDA * (elapsed / decay_window))
+        _LOGGER.debug("Decay factor: %s", decay_factor)
+        current_probability = previous_probability * decay_factor
+        _LOGGER.debug("After decay: current_probability=%s", current_probability)
 
-            # If we were previously above threshold, decay from previous probability
-            if previous_probability >= threshold:
-                current_probability = previous_probability * decay_factor
-            else:
-                current_probability *= decay_factor
-
-            current_probability = max(
-                MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+        current_probability = max(
+            MIN_PROBABILITY, min(current_probability, MAX_PROBABILITY)
+        )
+        _LOGGER.debug("Clamped probability: %s", current_probability)
+        if current_probability < threshold:
+            _LOGGER.debug(
+                "Current probability %s is below threshold %s. Resetting decay.",
+                current_probability,
+                threshold,
             )
+            self._decay_start_time = None
+            current_probability = MIN_PROBABILITY
 
-            # Reset decay if we've fallen below threshold or fully decayed
-            if current_probability < threshold or decay_factor <= 0.01:
-                self.coordinator.set_last_positive_trigger(None)
-                current_probability = MIN_PROBABILITY
-        else:
-            decay_factor = 1.0
-            # Maintain previous probability during min_delay if above threshold
-            if previous_probability >= threshold:
-                current_probability = previous_probability
-
+        _LOGGER.debug(
+            "Final probability after decay calculation: %s", current_probability
+        )
         return current_probability, decay_factor
 
     def _perform_calculation_logic(
@@ -511,59 +534,38 @@ class ProbabilityCalculator:
         now: datetime,
     ) -> ProbabilityResult:
         """Core calculation logic."""
+        _LOGGER.debug("Starting occupancy probability calculation.")
         active_triggers = []
         sensor_probs = {}
         threshold = self.coordinator.get_threshold_decimal()
 
         # Store the previous probability for decay logic
         self.previous_probability = self.current_probability
+        _LOGGER.debug("Previous probability: %s", self.previous_probability)
 
-        # Reset the base probability when calculating new state
-        calculated_probability = MIN_PROBABILITY
-
-        # Process all sensors
-        for entity_id, state in sensor_states.items():
-            weighted_prob, is_active, prob_details = self._calculate_sensor_probability(
-                entity_id, state, now
-            )
-            if is_active:
-                active_triggers.append(entity_id)
-                sensor_probs[entity_id] = prob_details
-                # Stack probabilities using complementary probability
-                calculated_probability = 1.0 - (
-                    (1.0 - calculated_probability) * (1.0 - weighted_prob)
-                )
-                calculated_probability = min(calculated_probability, MAX_PROBABILITY)
+        # Process all sensors to get new base probability
+        _LOGGER.debug("Processing sensor states: %s", sensor_states)
+        calculated_probability = self._calculate_base_probability(
+            sensor_states, active_triggers, sensor_probs, now
+        )
 
         # Apply decay if needed
-        calculated_probability, decay_status = self._apply_decay(
-            calculated_probability,
+        _LOGGER.debug("Applying decay with active triggers: %s", active_triggers)
+        decayed_probability, decay_status = self._apply_decay(
+            calculated_probability,  # Pass the new calculated probability directly
             self.previous_probability,
             threshold,
             now,
             active_triggers,
         )
 
-        # Handle probability drops with delay
-        if calculated_probability < self.previous_probability:
-            # If this is the first drop, record the time
-            if self._last_high_probability_time is None:
-                self._last_high_probability_time = now
-                self.current_probability = self.previous_probability
-            else:
-                # Check if enough time has passed since the first drop
-                elapsed = (now - self._last_high_probability_time).total_seconds()
-                if elapsed >= PROBABILITY_DROP_DELAY:
-                    self.current_probability = calculated_probability
-                    self._last_high_probability_time = None  # Reset the timer
-                else:
-                    self.current_probability = self.previous_probability
-        else:
-            # If probability increased or stayed the same, update immediately
-            self.current_probability = calculated_probability
-            self._last_high_probability_time = None  # Reset the timer
+        # Use decayed probability
+        self.current_probability = decayed_probability
 
-        return {
+        _LOGGER.debug("Final current probability: %s", self.current_probability)
+
+        # Create result dictionary
+        result = {
             "probability": self.current_probability,
             "prior_probability": 0.0,
             "active_triggers": active_triggers,
@@ -575,6 +577,42 @@ class ProbabilityCalculator:
             },
             "is_occupied": self.current_probability >= threshold,
         }
+        _LOGGER.debug("Calculation result: %s", result)
+        return result
+
+    def _calculate_base_probability(
+        self,
+        sensor_states: dict,
+        active_triggers: list,
+        sensor_probs: dict,
+        now: datetime,
+    ) -> float:
+        """Calculate the base probability from sensor states."""
+        calculated_probability = MIN_PROBABILITY
+
+        for entity_id, state in sensor_states.items():
+            _LOGGER.debug("Processing sensor: %s with state: %s", entity_id, state)
+            weighted_prob, is_active, prob_details = self._calculate_sensor_probability(
+                entity_id, state, now
+            )
+            if is_active:
+                active_triggers.append(entity_id)
+                sensor_probs[entity_id] = prob_details
+                _LOGGER.debug(
+                    "Sensor %s is active. Weighted probability: %s",
+                    entity_id,
+                    weighted_prob,
+                )
+                # Stack probabilities using complementary probability
+                calculated_probability = 1.0 - (
+                    (1.0 - calculated_probability) * (1.0 - weighted_prob)
+                )
+                calculated_probability = min(calculated_probability, MAX_PROBABILITY)
+                _LOGGER.debug(
+                    "Updated calculated probability: %s", calculated_probability
+                )
+
+        return calculated_probability
 
     def calculate(
         self,
@@ -582,15 +620,23 @@ class ProbabilityCalculator:
         motion_timestamps: dict[str, datetime],
     ) -> ProbabilityResult:
         """Calculate occupancy probability."""
-        _LOGGER.debug("Calculating occupancy probability")
+        _LOGGER.debug("Initiating occupancy probability calculation.")
         try:
             # Update previous probability from coordinator data
             if self.coordinator.data and "probability" in self.coordinator.data:
                 self.previous_probability = self.coordinator.data["probability"]
+                _LOGGER.debug(
+                    "Coordinator data probability: %s", self.previous_probability
+                )
             else:
                 self.previous_probability = DEFAULT_PRIOR
+                _LOGGER.debug(
+                    "No coordinator data or probability. Using default prior: %s",
+                    self.previous_probability,
+                )
 
             now = dt_util.utcnow()
+            _LOGGER.debug("Current time: %s", now)
 
             # Use the shared calculation logic
             result = self._perform_calculation_logic(
