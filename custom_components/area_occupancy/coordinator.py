@@ -449,25 +449,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             await self._debouncer.async_shutdown()
             self._debouncer = None
 
-    def update_options(self) -> None:
+    async def async_update_options(self) -> None:
+        """Update options asynchronously."""
         _LOGGER.debug("Updating options")
         try:
             self.config = {
                 **self.config_entry.data,
                 **self.config_entry.options,
-            }  # Reload config
+            }
             self._calculator = self._create_calculator()
 
             # Re-setup entity tracking with new sensors
             self._setup_entity_tracking()
+            await self._async_reinitialize_states()
 
-            # Re-initialize states and refresh data
-            self.hass.async_create_task(self._async_reinitialize_states())
-
-            _LOGGER.debug(
-                "Updated coordinator options for %s",
-                self.config[CONF_NAME],
-            )
         except (ValueError, KeyError, HomeAssistantError) as err:
             _LOGGER.error("Error updating coordinator options: %s", err)
             raise HomeAssistantError(
@@ -567,6 +562,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     def update_learned_priors(
         self, entity_id: str, p_true: float, p_false: float, prior: float
     ) -> None:
+        """Update learned priors."""
         _LOGGER.debug("Updating learned priors")
         self.learned_priors[entity_id] = {
             "prob_given_true": p_true,
@@ -575,6 +571,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             "last_updated": dt_util.utcnow().isoformat(),
         }
         self.hass.async_create_task(self.async_save_state())
+
+        # Force an update of all entities
+        self.async_set_updated_data(self.data)
 
     async def async_save_state(self) -> None:
         _LOGGER.debug("Saving state")
