@@ -93,11 +93,6 @@ class AreaOccupancySensorBase(
         """Set whether the entity should be enabled by default."""
         self._attr_entity_registry_enabled_default = enabled
 
-    @staticmethod
-    def _format_float(value: float) -> float:
-        """Format float to consistently show 2 decimal places."""
-        return format_float(value)
-
 
 class PriorsSensor(AreaOccupancySensorBase):
     """Combined sensor for all priors."""
@@ -110,15 +105,13 @@ class PriorsSensor(AreaOccupancySensorBase):
         """Initialize the priors sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_PRIORS_SENSOR
-        self._attr_unique_id = (
-            f"{DOMAIN}_{coordinator.entry_id}_{NAME_PRIORS_SENSOR.lower()}"
-        )
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def _calculate_prior(
+    def _get_prior(
         self, sensor_list: list[str], default_p_true: float, default_p_false: float
     ) -> float:
         """Calculate prior probability for a specific sensor type."""
@@ -143,7 +136,7 @@ class PriorsSensor(AreaOccupancySensorBase):
                 return None
 
             return (
-                self._calculate_prior(
+                self._get_prior(
                     all_sensors,
                     DEFAULT_PROB_GIVEN_TRUE,
                     DEFAULT_PROB_GIVEN_FALSE,
@@ -162,32 +155,32 @@ class PriorsSensor(AreaOccupancySensorBase):
             config = self.coordinator.config
 
             attributes = {
-                ATTR_MOTION_PRIOR: self._calculate_prior(
+                ATTR_MOTION_PRIOR: self._get_prior(
                     config.get(CONF_MOTION_SENSORS, []),
                     MOTION_PROB_GIVEN_TRUE,
                     MOTION_PROB_GIVEN_FALSE,
                 ),
-                ATTR_MEDIA_PRIOR: self._calculate_prior(
+                ATTR_MEDIA_PRIOR: self._get_prior(
                     config.get(CONF_MEDIA_DEVICES, []),
                     MEDIA_PROB_GIVEN_TRUE,
                     MEDIA_PROB_GIVEN_FALSE,
                 ),
-                ATTR_APPLIANCE_PRIOR: self._calculate_prior(
+                ATTR_APPLIANCE_PRIOR: self._get_prior(
                     config.get(CONF_APPLIANCES, []),
                     APPLIANCE_PROB_GIVEN_TRUE,
                     APPLIANCE_PROB_GIVEN_FALSE,
                 ),
-                ATTR_DOOR_PRIOR: self._calculate_prior(
+                ATTR_DOOR_PRIOR: self._get_prior(
                     config.get(CONF_DOOR_SENSORS, []),
                     DOOR_PROB_GIVEN_TRUE,
                     DOOR_PROB_GIVEN_FALSE,
                 ),
-                ATTR_WINDOW_PRIOR: self._calculate_prior(
+                ATTR_WINDOW_PRIOR: self._get_prior(
                     config.get(CONF_WINDOW_SENSORS, []),
                     WINDOW_PROB_GIVEN_TRUE,
                     WINDOW_PROB_GIVEN_FALSE,
                 ),
-                ATTR_LIGHT_PRIOR: self._calculate_prior(
+                ATTR_LIGHT_PRIOR: self._get_prior(
                     config.get(CONF_LIGHTS, []),
                     LIGHT_PROB_GIVEN_TRUE,
                     LIGHT_PROB_GIVEN_FALSE,
@@ -227,7 +220,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             if not self.coordinator.data:
                 return None
             probability = self.coordinator.data.get("probability", 0.0)
-            return self._format_float(probability * 100)
+            return format_float(probability * 100)
         except (TypeError, ValueError, AttributeError) as err:
             _LOGGER.error("Error getting probability value: %s", err)
             return None
@@ -253,9 +246,9 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
                 formatted_entry = (
                     f"{friendly_name} | "
-                    f"W: {self._format_float(prob_details['weight'])} | "
-                    f"P: {self._format_float(prob_details['probability'])} | "
-                    f"WP: {self._format_float(prob_details['weighted_probability'])}"
+                    f"W: {format_float(prob_details['weight'])} | "
+                    f"P: {format_float(prob_details['probability'])} | "
+                    f"WP: {format_float(prob_details['weighted_probability'])}"
                 )
                 sensor_probabilities.add(formatted_entry)
 
@@ -303,7 +296,7 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
                 return 0.0
 
             average_decay = sum(decay_values) / len(decay_values)
-            return self._format_float(average_decay * 100)
+            return format_float(average_decay * 100)
 
         except (TypeError, KeyError, ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error calculating decay value: %s", err)
@@ -322,9 +315,7 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
                 state = self.hass.states.get(entity_id)
                 if state and decay_value is not None:
                     friendly_name = state.attributes.get("friendly_name", entity_id)
-                    formatted_decays[friendly_name] = self._format_float(
-                        decay_value * 100
-                    )
+                    formatted_decays[friendly_name] = format_float(decay_value * 100)
 
             return {"individual_decays": formatted_decays} if formatted_decays else {}
 
