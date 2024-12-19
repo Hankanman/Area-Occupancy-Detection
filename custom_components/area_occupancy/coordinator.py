@@ -11,6 +11,7 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
+    async_track_time_interval,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -72,6 +73,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         # Initialize probabilities before calculator
         self._probabilities = Probabilities(config=self.config)
+
+        self._prior_update_tracker = None
 
         super().__init__(
             hass,
@@ -173,8 +176,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         # Initialize states after loading stored data
         await self.async_initialize_states()
 
+        # Calculate initial priors before scheduling updates
+        await self.update_learned_priors()
+
         # Schedule prior updates
-        self.hass.loop.create_task(self._schedule_prior_updates())
+        self.async_track_prior_updates()
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -246,28 +252,65 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             + self.config.get(CONF_LIGHTS, [])
         )
 
-    async def _schedule_prior_updates(self):
-        """Schedule periodic updates of learned priors."""
-        while True:
-            try:
-                _LOGGER.debug("Updating learned priors for all sensors")
-                await self._update_learned_priors()
-            except (HomeAssistantError, ValueError, RuntimeError) as err:
-                _LOGGER.error("Error updating learned priors: %s", err)
-            # Wait for the specified interval before the next update
-            await asyncio.sleep(self._prior_update_interval.total_seconds())
+    def async_track_prior_updates(self) -> None:
+        """Set up periodic prior updates using Home Assistant's async_track_time_interval."""
 
-    async def _update_learned_priors(self):
-        """Update learned priors by calculating them for all configured sensors."""
-        start_time = dt_util.utcnow() - timedelta(
-            days=self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+        async def _update_priors_wrapper(_):
+            """Wrapper for updating priors."""
+            try:
+                await self.update_learned_priors()
+            except (
+                HomeAssistantError,
+                ValueError,
+                RuntimeError,
+                asyncio.TimeoutError,
+            ) as err:
+                _LOGGER.error("Error in scheduled prior update: %s", err, exc_info=True)
+
+        # Cancel any existing tracker
+        if hasattr(self, "_prior_update_tracker"):
+            self._prior_update_tracker()
+
+        # Schedule updates every hour
+        self._prior_update_tracker = async_track_time_interval(
+            self.hass, _update_priors_wrapper, self._prior_update_interval
         )
+
+    async def update_learned_priors(self, history_period: int | None = None):
+        """Update learned priors by calculating them for all configured sensors.
+
+        Args:
+            history_period: Optional number of days of history to analyze. If not provided,
+                          uses the configured history period.
+        """
+        _LOGGER.debug("Updating learned priors for all sensors")
+
+        days = (
+            history_period
+            if history_period is not None
+            else self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+        )
+        start_time = dt_util.utcnow() - timedelta(days=days)
         end_time = dt_util.utcnow()
+
+        # Process sensors in parallel for better performance
+        update_tasks = []
         for entity_id in self.get_configured_sensors():
-            await self._prior_calculator.calculate_prior(
-                entity_id, start_time, end_time
+            update_tasks.append(
+                self._prior_calculator.calculate_prior(entity_id, start_time, end_time)
             )
-        self._probabilities.update_config(self.config)
+
+        try:
+            await asyncio.gather(*update_tasks)
+            self._probabilities.update_config(self.config)
+
+            # Save the updated priors
+            await self._async_store_data()
+
+            _LOGGER.info("Successfully updated learned priors for all sensors")
+        except Exception as err:
+            _LOGGER.error("Error updating learned priors: %s", err, exc_info=True)
+            raise
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -391,6 +434,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def async_unload(self) -> None:
         """Unload the coordinator."""
         _LOGGER.debug("Unloading coordinator")
+
+        # Cancel prior update tracker
+        if hasattr(self, "_prior_update_tracker"):
+            self._prior_update_tracker()
+
         await self._save_debounced_data()
 
         if self._remove_state_listener is not None:
@@ -480,7 +528,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             # Revert runtime config if update failed
             raise HomeAssistantError(f"Failed to update threshold: {err}") from err
 
-    def update_learned_priors(
+    def update_learned_prior(
         self, entity_id: str, p_true: float, p_false: float, prior: float
     ) -> None:
         """Update learned priors."""
