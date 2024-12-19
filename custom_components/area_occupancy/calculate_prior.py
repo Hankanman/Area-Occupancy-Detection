@@ -145,7 +145,7 @@ class PriorCalculator:
         )
 
         # After computing the probabilities, update learned priors
-        self.coordinator.update_learned_priors(
+        self.coordinator.update_learned_prior(
             entity_id,
             prob_given_true,
             prob_given_false,
