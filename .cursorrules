@@ -33,14 +33,15 @@ The individual prior sensors are the prior probabilities of the input sensors fr
 - `custom_components/area_occupancy` - Main integration directory
   - `__init__.py` - Integration setup
   - `binary_sensor.py` - Binary sensor entity definitions
-  - `calculations.py` - Probability calculations
+  - `calculate_prob.py` - Probability calculations
+  - `calculate_prior.py` - Prior probability calculations
   - `config_flow.py` - Configuration flow for the integration
   - `const.py` - Constants used across the integration
   - `coordinator.py` - Coordinator for the integration
   - `manifest.json` - Integration metadata
-  - `probabilities.py` - Default probability constants
+  - `probabilities.py` - Probability constants provider
   - `sensor.py` - Sensor entity definitions
-  - `service.py` - Service creation and
+  - `service.py` - Service creation and management
   - `strings.json` - Integration strings
   - `types.py` - Type definitions
   - `services.yaml` - Service definitions
@@ -66,9 +67,12 @@ Follow these rules strictly to ensure high-quality development.
 - All services should be defined in `services.py`.
 - All sensors should be defined in `sensor.py`.
 - All binary sensors should be defined in `binary_sensor.py`.
-- All calculations should be defined in `calculations.py`.
+- All calculations should be defined in `calculate_prob.py` and `calculate_prior.py`.
+- All probabilities should be defined in `probabilities.py`.
+- All exceptions should include the stack trace.
 - NEVER truncate your code, always use the full codebase to complete the task.
 - NEVER use placeholders like "... existing logic ..." in your code, always implement the full logic.
+- NEVER use general exceptions like `Exception` or `BaseException` in your code, always use specific exceptions.
 
 ### Environment Rules
 

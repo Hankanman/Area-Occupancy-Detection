@@ -54,6 +54,20 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_DOOR,
+    CONF_WEIGHT_WINDOW,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_WINDOW,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_ENVIRONMENTAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -304,6 +318,94 @@ def create_parameters_schema(defaults: dict[str, Any] | None = None) -> dict:
     }
 
 
+def create_weights_schema(defaults: dict[str, Any] | None = None) -> dict:
+    """Create weights configuration schema with optional default values."""
+    if defaults is None:
+        defaults = {}
+
+    return {
+        vol.Optional(
+            CONF_WEIGHT_MOTION,
+            default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_MEDIA,
+            default=defaults.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_APPLIANCE,
+            default=defaults.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_DOOR,
+            default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_WINDOW,
+            default=defaults.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_LIGHT,
+            default=defaults.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+        vol.Optional(
+            CONF_WEIGHT_ENVIRONMENTAL,
+            default=defaults.get(
+                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+            ),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=1,
+                step=0.05,
+                mode="slider",
+            ),
+        ),
+    }
+
+
 class BaseOccupancyFlow:
     """Base class for config and options flow."""
 
@@ -417,6 +519,19 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         return await self._handle_step(
             "environmental",
             lambda x: create_environmental_schema(defaults),
+            "weights",
+            False,
+            user_input,
+        )
+
+    async def async_step_weights(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle weights configuration."""
+        defaults = self._data.copy()
+        return await self._handle_step(
+            "weights",
+            lambda x: create_weights_schema(defaults),
             "parameters",
             False,
             user_input,
@@ -521,6 +636,23 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         return await self._handle_step(
             "environmental",
             lambda x: create_environmental_schema(defaults),
+            "weights",
+            False,
+            user_input,
+        )
+
+    async def async_step_weights(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle weights options."""
+        defaults = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
+        return await self._handle_step(
+            "weights",
+            lambda x: create_weights_schema(defaults),
             "parameters",
             False,
             user_input,
