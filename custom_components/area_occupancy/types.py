@@ -107,15 +107,6 @@ class SensorStates(TypedDict):
     states: dict[str, SensorState]
 
 
-class LearnedPrior(TypedDict):
-    """Type for learned prior data."""
-
-    prob_given_true: float
-    prob_given_false: float
-    prior: float
-    last_updated: str
-
-
 class SensorConfig(TypedDict):
     """Type for sensor configuration."""
 
@@ -191,12 +182,18 @@ class PriorsAttributes(TypedDict, total=False):
     total_period: str
 
 
+class LearnedPrior(TypedDict):
+    """Type for learned prior data."""
+
+    prob_given_true: float
+    prob_given_false: float
+    prior: float
+    last_updated: str
+
+
 class StorageData(TypedDict):
     """Type for storage data."""
 
-    last_updated: str
-    last_occupied: str | None
-    last_probability: float
     version: int
     version_minor: int
     learned_priors: dict[str, LearnedPrior]
