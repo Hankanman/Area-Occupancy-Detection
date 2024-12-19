@@ -170,34 +170,37 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             )
 
     async def async_load_stored_data(self) -> None:
-        """Load stored data from storage."""
-        _LOGGER.debug("Loading stored data")
+        """Load and restore data from storage."""
         try:
             stored_data = await self.storage.async_load()
-            if stored_data:
-                _LOGGER.debug("Found stored data: %s", stored_data)
-
-                # Restore learned priors first
-                if "learned_priors" in stored_data:
-                    self.learned_priors = stored_data["learned_priors"]
-                    _LOGGER.debug("Restored learned priors: %s", self.learned_priors)
-
-                # Safely parse last_occupied datetime
-                last_occupied = stored_data.get("last_occupied")
-                if last_occupied and isinstance(last_occupied, str):
-                    try:
-                        self._last_occupied = dt_util.parse_datetime(last_occupied)
-                    except (ValueError, TypeError) as err:
-                        _LOGGER.warning(
-                            "Failed to parse last_occupied datetime: %s", err
-                        )
-                        self._last_occupied = None
-
-            else:
-                _LOGGER.debug("No stored data found, resetting state")
+            if not stored_data:
+                _LOGGER.debug("No stored data found, initializing fresh state")
                 self._reset_state()
-        except (ValueError, TypeError, KeyError, HomeAssistantError) as err:
-            _LOGGER.error("Error loading stored data: %s", err)
+                return
+
+            # Restore learned priors
+            self.learned_priors = stored_data.get("learned_priors", {})
+
+            # Restore last occupied timestamp
+            last_occupied = stored_data.get("last_occupied")
+            if last_occupied:
+                try:
+                    self._last_occupied = dt_util.parse_datetime(last_occupied)
+                except (ValueError, TypeError) as err:
+                    _LOGGER.warning(
+                        "Failed to parse last_occupied datetime: %s", err, exc_info=True
+                    )
+                    self._last_occupied = None
+
+            _LOGGER.debug("Successfully restored stored data")
+
+        except (ValueError, TypeError, KeyError) as err:
+            _LOGGER.error("Error loading stored data: %s", err, exc_info=True)
+            self._reset_state()
+        except HomeAssistantError as err:
+            _LOGGER.error(
+                "Home Assistant error loading stored data: %s", err, exc_info=True
+            )
             self._reset_state()
 
     async def async_initialize_states(self) -> None:
@@ -321,41 +324,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._last_occupied = now
 
     async def _async_store_result(self, result: ProbabilityResult) -> None:
-        _LOGGER.debug("Storing result")
+        """Store the latest result and schedule a debounced save."""
         try:
-            stored_data = await self.storage.async_load() or {}
-
             # Prepare the new data
             new_data = {
-                "last_updated": dt_util.utcnow().isoformat(),
-                "last_occupied": (
-                    self._last_occupied.isoformat() if self._last_occupied else None
-                ),
-                "last_probability": result["probability"],
                 "version": STORAGE_VERSION,
                 "version_minor": STORAGE_VERSION_MINOR,
                 "learned_priors": self.learned_priors,
             }
 
-            # Compare with existing data excluding 'last_updated'
-            existing_data = stored_data.copy()
-            existing_data.pop("last_updated", None)
+            # Only save if data has meaningfully changed
+            if self._stored_data:
+                old_data = self._stored_data.copy()
+                new_data_compare = new_data.copy()
 
-            new_data_to_compare = new_data.copy()
-            new_data_to_compare.pop("last_updated", None)
+                # Remove timestamps before comparison
+                old_data.pop("last_updated", None)
+                new_data_compare.pop("last_updated", None)
 
-            if existing_data == new_data_to_compare:
-                _LOGGER.debug("No significant changes detected; skipping save.")
-                return  # Data hasn't changed; no need to save
+                if old_data == new_data_compare:
+                    _LOGGER.debug("No significant changes detected; skipping save")
+                    return
 
-            # Update the stored data with the new result
             self._stored_data = new_data
-
-            # Instead of saving immediately, schedule a debounced save
             await self._save_debouncer.async_call()
 
-        except (HomeAssistantError, ValueError, KeyError, IOError) as err:
-            _LOGGER.error("Error storing result: %s", err)
+        except (ValueError, TypeError, KeyError) as err:
+            _LOGGER.error("Error preparing data for storage: %s", err, exc_info=True)
+        except HomeAssistantError as err:
+            _LOGGER.error(
+                "Home Assistant error preparing data for storage: %s",
+                err,
+                exc_info=True,
+            )
 
     def _get_all_configured_sensors(self) -> list[str]:
         return (
@@ -463,11 +464,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         # Construct the data to be saved
         storage_data = {
-            "last_updated": dt_util.utcnow().isoformat(),
-            "last_occupied": (
-                self._last_occupied.isoformat() if self._last_occupied else None
-            ),
-            "last_probability": self.data["probability"],
             "version": STORAGE_VERSION,
             "version_minor": STORAGE_VERSION_MINOR,
             "learned_priors": self.learned_priors,
@@ -589,15 +585,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             _LOGGER.error("Error restoring state: %s", err)
             self._reset_state()
 
-    async def _save_debounced_data(self):
-        """Debounced method to save data to storage."""
-        if hasattr(self, "_stored_data"):
-            try:
+    async def _save_debounced_data(self) -> None:
+        """Save stored data with debouncing."""
+        if not hasattr(self, "_stored_data") or self._stored_data is None:
+            return
+
+        try:
+            async with self._storage_lock:
                 await self.storage.async_save(self._stored_data)
-                _LOGGER.debug("Debounced save completed")
-                del self._stored_data  # Clean up after saving
-            except (IOError, ValueError, HomeAssistantError) as err:
-                _LOGGER.error("Error during debounced save: %s", err)
+                _LOGGER.debug("Successfully saved data to storage")
+        except (ValueError, TypeError, KeyError) as err:
+            _LOGGER.error("Error saving data to storage: %s", err, exc_info=True)
+        except (IOError, HomeAssistantError) as err:
+            _LOGGER.error("Storage I/O error: %s", err, exc_info=True)
+        finally:
+            # Clear stored data after save attempt
+            self._stored_data = None
 
     async def calculate_sensor_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
