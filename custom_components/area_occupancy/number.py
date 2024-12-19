@@ -19,7 +19,6 @@ from .const import (
     DEFAULT_THRESHOLD,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .helpers import get_device_info
 
 
 class AreaOccupancyThreshold(
@@ -45,7 +44,7 @@ class AreaOccupancyThreshold(
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
         self._area_name = coordinator.config[CONF_NAME]
-        self._attr_device_info = get_device_info(entry_id, self._area_name)
+        self._attr_device_info = coordinator.device_info
 
     @property
     def native_value(self) -> float:

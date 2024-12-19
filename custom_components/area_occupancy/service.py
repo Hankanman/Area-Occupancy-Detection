@@ -9,6 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
+    DEFAULT_HISTORY_PERIOD,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +31,9 @@ async def async_setup_services(hass: HomeAssistant):
             else:
                 # Use configured history period
                 start_time = dt_util.utcnow() - timedelta(
-                    days=coordinator.config.get("history_period", 7)
+                    days=coordinator.config.get(
+                        "history_period", DEFAULT_HISTORY_PERIOD
+                    )
                 )
 
             end_time = dt_util.utcnow()
@@ -58,11 +61,6 @@ async def async_setup_services(hass: HomeAssistant):
             )
             _LOGGER.info(message)
 
-            hass.components.persistent_notification.create(
-                message,
-                title="Area Occupancy Prior Update",
-            )
-
         except KeyError as err:
             raise HomeAssistantError(
                 f"Invalid entry_id or coordinator not found: {err}"
@@ -73,7 +71,10 @@ async def async_setup_services(hass: HomeAssistant):
     service_schema_update_priors = vol.Schema(
         {
             vol.Required("entry_id"): str,
-            vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=30)),
+            vol.Optional(
+                "history_period",
+                default=DEFAULT_HISTORY_PERIOD,
+            ): vol.All(int, vol.Range(min=1, max=90)),
         }
     )
 
