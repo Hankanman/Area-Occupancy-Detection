@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any
 import threading
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -43,9 +42,12 @@ from .const import (
 )
 from .types import (
     ProbabilityResult,
+    LearnedPrior,
+    DeviceInfo,
+    StorageData,
 )
-from .calculations import ProbabilityCalculator
 from .storage import AreaOccupancyStorage
+from .calculate_prob import ProbabilityCalculator
 from .calculate_prior import PriorCalculator
 from .probabilities import Probabilities
 
@@ -66,7 +68,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         # Initialize storage and learned_priors first
         self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
-        self.learned_priors: dict[str, dict[str, Any]] = {}
+        self.learned_priors: dict[str, LearnedPrior] = {}
 
         # Initialize probabilities before calculator
         self._probabilities = Probabilities(config=self.config)
@@ -86,7 +88,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
         self.entry_id = config_entry.entry_id
-        self._last_known_values: dict[str, Any] = {}
 
         self._state_lock = asyncio.Lock()
         self._sensor_states = {}
@@ -94,7 +95,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._prior_update_interval = timedelta(hours=1)
 
         self._last_occupied: datetime | None = None
-        self._last_state_change: datetime | None = None
 
         self._prior_calculator = PriorCalculator(
             coordinator=self,
@@ -182,8 +182,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                     self.learned_priors = stored_data["learned_priors"]
                     _LOGGER.debug("Restored learned priors: %s", self.learned_priors)
 
-                self._last_known_values = stored_data.get("last_known_values", {})
-
                 # Safely parse last_occupied datetime
                 last_occupied = stored_data.get("last_occupied")
                 if last_occupied and isinstance(last_occupied, str):
@@ -194,19 +192,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                             "Failed to parse last_occupied datetime: %s", err
                         )
                         self._last_occupied = None
-
-                # Safely parse last_state_change datetime
-                last_state_change = stored_data.get("last_state_change")
-                if last_state_change and isinstance(last_state_change, str):
-                    try:
-                        self._last_state_change = dt_util.parse_datetime(
-                            last_state_change
-                        )
-                    except (ValueError, TypeError) as err:
-                        _LOGGER.warning(
-                            "Failed to parse last_state_change datetime: %s", err
-                        )
-                        self._last_state_change = None
 
             else:
                 _LOGGER.debug("No stored data found, resetting state")
@@ -343,31 +328,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             # Prepare the new data
             new_data = {
                 "last_updated": dt_util.utcnow().isoformat(),
-                "last_probability": result["probability"],
-                "configuration": {
-                    "motion_sensors": self.config[CONF_MOTION_SENSORS],
-                    "media_devices": self.config.get(CONF_MEDIA_DEVICES, []),
-                    "appliances": self.config.get(CONF_APPLIANCES, []),
-                    "illuminance_sensors": self.config.get(
-                        CONF_ILLUMINANCE_SENSORS, []
-                    ),
-                    "humidity_sensors": self.config.get(CONF_HUMIDITY_SENSORS, []),
-                    "temperature_sensors": self.config.get(
-                        CONF_TEMPERATURE_SENSORS, []
-                    ),
-                    "door_sensors": self.config.get(CONF_DOOR_SENSORS, []),
-                    "window_sensors": self.config.get(CONF_WINDOW_SENSORS, []),
-                    "lights": self.config.get(CONF_LIGHTS, []),
-                },
-                "last_known_values": self._last_known_values,
                 "last_occupied": (
                     self._last_occupied.isoformat() if self._last_occupied else None
                 ),
-                "last_state_change": (
-                    self._last_state_change.isoformat()
-                    if self._last_state_change
-                    else None
-                ),
+                "last_probability": result["probability"],
+                "version": STORAGE_VERSION,
+                "version_minor": STORAGE_VERSION_MINOR,
                 "learned_priors": self.learned_priors,
             }
 
@@ -409,7 +375,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         _LOGGER.debug("Resetting coordinator")
         self._sensor_states.clear()
         self._last_occupied = None
-        self._last_state_change = None
 
         self._last_save = dt_util.utcnow()
         self.learned_priors.clear()
@@ -477,7 +442,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     @property
-    def device_info(self) -> dict[str, Any]:
+    def device_info(self) -> DeviceInfo:
         return {
             "identifiers": {(DOMAIN, self.entry_id)},
             "name": self.config[CONF_NAME],
@@ -488,28 +453,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     def _reset_state(self) -> None:
         _LOGGER.debug("Resetting state")
-        self._last_known_values = {}
         self._last_occupied = None
-        self._last_state_change = None
         self._last_save = dt_util.utcnow()
         self.learned_priors.clear()
 
-    def get_storage_data(self) -> dict[str, Any]:
+    def get_storage_data(self) -> StorageData:
         """Prepare data to be saved in storage."""
         _LOGGER.debug("Preparing storage data")
 
         # Construct the data to be saved
         storage_data = {
+            "last_updated": dt_util.utcnow().isoformat(),
             "last_occupied": (
                 self._last_occupied.isoformat() if self._last_occupied else None
             ),
-            "last_state_change": (
-                self._last_state_change.isoformat() if self._last_state_change else None
-            ),
-            "learned_priors": self.learned_priors,
+            "last_probability": self.data["probability"],
             "version": STORAGE_VERSION,
             "version_minor": STORAGE_VERSION_MINOR,
-            "last_updated": dt_util.utcnow().isoformat(),
+            "learned_priors": self.learned_priors,
         }
 
         return storage_data
@@ -617,16 +578,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             if not isinstance(stored_data, dict):
                 raise ValueError("Invalid storage data format")
 
-            self._last_known_values = stored_data.get("last_known_values", {})
-
             last_occupied = stored_data.get("last_occupied")
             self._last_occupied = (
                 dt_util.parse_datetime(last_occupied) if last_occupied else None
-            )
-
-            last_state_change = stored_data.get("last_state_change")
-            self._last_state_change = (
-                dt_util.parse_datetime(last_state_change) if last_state_change else None
             )
 
             self.learned_priors = stored_data.get("learned_priors", {})

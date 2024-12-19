@@ -12,6 +12,8 @@ from homeassistant.const import (
     STATE_PAUSED,
 )
 
+from .types import EntityType
+
 from .const import (
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_MEDIA,
@@ -27,15 +29,21 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_PRIOR,
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_DOOR_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
 )
 
 # Environmental detection baseline settings
 ENVIRONMENTAL_BASELINE_PERCENT: Final[float] = 0.05  # 5% deviation allowed around mean
 ENVIRONMENTAL_MIN_ACTIVE_DURATION: Final[int] = 300  # seconds of active data needed
-
-# Default prior probabilities
-DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
-DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Motion sensor defaults
 MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
@@ -107,6 +115,27 @@ class Probabilities:
         self.config = config
         self._sensor_weights = self._get_sensor_weights()
         self._sensor_configs = self._build_sensor_configs()
+        self.entity_types: dict[str, EntityType] = {}
+        self._map_entities_to_types()
+
+    def _map_entities_to_types(self) -> None:
+        """Create mapping of entity IDs to their sensor types."""
+
+        mappings = [
+            (CONF_MOTION_SENSORS, "motion"),
+            (CONF_MEDIA_DEVICES, "media"),
+            (CONF_APPLIANCES, "appliance"),
+            (CONF_DOOR_SENSORS, "door"),
+            (CONF_WINDOW_SENSORS, "window"),
+            (CONF_LIGHTS, "light"),
+            (CONF_ILLUMINANCE_SENSORS, "environmental"),
+            (CONF_HUMIDITY_SENSORS, "environmental"),
+            (CONF_TEMPERATURE_SENSORS, "environmental"),
+        ]
+
+        for config_key, sensor_type in mappings:
+            for entity_id in self.config.get(config_key, []):
+                self.entity_types[entity_id] = sensor_type
 
     def _get_sensor_weights(self) -> dict[str, float]:
         """Get the configured sensor weights, falling back to defaults if not configured."""
@@ -188,8 +217,44 @@ class Probabilities:
         """Get the current sensor configurations."""
         return self._sensor_configs
 
+    def get_default_prior(self, entity_id: str) -> float:
+        """Get the default prior for an entity."""
+        sensor_type = self.entity_types.get(entity_id)
+        return self._sensor_configs.get(sensor_type, {}).get(
+            "default_prior", DEFAULT_PRIOR
+        )
+
     def update_config(self, config: dict[str, Any]) -> None:
         """Update the configuration and recalculate weights and configs."""
         self.config = config
         self._sensor_weights = self._get_sensor_weights()
         self._sensor_configs = self._build_sensor_configs()
+
+    def get_sensor_config(self, entity_id: str) -> dict[str, Any]:
+        """Get sensor configuration based on entity type."""
+        sensor_type = self.entity_types.get(entity_id)
+        return self._sensor_configs.get(sensor_type, {})
+
+    def is_entity_active(
+        self,
+        entity_id: str,
+        state: str,
+    ) -> bool:
+        """Check if an entity is in an active state.
+
+        Args:
+            entity_id: The entity ID to check
+            state: The current state of the entity
+
+        Returns:
+            bool: True if the entity is considered active, False otherwise
+        """
+        sensor_type = self.entity_types.get(entity_id)
+        if not sensor_type:
+            return False
+
+        sensor_config = self.sensor_configs.get(sensor_type, {})
+        if not sensor_config:
+            return False
+
+        return state in sensor_config.get("active_states", set())
