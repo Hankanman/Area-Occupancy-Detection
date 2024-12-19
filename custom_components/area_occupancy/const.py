@@ -12,7 +12,7 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2024.12.2"
+DEVICE_SW_VERSION: Final = "2024.12.3"
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -34,9 +34,18 @@ CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 
+# Configured Weights
+CONF_WEIGHT_MOTION: Final = "weight_motion"
+CONF_WEIGHT_MEDIA: Final = "weight_media"
+CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
+CONF_WEIGHT_DOOR: Final = "weight_door"
+CONF_WEIGHT_WINDOW: Final = "weight_window"
+CONF_WEIGHT_LIGHT: Final = "weight_light"
+CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
+
 # File paths and configuration
-CONF_VERSION: Final = 3
-STORAGE_VERSION: Final = 4
+CONF_VERSION: Final = 4
+STORAGE_VERSION: Final = 5
 STORAGE_VERSION_MINOR: Final = 1
 CACHE_DURATION: Final = timedelta(hours=6)
 
@@ -48,27 +57,33 @@ DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 
+# Default weights
+DEFAULT_WEIGHT_MOTION: Final = 0.85
+DEFAULT_WEIGHT_MEDIA: Final = 0.7
+DEFAULT_WEIGHT_APPLIANCE: Final = 0.3
+DEFAULT_WEIGHT_DOOR: Final = 0.3
+DEFAULT_WEIGHT_WINDOW: Final = 0.2
+DEFAULT_WEIGHT_LIGHT: Final = 0.2
+DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
+
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
 NAME_BINARY_SENSOR: Final = "Occupancy Status"
-NAME_MOTION_PRIOR_SENSOR: Final = "Motion Prior"
-NAME_ENVIRONMENTAL_PRIOR_SENSOR: Final = "Environmental Prior"
-NAME_MEDIA_PRIOR_SENSOR: Final = "Media Prior"
-NAME_APPLIANCE_PRIOR_SENSOR: Final = "Appliance Prior"
-NAME_DOOR_PRIOR_SENSOR: Final = "Door Prior"
-NAME_WINDOW_PRIOR_SENSOR: Final = "Window Prior"
-NAME_LIGHT_PRIOR_SENSOR: Final = "Light Prior"
-NAME_OCCUPANCY_PRIOR_SENSOR: Final = "Occupancy Prior"
+NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
-# Attribute keys
-ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
-ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
-ATTR_PROB_GIVEN_TRUE: Final = "prob_given_true"
-ATTR_PROB_GIVEN_FALSE: Final = "prob_given_false"
-ATTR_LAST_UPDATED: Final = "last_updated"
-ATTR_TOTAL_PERIOD: Final = "total_period"
-ATTR_START_TIME: Final = "start_time"
-ATTR_END_TIME: Final = "end_time"
-ATTR_OUTPUT_FILE: Final = "output_file"
+# Decay lambda such that at half of decay_window probability is 25% of original
+DECAY_LAMBDA = 0.866433976
+
+# Safety bounds
+MIN_PROBABILITY: Final[float] = 0.01
+MAX_PROBABILITY: Final[float] = 0.99
+
+# Default prior probabilities
+DEFAULT_PRIOR: Final[float] = 0.1713
+DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
+DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
+
+# Helper constants
+ROUNDING_PRECISION: Final = 2

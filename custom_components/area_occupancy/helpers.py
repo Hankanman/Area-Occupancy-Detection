@@ -3,35 +3,27 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Final
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.entity_registry import async_get
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.exceptions import HomeAssistantError
 
-from .coordinator import AreaOccupancyCoordinator
 from .const import (
     DOMAIN,
-    DEVICE_MANUFACTURER,
-    DEVICE_MODEL,
-    DEVICE_SW_VERSION,
+    STORAGE_VERSION,
+    PLATFORMS,
     CONF_AREA_ID,
     NAME_PROBABILITY_SENSOR,
     NAME_DECAY_SENSOR,
-    NAME_MOTION_PRIOR_SENSOR,
-    NAME_MEDIA_PRIOR_SENSOR,
-    NAME_APPLIANCE_PRIOR_SENSOR,
-    NAME_DOOR_PRIOR_SENSOR,
-    NAME_WINDOW_PRIOR_SENSOR,
-    NAME_LIGHT_PRIOR_SENSOR,
-    NAME_OCCUPANCY_PRIOR_SENSOR,
     NAME_BINARY_SENSOR,
     NAME_THRESHOLD_NUMBER,
+    NAME_PRIORS_SENSOR,
+    ROUNDING_PRECISION,
 )
-from .types import ProbabilityResult
 
 _LOGGER = logging.getLogger(__name__)
-ROUNDING_PRECISION: Final = 2
 
 
 def format_float(value: float) -> float:
@@ -51,96 +43,38 @@ def get_friendly_names(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
     ]
 
 
-def get_sensor_attributes(
-    hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
-) -> dict[str, Any]:
-    """Get common sensor attributes."""
-    if not coordinator.data:
-        return {}
-
-    try:
-        data: ProbabilityResult = coordinator.data
-
-        attributes = {
-            "active_triggers": get_friendly_names(
-                hass, data.get("active_triggers", [])
-            ),
-        }
-
-        # Add configured sensors info
-        config = coordinator.config
-
-        configured_sensors = {
-            "Motion": config.get("motion_sensors", []),
-            "Media": config.get("media_devices", []),
-            "Appliances": config.get("appliances", []),
-            "Illuminance": config.get("illuminance_sensors", []),
-            "Humidity": config.get("humidity_sensors", []),
-            "Temperature": config.get("temperature_sensors", []),
-            "Door": config.get("door_sensors", []),
-            "Window": config.get("window_sensors", []),
-            "Lights": config.get("lights", []),
-        }
-
-        # Flatten all sensors to count how many have learned priors
-        all_sensors = []
-        for sensor_list in configured_sensors.values():
-            all_sensors.extend(sensor_list)
-
-        learned_count = sum(
-            1 for sensor in all_sensors if sensor in coordinator.learned_priors
-        )
-
-        attributes["configured_sensors"] = {
-            cat: get_friendly_names(hass, slist)
-            for cat, slist in configured_sensors.items()
-        }
-
-        # Show how many sensors have learned priors
-        attributes["learned_prior_sensors_count"] = learned_count
-        attributes["total_sensors_count"] = len(all_sensors)
-
-        return attributes
-
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.error("Error getting entity attributes: %s", err)
-        return {}
-
-
-def get_device_info(entry_id: str, area_name: str) -> dict[str, Any]:
-    """Get common device info dictionary."""
-    return {
-        "identifiers": {(DOMAIN, entry_id)},
-        "name": area_name,
-        "manufacturer": DEVICE_MANUFACTURER,
-        "model": DEVICE_MODEL,
-        "sw_version": DEVICE_SW_VERSION,
-    }
-
-
 def generate_migration_map(
     area_id: str, entry_id: str, platform: str
 ) -> dict[str, str]:
     """Generate migration map for unique IDs based on platform."""
     if platform == "sensor":
-        return {
-            f"{DOMAIN}_{area_id}_probability": f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_decay": f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_motion_prior": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_MOTION_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_MOTION_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_media_prior": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_MEDIA_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_MEDIA_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_appliance_prior": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_APPLIANCE_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_APPLIANCE_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_door_prior": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_DOOR_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_DOOR_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_window_prior": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_WINDOW_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_WINDOW_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_light_prior": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_LIGHT_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_LIGHT_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_occupancy_prior": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
-            f"{DOMAIN}_{area_id}_{NAME_OCCUPANCY_PRIOR_SENSOR}": f"{DOMAIN}_{entry_id}_{NAME_OCCUPANCY_PRIOR_SENSOR.lower().replace(' ', '_')}",
+        # Add migration for old prior sensors to new priors sensor
+        old_prior_sensors = [
+            "motion_prior",
+            "media_prior",
+            "appliance_prior",
+            "door_prior",
+            "window_prior",
+            "light_prior",
+            "occupancy_prior",
+        ]
+
+        migration_map = {
+            f"{DOMAIN}_{area_id}_probability": (
+                f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+            ),
+            f"{DOMAIN}_{area_id}_decay": (
+                f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+            ),
         }
+
+        # Add migrations for all old prior sensors to the new priors sensor
+        for old_prior in old_prior_sensors:
+            migration_map[f"{DOMAIN}_{area_id}_{old_prior}"] = (
+                f"{DOMAIN}_{entry_id}_{NAME_PRIORS_SENSOR.lower()}"
+            )
+
+        return migration_map
     elif platform == "binary_sensor":
         return {
             f"{DOMAIN}_{area_id}_occupancy": f"{DOMAIN}_{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
@@ -156,7 +90,7 @@ async def async_migrate_unique_ids(
     hass, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
-    entity_registry = async_get_entity_registry(hass)
+    entity_registry = async_get(hass)
     updated_entries = 0
 
     # Get area_id from config entry data
@@ -185,3 +119,66 @@ async def async_migrate_unique_ids(
         _LOGGER.info(
             "Completed migrating %s unique IDs for area %s", updated_entries, area_id
         )
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old entry to the new version."""
+    _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
+
+    # Get existing data
+    data = {**config_entry.data}
+    options = {**config_entry.options}
+
+    # Get the entity registry
+    entity_registry = async_get(hass)
+
+    # List of old prior sensor suffixes to remove
+    old_prior_sensors = [
+        "motion_prior",
+        "media_prior",
+        "appliance_prior",
+        "door_prior",
+        "window_prior",
+        "light_prior",
+        "occupancy_prior",
+    ]
+
+    try:
+        # Remove old prior sensors from registry
+        for old_prior in old_prior_sensors:
+            unique_id = f"{DOMAIN}_{config_entry.entry_id}_{old_prior}"
+            if entity_entry := entity_registry.async_get_entity_id(
+                Platform.SENSOR, DOMAIN, unique_id
+            ):
+                _LOGGER.info(
+                    "Found and removing prior sensor with unique_id: %s", unique_id
+                )
+                entity_registry.async_remove(entity_entry)
+    except HomeAssistantError as err:
+        _LOGGER.error("Error accessing entity registry: %s", err)
+
+    try:
+        # Run the unique ID migrations
+        for platform in PLATFORMS:
+            await async_migrate_unique_ids(hass, config_entry, platform)
+    except HomeAssistantError as err:
+        _LOGGER.error("Error during unique ID migration: %s", err)
+
+    if CONF_AREA_ID in data:
+        data.pop(CONF_AREA_ID)
+
+    try:
+        # Update the config entry without the area_id
+        hass.config_entries.async_update_entry(
+            config_entry, data=data, options=options, version=STORAGE_VERSION
+        )
+    except ValueError as err:
+        _LOGGER.error("Error updating config entry: %s", err)
+        return False
+
+    _LOGGER.info(
+        "Successfully migrated Area Occupancy entry %s to version %s",
+        config_entry.entry_id,
+        STORAGE_VERSION,
+    )
+    return True

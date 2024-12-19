@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TypedDict, NotRequired, Any
+from datetime import datetime
+from typing import TypedDict, Any, Literal, Sequence, Set
+from homeassistant.core import State
+
+MotionState = Literal["on", "off"]
+
+StateList = list[State]
+
+StateSequence = Sequence[State]
+
+EntityType = Literal[
+    "motion",
+    "media",
+    "appliance",
+    "door",
+    "window",
+    "light",
+    "environmental",
+]
 
 
 # Unified configuration type
@@ -31,7 +49,25 @@ class Config(TypedDict, total=False):
     historical_analysis_enabled: bool
 
 
+class DeviceInfo(TypedDict):
+    """Type for device information."""
+
+    identifiers: dict[str, str]
+    name: str
+    manufacturer: str
+    model: str
+    sw_version: str
+
+
 # Probability calculation types
+class SensorProbability(TypedDict):
+    """Type for sensor probability details."""
+
+    probability: float
+    weight: float
+    weighted_probability: float
+
+
 class SensorProbabilities(TypedDict):
     """Type for sensor probability data."""
 
@@ -48,19 +84,106 @@ class ProbabilityResult(TypedDict):
     """Type for probability calculation results."""
 
     probability: float
-    prior_probability: float
     active_triggers: list[str]
     sensor_probabilities: SensorProbabilities
     device_states: dict[str, dict[str, str]]
-    decay_status: dict[str, float]
     sensor_availability: dict[str, bool]
     is_occupied: bool
-    historical_probability: NotRequired[float]
-    last_occupied: NotRequired[str]
-    state_duration: NotRequired[float]
-    occupancy_rate: NotRequired[float]
-    moving_average: NotRequired[float]
-    rate_of_change: NotRequired[float]
-    min_probability: NotRequired[float]
-    max_probability: NotRequired[float]
-    historical_patterns: NotRequired[dict[str, Any]]
+
+
+class SensorState(TypedDict):
+    """Type for sensor state data."""
+
+    state: str | None
+    last_changed: str
+    availability: bool
+
+
+class SensorStates(TypedDict):
+    """Type for collection of sensor states."""
+
+    states: dict[str, SensorState]
+
+
+class SensorConfig(TypedDict):
+    """Type for sensor configuration."""
+
+    prob_given_true: float
+    prob_given_false: float
+    default_prior: float
+    weight: float
+
+
+class DecayStatus(TypedDict):
+    """Type for decay status."""
+
+    global_decay: float
+
+
+class StateInterval(TypedDict):
+    """Type for state interval data."""
+
+    start: datetime
+    end: datetime
+    state: Any
+
+
+class MotionInterval(TypedDict):
+    """Type for motion interval data."""
+
+    start: datetime
+    end: datetime
+
+
+class StateDurations(TypedDict):
+    """Type for state durations."""
+
+    total_motion_active_time: float
+    total_motion_inactive_time: float
+    total_motion_time: float
+
+
+class ConditionalProbability(TypedDict):
+    """Type for conditional probability calculation results."""
+
+    prob_given_true: float
+    prob_given_false: float
+    prior: float
+
+
+class CalculationResult(TypedDict):
+    """Type for single sensor calculation result."""
+
+    weighted_prob: float
+    is_active: bool
+    prob_details: SensorProbability
+
+
+class ProbabilityAttributes(TypedDict, total=False):
+    """Type for probability sensor attributes."""
+
+    active_triggers: list[str]
+    sensor_probabilities: Set[str]
+    threshold: str
+
+
+class PriorsAttributes(TypedDict, total=False):
+    """Type for priors sensor attributes."""
+
+    motion_prior: str
+    media_prior: str
+    appliance_prior: str
+    door_prior: str
+    window_prior: str
+    light_prior: str
+    last_updated: str
+    total_period: str
+
+
+class LearnedPrior(TypedDict):
+    """Type for learned prior data."""
+
+    prob_given_true: float
+    prob_given_false: float
+    prior: float
+    last_updated: str

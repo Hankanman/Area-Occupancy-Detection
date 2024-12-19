@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any, Final
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -19,9 +17,6 @@ from .const import (
     NAME_BINARY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .helpers import get_device_info, get_sensor_attributes
-
-ROUNDING_PRECISION: Final = 2
 
 
 class AreaOccupancyBinarySensor(
@@ -41,21 +36,14 @@ class AreaOccupancyBinarySensor(
         self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
         self._attr_name = f"{coordinator.config[CONF_NAME]} {NAME_BINARY_SENSOR}"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info = get_device_info(
-            entry_id, coordinator.config[CONF_NAME]
-        )
+        self._attr_device_info = coordinator.device_info
 
     @property
     def is_on(self) -> bool:
         """Return True if the area is currently occupied."""
-        threshold = self.coordinator.get_threshold_decimal()
+        threshold = self.coordinator.threshold
         probability = self.coordinator.data.get("probability", 0.0)
         return probability >= threshold
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
-        return get_sensor_attributes(self.hass, self.coordinator)
 
 
 async def async_setup_entry(
