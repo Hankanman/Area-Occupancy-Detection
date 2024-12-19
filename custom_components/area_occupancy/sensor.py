@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any, Final
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -25,11 +24,6 @@ from .const import (
     DOMAIN,
     NAME_PROBABILITY_SENSOR,
     NAME_PRIORS_SENSOR,
-    ATTR_TOTAL_PERIOD,
-    ATTR_LAST_UPDATED,
-    ATTR_ACTIVE_TRIGGERS,
-    ATTR_SENSOR_PROBABILITIES,
-    ATTR_THRESHOLD,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
@@ -40,14 +34,10 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     NAME_DECAY_SENSOR,
     CONF_NAME,
-    ATTR_MOTION_PRIOR,
-    ATTR_MEDIA_PRIOR,
-    ATTR_APPLIANCE_PRIOR,
-    ATTR_DOOR_PRIOR,
-    ATTR_WINDOW_PRIOR,
-    ATTR_LIGHT_PRIOR,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
+    DEFAULT_PROB_GIVEN_TRUE,
+    DEFAULT_PROB_GIVEN_FALSE,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .probabilities import (
@@ -63,14 +53,15 @@ from .probabilities import (
     MEDIA_PROB_GIVEN_FALSE,
     APPLIANCE_PROB_GIVEN_TRUE,
     APPLIANCE_PROB_GIVEN_FALSE,
-    DEFAULT_PROB_GIVEN_TRUE,
-    DEFAULT_PROB_GIVEN_FALSE,
 )
-from .types import ProbabilityResult
+from .types import (
+    ProbabilityResult,
+    ProbabilityAttributes,
+    PriorsAttributes,
+)
 from .helpers import format_float, get_device_info
 
 _LOGGER = logging.getLogger(__name__)
-ROUNDING_PRECISION: Final = 2
 
 
 class AreaOccupancySensorBase(
@@ -149,44 +140,44 @@ class PriorsSensor(AreaOccupancySensorBase):
             return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def extra_state_attributes(self) -> PriorsAttributes:
         """Return all prior probabilities as attributes."""
         try:
             config = self.coordinator.config
 
             attributes = {
-                ATTR_MOTION_PRIOR: self._get_prior(
+                "motion_prior": self._get_prior(
                     config.get(CONF_MOTION_SENSORS, []),
                     MOTION_PROB_GIVEN_TRUE,
                     MOTION_PROB_GIVEN_FALSE,
                 ),
-                ATTR_MEDIA_PRIOR: self._get_prior(
+                "media_prior": self._get_prior(
                     config.get(CONF_MEDIA_DEVICES, []),
                     MEDIA_PROB_GIVEN_TRUE,
                     MEDIA_PROB_GIVEN_FALSE,
                 ),
-                ATTR_APPLIANCE_PRIOR: self._get_prior(
+                "appliance_prior": self._get_prior(
                     config.get(CONF_APPLIANCES, []),
                     APPLIANCE_PROB_GIVEN_TRUE,
                     APPLIANCE_PROB_GIVEN_FALSE,
                 ),
-                ATTR_DOOR_PRIOR: self._get_prior(
+                "door_prior": self._get_prior(
                     config.get(CONF_DOOR_SENSORS, []),
                     DOOR_PROB_GIVEN_TRUE,
                     DOOR_PROB_GIVEN_FALSE,
                 ),
-                ATTR_WINDOW_PRIOR: self._get_prior(
+                "window_prior": self._get_prior(
                     config.get(CONF_WINDOW_SENSORS, []),
                     WINDOW_PROB_GIVEN_TRUE,
                     WINDOW_PROB_GIVEN_FALSE,
                 ),
-                ATTR_LIGHT_PRIOR: self._get_prior(
+                "light_prior": self._get_prior(
                     config.get(CONF_LIGHTS, []),
                     LIGHT_PROB_GIVEN_TRUE,
                     LIGHT_PROB_GIVEN_FALSE,
                 ),
-                ATTR_LAST_UPDATED: dt_util.utcnow().isoformat(),
-                ATTR_TOTAL_PERIOD: str(
+                "last_updated": dt_util.utcnow().isoformat(),
+                "total_period": str(
                     timedelta(
                         days=self.coordinator.config.get(
                             CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
@@ -226,7 +217,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def extra_state_attributes(self) -> ProbabilityAttributes:
         """Return entity specific state attributes."""
         if not self.coordinator.data:
             return {}
@@ -253,15 +244,15 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                 sensor_probabilities.add(formatted_entry)
 
             return {
-                ATTR_ACTIVE_TRIGGERS: [
+                "active_triggers": [
                     self.hass.states.get(entity_id).attributes.get(
                         "friendly_name", entity_id
                     )
                     for entity_id in data.get("active_triggers", [])
                     if self.hass.states.get(entity_id)
                 ],
-                ATTR_SENSOR_PROBABILITIES: sensor_probabilities,
-                ATTR_THRESHOLD: f"{self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)}%",
+                "sensor_probabilities": sensor_probabilities,
+                "threshold": f"{self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)}%",
             }
         except (TypeError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting probability attributes: %s", err)
@@ -301,27 +292,6 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
         except (TypeError, KeyError, ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error calculating decay value: %s", err)
             return 0.0
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        try:
-            if not self.coordinator.data or "decay_status" not in self.coordinator.data:
-                return {}
-
-            decay_status = self.coordinator.data["decay_status"]
-            formatted_decays = {}
-
-            for entity_id, decay_value in decay_status.items():
-                state = self.hass.states.get(entity_id)
-                if state and decay_value is not None:
-                    friendly_name = state.attributes.get("friendly_name", entity_id)
-                    formatted_decays[friendly_name] = format_float(decay_value * 100)
-
-            return {"individual_decays": formatted_decays} if formatted_decays else {}
-
-        except (TypeError, KeyError, AttributeError) as err:
-            _LOGGER.error("Error getting decay attributes: %s", err)
-            return {}
 
 
 async def async_setup_entry(

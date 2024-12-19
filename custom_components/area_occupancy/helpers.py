@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Final
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import async_get
@@ -11,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.exceptions import HomeAssistantError
 
+from .types import DeviceInfo
 from .const import (
     DOMAIN,
     STORAGE_VERSION,
@@ -24,11 +24,10 @@ from .const import (
     NAME_BINARY_SENSOR,
     NAME_THRESHOLD_NUMBER,
     NAME_PRIORS_SENSOR,
+    ROUNDING_PRECISION,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-ROUNDING_PRECISION: Final = 2
 
 
 def format_float(value: float) -> float:
@@ -48,7 +47,7 @@ def get_friendly_names(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
     ]
 
 
-def get_device_info(entry_id: str, area_name: str) -> dict[str, Any]:
+def get_device_info(entry_id: str, area_name: str) -> DeviceInfo:
     """Get common device info dictionary."""
     return {
         "identifiers": {(DOMAIN, entry_id)},
@@ -198,30 +197,3 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         STORAGE_VERSION,
     )
     return True
-
-
-def is_entity_active(
-    entity_id: str,
-    state: str,
-    entity_types: dict[str, str],
-    type_configs: dict[str, dict[str, Any]],
-) -> bool:
-    """Check if an entity is in an active state.
-
-    Args:
-        entity_id: The entity ID to check
-        state: The current state of the entity
-        entity_types: Dictionary mapping entity IDs to their sensor types
-
-    Returns:
-        bool: True if the entity is considered active, False otherwise
-    """
-    sensor_type = entity_types.get(entity_id)
-    if not sensor_type:
-        return False
-
-    sensor_config = type_configs.get(sensor_type, {})
-    if not sensor_config:
-        return False
-
-    return state in sensor_config["active_states"]

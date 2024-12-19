@@ -1,7 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Literal
-from homeassistant.core import State, HomeAssistant
+from homeassistant.core import HomeAssistant
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
@@ -24,34 +23,19 @@ from .const import (
     CONF_LIGHTS,
     MIN_PROBABILITY,
     MAX_PROBABILITY,
-    DEFAULT_PRIOR,
-)
-
-from .probabilities import (
     DEFAULT_PROB_GIVEN_TRUE,
     DEFAULT_PROB_GIVEN_FALSE,
-    MOTION_DEFAULT_PRIOR,
-    MEDIA_DEFAULT_PRIOR,
-    APPLIANCE_DEFAULT_PRIOR,
-    DOOR_DEFAULT_PRIOR,
-    WINDOW_DEFAULT_PRIOR,
-    LIGHT_DEFAULT_PRIOR,
-    ENVIRONMENTAL_DEFAULT_PRIOR,
+)
+from .types import (
+    StateInterval,
+    StateDurations,
+    ConditionalProbability,
+    StateList,
+    StateSequence,
+    MotionState,
 )
 
-from .helpers import is_entity_active
-
 _LOGGER = logging.getLogger(__name__)
-
-SensorType = Literal[
-    "motion",
-    "media",
-    "appliance",
-    "door",
-    "window",
-    "light",
-    "environmental",
-]
 
 
 class PriorCalculator:
@@ -63,8 +47,6 @@ class PriorCalculator:
         self.config = coordinator.config
         self.probabilities = probabilities
         self.hass = hass
-        self.entity_types: dict[str, SensorType] = {}
-        self._map_entities_to_types()
 
         self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
         self.media_devices = self.config.get(CONF_MEDIA_DEVICES, [])
@@ -78,7 +60,7 @@ class PriorCalculator:
 
     async def calculate_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
-    ) -> tuple[float, float, float]:
+    ) -> ConditionalProbability:
         """Calculate learned priors for a given entity."""
         _LOGGER.debug("Calculating prior for %s", entity_id)
         # Fetch motion sensor states
@@ -95,7 +77,7 @@ class PriorCalculator:
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
-                get_default_prior(entity_id, self),
+                self.probabilities.get_default_prior(entity_id),
             )
 
         # Fetch entity states
@@ -107,7 +89,7 @@ class PriorCalculator:
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
-                get_default_prior(entity_id, self),
+                self.probabilities.get_default_prior(entity_id),
             )
 
         # Compute intervals for motion sensors once
@@ -129,7 +111,7 @@ class PriorCalculator:
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
-                get_default_prior(entity_id, self),
+                self.probabilities.get_default_prior(entity_id),
             )
 
         # Calculate prior probability based on motion sensor and clamp it
@@ -163,7 +145,7 @@ class PriorCalculator:
 
     async def _get_states_from_recorder(
         self, entity_id: str, start_time: datetime, end_time: datetime
-    ) -> list[State] | None:
+    ) -> StateList | None:
         """Fetch states history from recorder."""
         try:
             states = await get_instance(self.hass).async_add_executor_job(
@@ -181,10 +163,10 @@ class PriorCalculator:
             return None
 
     def _states_to_intervals(
-        self, states: list[State], start: datetime, end: datetime
-    ) -> list[tuple[datetime, datetime, Any]]:
-        """Convert a list of states into intervals [(start, end, state), ...]."""
-        intervals = []
+        self, states: StateSequence, start: datetime, end: datetime
+    ) -> list[StateInterval]:
+        """Convert a list of states into intervals."""
+        intervals: list[StateInterval] = []
         sorted_states = sorted(states, key=lambda s: s.last_changed)
         current_start = start
         current_state = None
@@ -208,11 +190,15 @@ class PriorCalculator:
         return intervals
 
     def _compute_state_durations_from_intervals(
-        self, intervals_dict: dict[str, list[tuple[datetime, datetime, Any]]]
-    ) -> dict[str, float]:
+        self, intervals_dict: dict[str, list[StateInterval]]
+    ) -> StateDurations:
         """Compute total durations for each state from precomputed intervals."""
         _LOGGER.debug("Computing state durations from intervals")
-        durations = {}
+        durations: StateDurations = {
+            "total_motion_active_time": 0.0,
+            "total_motion_inactive_time": 0.0,
+            "total_motion_time": 0.0,
+        }
         for intervals in intervals_dict.values():
             for interval_start, interval_end, state_val in intervals:
                 duration = (interval_end - interval_start).total_seconds()
@@ -222,9 +208,9 @@ class PriorCalculator:
     def _calculate_conditional_probability_with_intervals(
         self,
         entity_id: str,
-        entity_intervals: list[tuple[datetime, datetime, Any]],
-        motion_intervals_by_sensor: dict[str, list[tuple[datetime, datetime, Any]]],
-        motion_state_filter: str,
+        entity_intervals: list[StateInterval],
+        motion_intervals_by_sensor: dict[str, list[StateInterval]],
+        motion_state_filter: MotionState,
     ) -> float:
         """Calculate P(entity_active | motion_state) using precomputed intervals."""
         _LOGGER.debug("Calculating conditional probability for %s", entity_id)
@@ -251,11 +237,9 @@ class PriorCalculator:
         entity_active_intervals = [
             (start, end)
             for start, end, state in entity_intervals
-            if is_entity_active(
+            if self.probabilities.is_entity_active(
                 entity_id,
                 state,
-                self.entity_types,
-                self.probabilities.sensor_configs,
             )
         ]
 
@@ -271,44 +255,3 @@ class PriorCalculator:
         # Clamp the final probability before returning
         result = overlap_duration / total_motion_duration
         return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
-
-    def _map_entities_to_types(self) -> None:
-        """Create mapping of entity IDs to their sensor types."""
-        mappings = [
-            (CONF_MOTION_SENSORS, "motion"),
-            (CONF_MEDIA_DEVICES, "media"),
-            (CONF_APPLIANCES, "appliance"),
-            (CONF_DOOR_SENSORS, "door"),
-            (CONF_WINDOW_SENSORS, "window"),
-            (CONF_LIGHTS, "light"),
-            (CONF_ILLUMINANCE_SENSORS, "environmental"),
-            (CONF_HUMIDITY_SENSORS, "environmental"),
-            (CONF_TEMPERATURE_SENSORS, "environmental"),
-        ]
-
-        for config_key, sensor_type in mappings:
-            for entity_id in self.config.get(config_key, []):
-                self.entity_types[entity_id] = sensor_type
-
-
-def get_default_prior(entity_id: str, calc) -> float:
-    """Return default prior based on entity category."""
-    if entity_id in calc.motion_sensors:
-        return MOTION_DEFAULT_PRIOR
-    elif entity_id in calc.media_devices:
-        return MEDIA_DEFAULT_PRIOR
-    elif entity_id in calc.appliances:
-        return APPLIANCE_DEFAULT_PRIOR
-    elif entity_id in calc.door_sensors:
-        return DOOR_DEFAULT_PRIOR
-    elif entity_id in calc.window_sensors:
-        return WINDOW_DEFAULT_PRIOR
-    elif entity_id in calc.lights:
-        return LIGHT_DEFAULT_PRIOR
-    elif (
-        entity_id in calc.illuminance_sensors
-        or entity_id in calc.humidity_sensors
-        or entity_id in calc.temperature_sensors
-    ):
-        return ENVIRONMENTAL_DEFAULT_PRIOR
-    return DEFAULT_PRIOR

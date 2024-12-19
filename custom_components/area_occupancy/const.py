@@ -45,7 +45,7 @@ CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 
 # File paths and configuration
 CONF_VERSION: Final = 4
-STORAGE_VERSION: Final = 4
+STORAGE_VERSION: Final = 5
 STORAGE_VERSION_MINOR: Final = 1
 CACHE_DURATION: Final = timedelta(hours=6)
 
@@ -73,25 +73,6 @@ NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
-# Attribute keys
-ATTR_ACTIVE_TRIGGERS: Final = "active_triggers"
-ATTR_SENSOR_PROBABILITIES: Final = "sensor_probabilities"
-ATTR_THRESHOLD: Final = "threshold"
-ATTR_PROB_GIVEN_TRUE: Final = "prob_given_true"
-ATTR_PROB_GIVEN_FALSE: Final = "prob_given_false"
-ATTR_LAST_UPDATED: Final = "last_updated"
-ATTR_TOTAL_PERIOD: Final = "total_period"
-ATTR_START_TIME: Final = "start_time"
-ATTR_END_TIME: Final = "end_time"
-ATTR_OUTPUT_FILE: Final = "output_file"
-ATTR_MOTION_PRIOR: Final = "motion_prior"
-ATTR_MEDIA_PRIOR: Final = "media_prior"
-ATTR_APPLIANCE_PRIOR: Final = "appliance_prior"
-ATTR_DOOR_PRIOR: Final = "door_prior"
-ATTR_WINDOW_PRIOR: Final = "window_prior"
-ATTR_LIGHT_PRIOR: Final = "light_prior"
-ATTR_OCCUPANCY_PRIOR: Final = "occupancy_prior"
-
 # Decay lambda such that at half of decay_window probability is 25% of original
 DECAY_LAMBDA = 0.866433976
 
@@ -99,4 +80,10 @@ DECAY_LAMBDA = 0.866433976
 MIN_PROBABILITY: Final[float] = 0.01
 MAX_PROBABILITY: Final[float] = 0.99
 
+# Default prior probabilities
 DEFAULT_PRIOR: Final[float] = 0.1713
+DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
+DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
+
+# Helper constants
+ROUNDING_PRECISION: Final = 2

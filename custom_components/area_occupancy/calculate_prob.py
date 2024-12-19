@@ -5,26 +5,21 @@ from __future__ import annotations
 import math
 import logging
 from datetime import datetime
-from typing import Any, Optional, TypedDict, Literal
+from typing import Optional
 
 from homeassistant.util import dt as dt_util
 from homeassistant.exceptions import HomeAssistantError
 
-from .types import ProbabilityResult
+from .types import (
+    ProbabilityResult,
+    SensorState,
+    CalculationResult,
+)
 from .const import (
     DEFAULT_PRIOR,
     DECAY_LAMBDA,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
     CONF_DECAY_MIN_DELAY,
@@ -32,28 +27,8 @@ from .const import (
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_MIN_DELAY,
 )
-from .helpers import is_entity_active
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class SensorProbability(TypedDict):
-    """Type for sensor probability details."""
-
-    probability: float
-    weight: float
-    weighted_probability: float
-
-
-SensorType = Literal[
-    "motion",
-    "media",
-    "appliance",
-    "door",
-    "window",
-    "light",
-    "environmental",
-]
 
 
 class ProbabilityCalculator:
@@ -65,41 +40,14 @@ class ProbabilityCalculator:
         self.config = coordinator.config
         self.probabilities = probabilities
 
-        # Map entity IDs to their sensor types for faster lookup
-        self.entity_types: dict[str, SensorType] = {}
-        self._map_entities_to_types()
-
         self.current_probability = MIN_PROBABILITY
         self.previous_probability = MIN_PROBABILITY
         self.decay_enabled = self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         self.decay_start_time: Optional[datetime] = None
 
-    def _map_entities_to_types(self) -> None:
-        """Create mapping of entity IDs to their sensor types."""
-        mappings = [
-            (CONF_MOTION_SENSORS, "motion"),
-            (CONF_MEDIA_DEVICES, "media"),
-            (CONF_APPLIANCES, "appliance"),
-            (CONF_DOOR_SENSORS, "door"),
-            (CONF_WINDOW_SENSORS, "window"),
-            (CONF_LIGHTS, "light"),
-            (CONF_ILLUMINANCE_SENSORS, "environmental"),
-            (CONF_HUMIDITY_SENSORS, "environmental"),
-            (CONF_TEMPERATURE_SENSORS, "environmental"),
-        ]
-
-        for config_key, sensor_type in mappings:
-            for entity_id in self.config.get(config_key, []):
-                self.entity_types[entity_id] = sensor_type
-
-    def _get_sensor_config(self, entity_id: str) -> dict[str, Any]:
-        """Get sensor configuration based on entity type."""
-        sensor_type = self.entity_types.get(entity_id)
-        return self.probabilities.sensor_configs.get(sensor_type, {})
-
     def _calculate_sensor_probability(
-        self, entity_id: str, state: dict[str, Any]
-    ) -> tuple[float, bool, SensorProbability]:
+        self, entity_id: str, state: SensorState
+    ) -> CalculationResult:
         """Calculate probability contribution from a single sensor."""
         if not state.get("availability", False):
             return (
@@ -108,7 +56,7 @@ class ProbabilityCalculator:
                 {"probability": 0.0, "weight": 0.0, "weighted_probability": 0.0},
             )
 
-        sensor_config = self._get_sensor_config(entity_id)
+        sensor_config = self.probabilities.get_sensor_config(entity_id)
         if not sensor_config:
             return (
                 0.0,
@@ -125,11 +73,9 @@ class ProbabilityCalculator:
         prior = learned_data.get("prior", sensor_config["default_prior"])
 
         # Use the helper function instead of class method
-        if not is_entity_active(
+        if not self.probabilities.is_entity_active(
             entity_id,
             state["state"],
-            self.entity_types,
-            self.probabilities.sensor_configs,
         ):
             return (
                 0.0,
@@ -184,7 +130,7 @@ class ProbabilityCalculator:
 
     def calculate(
         self,
-        sensor_states: dict[str, Any],
+        sensor_states: dict[str, SensorState],
     ) -> ProbabilityResult:
         """Calculate occupancy probability."""
         _LOGGER.debug("Initiating occupancy probability calculation.")
@@ -218,7 +164,7 @@ class ProbabilityCalculator:
 
     def _perform_calculation_logic(
         self,
-        sensor_states: dict[str, Any],
+        sensor_states: dict[str, SensorState],
         now: datetime,
     ) -> ProbabilityResult:
         """Core calculation logic."""
@@ -307,7 +253,7 @@ class ProbabilityCalculator:
 
     def _calculate_base_probability(
         self,
-        sensor_states: dict,
+        sensor_states: dict[str, SensorState],
         active_triggers: list,
         sensor_probs: dict,
         now: datetime,
