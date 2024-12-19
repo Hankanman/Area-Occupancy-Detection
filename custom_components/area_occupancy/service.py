@@ -1,5 +1,3 @@
-import logging
-
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
@@ -9,8 +7,6 @@ from .const import (
     DOMAIN,
     DEFAULT_HISTORY_PERIOD,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_services(hass: HomeAssistant):

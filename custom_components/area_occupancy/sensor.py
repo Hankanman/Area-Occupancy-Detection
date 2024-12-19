@@ -91,7 +91,7 @@ class PriorsSensor(AreaOccupancySensorBase):
                 return None
 
             # Calculate average of all type priors
-            priors = [prior["prob_given_true"] for prior in type_priors.values()]
+            priors = [prior["prior"] for prior in type_priors.values()]
             return sum(priors) / len(priors) * 100
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
@@ -106,8 +106,8 @@ class PriorsSensor(AreaOccupancySensorBase):
 
             attributes = {
                 f"{sensor_type}": (
-                    f"T: {format_float(prior['prob_given_true']) * 100}% | "
-                    f"F: {format_float(prior['prob_given_false']) * 100}%"
+                    f"T: {round(format_float(prior['prob_given_true']) * 100, 1)}% | "
+                    f"F: {round(format_float(prior['prob_given_false']) * 100, 1)}%"
                 )
                 for sensor_type, prior in type_priors.items()
             }
