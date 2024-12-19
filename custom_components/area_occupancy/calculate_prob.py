@@ -171,7 +171,7 @@ class ProbabilityCalculator:
         _LOGGER.debug("Starting occupancy probability calculation.")
         active_triggers = []
         sensor_probs = {}
-        threshold = self.coordinator.get_threshold_decimal()
+        threshold = self.coordinator.threshold
 
         # Store the previous probability for decay logic
         self.previous_probability = self.current_probability

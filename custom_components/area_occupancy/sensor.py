@@ -59,7 +59,7 @@ from .types import (
     ProbabilityAttributes,
     PriorsAttributes,
 )
-from .helpers import format_float, get_device_info
+from .helpers import format_float
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class AreaOccupancySensorBase(
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._area_name = coordinator.config[CONF_NAME]
-        self._attr_device_info = get_device_info(entry_id, self._area_name)
+        self._attr_device_info = coordinator.device_info
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""

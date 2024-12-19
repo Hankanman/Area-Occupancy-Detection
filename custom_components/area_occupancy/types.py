@@ -189,11 +189,3 @@ class LearnedPrior(TypedDict):
     prob_given_false: float
     prior: float
     last_updated: str
-
-
-class StorageData(TypedDict):
-    """Type for storage data."""
-
-    version: int
-    version_minor: int
-    learned_priors: dict[str, LearnedPrior]

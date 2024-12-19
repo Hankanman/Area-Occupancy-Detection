@@ -10,14 +10,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.exceptions import HomeAssistantError
 
-from .types import DeviceInfo
 from .const import (
     DOMAIN,
     STORAGE_VERSION,
     PLATFORMS,
-    DEVICE_MANUFACTURER,
-    DEVICE_MODEL,
-    DEVICE_SW_VERSION,
     CONF_AREA_ID,
     NAME_PROBABILITY_SENSOR,
     NAME_DECAY_SENSOR,
@@ -45,17 +41,6 @@ def get_friendly_names(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
         for entity_id in entity_ids
         if hass.states.get(entity_id)
     ]
-
-
-def get_device_info(entry_id: str, area_name: str) -> DeviceInfo:
-    """Get common device info dictionary."""
-    return {
-        "identifiers": {(DOMAIN, entry_id)},
-        "name": area_name,
-        "manufacturer": DEVICE_MANUFACTURER,
-        "model": DEVICE_MODEL,
-        "sw_version": DEVICE_SW_VERSION,
-    }
 
 
 def generate_migration_map(
