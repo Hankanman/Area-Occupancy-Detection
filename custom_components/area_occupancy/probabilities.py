@@ -12,7 +12,9 @@ from homeassistant.const import (
     STATE_PAUSED,
 )
 
-from .types import EntityType
+from homeassistant.util import dt as dt_util
+
+from .types import EntityType, LearnedPrior
 
 from .const import (
     CONF_WEIGHT_MOTION,
@@ -154,8 +156,12 @@ class Probabilities:
         }
 
     def _build_sensor_configs(self) -> dict:
-        """Build sensor configurations using current weights."""
-        return {
+        """Build sensor configurations using current weights and type priors."""
+        type_priors = (
+            self.coordinator.type_priors if hasattr(self, "coordinator") else {}
+        )
+
+        configs = {
             "motion": {
                 "prob_given_true": MOTION_PROB_GIVEN_TRUE,
                 "prob_given_false": MOTION_PROB_GIVEN_FALSE,
@@ -206,6 +212,19 @@ class Probabilities:
                 "active_states": {STATE_ON},
             },
         }
+
+        # Update configs with learned type priors if available
+        for sensor_type, config in configs.items():
+            if type_prior := type_priors.get(sensor_type):
+                config.update(
+                    {
+                        "prob_given_true": type_prior["prob_given_true"],
+                        "prob_given_false": type_prior["prob_given_false"],
+                        "default_prior": type_prior["prior"],
+                    }
+                )
+
+        return configs
 
     @property
     def sensor_weights(self) -> dict[str, float]:
@@ -258,3 +277,45 @@ class Probabilities:
             return False
 
         return state in sensor_config.get("active_states", set())
+
+    def get_initial_type_priors(self) -> dict[str, LearnedPrior]:
+        """Get initial type priors with default values."""
+        now = dt_util.utcnow().isoformat()
+        return {
+            "motion": {
+                "prob_given_true": MOTION_PROB_GIVEN_TRUE,
+                "prob_given_false": MOTION_PROB_GIVEN_FALSE,
+                "prior": MOTION_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+            "media": {
+                "prob_given_true": MEDIA_PROB_GIVEN_TRUE,
+                "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
+                "prior": MEDIA_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+            "appliance": {
+                "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
+                "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
+                "prior": APPLIANCE_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+            "door": {
+                "prob_given_true": DOOR_PROB_GIVEN_TRUE,
+                "prob_given_false": DOOR_PROB_GIVEN_FALSE,
+                "prior": DOOR_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+            "window": {
+                "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
+                "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
+                "prior": WINDOW_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+            "light": {
+                "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
+                "prob_given_false": LIGHT_PROB_GIVEN_FALSE,
+                "prior": LIGHT_DEFAULT_PRIOR,
+                "last_updated": now,
+            },
+        }

@@ -63,6 +63,17 @@ class PriorCalculator:
     ) -> ConditionalProbability:
         """Calculate learned priors for a given entity."""
         _LOGGER.debug("Calculating prior for %s", entity_id)
+
+        # Get the sensor type for this entity
+        sensor_type = self.probabilities.entity_types.get(entity_id)
+        if not sensor_type:
+            _LOGGER.warning("No sensor type found for entity %s", entity_id)
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                self.probabilities.get_default_prior(entity_id),
+            )
+
         # Fetch motion sensor states
         motion_states = {}
         for motion_sensor in self.motion_sensors:
@@ -140,6 +151,9 @@ class PriorCalculator:
             prob_given_false,
             prior,
         )
+
+        # Calculate and update type priors by averaging all sensors of this type
+        await self._update_type_priors(sensor_type)
 
         return prob_given_true, prob_given_false, prior
 
@@ -255,3 +269,53 @@ class PriorCalculator:
         # Clamp the final probability before returning
         result = overlap_duration / total_motion_duration
         return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
+
+    async def _update_type_priors(self, sensor_type: str) -> None:
+        """Update type priors by averaging all sensors of the given type."""
+        # Get all entities of this type
+        entities = []
+        if sensor_type == "motion":
+            entities = self.motion_sensors
+        elif sensor_type == "media":
+            entities = self.media_devices
+        elif sensor_type == "appliance":
+            entities = self.appliances
+        elif sensor_type == "door":
+            entities = self.door_sensors
+        elif sensor_type == "window":
+            entities = self.window_sensors
+        elif sensor_type == "light":
+            entities = self.lights
+
+        if not entities:
+            _LOGGER.debug("No entities found for type %s", sensor_type)
+            return
+
+        # Collect all learned priors for this type
+        priors = []
+        prob_given_trues = []
+        prob_given_falses = []
+
+        for entity_id in entities:
+            learned = self.coordinator.learned_priors.get(entity_id)
+            if learned:
+                priors.append(learned["prior"])
+                prob_given_trues.append(learned["prob_given_true"])
+                prob_given_falses.append(learned["prob_given_false"])
+
+        if not priors:
+            _LOGGER.debug("No learned priors found for type %s", sensor_type)
+            return
+
+        # Calculate averages
+        avg_prior = sum(priors) / len(priors)
+        avg_prob_given_true = sum(prob_given_trues) / len(prob_given_trues)
+        avg_prob_given_false = sum(prob_given_falses) / len(prob_given_falses)
+
+        # Update type priors
+        self.coordinator.update_type_prior(
+            sensor_type,
+            avg_prob_given_true,
+            avg_prob_given_false,
+            avg_prior,
+        )

@@ -84,11 +84,9 @@ class ProbabilityResult(TypedDict):
     """Type for probability calculation results."""
 
     probability: float
-    prior_probability: float
     active_triggers: list[str]
     sensor_probabilities: SensorProbabilities
     device_states: dict[str, dict[str, str]]
-    decay_status: dict[str, float]
     sensor_availability: dict[str, bool]
     is_occupied: bool
 
@@ -172,12 +170,12 @@ class ProbabilityAttributes(TypedDict, total=False):
 class PriorsAttributes(TypedDict, total=False):
     """Type for priors sensor attributes."""
 
-    motion_prior: float
-    media_prior: float
-    appliance_prior: float
-    door_prior: float
-    window_prior: float
-    light_prior: float
+    motion_prior: str
+    media_prior: str
+    appliance_prior: str
+    door_prior: str
+    window_prior: str
+    light_prior: str
     last_updated: str
     total_period: str
 

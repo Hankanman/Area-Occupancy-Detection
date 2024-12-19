@@ -66,6 +66,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         # Initialize storage and learned_priors first
         self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
         self.learned_priors: dict[str, LearnedPrior] = {}
+        self.type_priors: dict[str, LearnedPrior] = {}
 
         self.threshold = self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0
 
@@ -182,32 +183,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             if not stored_data:
                 _LOGGER.debug("No stored data found, initializing fresh state")
                 self._reset_state()
+                self.type_priors = self._probabilities.get_initial_type_priors()
                 return
 
             # Restore learned priors
             self.learned_priors = stored_data.get("learned_priors", {})
 
-            # Restore last occupied timestamp
-            last_occupied = stored_data.get("last_occupied")
-            if last_occupied:
-                try:
-                    self._last_occupied = dt_util.parse_datetime(last_occupied)
-                except (ValueError, TypeError) as err:
-                    _LOGGER.warning(
-                        "Failed to parse last_occupied datetime: %s", err, exc_info=True
-                    )
-                    self._last_occupied = None
+            # Restore type priors
+            stored_type_priors = stored_data.get("type_priors", {})
+            if stored_type_priors:
+                self.type_priors = stored_type_priors
+            else:
+                self.type_priors = self._probabilities.get_initial_type_priors()
 
             _LOGGER.debug("Successfully restored stored data")
 
         except (ValueError, TypeError, KeyError) as err:
             _LOGGER.error("Error loading stored data: %s", err, exc_info=True)
             self._reset_state()
-        except HomeAssistantError as err:
-            _LOGGER.error(
-                "Home Assistant error loading stored data: %s", err, exc_info=True
-            )
-            self._reset_state()
+            self.type_priors = self._probabilities.get_initial_type_priors()
 
     async def async_initialize_states(self) -> None:
         """Initialize sensor states."""
@@ -273,6 +267,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             await self._prior_calculator.calculate_prior(
                 entity_id, start_time, end_time
             )
+        self._probabilities.update_config(self.config)
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -350,6 +345,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             new_data = {
                 "name": self.config[CONF_NAME],
                 "learned_priors": self.learned_priors,
+                "type_priors": self.type_priors,
             }
 
             # Only save if data has meaningfully changed
@@ -499,6 +495,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         # Force an update of all entities
         self.async_set_updated_data(self.data)
+        self._probabilities.update_config(self.config)
 
     async def async_save_state(self) -> None:
         _LOGGER.debug("Saving state")
@@ -558,3 +555,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         return await self._prior_calculator.calculate_prior(
             entity_id, start_time, end_time
         )
+
+    def update_type_prior(
+        self,
+        sensor_type: str,
+        p_true: float,
+        p_false: float,
+        prior: float,
+    ) -> None:
+        """Update type priors."""
+        _LOGGER.debug("Updating type prior for %s", sensor_type)
+        self.type_priors[sensor_type] = {
+            "prob_given_true": p_true,
+            "prob_given_false": p_false,
+            "prior": prior,
+            "last_updated": dt_util.utcnow().isoformat(),
+        }
+        self.hass.async_create_task(self.async_save_state())
+        self._probabilities.update_config(self.config)

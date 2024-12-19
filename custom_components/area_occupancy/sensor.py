@@ -24,36 +24,14 @@ from .const import (
     DOMAIN,
     NAME_PROBABILITY_SENSOR,
     NAME_PRIORS_SENSOR,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
     NAME_DECAY_SENSOR,
     CONF_NAME,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
-    DEFAULT_PROB_GIVEN_TRUE,
-    DEFAULT_PROB_GIVEN_FALSE,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .probabilities import (
-    DOOR_PROB_GIVEN_TRUE,
-    DOOR_PROB_GIVEN_FALSE,
-    WINDOW_PROB_GIVEN_TRUE,
-    WINDOW_PROB_GIVEN_FALSE,
-    LIGHT_PROB_GIVEN_TRUE,
-    LIGHT_PROB_GIVEN_FALSE,
-    MOTION_PROB_GIVEN_TRUE,
-    MOTION_PROB_GIVEN_FALSE,
-    MEDIA_PROB_GIVEN_TRUE,
-    MEDIA_PROB_GIVEN_FALSE,
-    APPLIANCE_PROB_GIVEN_TRUE,
-    APPLIANCE_PROB_GIVEN_FALSE,
-)
 from .types import (
     ProbabilityResult,
     ProbabilityAttributes,
@@ -79,6 +57,8 @@ class AreaOccupancySensorBase(
         self._attr_should_poll = False
         self._area_name = coordinator.config[CONF_NAME]
         self._attr_device_info = coordinator.device_info
+        self._attr_suggested_display_precision = 1
+        self._sensor_option_display_precision = 1
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""
@@ -102,38 +82,17 @@ class PriorsSensor(AreaOccupancySensorBase):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def _get_prior(
-        self, sensor_list: list[str], default_p_true: float, default_p_false: float
-    ) -> float:
-        """Calculate prior probability for a specific sensor type."""
-        learned = self.coordinator.learned_priors
-        p_true_values = []
-
-        for entity_id in sensor_list:
-            priors = learned.get(entity_id)
-            if priors:
-                p_true_values.append(priors["prob_given_true"])
-
-        if p_true_values:
-            return round(sum(p_true_values) / len(p_true_values), 4)
-        return round(default_p_true, 4)
-
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
         try:
-            all_sensors = self.coordinator.get_configured_sensors()
-            if not all_sensors:
+            type_priors = self.coordinator.type_priors
+            if not type_priors:
                 return None
 
-            return (
-                self._get_prior(
-                    all_sensors,
-                    DEFAULT_PROB_GIVEN_TRUE,
-                    DEFAULT_PROB_GIVEN_FALSE,
-                )
-                * 100
-            )
+            # Calculate average of all type priors
+            priors = [prior["prob_given_true"] for prior in type_priors.values()]
+            return sum(priors) / len(priors) * 100
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error calculating priors: %s", err)
@@ -143,48 +102,28 @@ class PriorsSensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> PriorsAttributes:
         """Return all prior probabilities as attributes."""
         try:
-            config = self.coordinator.config
+            type_priors = self.coordinator.type_priors
 
             attributes = {
-                "motion_prior": self._get_prior(
-                    config.get(CONF_MOTION_SENSORS, []),
-                    MOTION_PROB_GIVEN_TRUE,
-                    MOTION_PROB_GIVEN_FALSE,
-                ),
-                "media_prior": self._get_prior(
-                    config.get(CONF_MEDIA_DEVICES, []),
-                    MEDIA_PROB_GIVEN_TRUE,
-                    MEDIA_PROB_GIVEN_FALSE,
-                ),
-                "appliance_prior": self._get_prior(
-                    config.get(CONF_APPLIANCES, []),
-                    APPLIANCE_PROB_GIVEN_TRUE,
-                    APPLIANCE_PROB_GIVEN_FALSE,
-                ),
-                "door_prior": self._get_prior(
-                    config.get(CONF_DOOR_SENSORS, []),
-                    DOOR_PROB_GIVEN_TRUE,
-                    DOOR_PROB_GIVEN_FALSE,
-                ),
-                "window_prior": self._get_prior(
-                    config.get(CONF_WINDOW_SENSORS, []),
-                    WINDOW_PROB_GIVEN_TRUE,
-                    WINDOW_PROB_GIVEN_FALSE,
-                ),
-                "light_prior": self._get_prior(
-                    config.get(CONF_LIGHTS, []),
-                    LIGHT_PROB_GIVEN_TRUE,
-                    LIGHT_PROB_GIVEN_FALSE,
-                ),
-                "last_updated": dt_util.utcnow().isoformat(),
-                "total_period": str(
-                    timedelta(
-                        days=self.coordinator.config.get(
-                            CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                        )
-                    )
-                ),
+                f"{sensor_type}": (
+                    f"T: {format_float(prior['prob_given_true']) * 100}% | "
+                    f"F: {format_float(prior['prob_given_false']) * 100}%"
+                )
+                for sensor_type, prior in type_priors.items()
             }
+
+            attributes.update(
+                {
+                    "last_updated": dt_util.utcnow().isoformat(),
+                    "total_period": f"{str(
+                        timedelta(
+                            days=self.coordinator.config.get(
+                                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                            )
+                        ).days
+                    )} days",
+                }
+            )
 
             return attributes
 
