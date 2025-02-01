@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Final
 from datetime import timedelta
-from homeassistant.const import Platform
+from homeassistant.const import (
+    Platform,
+    STATE_CLOSED,
+    STATE_PLAYING,
+    STATE_PAUSED,
+    STATE_ON,
+    STATE_OPEN,
+    STATE_STANDBY,
+)
 
 DOMAIN: Final = "area_occupancy"
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
@@ -23,7 +31,10 @@ CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
 CONF_DOOR_SENSORS: Final = "door_sensors"
+CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
+CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
+CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
 CONF_LIGHTS: Final = "lights"
 CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
@@ -33,6 +44,7 @@ CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
+CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
@@ -56,6 +68,10 @@ DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
+DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
+DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
+DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
+DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 0.85

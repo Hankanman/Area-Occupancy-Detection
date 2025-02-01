@@ -26,6 +26,8 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
 )
 from homeassistant.helpers import entity_registry
 from homeassistant.exceptions import HomeAssistantError
@@ -34,11 +36,15 @@ from .const import (
     DOMAIN,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
+    CONF_MEDIA_ACTIVE_STATES,
     CONF_APPLIANCES,
+    CONF_APPLIANCE_ACTIVE_STATES,
+    CONF_WINDOW_ACTIVE_STATE,
     CONF_ILLUMINANCE_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_DOOR_SENSORS,
+    CONF_DOOR_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     CONF_LIGHTS,
     CONF_THRESHOLD,
@@ -68,6 +74,14 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+)
+
+from .state_mapping import (
+    get_state_options,
+    get_default_state,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -182,6 +196,34 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
             ):
                 include_door_entities.append(entry.entity_id)
 
+    # Get door states from our states module
+    door_states = get_state_options("door")
+    door_state_options = [
+        {"value": option.value, "label": option.name}
+        for option in door_states["options"]
+    ]
+
+    # Get media states from our states module
+    media_states = get_state_options("media")
+    media_state_options = [
+        {"value": option.value, "label": option.name}
+        for option in media_states["options"]
+    ]
+
+    # Get window states from our states module
+    window_states = get_state_options("window")
+    window_state_options = [
+        {"value": option.value, "label": option.name}
+        for option in window_states["options"]
+    ]
+
+    # Get appliance states from our states module
+    appliance_states = get_state_options("appliance")
+    appliance_state_options = [
+        {"value": option.value, "label": option.name}
+        for option in appliance_states["options"]
+    ]
+
     return {
         vol.Required("openings"): section(
             vol.Schema(
@@ -195,6 +237,17 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
                         ),
                     ),
                     vol.Optional(
+                        CONF_DOOR_ACTIVE_STATE,
+                        default=defaults.get(
+                            CONF_DOOR_ACTIVE_STATE, get_default_state("door")
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=door_state_options,
+                            mode="dropdown",
+                        )
+                    ),
+                    vol.Optional(
                         CONF_WINDOW_SENSORS,
                         default=defaults.get(CONF_WINDOW_SENSORS, []),
                     ): EntitySelector(
@@ -202,6 +255,17 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
                             include_entities=include_window_entities,
                             multiple=True,
                         ),
+                    ),
+                    vol.Optional(
+                        CONF_WINDOW_ACTIVE_STATE,
+                        default=defaults.get(
+                            CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=window_state_options,
+                            mode="dropdown",
+                        )
                     ),
                 }
             ),
@@ -228,12 +292,37 @@ def create_device_schema(hass, defaults: dict[str, Any] | None = None) -> dict:
                         ),
                     ),
                     vol.Optional(
+                        CONF_MEDIA_ACTIVE_STATES,
+                        default=defaults.get(
+                            CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=media_state_options,
+                            multiple=True,
+                            mode="dropdown",
+                        )
+                    ),
+                    vol.Optional(
                         CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
                     ): EntitySelector(
                         EntitySelectorConfig(
                             include_entities=include_appliance_entities,
                             multiple=True,
                         ),
+                    ),
+                    vol.Optional(
+                        CONF_APPLIANCE_ACTIVE_STATES,
+                        default=defaults.get(
+                            CONF_APPLIANCE_ACTIVE_STATES,
+                            DEFAULT_APPLIANCE_ACTIVE_STATES,
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=appliance_state_options,
+                            multiple=True,
+                            mode="dropdown",
+                        )
                     ),
                 }
             ),

@@ -23,7 +23,13 @@
                         "description": "Configure door and window sensors",
                         "data": {
                             "door_sensors": "Door Sensors",
-                            "window_sensors": "Window Sensors"
+                            "door_active_state": "Door Active State",
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State"
+                        },
+                        "data_description": {
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy."
                         }
                     },
                     "devices": {
@@ -32,7 +38,13 @@
                         "data": {
                             "lights": "Lights",
                             "media_devices": "Media Players",
-                            "appliances": "Appliances"
+                            "media_active_states": "Media Active States",
+                            "appliances": "Appliances",
+                            "appliance_active_states": "Appliance Active States"
+                        },
+                        "data_description": {
+                            "media_active_states": "These are the states of the media players that will be used to detect occupancy.",
+                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy."
                         }
                     }
                 }
@@ -121,9 +133,6 @@
                 "title": "Motion Sensors",
                 "data": {
                     "motion_sensors": "Motion Sensors"
-                },
-                "data_description": {
-                    "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors."
                 }
             },
             "devices": {
@@ -134,7 +143,13 @@
                         "description": "Configure door and window sensors",
                         "data": {
                             "door_sensors": "Door Sensors",
-                            "window_sensors": "Window Sensors"
+                            "door_active_state": "Door Active State",
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State"
+                        },
+                        "data_description": {
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy."
                         }
                     },
                     "devices": {
@@ -143,7 +158,13 @@
                         "data": {
                             "lights": "Lights",
                             "media_devices": "Media Players",
-                            "appliances": "Appliances"
+                            "media_active_states": "Media Active States",
+                            "appliances": "Appliances",
+                            "appliance_active_states": "Appliance Active States"
+                        },
+                        "data_description": {
+                            "media_active_states": "These are the states of the media players that will be used to detect occupancy.",
+                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy."
                         }
                     }
                 }
