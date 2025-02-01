@@ -21,6 +21,14 @@ from .const import (
     NAME_THRESHOLD_NUMBER,
     NAME_PRIORS_SENSOR,
     ROUNDING_PRECISION,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -164,11 +172,31 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     except HomeAssistantError as err:
         _LOGGER.error("Error during unique ID migration: %s", err)
 
+    # Remove deprecated fields
     if CONF_AREA_ID in data:
         data.pop(CONF_AREA_ID)
 
+    # Ensure new state configuration values are present with defaults
+    new_configs = {
+        CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
+        CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
+        CONF_MEDIA_ACTIVE_STATES: DEFAULT_MEDIA_ACTIVE_STATES,
+        CONF_APPLIANCE_ACTIVE_STATES: DEFAULT_APPLIANCE_ACTIVE_STATES,
+    }
+
+    # Update data with new state configurations if not present
+    for key, default_value in new_configs.items():
+        if key not in data and key not in options:
+            _LOGGER.info("Adding new configuration %s with default value", key)
+            # For multi-select states, add to data
+            if isinstance(default_value, list):
+                data[key] = default_value
+            # For single-select states, add to options
+            else:
+                options[key] = default_value
+
     try:
-        # Update the config entry without the area_id
+        # Update the config entry with new data and options
         hass.config_entries.async_update_entry(
             config_entry, data=data, options=options, version=STORAGE_VERSION
         )

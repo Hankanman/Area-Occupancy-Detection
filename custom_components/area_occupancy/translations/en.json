@@ -3,124 +3,120 @@
         "step": {
             "user": {
                 "title": "Area Occupancy Detection",
-                "description": "Please specify the name and the sensors used for initial occupancy detection",
+                "description": "Configure area occupancy detection with sensors and parameters",
                 "data": {
-                    "name": "Name of Detection Area",
-                    "area_id": "Area ID",
-                    "motion_sensors": "Motion/Presence Sensors"
+                    "name": "Name of Detection Area"
                 },
                 "data_description": {
-                    "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity.",
-                    "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors."
-                }
-            },
-            "devices": {
-                "title": "Device Configuration",
-                "description": "Configure the devices used for occupancy detection",
+                    "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
+                },
                 "sections": {
-                    "openings": {
-                        "name": "Opening Sensors",
-                        "description": "Configure door and window sensors",
+                    "motion": {
+                        "name": "Motion & Occupancy Sensors",
+                        "description": "Configure motion and occupancy sensors",
+                        "data": {
+                            "motion_sensors": "Motion/Presence Sensors",
+                            "weight_motion": "Motion Weight"
+                        },
+                        "data_description": {
+                            "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
+                            "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "doors": {
+                        "name": "Door Sensors",
+                        "description": "Configure door sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
-                            "window_sensors": "Window Sensors",
-                            "window_active_state": "Window Active State"
+                            "weight_door": "Door Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
-                            "window_active_state": "This is the state of the window that will be used to detect occupancy."
+                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
                         }
                     },
-                    "devices": {
-                        "name": "Device Sensors",
-                        "description": "Configure lights, media players, and appliances",
+                    "windows": {
+                        "name": "Window Sensors",
+                        "description": "Configure window sensors and their states",
+                        "data": {
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State",
+                            "weight_window": "Window Weight"
+                        },
+                        "data_description": {
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "lights": {
+                        "name": "Light Sensors",
+                        "description": "Configure light sensors",
                         "data": {
                             "lights": "Lights",
+                            "weight_light": "Light Weight"
+                        },
+                        "data_description": {
+                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "media": {
+                        "name": "Media Players",
+                        "description": "Configure media players and their states",
+                        "data": {
                             "media_devices": "Media Players",
                             "media_active_states": "Media Active States",
-                            "appliances": "Appliances",
-                            "appliance_active_states": "Appliance Active States"
+                            "weight_media": "Media Weight"
                         },
                         "data_description": {
                             "media_active_states": "These are the states of the media players that will be used to detect occupancy.",
-                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy."
+                            "weight_media": "The weight given to media player inputs in the occupancy calculation."
                         }
-                    }
-                }
-            },
-            "environmental": {
-                "title": "Environmental Sensors",
-                "description": "Configure environmental sensors for enhanced detection",
-                "sections": {
-                    "environmental_sensors": {
+                    },
+                    "appliances": {
+                        "name": "Appliances",
+                        "description": "Configure appliances and their states",
+                        "data": {
+                            "appliances": "Appliances",
+                            "appliance_active_states": "Appliance Active States",
+                            "weight_appliance": "Appliance Weight"
+                        },
+                        "data_description": {
+                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                        }
+                    },
+                    "environmental": {
                         "name": "Environmental Sensors",
-                        "description": "Configure sensors that monitor environmental conditions",
+                        "description": "Configure environmental sensors",
                         "data": {
                             "illuminance_sensors": "Illuminance Sensors",
                             "humidity_sensors": "Humidity Sensors",
-                            "temperature_sensors": "Temperature Sensors"
-                        }
-                    }
-                }
-            },
-            "weights": {
-                "title": "Area Occupancy Weights",
-                "description": "Configure the weights for different sensor types",
-                "sections": {
-                    "primary_weights": {
-                        "name": "Primary Sensor Weights",
-                        "description": "Configure weights for primary occupancy indicators",
-                        "data": {
-                            "weight_motion": "Motion Weight",
-                            "weight_media": "Media Weight",
-                            "weight_appliance": "Appliance Weight"
-                        }
-                    },
-                    "opening_weights": {
-                        "name": "Opening Sensor Weights",
-                        "description": "Configure weights for doors and windows",
-                        "data": {
-                            "weight_door": "Door Weight",
-                            "weight_window": "Window Weight"
-                        }
-                    },
-                    "other_weights": {
-                        "name": "Additional Sensor Weights",
-                        "description": "Configure weights for other sensors",
-                        "data": {
-                            "weight_light": "Light Weight",
+                            "temperature_sensors": "Temperature Sensors",
                             "weight_environmental": "Environmental Weight"
+                        },
+                        "data_description": {
+                            "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
-                    }
-                }
-            },
-            "parameters": {
-                "title": "Area Occupancy Parameters",
-                "description": "Configure advanced parameters for occupancy detection",
-                "sections": {
-                    "thresholds": {
-                        "name": "Threshold Settings",
-                        "description": "Configure occupancy thresholds and history",
+                    },
+                    "parameters": {
+                        "name": "Advanced Parameters",
+                        "description": "Configure advanced parameters for occupancy detection",
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
-                            "history_period": "History Period (days)"
-                        }
-                    },
-                    "decay_settings": {
-                        "name": "Time Decay Settings",
-                        "description": "Configure how occupancy probability decays over time",
-                        "data": {
+                            "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
                             "decay_window": "Decay Window (seconds)",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)"
-                        }
-                    },
-                    "analysis_settings": {
-                        "name": "Analysis Settings",
-                        "description": "Configure historical analysis options",
-                        "data": {
+                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
+                        },
+                        "data_description": {
+                            "threshold": "The probability threshold above which the area is considered occupied.",
+                            "history_period": "Number of days of history to analyze for determining probabilities.",
+                            "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
+                            "decay_window": "Time window over which occupancy probability decays.",
+                            "decay_min_delay": "Minimum time before decay starts.",
+                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }
                 }
@@ -129,115 +125,116 @@
     },
     "options": {
         "step": {
-            "motion": {
-                "title": "Motion Sensors",
-                "data": {
-                    "motion_sensors": "Motion Sensors"
-                }
-            },
-            "devices": {
-                "title": "Device Configuration",
+            "init": {
+                "title": "Area Occupancy Detection Options",
+                "description": "Modify area occupancy detection configuration",
                 "sections": {
-                    "openings": {
-                        "name": "Opening Sensors",
-                        "description": "Configure door and window sensors",
+                    "motion": {
+                        "name": "Motion & Occupancy Sensors",
+                        "description": "Configure motion and occupancy sensors",
+                        "data": {
+                            "motion_sensors": "Motion/Presence Sensors",
+                            "weight_motion": "Motion Weight"
+                        },
+                        "data_description": {
+                            "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
+                            "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "doors": {
+                        "name": "Door Sensors",
+                        "description": "Configure door sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
-                            "window_sensors": "Window Sensors",
-                            "window_active_state": "Window Active State"
+                            "weight_door": "Door Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
-                            "window_active_state": "This is the state of the window that will be used to detect occupancy."
+                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
                         }
                     },
-                    "devices": {
-                        "name": "Device Sensors",
-                        "description": "Configure lights, media players, and appliances",
+                    "windows": {
+                        "name": "Window Sensors",
+                        "description": "Configure window sensors and their states",
+                        "data": {
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State",
+                            "weight_window": "Window Weight"
+                        },
+                        "data_description": {
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "lights": {
+                        "name": "Light Sensors",
+                        "description": "Configure light sensors",
                         "data": {
                             "lights": "Lights",
+                            "weight_light": "Light Weight"
+                        },
+                        "data_description": {
+                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "media": {
+                        "name": "Media Players",
+                        "description": "Configure media players and their states",
+                        "data": {
                             "media_devices": "Media Players",
                             "media_active_states": "Media Active States",
-                            "appliances": "Appliances",
-                            "appliance_active_states": "Appliance Active States"
+                            "weight_media": "Media Weight"
                         },
                         "data_description": {
                             "media_active_states": "These are the states of the media players that will be used to detect occupancy.",
-                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy."
+                            "weight_media": "The weight given to media player inputs in the occupancy calculation."
                         }
-                    }
-                }
-            },
-            "environmental": {
-                "title": "Environmental Sensors",
-                "sections": {
-                    "environmental_sensors": {
+                    },
+                    "appliances": {
+                        "name": "Appliances",
+                        "description": "Configure appliances and their states",
+                        "data": {
+                            "appliances": "Appliances",
+                            "appliance_active_states": "Appliance Active States",
+                            "weight_appliance": "Appliance Weight"
+                        },
+                        "data_description": {
+                            "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                        }
+                    },
+                    "environmental": {
                         "name": "Environmental Sensors",
-                        "description": "Configure sensors that monitor environmental conditions",
+                        "description": "Configure environmental sensors",
                         "data": {
                             "illuminance_sensors": "Illuminance Sensors",
                             "humidity_sensors": "Humidity Sensors",
-                            "temperature_sensors": "Temperature Sensors"
-                        }
-                    }
-                }
-            },
-            "weights": {
-                "title": "Area Occupancy Weights",
-                "sections": {
-                    "primary_weights": {
-                        "name": "Primary Sensor Weights",
-                        "description": "Configure weights for primary occupancy indicators",
-                        "data": {
-                            "weight_motion": "Motion Weight",
-                            "weight_media": "Media Weight",
-                            "weight_appliance": "Appliance Weight"
-                        }
-                    },
-                    "opening_weights": {
-                        "name": "Opening Sensor Weights",
-                        "description": "Configure weights for doors and windows",
-                        "data": {
-                            "weight_door": "Door Weight",
-                            "weight_window": "Window Weight"
-                        }
-                    },
-                    "other_weights": {
-                        "name": "Additional Sensor Weights",
-                        "description": "Configure weights for other sensors",
-                        "data": {
-                            "weight_light": "Light Weight",
+                            "temperature_sensors": "Temperature Sensors",
                             "weight_environmental": "Environmental Weight"
+                        },
+                        "data_description": {
+                            "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
-                    }
-                }
-            },
-            "parameters": {
-                "title": "Area Occupancy Parameters",
-                "sections": {
-                    "thresholds": {
-                        "name": "Threshold Settings",
-                        "description": "Configure occupancy thresholds and history",
+                    },
+                    "parameters": {
+                        "name": "Advanced Parameters",
+                        "description": "Configure advanced parameters for occupancy detection",
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
-                            "history_period": "History Period (days)"
-                        }
-                    },
-                    "decay_settings": {
-                        "name": "Time Decay Settings",
-                        "description": "Configure how occupancy probability decays over time",
-                        "data": {
+                            "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
                             "decay_window": "Decay Window (seconds)",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)"
-                        }
-                    },
-                    "analysis_settings": {
-                        "name": "Analysis Settings",
-                        "description": "Configure historical analysis options",
-                        "data": {
+                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
+                        },
+                        "data_description": {
+                            "threshold": "The probability threshold above which the area is considered occupied.",
+                            "history_period": "Number of days of history to analyze for determining probabilities.",
+                            "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
+                            "decay_window": "Time window over which occupancy probability decays.",
+                            "decay_min_delay": "Minimum time before decay starts.",
+                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }
                 }
