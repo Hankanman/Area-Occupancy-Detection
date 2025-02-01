@@ -5,11 +5,6 @@ from typing import Final, Dict, Any
 
 from homeassistant.const import (
     STATE_ON,
-    STATE_OFF,
-    STATE_CLOSED,
-    STATE_OPEN,
-    STATE_PLAYING,
-    STATE_PAUSED,
 )
 
 from homeassistant.util import dt as dt_util
@@ -24,6 +19,10 @@ from .const import (
     CONF_WEIGHT_WINDOW,
     CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_APPLIANCE_ACTIVE_STATES,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_APPLIANCE,
@@ -32,6 +31,10 @@ from .const import (
     DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_PRIOR,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
@@ -161,6 +164,28 @@ class Probabilities:
             self.coordinator.type_priors if hasattr(self, "coordinator") else {}
         )
 
+        # Get the configured door active state
+        door_active_state = self.config.get(
+            CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
+        )
+
+        # Get the configured window active state
+        window_active_state = self.config.get(
+            CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+        )
+
+        # Get the configured media active states
+        media_active_states = set(
+            self.config.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
+        )
+
+        # Get the configured appliance active states
+        appliance_active_states = set(
+            self.config.get(
+                CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
+            )
+        )
+
         configs = {
             "motion": {
                 "prob_given_true": MOTION_PROB_GIVEN_TRUE,
@@ -174,28 +199,28 @@ class Probabilities:
                 "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
                 "default_prior": MEDIA_DEFAULT_PRIOR,
                 "weight": self._sensor_weights["media"],
-                "active_states": {STATE_PLAYING, STATE_PAUSED},
+                "active_states": media_active_states,
             },
             "appliance": {
                 "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
                 "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
                 "default_prior": APPLIANCE_DEFAULT_PRIOR,
                 "weight": self._sensor_weights["appliance"],
-                "active_states": {STATE_ON},
+                "active_states": appliance_active_states,
             },
             "door": {
                 "prob_given_true": DOOR_PROB_GIVEN_TRUE,
                 "prob_given_false": DOOR_PROB_GIVEN_FALSE,
                 "default_prior": DOOR_DEFAULT_PRIOR,
                 "weight": self._sensor_weights["door"],
-                "active_states": {STATE_OFF, STATE_CLOSED},
+                "active_states": {door_active_state},
             },
             "window": {
                 "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
                 "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
                 "default_prior": WINDOW_DEFAULT_PRIOR,
                 "weight": self._sensor_weights["window"],
-                "active_states": {STATE_ON, STATE_OPEN},
+                "active_states": {window_active_state},
             },
             "light": {
                 "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
