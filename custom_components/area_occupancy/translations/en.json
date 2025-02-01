@@ -3,52 +3,114 @@
         "step": {
             "user": {
                 "title": "Area Occupancy Detection",
-                "description": "Set up area occupancy detection with motion sensors",
+                "description": "Please specify the name and the sensors used for initial occupancy detection",
                 "data": {
-                    "name": "Name",
+                    "name": "Name of Detection Area",
                     "area_id": "Area ID",
-                    "motion_sensors": "Motion Sensors"
+                    "motion_sensors": "Motion/Presence Sensors"
+                },
+                "data_description": {
+                    "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity.",
+                    "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors."
                 }
             },
             "devices": {
                 "title": "Device Configuration",
-                "data": {
-                    "media_devices": "Media Players",
-                    "appliances": "Appliances",
-                    "lights": "Lights",
-                    "window_sensors": "Window Sensors",
-                    "door_sensors": "Door Sensors"
+                "description": "Configure the devices used for occupancy detection",
+                "sections": {
+                    "openings": {
+                        "name": "Opening Sensors",
+                        "description": "Configure door and window sensors",
+                        "data": {
+                            "door_sensors": "Door Sensors",
+                            "window_sensors": "Window Sensors"
+                        }
+                    },
+                    "devices": {
+                        "name": "Device Sensors",
+                        "description": "Configure lights, media players, and appliances",
+                        "data": {
+                            "lights": "Lights",
+                            "media_devices": "Media Players",
+                            "appliances": "Appliances"
+                        }
+                    }
                 }
             },
             "environmental": {
                 "title": "Environmental Sensors",
-                "data": {
-                    "illuminance_sensors": "Illuminance Sensors",
-                    "humidity_sensors": "Humidity Sensors",
-                    "temperature_sensors": "Temperature Sensors"
+                "description": "Configure environmental sensors for enhanced detection",
+                "sections": {
+                    "environmental_sensors": {
+                        "name": "Environmental Sensors",
+                        "description": "Configure sensors that monitor environmental conditions",
+                        "data": {
+                            "illuminance_sensors": "Illuminance Sensors",
+                            "humidity_sensors": "Humidity Sensors",
+                            "temperature_sensors": "Temperature Sensors"
+                        }
+                    }
                 }
             },
             "weights": {
                 "title": "Area Occupancy Weights",
-                "data": {
-                    "weight_motion": "Motion Weight",
-                    "weight_media": "Media Weight",
-                    "weight_appliance": "Appliance Weight",
-                    "weight_door": "Door Weight",
-                    "weight_window": "Window Weight",
-                    "weight_light": "Light Weight",
-                    "weight_environmental": "Environmental Weight"
+                "description": "Configure the weights for different sensor types",
+                "sections": {
+                    "primary_weights": {
+                        "name": "Primary Sensor Weights",
+                        "description": "Configure weights for primary occupancy indicators",
+                        "data": {
+                            "weight_motion": "Motion Weight",
+                            "weight_media": "Media Weight",
+                            "weight_appliance": "Appliance Weight"
+                        }
+                    },
+                    "opening_weights": {
+                        "name": "Opening Sensor Weights",
+                        "description": "Configure weights for doors and windows",
+                        "data": {
+                            "weight_door": "Door Weight",
+                            "weight_window": "Window Weight"
+                        }
+                    },
+                    "other_weights": {
+                        "name": "Additional Sensor Weights",
+                        "description": "Configure weights for other sensors",
+                        "data": {
+                            "weight_light": "Light Weight",
+                            "weight_environmental": "Environmental Weight"
+                        }
+                    }
                 }
             },
             "parameters": {
                 "title": "Area Occupancy Parameters",
-                "data": {
-                    "threshold": "Occupancy Threshold (%)",
-                    "history_period": "History Period (days)",
-                    "decay_enabled": "Enable Time Decay",
-                    "decay_window": "Decay Window (seconds)",
-                    "decay_min_delay": "Delay Before Starting Decay (seconds)",
-                    "historical_analysis_enabled": "Enable Historical Analysis"
+                "description": "Configure advanced parameters for occupancy detection",
+                "sections": {
+                    "thresholds": {
+                        "name": "Threshold Settings",
+                        "description": "Configure occupancy thresholds and history",
+                        "data": {
+                            "threshold": "Occupancy Threshold (%)",
+                            "history_period": "History Period (days)"
+                        }
+                    },
+                    "decay_settings": {
+                        "name": "Time Decay Settings",
+                        "description": "Configure how occupancy probability decays over time",
+                        "data": {
+                            "decay_enabled": "Enable Time Decay",
+                            "decay_window": "Decay Window (seconds)",
+                            "decay_min_delay": "Delay Before Starting Decay (seconds)"
+                        }
+                    },
+                    "analysis_settings": {
+                        "name": "Analysis Settings",
+                        "description": "Configure historical analysis options",
+                        "data": {
+                            "historical_analysis_enabled": "Enable Historical Analysis"
+                        }
+                    }
                 }
             }
         }
@@ -63,43 +125,97 @@
             },
             "devices": {
                 "title": "Device Configuration",
-                "data": {
-                    "lights": "Lights",
-                    "media_devices": "Media Players",
-                    "appliances": "Appliances",
-                    "window_sensors": "Window Sensors",
-                    "door_sensors": "Door Sensors"
+                "sections": {
+                    "openings": {
+                        "name": "Opening Sensors",
+                        "description": "Configure door and window sensors",
+                        "data": {
+                            "door_sensors": "Door Sensors",
+                            "window_sensors": "Window Sensors"
+                        }
+                    },
+                    "devices": {
+                        "name": "Device Sensors",
+                        "description": "Configure lights, media players, and appliances",
+                        "data": {
+                            "lights": "Lights",
+                            "media_devices": "Media Players",
+                            "appliances": "Appliances"
+                        }
+                    }
                 }
             },
             "environmental": {
                 "title": "Environmental Sensors",
-                "data": {
-                    "illuminance_sensors": "Illuminance Sensors",
-                    "humidity_sensors": "Humidity Sensors",
-                    "temperature_sensors": "Temperature Sensors"
+                "sections": {
+                    "environmental_sensors": {
+                        "name": "Environmental Sensors",
+                        "description": "Configure sensors that monitor environmental conditions",
+                        "data": {
+                            "illuminance_sensors": "Illuminance Sensors",
+                            "humidity_sensors": "Humidity Sensors",
+                            "temperature_sensors": "Temperature Sensors"
+                        }
+                    }
                 }
             },
             "weights": {
                 "title": "Area Occupancy Weights",
-                "data": {
-                    "weight_motion": "Motion Weight",
-                    "weight_media": "Media Weight",
-                    "weight_appliance": "Appliance Weight",
-                    "weight_door": "Door Weight",
-                    "weight_window": "Window Weight",
-                    "weight_light": "Light Weight",
-                    "weight_environmental": "Environmental Weight"
+                "sections": {
+                    "primary_weights": {
+                        "name": "Primary Sensor Weights",
+                        "description": "Configure weights for primary occupancy indicators",
+                        "data": {
+                            "weight_motion": "Motion Weight",
+                            "weight_media": "Media Weight",
+                            "weight_appliance": "Appliance Weight"
+                        }
+                    },
+                    "opening_weights": {
+                        "name": "Opening Sensor Weights",
+                        "description": "Configure weights for doors and windows",
+                        "data": {
+                            "weight_door": "Door Weight",
+                            "weight_window": "Window Weight"
+                        }
+                    },
+                    "other_weights": {
+                        "name": "Additional Sensor Weights",
+                        "description": "Configure weights for other sensors",
+                        "data": {
+                            "weight_light": "Light Weight",
+                            "weight_environmental": "Environmental Weight"
+                        }
+                    }
                 }
             },
             "parameters": {
                 "title": "Area Occupancy Parameters",
-                "data": {
-                    "threshold": "Occupancy Threshold (%)",
-                    "history_period": "History Period (days)",
-                    "decay_enabled": "Enable Time Decay",
-                    "decay_window": "Decay Window (seconds)",
-                    "decay_min_delay": "Delay Before Starting Decay (seconds)",
-                    "historical_analysis_enabled": "Enable Historical Analysis"
+                "sections": {
+                    "thresholds": {
+                        "name": "Threshold Settings",
+                        "description": "Configure occupancy thresholds and history",
+                        "data": {
+                            "threshold": "Occupancy Threshold (%)",
+                            "history_period": "History Period (days)"
+                        }
+                    },
+                    "decay_settings": {
+                        "name": "Time Decay Settings",
+                        "description": "Configure how occupancy probability decays over time",
+                        "data": {
+                            "decay_enabled": "Enable Time Decay",
+                            "decay_window": "Decay Window (seconds)",
+                            "decay_min_delay": "Delay Before Starting Decay (seconds)"
+                        }
+                    },
+                    "analysis_settings": {
+                        "name": "Analysis Settings",
+                        "description": "Configure historical analysis options",
+                        "data": {
+                            "historical_analysis_enabled": "Enable Historical Analysis"
+                        }
+                    }
                 }
             }
         }
