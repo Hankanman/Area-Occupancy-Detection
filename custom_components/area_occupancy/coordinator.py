@@ -1,7 +1,6 @@
-"""Coordinator for Area Occupancy Detection with optimized update handling."""
+"""Area Occupancy Coordinator."""
 
 from __future__ import annotations
-
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -19,12 +18,14 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.config_entries import ConfigEntry
 
 from .const import (
+    CONF_MOTION_SENSORS,
+    CONF_HISTORY_PERIOD,
+    CONF_THRESHOLD,
+    CONF_NAME,
     DOMAIN,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
-    CONF_NAME,
-    CONF_THRESHOLD,
     CONF_APPLIANCES,
     CONF_ILLUMINANCE_SENSORS,
     CONF_HUMIDITY_SENSORS,
@@ -32,11 +33,9 @@ from .const import (
     CONF_DOOR_SENSORS,
     CONF_WINDOW_SENSORS,
     CONF_LIGHTS,
-    CONF_MOTION_SENSORS,
     CONF_MEDIA_DEVICES,
-    DEFAULT_THRESHOLD,
-    CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
+    DEFAULT_THRESHOLD,
 )
 from .types import (
     ProbabilityResult,
@@ -61,6 +60,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         config_entry: ConfigEntry,
     ) -> None:
         """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=timedelta(seconds=1),
+        )
         self.config_entry = config_entry
         self.config = {**config_entry.data, **config_entry.options}
 
@@ -75,14 +80,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._probabilities = Probabilities(config=self.config)
 
         self._prior_update_tracker = None
-
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=10),
-            update_method=self._async_update_data,
-        )
 
         # Initialize calculator after super().__init__
         self._calculator = ProbabilityCalculator(
