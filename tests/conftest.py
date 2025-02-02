@@ -1,4 +1,4 @@
-"""Test fixtures for area_occupancy integration."""
+"""Fixtures for Area Occupancy Detection integration tests."""
 
 import os
 import sys
@@ -6,21 +6,59 @@ from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 import pytest
+
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from homeassistant.const import CONF_NAME, STATE_OFF
+from homeassistant.const import STATE_OFF
 from homeassistant.core import HomeAssistant
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.recorder import DOMAIN as RECORDER_DOMAIN, DATA_INSTANCE
+from homeassistant.helpers import entity_registry as er
+
 from custom_components.area_occupancy.const import (
-    DOMAIN,
-    CONF_MOTION_SENSORS,
+    CONF_NAME,
     CONF_THRESHOLD,
-    CONF_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MOTION,
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_DOOR_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_LIGHTS,
     CONF_HISTORY_PERIOD,
     CONF_DECAY_ENABLED,
+    CONF_DECAY_WINDOW,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_DECAY_MIN_DELAY,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_APPLIANCE_ACTIVE_STATES,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_DOOR,
+    CONF_WEIGHT_WINDOW,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_WINDOW,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_ENVIRONMENTAL,
 )
-from homeassistant.helpers import entity_registry as er
 
 # Make parent directory available to tests
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -32,20 +70,31 @@ pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=inva
 TEST_CONFIG = {
     CONF_NAME: "Test Area",
     CONF_THRESHOLD: 50,
-    "motion": {
-        CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-        CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-    },
-    "doors": {},
-    "windows": {},
-    "lights": {},
-    "media": {},
-    "appliances": {},
-    "environmental": {},
-    "parameters": {
-        CONF_HISTORY_PERIOD: 7,
-        CONF_DECAY_ENABLED: True,
-    },
+    CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
+    CONF_MEDIA_DEVICES: [],
+    CONF_APPLIANCES: [],
+    CONF_ILLUMINANCE_SENSORS: [],
+    CONF_HUMIDITY_SENSORS: [],
+    CONF_TEMPERATURE_SENSORS: [],
+    CONF_DOOR_SENSORS: [],
+    CONF_WINDOW_SENSORS: [],
+    CONF_LIGHTS: [],
+    CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
+    CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
+    CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
+    CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
+    CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
+    CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
+    CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
+    CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
+    CONF_MEDIA_ACTIVE_STATES: DEFAULT_MEDIA_ACTIVE_STATES,
+    CONF_APPLIANCE_ACTIVE_STATES: DEFAULT_APPLIANCE_ACTIVE_STATES,
+    CONF_HISTORY_PERIOD: DEFAULT_HISTORY_PERIOD,
+    CONF_DECAY_ENABLED: DEFAULT_DECAY_ENABLED,
+    CONF_DECAY_WINDOW: DEFAULT_DECAY_WINDOW,
+    CONF_HISTORICAL_ANALYSIS_ENABLED: DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_DECAY_MIN_DELAY: DEFAULT_DECAY_MIN_DELAY,
 }
 
 
@@ -110,7 +159,7 @@ def mock_recorder(hass: HomeAssistant):
 def mock_config_entry() -> MockConfigEntry:
     """Create a mock config entry for testing."""
     return MockConfigEntry(
-        domain=DOMAIN,
+        domain="area_occupancy",
         data=TEST_CONFIG,
         title="Test Area",
         unique_id="uniqueid123",
