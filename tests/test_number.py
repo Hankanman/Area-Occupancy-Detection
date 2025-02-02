@@ -10,9 +10,13 @@ from custom_components.area_occupancy.const import DOMAIN, CONF_THRESHOLD
 
 async def test_threshold_number(hass: HomeAssistant, init_integration):
     """Test threshold number entity."""
-    state = hass.states.get("number.area_occupancy_threshold")
+    state = hass.states.get("number.test_area_occupancy_threshold")
     assert state is not None
-    assert float(state.state) == 50.0  # Default threshold as percentage
+    assert state.state == "50"
+    assert state.attributes["min"] == 1.0
+    assert state.attributes["max"] == 99.0
+    assert state.attributes["step"] == 1.0
+    assert state.attributes["unit_of_measurement"] == "%"
 
     # Test setting new value (as percentage)
     with patch(
@@ -21,12 +25,12 @@ async def test_threshold_number(hass: HomeAssistant, init_integration):
         await hass.services.async_call(
             Platform.NUMBER,
             "set_value",
-            {"entity_id": "number.area_occupancy_threshold", "value": 70.0},
+            {"entity_id": "number.test_area_occupancy_threshold", "value": 70.0},
             blocking=True,
         )
         await hass.async_block_till_done()
 
-    state = hass.states.get("number.area_occupancy_threshold")
+    state = hass.states.get("number.test_area_occupancy_threshold")
     assert float(state.state) == 70.0
 
     # Verify coordinator was updated with percentage value
