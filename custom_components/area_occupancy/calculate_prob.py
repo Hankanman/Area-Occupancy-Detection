@@ -198,62 +198,47 @@ class ProbabilityCalculator:
             # Calculate prior probability
             prior_probability = self._calculate_prior_probability(active_sensor_states)
 
-            # Apply decay if needed
-            actual_probability, decay_factor = self.decay_handler.calculate_decay(
-                calculated_probability,
-                self.previous_probability,
-                threshold,
-                now,
+            # Apply decay to the calculated probability
+            decayed_probability, decay_factor = self.decay_handler.calculate_decay(
+                calculated_probability, self.previous_probability, threshold, now
+            )
+
+            # Update previous probability for next calculation
+            self.previous_probability = decayed_probability
+
+            # Calculate final probability
+            final_probability = max(
+                MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
             )
 
             # Get decay status
             decay_status = self.decay_handler.get_decay_status(decay_factor)
 
-            # Update current probability for next calculation
-            self.current_probability = actual_probability
-
-            result = {
-                "probability": actual_probability,
-                "potential_probability": calculated_probability,
-                "prior_probability": prior_probability,
-                "active_triggers": active_triggers,
-                "sensor_probabilities": sensor_probs,
-                "device_states": {},
-                "decay_status": decay_status,
-                "sensor_availability": {
-                    k: v.get("availability", False)
-                    for k, v in active_sensor_states.items()
-                },
-                "is_occupied": actual_probability >= threshold,
-            }
-
             _LOGGER.debug(
-                "Calculation complete: prior=%.3f, calculated=%.3f, final=%.3f, occupied=%s, active_sensors=%d",
-                prior_probability,
+                "Final probability calculation: base=%.3f, decayed=%.3f, final=%.3f, decay_factor=%.3f",
                 calculated_probability,
-                actual_probability,
-                result["is_occupied"],
-                len(active_triggers),
+                decayed_probability,
+                final_probability,
+                decay_factor,
             )
 
-            return result
+            return ProbabilityResult(
+                probability=final_probability,
+                prior_probability=prior_probability,
+                active_triggers=active_triggers,
+                sensor_probabilities=sensor_probs,
+                decay_status=decay_status,
+            )
 
-        except (ValueError, ZeroDivisionError, KeyError, TypeError) as err:
+        except (ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error in probability calculation: %s", err, exc_info=True)
-            return {
-                "probability": MIN_PROBABILITY,
-                "potential_probability": MIN_PROBABILITY,
-                "prior_probability": MIN_PROBABILITY,
-                "active_triggers": [],
-                "sensor_probabilities": {},
-                "device_states": {},
-                "decay_status": "error",
-                "sensor_availability": {
-                    k: v.get("availability", False)
-                    for k, v in active_sensor_states.items()
-                },
-                "is_occupied": False,
-            }
+            return ProbabilityResult(
+                probability=MIN_PROBABILITY,
+                prior_probability=MIN_PROBABILITY,
+                active_triggers=[],
+                sensor_probabilities={},
+                decay_status={"global_decay": 0.0},
+            )
 
 
 def bayesian_update(
