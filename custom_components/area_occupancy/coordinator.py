@@ -36,6 +36,7 @@ from .const import (
     CONF_MEDIA_DEVICES,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
 )
 from .types import (
     ProbabilityResult,
@@ -148,14 +149,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     @property
     def available(self) -> bool:
-        motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
-        if not motion_sensors:
+        """Check if the coordinator is available."""
+        primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        if not primary_sensor:
             return False
         # Use the cached state
-        return any(
-            self._state_cache.get(sensor_id, {}).get("availability", False)
-            for sensor_id in motion_sensors
-        )
+        return self._state_cache.get(primary_sensor, {}).get("availability", False)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -229,7 +228,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         self._setup_entity_tracking()
 
     def get_configured_sensors(self) -> list[str]:
-        return (
+        """Get all configured sensors including the primary occupancy sensor."""
+        sensors = (
             self.config.get(CONF_MOTION_SENSORS, [])
             + self.config.get(CONF_MEDIA_DEVICES, [])
             + self.config.get(CONF_APPLIANCES, [])
@@ -240,6 +240,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             + self.config.get(CONF_WINDOW_SENSORS, [])
             + self.config.get(CONF_LIGHTS, [])
         )
+        # Ensure primary sensor is included
+        primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        if primary_sensor and primary_sensor not in sensors:
+            sensors.append(primary_sensor)
+        return sensors
 
     def async_track_prior_updates(self) -> None:
         """Set up periodic prior updates using Home Assistant's async_track_time_interval."""
@@ -262,33 +267,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self.hass, _update_priors_wrapper, self._prior_update_interval
         )
 
-    async def update_learned_priors(self, history_period: int | None = None):
-        _LOGGER.debug("Updating learned priors for all sensors")
-
-        days = (
-            history_period
-            if history_period is not None
-            else self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
-        )
-        start_time = dt_util.utcnow() - timedelta(days=days)
-        end_time = dt_util.utcnow()
-
-        update_tasks = []
-        for entity_id in self.get_configured_sensors():
-            update_tasks.append(
-                self._prior_calculator.calculate_prior(entity_id, start_time, end_time)
-            )
-
+    async def update_learned_priors(self, history_period: int | None = None) -> None:
+        """Update learned priors using historical data."""
         try:
-            await asyncio.gather(*update_tasks)
-            self._probabilities.update_config(self.config)
+            period = history_period or self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+            end_time = dt_util.utcnow()
+            start_time = end_time - timedelta(days=period)
 
-            await self._async_store_data()
+            # Get all sensors that need priors calculated
+            sensors = self.get_configured_sensors()
+            for sensor_id in sensors:
+                if sensor_id != self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR):
+                    await self._prior_calculator.calculate_prior(
+                        sensor_id, start_time, end_time
+                    )
 
-            _LOGGER.info("Successfully updated learned priors for all sensors")
+            # Save the updated priors
+            await self._save_debounced_data()
+
         except Exception as err:
             _LOGGER.error("Error updating learned priors: %s", err, exc_info=True)
-            raise
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes using state manager."""
