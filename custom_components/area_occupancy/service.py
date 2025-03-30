@@ -19,7 +19,7 @@ async def async_setup_services(hass: HomeAssistant):
             coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
 
             # Get history period from service call or use configured default
-            history_period = call.data.get("history_period")
+            history_period = call.data.get("history_period", DEFAULT_HISTORY_PERIOD)
             if history_period:
                 await coordinator.update_learned_priors(history_period)
             else:
