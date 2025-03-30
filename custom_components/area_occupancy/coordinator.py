@@ -37,6 +37,20 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_DOOR,
+    CONF_WEIGHT_WINDOW,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_WINDOW,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_ENVIRONMENTAL,
 )
 from .types import (
     ProbabilityResult,
@@ -48,6 +62,12 @@ from .calculate_prob import ProbabilityCalculator
 from .calculate_prior import PriorCalculator
 from .probabilities import Probabilities
 from .state_management import OccupancyStateManager
+from .exceptions import (
+    ConfigurationError,
+    StateError,
+    CalculationError,
+    StorageError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +89,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
         self.config_entry = config_entry
         self.config = {**config_entry.data, **config_entry.options}
+
+        # Validate configuration
+        self._validate_config()
 
         # Initialize storage and learned_priors
         self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
@@ -138,6 +161,57 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
         self._thread_lock = threading.Lock()
 
+    def _validate_config(self) -> None:
+        """Validate the configuration."""
+        if not self.config.get(CONF_NAME):
+            raise ConfigurationError("Name is required")
+
+        motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
+        if not motion_sensors:
+            raise ConfigurationError("At least one motion sensor is required")
+
+        primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        if not primary_sensor:
+            raise ConfigurationError("Primary occupancy sensor is required")
+        if primary_sensor not in motion_sensors:
+            raise ConfigurationError(
+                "Primary occupancy sensor must be selected from motion sensors"
+            )
+
+        # Validate weights
+        weights = [
+            (
+                CONF_WEIGHT_MOTION,
+                self.config.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            ),
+            (
+                CONF_WEIGHT_MEDIA,
+                self.config.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            ),
+            (
+                CONF_WEIGHT_APPLIANCE,
+                self.config.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            ),
+            (CONF_WEIGHT_DOOR, self.config.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
+            (
+                CONF_WEIGHT_WINDOW,
+                self.config.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            ),
+            (
+                CONF_WEIGHT_LIGHT,
+                self.config.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
+            ),
+            (
+                CONF_WEIGHT_ENVIRONMENTAL,
+                self.config.get(
+                    CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+                ),
+            ),
+        ]
+        for name, weight in weights:
+            if not 0 <= weight <= 1:
+                raise ConfigurationError(f"{name} must be between 0 and 1")
+
     @property
     def entity_ids(self) -> set[str]:
         return self._entity_ids
@@ -173,21 +247,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
 
     async def async_setup(self) -> None:
         """Setup the coordinator and load stored data."""
-        _LOGGER.debug("Setting up AreaOccupancyCoordinator")
+        _LOGGER.debug(
+            "Setting up AreaOccupancyCoordinator for %s", self.config[CONF_NAME]
+        )
 
-        # Load stored data first
-        await self.async_load_stored_data()
+        try:
+            # Load stored data first
+            await self.async_load_stored_data()
 
-        # Initialize states after loading stored data using the new state manager
-        sensors = self.get_configured_sensors()
-        await self.state_manager.initialize_states(self.hass, sensors)
-        self._state_cache = await self.state_manager.get_active_sensors()
+            # Initialize states after loading stored data using the new state manager
+            sensors = self.get_configured_sensors()
+            await self.state_manager.initialize_states(self.hass, sensors)
+            self._state_cache = await self.state_manager.get_active_sensors()
 
-        # Calculate initial priors before scheduling updates
-        await self.update_learned_priors()
+            # Calculate initial priors before scheduling updates
+            await self.update_learned_priors()
 
-        # Schedule prior updates
-        self.async_track_prior_updates()
+            # Schedule prior updates
+            self.async_track_prior_updates()
+
+            _LOGGER.info(
+                "Successfully set up AreaOccupancyCoordinator for %s",
+                self.config[CONF_NAME],
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to set up AreaOccupancyCoordinator: %s", err, exc_info=True
+            )
+            raise
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -208,11 +295,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
                 self.type_priors = self._probabilities.get_initial_type_priors()
 
             _LOGGER.debug("Successfully restored stored data")
-
-        except (ValueError, TypeError, KeyError) as err:
+        except Exception as err:
             _LOGGER.error("Error loading stored data: %s", err, exc_info=True)
-            self._reset_state()
-            self.type_priors = self._probabilities.get_initial_type_priors()
+            raise StorageError(f"Failed to load stored data: {err}") from err
 
     async def async_initialize_states(self) -> None:
         """Initialize sensor states."""
@@ -222,8 +307,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             await self.state_manager.initialize_states(self.hass, sensors)
             self._state_cache = await self.state_manager.get_active_sensors()
             _LOGGER.info("Initialized states for sensors: %s", sensors)
-        except (HomeAssistantError, ValueError, LookupError) as err:
-            _LOGGER.error("Error initializing states: %s", err)
+        except Exception as err:
+            _LOGGER.error("Error initializing states: %s", err, exc_info=True)
+            raise StateError(f"Failed to initialize states: {err}") from err
 
         self._setup_entity_tracking()
 
@@ -270,7 +356,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
     async def update_learned_priors(self, history_period: int | None = None) -> None:
         """Update learned priors using historical data."""
         try:
-            period = history_period or self.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
+            period = history_period or self.config.get(
+                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+            )
             end_time = dt_util.utcnow()
             start_time = end_time - timedelta(days=period)
 
@@ -285,8 +373,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             # Save the updated priors
             await self._save_debounced_data()
 
+            _LOGGER.info("Successfully updated learned priors")
         except Exception as err:
             _LOGGER.error("Error updating learned priors: %s", err, exc_info=True)
+            raise CalculationError(f"Failed to update learned priors: {err}") from err
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes using state manager."""
@@ -326,39 +416,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
         )
 
     async def _async_update_data(self) -> ProbabilityResult:
-        async with self._state_lock:
-            try:
-                if self.data and "probability" in self.data:
-                    self._calculator.previous_probability = self.data["probability"]
-                    _LOGGER.debug(
-                        "Coordinator data probability: %s",
-                        self._calculator.previous_probability,
-                    )
-                else:
-                    self._calculator.previous_probability = (
-                        self._probabilities.get_default_prior("dummy")
-                    )
-                    _LOGGER.debug(
-                        "No coordinator data; using default prior: %s",
-                        self._calculator.previous_probability,
-                    )
+        """Update data via polling."""
+        try:
+            async with self._state_lock:
+                # Get current states
+                self._state_cache = await self.state_manager.get_active_sensors()
 
-                # Use cached active sensors from state manager
-                active_sensors = self._state_cache
-                now = dt_util.utcnow()
-                _LOGGER.debug("Current time: %s", now)
+                # Validate states
+                if not self._state_cache:
+                    raise StateError("No valid sensor states available")
 
-                result = self._calculator.perform_calculation_logic(active_sensors, now)
+                # Calculate probability
+                result = self._calculator.perform_calculation_logic(
+                    self._state_cache,
+                    dt_util.utcnow(),
+                )
 
-                if result["probability"] >= self.threshold:
-                    self._last_occupied = now
-                await self._async_store_data()
+                # Update entity IDs
+                self._entity_ids = set(self._state_cache.keys())
 
                 return result
 
-            except (HomeAssistantError, ValueError, RuntimeError, KeyError) as err:
-                _LOGGER.error("Error updating data: %s", err, exc_info=True)
-                raise UpdateFailed(f"Error updating data: {err}") from err
+        except Exception as err:
+            _LOGGER.error("Error updating data: %s", err, exc_info=True)
+            raise UpdateFailed(f"Failed to update data: {err}") from err
 
     async def _async_store_data(self) -> None:
         try:
@@ -443,10 +524,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             ) from err
 
     def _reset_state(self) -> None:
-        _LOGGER.debug("Resetting state")
+        """Reset the coordinator state."""
+        self.learned_priors = {}
+        self.type_priors = {}
+        self._state_cache = {}
+        self._entity_ids = set()
+        self._last_positive_trigger = None
         self._last_occupied = None
-        self._last_save = dt_util.utcnow()
-        self.learned_priors.clear()
+        _LOGGER.debug("Reset coordinator state")
 
     def register_entity(self, entity_id: str) -> None:
         _LOGGER.debug("Registering entity: %s", entity_id)
@@ -528,19 +613,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityResult]):
             self._reset_state()
 
     async def _save_debounced_data(self) -> None:
-        if not hasattr(self, "_stored_data") or self._stored_data is None:
-            return
-
+        """Save data with debouncing."""
         try:
             async with self._storage_lock:
-                await self.storage.async_save(self._stored_data)
-                _LOGGER.debug("Successfully saved data to storage")
-        except (ValueError, TypeError, KeyError) as err:
-            _LOGGER.error("Error saving data to storage: %s", err, exc_info=True)
-        except (IOError, HomeAssistantError) as err:
-            _LOGGER.error("Storage I/O error: %s", err, exc_info=True)
-        finally:
-            self._stored_data = None
+                data = {
+                    "learned_priors": self.learned_priors,
+                    "type_priors": self.type_priors,
+                }
+                await self.storage.async_save(data)
+                self._last_save = dt_util.utcnow()
+                _LOGGER.debug("Successfully saved data")
+        except Exception as err:
+            _LOGGER.error("Error saving data: %s", err, exc_info=True)
+            raise StorageError(f"Failed to save data: {err}") from err
 
     async def calculate_sensor_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
