@@ -54,12 +54,17 @@ from .const import (
     CONF_DECAY_MIN_DELAY,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_VERSION,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
     DEFAULT_THRESHOLD,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DEFAULT_DOOR_ACTIVE_STATE,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_APPLIANCE,
@@ -74,9 +79,6 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_WINDOW_ACTIVE_STATE,
 )
 
 from .state_mapping import (
@@ -211,6 +213,20 @@ def create_schema(
                                     BinarySensorDeviceClass.PRESENCE,
                                 ],
                                 multiple=True,
+                            ),
+                        ),
+                        vol.Required(
+                            CONF_PRIMARY_OCCUPANCY_SENSOR,
+                            default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
+                        ): EntitySelector(
+                            EntitySelectorConfig(
+                                domain=Platform.BINARY_SENSOR,
+                                device_class=[
+                                    BinarySensorDeviceClass.MOTION,
+                                    BinarySensorDeviceClass.OCCUPANCY,
+                                    BinarySensorDeviceClass.PRESENCE,
+                                ],
+                                multiple=False,
                             ),
                         ),
                         vol.Optional(
@@ -551,26 +567,54 @@ class BaseOccupancyFlow:
     """Base class for config and options flow."""
 
     def _validate_config(self, data: dict[str, Any]) -> None:
-        """Validate configuration data."""
-        # Core validation
-        if CONF_NAME in data and not data.get(CONF_NAME):
-            raise HomeAssistantError("Name is required")
+        """Validate the configuration."""
+        motion_sensors = data.get(CONF_MOTION_SENSORS, [])
+        if not motion_sensors:
+            raise ValueError("At least one motion sensor is required")
 
-        if CONF_MOTION_SENSORS in data and not data.get(CONF_MOTION_SENSORS):
-            raise HomeAssistantError("At least one motion sensor is required")
+        primary_sensor = data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        if not primary_sensor:
+            raise ValueError("A primary occupancy sensor must be selected")
+        if primary_sensor not in motion_sensors:
+            raise ValueError("Primary occupancy sensor must be selected from the motion sensors")
 
-        # Numeric bounds validation
-        bounds = {
-            CONF_THRESHOLD: (0, 100),
-            CONF_HISTORY_PERIOD: (1, 30),
-            CONF_DECAY_WINDOW: (60, 3600),
-        }
+        # Validate media devices
+        media_devices = data.get(CONF_MEDIA_DEVICES, [])
+        media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
+        if media_devices and not media_states:
+            raise ValueError("Media active states are required when media devices are configured")
 
-        for field, (min_val, max_val) in bounds.items():
-            if field in data and not min_val <= data[field] <= max_val:
-                raise HomeAssistantError(
-                    f"{field.replace('_', ' ').title()} must be between {min_val} and {max_val}"
-                )
+        # Validate appliances
+        appliances = data.get(CONF_APPLIANCES, [])
+        appliance_states = data.get(CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES)
+        if appliances and not appliance_states:
+            raise ValueError("Appliance active states are required when appliances are configured")
+
+        # Validate doors
+        door_sensors = data.get(CONF_DOOR_SENSORS, [])
+        door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
+        if door_sensors and not door_state:
+            raise ValueError("Door active state is required when door sensors are configured")
+
+        # Validate windows
+        window_sensors = data.get(CONF_WINDOW_SENSORS, [])
+        window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
+        if window_sensors and not window_state:
+            raise ValueError("Window active state is required when window sensors are configured")
+
+        # Validate weights
+        weights = [
+            (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
+            (CONF_WEIGHT_MEDIA, data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA)),
+            (CONF_WEIGHT_APPLIANCE, data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE)),
+            (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
+            (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
+            (CONF_WEIGHT_LIGHT, data.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT)),
+            (CONF_WEIGHT_ENVIRONMENTAL, data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL)),
+        ]
+        for name, weight in weights:
+            if not 0 <= weight <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):

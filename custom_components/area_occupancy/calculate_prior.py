@@ -21,6 +21,7 @@ from .const import (
     CONF_DOOR_SENSORS,
     CONF_WINDOW_SENSORS,
     CONF_LIGHTS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
     MIN_PROBABILITY,
     MAX_PROBABILITY,
     DEFAULT_PROB_GIVEN_TRUE,
@@ -49,6 +50,7 @@ class PriorCalculator:
         self.hass = hass
 
         self.motion_sensors = self.config.get(CONF_MOTION_SENSORS, [])
+        self.primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         self.media_devices = self.config.get(CONF_MEDIA_DEVICES, [])
         self.appliances = self.config.get(CONF_APPLIANCES, [])
         self.illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
@@ -74,17 +76,12 @@ class PriorCalculator:
                 self.probabilities.get_default_prior(entity_id),
             )
 
-        # Fetch motion sensor states
-        motion_states = {}
-        for motion_sensor in self.motion_sensors:
-            ms = await self._get_states_from_recorder(
-                motion_sensor, start_time, end_time
-            )
-            if ms:
-                motion_states[motion_sensor] = ms
-
-        if not motion_states:
-            # No motion data, fallback to defaults
+        # Fetch primary occupancy sensor states
+        primary_states = await self._get_states_from_recorder(
+            self.primary_sensor, start_time, end_time
+        )
+        if not primary_states:
+            _LOGGER.warning("No primary occupancy sensor data available")
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
@@ -96,52 +93,61 @@ class PriorCalculator:
             entity_id, start_time, end_time
         )
         if not entity_states:
-            # No entity data, fallback to defaults
+            _LOGGER.warning("No entity data available for %s", entity_id)
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
                 self.probabilities.get_default_prior(entity_id),
             )
 
-        # Compute intervals for motion sensors once
-        motion_intervals_by_sensor = {}
-        for sensor_id, states in motion_states.items():
-            intervals = self._states_to_intervals(states, start_time, end_time)
-            motion_intervals_by_sensor[sensor_id] = intervals
+        # Compute intervals for primary sensor
+        primary_intervals = self._states_to_intervals(primary_states, start_time, end_time)
+        if not primary_intervals:
+            _LOGGER.warning("No valid intervals found for primary sensor")
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                self.probabilities.get_default_prior(entity_id),
+            )
 
-        # Compute total durations for motion sensors from precomputed intervals
-        motion_durations = self._compute_state_durations_from_intervals(
-            motion_intervals_by_sensor
+        # Compute intervals for the entity
+        entity_intervals = self._states_to_intervals(entity_states, start_time, end_time)
+        if not entity_intervals:
+            _LOGGER.warning("No valid intervals found for entity %s", entity_id)
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                self.probabilities.get_default_prior(entity_id),
+            )
+
+        # Calculate prior probability based on primary sensor
+        primary_durations = self._compute_state_durations_from_intervals(
+            {self.primary_sensor: primary_intervals}
         )
-        total_motion_active_time = motion_durations.get(STATE_ON, 0.0)
-        total_motion_inactive_time = motion_durations.get(STATE_OFF, 0.0)
-        total_motion_time = total_motion_active_time + total_motion_inactive_time
+        total_primary_active_time = primary_durations.get(STATE_ON, 0.0)
+        total_primary_inactive_time = primary_durations.get(STATE_OFF, 0.0)
+        total_primary_time = total_primary_active_time + total_primary_inactive_time
 
-        if total_motion_time == 0:
-            # No motion duration data, fallback to defaults
+        if total_primary_time == 0:
+            _LOGGER.warning("No valid duration found for primary sensor")
             return (
                 DEFAULT_PROB_GIVEN_TRUE,
                 DEFAULT_PROB_GIVEN_FALSE,
                 self.probabilities.get_default_prior(entity_id),
             )
 
-        # Calculate prior probability based on motion sensor and clamp it
+        # Calculate prior probability based on primary sensor and clamp it
         prior = max(
             MIN_PROBABILITY,
-            min(total_motion_active_time / total_motion_time, MAX_PROBABILITY),
+            min(total_primary_active_time / total_primary_time, MAX_PROBABILITY),
         )
 
-        # Compute intervals for the entity once
-        entity_intervals = self._states_to_intervals(
-            entity_states, start_time, end_time
-        )
-
-        # Calculate conditional probabilities using precomputed intervals
+        # Calculate conditional probabilities using intervals
         prob_given_true = self._calculate_conditional_probability_with_intervals(
-            entity_id, entity_intervals, motion_intervals_by_sensor, STATE_ON
+            entity_id, entity_intervals, {self.primary_sensor: primary_intervals}, STATE_ON
         )
         prob_given_false = self._calculate_conditional_probability_with_intervals(
-            entity_id, entity_intervals, motion_intervals_by_sensor, STATE_OFF
+            entity_id, entity_intervals, {self.primary_sensor: primary_intervals}, STATE_OFF
         )
 
         # After computing the probabilities, update learned priors

@@ -25,6 +25,7 @@ DEVICE_SW_VERSION: Final = "2025.2.1"
 # Configuration constants
 CONF_NAME: Final = "name"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
+CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
