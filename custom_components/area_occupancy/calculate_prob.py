@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 
 from .types import (
-    ProbabilityResult,
+    ProbabilityState,
     SensorState,
     CalculationResult,
 )
@@ -24,11 +24,13 @@ class ProbabilityCalculator:
 
     def __init__(self, coordinator, probabilities) -> None:
         """Initialize the calculator."""
-        self.coordinator = coordinator
         self.probabilities = probabilities
         self.current_probability = MIN_PROBABILITY
         self.previous_probability = MIN_PROBABILITY
         self.decay_handler = DecayHandler(coordinator.config)
+        self.probability_state = coordinator.data
+        self.learned_priors = coordinator.learned_priors
+        self.type_priors = coordinator.type_priors
 
     def _calculate_sensor_probability(
         self, entity_id: str, state: SensorState
@@ -52,7 +54,9 @@ class ProbabilityCalculator:
             )
 
         # Get learned or default priors
-        learned_data = self.coordinator.learned_priors.get(entity_id, {})
+        learned_data = self.probability_state.get("learned_priors", {}).get(
+            entity_id, {}
+        )
         p_true = learned_data.get("prob_given_true", sensor_config["prob_given_true"])
         p_false = learned_data.get(
             "prob_given_false", sensor_config["prob_given_false"]
@@ -105,7 +109,6 @@ class ProbabilityCalculator:
         sensor_states: dict[str, SensorState],
         active_triggers: list,
         sensor_probs: dict,
-        now: datetime,
     ) -> float:
         """Calculate the base probability using complementary probability for multiple sensors.
 
@@ -167,7 +170,7 @@ class ProbabilityCalculator:
             if not sensor_config:
                 continue
 
-            learned_data = self.coordinator.learned_priors.get(entity_id, {})
+            learned_data = self.learned_priors.get(entity_id, {})
             prior = learned_data.get("prior", sensor_config["default_prior"])
 
             prior_sum += prior
@@ -182,25 +185,35 @@ class ProbabilityCalculator:
         self,
         active_sensor_states: dict[str, SensorState],
         now: datetime,
-    ) -> ProbabilityResult:
+    ) -> ProbabilityState:
         """Core calculation logic using Bayesian inference."""
         _LOGGER.debug("Starting occupancy probability calculation")
         active_triggers = []
         sensor_probs = {}
-        threshold = self.coordinator.threshold
 
         try:
             # Calculate base probability
             calculated_probability = self._calculate_base_probability(
-                active_sensor_states, active_triggers, sensor_probs, now
+                active_sensor_states, active_triggers, sensor_probs
             )
 
             # Calculate prior probability
             prior_probability = self._calculate_prior_probability(active_sensor_states)
 
             # Apply decay to the calculated probability
-            decayed_probability, decay_factor = self.decay_handler.calculate_decay(
-                calculated_probability, self.previous_probability, threshold, now
+            probability_state = ProbabilityState(
+                probability=calculated_probability,
+                previous_probability=self.previous_probability,
+                threshold=self.probability_state["threshold"],
+                prior_probability=prior_probability,
+                active_triggers=active_triggers,
+                sensor_probabilities=sensor_probs,
+                decay_status=0.0,
+                device_states={},
+                sensor_availability={},
+            )
+            decayed_probability, decay_status = self.decay_handler.calculate_decay(
+                probability_state
             )
 
             # Update previous probability for next calculation
@@ -211,33 +224,42 @@ class ProbabilityCalculator:
                 MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
             )
 
-            # Get decay status
-            decay_status = self.decay_handler.get_decay_status(decay_factor)
-
             _LOGGER.debug(
-                "Final probability calculation: base=%.3f, decayed=%.3f, final=%.3f, decay_factor=%.3f",
+                "Final probability calculation: base=%.3f, decayed=%.3f, final=%.3f, decay_status=%.3f",
                 calculated_probability,
                 decayed_probability,
                 final_probability,
-                decay_factor,
+                decay_status,
             )
 
-            return ProbabilityResult(
+            return ProbabilityState(
                 probability=final_probability,
                 prior_probability=prior_probability,
                 active_triggers=active_triggers,
                 sensor_probabilities=sensor_probs,
                 decay_status=decay_status,
+                device_states={
+                    entity_id: {"state": state.get("state")}
+                    for entity_id, state in active_sensor_states.items()
+                },
+                sensor_availability={
+                    entity_id: state.get("availability", False)
+                    for entity_id, state in active_sensor_states.items()
+                },
+                is_occupied=final_probability >= self.probability_state["threshold"],
             )
 
         except (ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error in probability calculation: %s", err, exc_info=True)
-            return ProbabilityResult(
+            return ProbabilityState(
                 probability=MIN_PROBABILITY,
                 prior_probability=MIN_PROBABILITY,
                 active_triggers=[],
                 sensor_probabilities={},
-                decay_status={"global_decay": 0.0},
+                decay_status=0.0,
+                device_states={},
+                sensor_availability={},
+                is_occupied=False,
             )
 
 

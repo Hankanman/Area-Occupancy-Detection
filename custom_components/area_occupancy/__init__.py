@@ -15,7 +15,7 @@ from .const import (
 )
 from .coordinator import AreaOccupancyCoordinator
 from .service import async_setup_services
-from .helpers import async_migrate_entry
+from .migrations import async_migrate_entry
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -28,12 +28,10 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     NAME_DECAY_SENSOR,
     CONF_NAME,
-    CONF_THRESHOLD,
-    DEFAULT_THRESHOLD,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .types import (
-    ProbabilityResult,
+    ProbabilityState,
     ProbabilityAttributes,
     PriorsAttributes,
 )
@@ -146,14 +144,20 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
     @property
     def native_value(self) -> float | None:
+        """Return the current occupancy probability as a percentage."""
         try:
-            if not self.coordinator.data:
-                return None
-            probability = self.coordinator.data.get("probability", 0.0)
+
+            probability = self.coordinator.data.get("probability")
+            if probability is None:
+                _LOGGER.warning("No probability value in coordinator data")
+                return 0.0
+
+            _LOGGER.debug("Current probability: %s", probability)
             return format_float(probability * 100)
+
         except (TypeError, ValueError, AttributeError) as err:
-            _LOGGER.error("Error getting probability value: %s", err)
-            return None
+            _LOGGER.error("Error getting probability value: %s", err, exc_info=True)
+            return 0.0
 
     @property
     def extra_state_attributes(self) -> ProbabilityAttributes:
@@ -161,7 +165,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            data: ProbabilityResult = self.coordinator.data
+            data: ProbabilityState = self.coordinator.data
 
             # Create formatted probability entries with details
             sensor_probabilities = set()  # Use a set instead of dict
@@ -191,7 +195,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                     if self.hass.states.get(entity_id)
                 ],
                 "sensor_probabilities": sensor_probabilities,
-                "threshold": f"{self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)}%",
+                "threshold": f"{data.get("threshold")}%",
             }
         except (TypeError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting probability attributes: %s", err)
@@ -213,23 +217,13 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         try:
-            if not self.coordinator.data or "decay_status" not in self.coordinator.data:
+            decay_status = self.coordinator.data.get("decay_status")
+            if decay_status is None:
                 return 0.0
-
-            decay_values = [
-                v
-                for v in self.coordinator.data["decay_status"].values()
-                if v is not None
-            ]
-
-            if not decay_values:
-                return 0.0
-
-            average_decay = sum(decay_values) / len(decay_values)
-            return format_float(average_decay * 100)
+            return format_float(decay_status * 100)
 
         except (TypeError, KeyError, ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error calculating decay value: %s", err)
+            _LOGGER.error("Error getting decay value: %s", err)
             return 0.0
 
 

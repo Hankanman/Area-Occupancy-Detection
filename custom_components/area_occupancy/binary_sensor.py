@@ -41,9 +41,9 @@ class AreaOccupancyBinarySensor(
     @property
     def is_on(self) -> bool:
         """Return True if the area is currently occupied."""
-        threshold = self.coordinator.threshold
-        probability = self.coordinator.data.get("probability", 0.0)
-        return probability >= threshold
+        if not self.coordinator or not self.coordinator.data:
+            return False
+        return self.coordinator.data.get("is_occupied", False)
 
 
 async def async_setup_entry(

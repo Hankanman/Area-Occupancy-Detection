@@ -435,14 +435,6 @@ class Probabilities:
         active_states = self._sensor_configs[sensor_type]["active_states"]
         is_active = state in active_states
 
-        _LOGGER.debug(
-            "Entity %s (type %s) state %s: active=%s",
-            entity_id,
-            sensor_type,
-            state,
-            is_active,
-        )
-
         return is_active
 
     def get_initial_type_priors(self) -> dict[str, LearnedPrior]:
