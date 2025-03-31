@@ -80,13 +80,17 @@ class SensorProbabilities(TypedDict):
     environmental_probability: float
 
 
-class ProbabilityResult(TypedDict):
+class ProbabilityState(TypedDict):
     """Type for probability calculation results."""
 
     probability: float
+    previous_probability: float
+    threshold: float
+    prior_probability: float
     active_triggers: list[str]
-    sensor_probabilities: SensorProbabilities
-    device_states: dict[str, dict[str, str]]
+    sensor_probabilities: dict[str, float]
+    decay_status: float
+    device_states: dict[str, str]
     sensor_availability: dict[str, bool]
     is_occupied: bool
 
@@ -112,12 +116,6 @@ class SensorConfig(TypedDict):
     prob_given_false: float
     default_prior: float
     weight: float
-
-
-class DecayStatus(TypedDict):
-    """Type for decay status."""
-
-    global_decay: float
 
 
 class StateInterval(TypedDict):
