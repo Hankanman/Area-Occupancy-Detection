@@ -53,28 +53,51 @@ def generate_migration_map(
         ]
 
         migration_map = {
+            # Handle old format with area_id
             f"{DOMAIN}_{area_id}_probability": (
-                f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+                f"{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
             ),
             f"{DOMAIN}_{area_id}_decay": (
-                f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+                f"{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+            ),
+            # Handle new format with entry_id
+            f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}": (
+                f"{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+            ),
+            f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}": (
+                f"{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
             ),
         }
 
         # Add migrations for all old prior sensors to the new priors sensor
         for old_prior in old_prior_sensors:
+            # Handle old format with area_id
             migration_map[f"{DOMAIN}_{area_id}_{old_prior}"] = (
-                f"{DOMAIN}_{entry_id}_{NAME_PRIORS_SENSOR.lower()}"
+                f"{entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
+            )
+            # Handle new format with entry_id
+            migration_map[f"{DOMAIN}_{entry_id}_{old_prior}"] = (
+                f"{entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
             )
 
         return migration_map
     elif platform == "binary_sensor":
         return {
-            f"{DOMAIN}_{area_id}_occupancy": f"{DOMAIN}_{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
+            # Handle old format with area_id
+            f"{DOMAIN}_{area_id}_occupancy": f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
+            # Handle new format with entry_id
+            f"{DOMAIN}_{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}": (
+                f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+            ),
         }
     elif platform == "number":
         return {
-            f"{DOMAIN}_{area_id}_threshold": f"{DOMAIN}_{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}",
+            # Handle old format with area_id
+            f"{DOMAIN}_{area_id}_threshold": f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}",
+            # Handle new format with entry_id
+            f"{DOMAIN}_{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}": (
+                f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
+            ),
         }
     return {}
 
