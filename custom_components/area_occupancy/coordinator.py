@@ -110,7 +110,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             previous_probability=MIN_PROBABILITY,
             threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
             prior_probability=MIN_PROBABILITY,
-            active_triggers=[],
             sensor_probabilities={},
             decay_status=0.0,
             device_states={},
@@ -471,7 +470,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 probability_state.probability,
                 probability_state.prior_probability,
                 probability_state.threshold,
-                len(probability_state.active_triggers),
+                len(probability_state.sensor_probabilities),
                 probability_state.decay_status,
             )
 
@@ -494,7 +493,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             previous_probability=MIN_PROBABILITY,
             threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
             prior_probability=MIN_PROBABILITY,
-            active_triggers=[],
             sensor_probabilities={},
             decay_status=0.0,
             device_states={},

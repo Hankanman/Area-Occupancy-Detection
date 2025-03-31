@@ -97,13 +97,17 @@ class ProbabilityState:
     previous_probability: float = field(default=0.0)
     threshold: float = field(default=0.5)
     prior_probability: float = field(default=0.0)
-    active_triggers: List[str] = field(default_factory=list)
     sensor_probabilities: Dict[str, Dict[str, float]] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
     device_states: Dict[str, Dict[str, str]] = field(default_factory=dict)
     sensor_availability: Dict[str, bool] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
+
+    @property
+    def active_triggers(self) -> List[str]:
+        """Get list of active triggers from sensor probabilities."""
+        return list(self.sensor_probabilities.keys())
 
     def __post_init__(self) -> None:
         """Validate probability values."""
@@ -124,7 +128,6 @@ class ProbabilityState:
         previous_probability: float | None = None,
         threshold: float | None = None,
         prior_probability: float | None = None,
-        active_triggers: List[str] | None = None,
         sensor_probabilities: Dict[str, Dict[str, float]] | None = None,
         decay_status: float | None = None,
         device_states: Dict[str, Dict[str, str]] | None = None,
@@ -141,8 +144,6 @@ class ProbabilityState:
             self.threshold = max(0.0, min(threshold, 1.0))
         if prior_probability is not None:
             self.prior_probability = max(0.0, min(prior_probability, 1.0))
-        if active_triggers is not None:
-            self.active_triggers = active_triggers
         if sensor_probabilities is not None:
             self.sensor_probabilities = sensor_probabilities
         if decay_status is not None:
@@ -172,7 +173,6 @@ class ProbabilityState:
             "previous_probability": self.previous_probability,
             "threshold": self.threshold,
             "prior_probability": self.prior_probability,
-            "active_triggers": self.active_triggers,
             "sensor_probabilities": self.sensor_probabilities,
             "decay_status": self.decay_status,
             "device_states": self.device_states,
@@ -199,7 +199,6 @@ class ProbabilityState:
             previous_probability=float(data["previous_probability"]),
             threshold=float(data["threshold"]),
             prior_probability=float(data["prior_probability"]),
-            active_triggers=list(data["active_triggers"]),
             sensor_probabilities=dict(data["sensor_probabilities"]),
             decay_status=float(data["decay_status"]),
             device_states=dict(data["device_states"]),
