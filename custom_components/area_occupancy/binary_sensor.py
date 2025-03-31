@@ -1,11 +1,8 @@
-"""Binary sensor platform for Area Occupancy Detection integration."""
+"""Binary sensor entities for Area Occupancy Detection."""
 
 from __future__ import annotations
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-)
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -13,53 +10,48 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    CONF_NAME,
     NAME_BINARY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancyBinarySensor(
-    CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity
-):
-    """Binary sensor indicating occupancy status."""
+class AreaOccupancyBinarySensor(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity):
+    """Binary sensor for the occupancy status."""
 
     def __init__(
         self,
         coordinator: AreaOccupancyCoordinator,
         entry_id: str,
     ) -> None:
-        """Initialize the binary sensor."""
+        """Initialize the sensor."""
         super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry_id = entry_id
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
-        self._attr_name = f"{coordinator.config[CONF_NAME]} {NAME_BINARY_SENSOR}"
-        self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+        self._attr_name = NAME_BINARY_SENSOR
+        self._attr_device_class = "occupancy"
         self._attr_device_info = coordinator.device_info
 
     @property
     def is_on(self) -> bool:
-        """Return True if the area is currently occupied."""
-        if not self.coordinator or not self.coordinator.data:
+        """Return the state of the sensor."""
+        if not self.coordinator.data:
             return False
-        return self.coordinator.data.get("is_occupied", False)
+        return self.coordinator.data.is_occupied
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Area Occupancy binary sensor based on a config entry."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
-
-    # Create a new binary sensor entity
-    binary_sensor = AreaOccupancyBinarySensor(
-        coordinator=coordinator,
-        entry_id=entry.entry_id,
+    """Set up the Area Occupancy Detection binary sensors."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    async_add_entities(
+        [
+            AreaOccupancyBinarySensor(
+                coordinator=coordinator,
+                entry_id=config_entry.entry_id,
+            ),
+        ],
+        update_before_add=True,
     )
-
-    async_add_entities([binary_sensor], update_before_add=True)

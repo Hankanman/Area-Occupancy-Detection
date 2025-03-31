@@ -51,10 +51,14 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    MIN_PROBABILITY,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_WINDOW,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
 )
 from .types import (
     ProbabilityState,
-    LearnedPrior,
     DeviceInfo,
 )
 from .storage import AreaOccupancyStorage
@@ -85,29 +89,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=1),
+            name=config_entry.data.get(CONF_NAME, "Area Occupancy"),
+            update_interval=timedelta(
+                seconds=config_entry.data.get("update_interval", 1)
+            ),
         )
-        # Validate configuration
-        self.entry_id = config_entry.entry_id
         self.config_entry = config_entry
-        self.config = {**config_entry.data, **config_entry.options}
-        self._validate_config()
-
-        # Initialize storage and learned_priors
+        # Create a mutable copy of the config
+        self.config = dict(config_entry.data)
         self.storage = AreaOccupancyStorage(hass, config_entry.entry_id)
-        self.learned_priors: dict[str, LearnedPrior] = {}
-        self.type_priors: dict[str, LearnedPrior] = {}
+        self.learned_priors = {}
+        self.type_priors = {}
+        self.probabilities = Probabilities(config=self.config)
+        self.type_priors = self.probabilities.get_initial_type_priors()
 
-        # Initialize threshold
-        self.threshold = self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0
-
-        # Initialize coordinator data
-        self.data = ProbabilityState(
-            probability=0.0,
-            previous_probability=0.0,
-            threshold=self.threshold,
-            prior_probability=0.0,
+        # Initialize the state
+        self.data = ProbabilityState()
+        self.data.update(
+            probability=MIN_PROBABILITY,
+            previous_probability=MIN_PROBABILITY,
+            threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
+            prior_probability=MIN_PROBABILITY,
             active_triggers=[],
             sensor_probabilities={},
             decay_status=0.0,
@@ -115,6 +117,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             sensor_availability={},
             is_occupied=False,
         )
+        self.decay_handler = DecayHandler(self.config)
+        self.calculator = ProbabilityCalculator(self, self.probabilities)
 
         # Initialize state management
         self._state_manager = OccupancyStateManager()
@@ -132,15 +136,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._last_save = dt_util.utcnow()
 
         # Initialize handlers and calculators
-        self._probabilities = Probabilities(config=self.config)
-        self._decay_handler = DecayHandler(self.config)
-        self._calculator = ProbabilityCalculator(
-            coordinator=self,
-            probabilities=self._probabilities,
-        )
         self._prior_calculator = PriorCalculator(
             coordinator=self,
-            probabilities=self._probabilities,
+            probabilities=self.probabilities,
             hass=self.hass,
         )
 
@@ -164,6 +162,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._prior_update_tracker = None
         self._remove_state_listener = None
         self._stored_data = None
+
+        # Initialize decay-related attributes
+        self.config[CONF_DECAY_ENABLED] = self.config.get(
+            CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
+        )
+        self.config[CONF_DECAY_WINDOW] = self.config.get(
+            CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
+        )
 
     def _validate_config(self) -> None:
         """Validate the configuration."""
@@ -221,11 +227,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         return self._entity_ids
 
     @property
-    def calculator(self) -> ProbabilityCalculator:
-        """Get the probability calculator."""
-        return self._calculator
-
-    @property
     def available(self) -> bool:
         """Check if the coordinator is available."""
         primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
@@ -237,7 +238,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     @property
     def device_info(self) -> DeviceInfo:
         return {
-            "identifiers": {(DOMAIN, self.entry_id)},
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config[CONF_NAME],
             "manufacturer": DEVICE_MANUFACTURER,
             "model": DEVICE_MODEL,
@@ -287,7 +288,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             if not stored_data:
                 _LOGGER.debug("No stored data found, initializing fresh state")
                 self._reset_state()
-                self.type_priors = self._probabilities.get_initial_type_priors()
+                self.type_priors = self.probabilities.get_initial_type_priors()
                 return
 
             self.learned_priors = stored_data.get("learned_priors", {})
@@ -296,7 +297,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             if stored_type_priors:
                 self.type_priors = stored_type_priors
             else:
-                self.type_priors = self._probabilities.get_initial_type_priors()
+                self.type_priors = self.probabilities.get_initial_type_priors()
 
             _LOGGER.debug("Successfully restored stored data")
         except Exception as err:
@@ -441,67 +442,92 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             async_state_changed_listener,
         )
 
-    async def _async_update_data(self) -> None:
-        """Update data from sensors and calculate probabilities."""
+    async def _async_update_data(self) -> ProbabilityState:
+        """Update data via library."""
         try:
-            # Get current states for all sensors
-            sensor_states = {}
-
+            # Get current states of all configured entities
+            active_sensor_states = {}
             for entity_id in self.get_configured_sensors():
                 state = self.hass.states.get(entity_id)
-                if state is not None and state.state not in [
-                    "unavailable",
-                    "unknown",
-                    None,
-                    "",
-                ]:
-                    sensor_states[entity_id] = {
+                if state is not None:
+                    active_sensor_states[entity_id] = {
                         "state": state.state,
+                        "attributes": state.attributes,
+                        "last_updated": state.last_updated,
                         "availability": True,
-                        "last_changed": (
-                            state.last_changed.isoformat()
-                            if state.last_changed
-                            else None
-                        ),
                     }
-                else:
-                    sensor_states[entity_id] = {
-                        "state": None,
-                        "availability": False,
-                        "last_changed": dt_util.utcnow().isoformat(),
-                    }
-
-            # Update sensor states
-            self._state_cache = sensor_states
-            _LOGGER.debug("Updated sensor states, found %s sensors", len(sensor_states))
 
             # Calculate probabilities
-            _LOGGER.debug("Calculating probabilities...")
-            result = self._calculator.perform_calculation_logic(
-                sensor_states, dt_util.utcnow()
+            probability_state = self.calculator.calculate_occupancy_probability(
+                active_sensor_states,
+                datetime.now(),
             )
 
             # Update coordinator data
-            _LOGGER.debug(
-                "Setting coordinator data with probability: %s",
-                result["probability"],
-            )
-            self.data = result
-            _LOGGER.debug("Data updated, data keys: %s", list(self.data.keys()))
+            self.data = probability_state
 
             _LOGGER.debug(
-                "Updated data - Probability: %.2f%%, Occupied: %s, Decay: %.2f%%",
-                self.data["probability"] * 100,
-                self.data["is_occupied"],
-                self.data["decay_status"] * 100,
+                "Updated occupancy state: prob=%.3f, prior=%.3f, threshold=%.3f, active=%d, decay=%.3f",
+                probability_state.probability,
+                probability_state.prior_probability,
+                probability_state.threshold,
+                len(probability_state.active_triggers),
+                probability_state.decay_status,
             )
 
-        except Exception as err:
-            _LOGGER.error("Error updating data: %s", err, exc_info=True)
-            raise
+            return probability_state
 
-        _LOGGER.debug("Completed _async_update_data method")
-        return self.data
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            HomeAssistantError,
+            CalculationError,
+        ) as err:
+            _LOGGER.error("Error updating occupancy data: %s", err, exc_info=True)
+            return self.data
+
+    def _reset_state(self) -> None:
+        """Reset the coordinator state."""
+        self.data.update(
+            probability=MIN_PROBABILITY,
+            previous_probability=MIN_PROBABILITY,
+            threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
+            prior_probability=MIN_PROBABILITY,
+            active_triggers=[],
+            sensor_probabilities={},
+            decay_status=0.0,
+            device_states={},
+            sensor_availability={},
+            is_occupied=False,
+        )
+        self.decay_handler.reset()
+
+    def register_entity(self, entity_id: str) -> None:
+        _LOGGER.debug("Registering entity: %s", entity_id)
+        self._entity_ids.add(entity_id)
+
+    def unregister_entity(self, entity_id: str) -> None:
+        _LOGGER.debug("Unregistering entity: %s", entity_id)
+        self._entity_ids.discard(entity_id)
+
+    async def async_refresh(self) -> None:
+        """Refresh data and notify listeners."""
+        _LOGGER.debug("async_refresh called")
+        try:
+            await super().async_refresh()
+            _LOGGER.debug(
+                "super().async_refresh completed, data: %s",
+                "available" if self.data is not None else "None",
+            )
+        except (
+            HomeAssistantError,
+            ValueError,
+            RuntimeError,
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+        ) as err:
+            _LOGGER.error("Error in async_refresh: %s", err, exc_info=True)
 
     async def _async_store_data(self) -> None:
         try:
@@ -590,14 +616,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         _LOGGER.debug("Updating options")
         try:
             self.config = {**self.config_entry.data, **self.config_entry.options}
-            self._probabilities = Probabilities(config=self.config)
-            self._calculator = ProbabilityCalculator(
+            self.probabilities = Probabilities(config=self.config)
+            self.type_priors = self.probabilities.get_initial_type_priors()
+            self.calculator = ProbabilityCalculator(
                 coordinator=self,
-                probabilities=self._probabilities,
+                probabilities=self.probabilities,
             )
             self._prior_calculator = PriorCalculator(
                 coordinator=self,
-                probabilities=self._probabilities,
+                probabilities=self.probabilities,
                 hass=self.hass,
             )
 
@@ -609,54 +636,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             raise HomeAssistantError(
                 f"Failed to update coordinator options: {err}"
             ) from err
-
-    def _reset_state(self) -> None:
-        """Reset the coordinator state."""
-        self.learned_priors.clear()
-        self.type_priors.clear()
-        self._state_cache.clear()
-        self._entity_ids.clear()
-        self._last_positive_trigger = None
-        self._last_occupied = None
-        self.data = ProbabilityState(
-            probability=0.0,
-            previous_probability=0.0,
-            threshold=self.threshold,
-            prior_probability=0.0,
-            active_triggers=[],
-            sensor_probabilities={},
-            decay_status=0.0,
-            device_states={},
-            sensor_availability={},
-            is_occupied=False,
-        )
-        _LOGGER.debug("Reset coordinator state")
-
-    def register_entity(self, entity_id: str) -> None:
-        _LOGGER.debug("Registering entity: %s", entity_id)
-        self._entity_ids.add(entity_id)
-
-    def unregister_entity(self, entity_id: str) -> None:
-        _LOGGER.debug("Unregistering entity: %s", entity_id)
-        self._entity_ids.discard(entity_id)
-
-    async def async_refresh(self) -> None:
-        """Refresh data and notify listeners."""
-        _LOGGER.debug("async_refresh called")
-        try:
-            await super().async_refresh()
-            _LOGGER.debug(
-                "super().async_refresh completed, data: %s",
-                "available" if self.data is not None else "None",
-            )
-        except (
-            HomeAssistantError,
-            ValueError,
-            RuntimeError,
-            asyncio.TimeoutError,
-            asyncio.CancelledError,
-        ) as err:
-            _LOGGER.error("Error in async_refresh: %s", err, exc_info=True)
 
     async def _async_reinitialize_states(self) -> None:
         await self.async_initialize_states()
@@ -691,7 +670,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         }
         self.hass.async_create_task(self.async_save_state())
         self.async_set_updated_data(self.data)
-        self._probabilities.update_config(self.config)
+        self.probabilities.update_config(self.config)
 
     async def async_save_state(self) -> None:
         _LOGGER.debug("Saving state")
@@ -763,7 +742,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             "last_updated": dt_util.utcnow().isoformat(),
         }
         self.hass.async_create_task(self.async_save_state())
-        self._probabilities.update_config(self.config)
+        self.probabilities.update_config(self.config)
 
     async def _delayed_remove_sensor(self, entity_id: str) -> None:
         removal_delay = 10
