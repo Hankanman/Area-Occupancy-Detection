@@ -58,13 +58,12 @@ class ProbabilityCalculator:
             Updated probability state
         """
         _LOGGER.debug("Starting occupancy probability calculation")
-        active_triggers: List[str] = []
         sensor_probs: Dict[str, SensorProbability] = {}
 
         try:
             # Calculate base probability
             calculated_probability = self._calculate_complementary_probability(
-                active_sensor_states, active_triggers, sensor_probs
+                active_sensor_states, sensor_probs
             )
 
             # Calculate prior probability
@@ -100,7 +99,6 @@ class ProbabilityCalculator:
                 previous_probability=self.previous_probability,
                 prior_probability=prior_probability,
                 decay_status=decay_status,
-                active_triggers=active_triggers,
                 sensor_probs=sensor_probs,
                 active_sensor_states=active_sensor_states,
             )
@@ -115,7 +113,6 @@ class ProbabilityCalculator:
                 previous_probability=self.previous_probability,
                 prior_probability=MIN_PROBABILITY,
                 decay_status=0.0,
-                active_triggers=[],
                 sensor_probs={},
                 active_sensor_states={},
             )
@@ -124,7 +121,6 @@ class ProbabilityCalculator:
     def _calculate_complementary_probability(
         self,
         sensor_states: Dict[str, SensorState],
-        active_triggers: List[str],
         sensor_probs: Dict[str, SensorProbability],
     ) -> float:
         """Calculate the complementary probability for multiple sensors.
@@ -135,7 +131,6 @@ class ProbabilityCalculator:
 
         Args:
             sensor_states: Dictionary of sensor states
-            active_triggers: List to store active trigger entities
             sensor_probs: Dictionary to store sensor probability details
 
         Returns:
@@ -146,7 +141,6 @@ class ProbabilityCalculator:
         for entity_id, state in sensor_states.items():
             calc_result = self._calculate_sensor_probability(entity_id, state)
             if calc_result.is_active:
-                active_triggers.append(entity_id)
                 sensor_probs[entity_id] = calc_result.details
 
                 # Convert to complementary probability and apply weight
@@ -268,7 +262,6 @@ class ProbabilityCalculator:
         previous_probability: float,
         prior_probability: float,
         decay_status: float,
-        active_triggers: List[str],
         sensor_probs: Dict[str, SensorProbability],
         active_sensor_states: Dict[str, SensorState],
     ) -> None:
@@ -278,7 +271,6 @@ class ProbabilityCalculator:
             final_probability: The final calculated probability
             prior_probability: The calculated prior probability
             decay_status: The current decay status
-            active_triggers: List of active trigger entities
             sensor_probs: Dictionary of sensor probability details
             active_sensor_states: Dictionary of active sensor states
         """
@@ -286,7 +278,6 @@ class ProbabilityCalculator:
             probability=final_probability,
             previous_probability=previous_probability,
             prior_probability=prior_probability,
-            active_triggers=active_triggers,
             sensor_probabilities=sensor_probs,
             decay_status=decay_status,
             device_states={

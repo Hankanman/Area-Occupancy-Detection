@@ -175,6 +175,8 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
             # Create formatted probability entries with details
             sensor_probabilities = set()  # Use a set instead of dict
+            active_triggers = []
+            
             for entity_id, prob_details in data.sensor_probabilities.items():
                 friendly_name = (
                     self.hass.states.get(entity_id).attributes.get(
@@ -191,15 +193,10 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                     f"WP: {format_float(prob_details['weighted_probability'])}"
                 )
                 sensor_probabilities.add(formatted_entry)
+                active_triggers.append(friendly_name)
 
             return {
-                "active_triggers": [
-                    self.hass.states.get(entity_id).attributes.get(
-                        "friendly_name", entity_id
-                    )
-                    for entity_id in data.active_triggers
-                    if self.hass.states.get(entity_id)
-                ],
+                "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probabilities,
                 "threshold": f"{data.threshold * 100}%",
             }
