@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
@@ -101,7 +102,9 @@ class PriorCalculator:
             )
 
         # Compute intervals for primary sensor
-        primary_intervals = self._states_to_intervals(primary_states, start_time, end_time)
+        primary_intervals = self._states_to_intervals(
+            primary_states, start_time, end_time
+        )
         if not primary_intervals:
             _LOGGER.warning("No valid intervals found for primary sensor")
             return (
@@ -111,7 +114,9 @@ class PriorCalculator:
             )
 
         # Compute intervals for the entity
-        entity_intervals = self._states_to_intervals(entity_states, start_time, end_time)
+        entity_intervals = self._states_to_intervals(
+            entity_states, start_time, end_time
+        )
         if not entity_intervals:
             _LOGGER.warning("No valid intervals found for entity %s", entity_id)
             return (
@@ -144,18 +149,26 @@ class PriorCalculator:
 
         # Calculate conditional probabilities using intervals
         prob_given_true = self._calculate_conditional_probability_with_intervals(
-            entity_id, entity_intervals, {self.primary_sensor: primary_intervals}, STATE_ON
+            entity_id,
+            entity_intervals,
+            {self.primary_sensor: primary_intervals},
+            STATE_ON,
         )
         prob_given_false = self._calculate_conditional_probability_with_intervals(
-            entity_id, entity_intervals, {self.primary_sensor: primary_intervals}, STATE_OFF
+            entity_id,
+            entity_intervals,
+            {self.primary_sensor: primary_intervals},
+            STATE_OFF,
         )
 
-        # After computing the probabilities, update learned priors
-        self.coordinator.update_learned_prior(
+        # After computing the probabilities, update learned priors in prior_state
+        timestamp = dt_util.utcnow().isoformat()
+        self.coordinator.prior_state.update_entity_prior(
             entity_id,
             prob_given_true,
             prob_given_false,
             prior,
+            timestamp,
         )
 
         # Calculate and update type priors by averaging all sensors of this type
@@ -303,7 +316,7 @@ class PriorCalculator:
         prob_given_falses = []
 
         for entity_id in entities:
-            learned = self.coordinator.learned_priors.get(entity_id)
+            learned = self.coordinator.prior_state.entity_priors.get(entity_id)
             if learned:
                 priors.append(learned["prior"])
                 prob_given_trues.append(learned["prob_given_true"])
@@ -315,13 +328,13 @@ class PriorCalculator:
 
         # Calculate averages
         avg_prior = sum(priors) / len(priors)
-        avg_prob_given_true = sum(prob_given_trues) / len(prob_given_trues)
-        avg_prob_given_false = sum(prob_given_falses) / len(prob_given_falses)
 
-        # Update type priors
-        self.coordinator.update_type_prior(
-            sensor_type,
-            avg_prob_given_true,
-            avg_prob_given_false,
-            avg_prior,
+        # Update type priors in prior_state
+        timestamp = dt_util.utcnow().isoformat()
+        self.coordinator.prior_state.update_type_prior(
+            sensor_type, avg_prior, timestamp
         )
+
+        # Recalculate overall prior
+        overall_prior = self.coordinator.prior_state.calculate_overall_prior()
+        self.coordinator.prior_state.update(overall_prior=overall_prior)

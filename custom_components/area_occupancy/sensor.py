@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -85,13 +84,11 @@ class PriorsSensor(AreaOccupancySensorBase):
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
         try:
-            type_priors = self.coordinator.type_priors
-            if not type_priors:
+            if not self.coordinator.prior_state:
                 return None
 
-            # Calculate average of all type priors
-            priors = [prior["prior"] for prior in type_priors.values()]
-            return sum(priors) / len(priors) * 100
+            # Return the overall prior directly from prior_state
+            return self.coordinator.prior_state.overall_prior * 100
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error calculating priors: %s", err)
@@ -101,26 +98,48 @@ class PriorsSensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> PriorsAttributes:
         """Return all prior probabilities as attributes."""
         try:
-            type_priors = self.coordinator.type_priors
+            if not self.coordinator.prior_state:
+                return {}
 
-            attributes = {
-                f"{sensor_type}": (
-                    f"T: {round(format_float(prior['prob_given_true']) * 100, 1)}% | "
-                    f"F: {round(format_float(prior['prob_given_false']) * 100, 1)}%"
-                )
-                for sensor_type, prior in type_priors.items()
+            prior_state = self.coordinator.prior_state
+
+            # Map sensor types to corresponding prior values from prior_state
+            type_prior_map = {
+                "motion": prior_state.motion_prior,
+                "media": prior_state.media_prior,
+                "appliance": prior_state.appliance_prior,
+                "door": prior_state.door_prior,
+                "window": prior_state.window_prior,
+                "light": prior_state.light_prior,
+                "environmental": prior_state.environmental_prior,
             }
+
+            # Build attribute dictionary using entity_priors for detailed values
+            attributes = {}
+            for sensor_type, prior_value in type_prior_map.items():
+                # Skip types with zero prior (not used in system)
+                if prior_value <= 0:
+                    continue
+
+                # Format attribute with consistent format
+                attributes[sensor_type] = f"Prior: {round(prior_value * 100, 1)}%"
+
+            # Add metadata attributes
+            last_updated = (
+                max(prior_state.last_updated.values())
+                if prior_state.last_updated
+                else dt_util.utcnow().isoformat()
+            )
+
+            # Check if we have any learned priors
+            has_learned_priors = bool(prior_state.entity_priors)
 
             attributes.update(
                 {
-                    "last_updated": dt_util.utcnow().isoformat(),
-                    "total_period": f"{str(
-                        timedelta(
-                            days=self.coordinator.config.get(
-                                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                            )
-                        ).days
-                    )} days",
+                    "last_updated": last_updated,
+                    "total_period": f"{prior_state.analysis_period} days",
+                    "entity_count": len(prior_state.entity_priors),
+                    "using_learned_priors": has_learned_priors,
                 }
             )
 
