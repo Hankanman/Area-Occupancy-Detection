@@ -7,7 +7,7 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, PERCENTAGE, EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -21,9 +21,7 @@ from .const import (
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancyThreshold(
-    CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity
-):
+class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):  # pylint: disable=abstract-method
     """Number entity for adjusting occupancy threshold."""
 
     def __init__(
@@ -35,7 +33,9 @@ class AreaOccupancyThreshold(
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._attr_name = NAME_THRESHOLD_NUMBER
-        self._attr_unique_id = f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
+        )
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 99.0
         self._attr_native_step = 1.0
@@ -60,7 +60,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Area Occupancy threshold number based on a config entry."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
 
     # Create a new number entity for the threshold
     number_entity = AreaOccupancyThreshold(

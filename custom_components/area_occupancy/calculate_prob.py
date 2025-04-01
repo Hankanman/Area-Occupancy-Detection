@@ -34,8 +34,7 @@ class ProbabilityCalculator:
         self.decay_handler = coordinator.decay_handler
         self.probability_state = coordinator.data
         self.previous_probability = coordinator.data.previous_probability
-        self.learned_priors = coordinator.learned_priors
-        self.type_priors = coordinator.type_priors
+        self.prior_state = coordinator.prior_state
 
     def calculate_occupancy_probability(
         self,
@@ -195,11 +194,31 @@ class ProbabilityCalculator:
         Returns:
             Tuple of (p_true, p_false, prior) probabilities
         """
-        learned_data = self.learned_priors.get(entity_id, {})
+        # Check for entity-specific learned priors
+        entity_prior = self.prior_state.entity_priors.get(entity_id, {})
+        if entity_prior:
+            return (
+                entity_prior.get("prob_given_true", sensor_config["prob_given_true"]),
+                entity_prior.get("prob_given_false", sensor_config["prob_given_false"]),
+                entity_prior.get("prior", sensor_config["default_prior"]),
+            )
+
+        # Fall back to type priors
+        sensor_type = self.probabilities.entity_types.get(entity_id)
+        if sensor_type:
+            type_prior = getattr(self.prior_state, f"{sensor_type}_prior", 0.0)
+            if type_prior > 0:
+                return (
+                    sensor_config["prob_given_true"],
+                    sensor_config["prob_given_false"],
+                    type_prior,
+                )
+
+        # Use default configuration values
         return (
-            learned_data.get("prob_given_true", sensor_config["prob_given_true"]),
-            learned_data.get("prob_given_false", sensor_config["prob_given_false"]),
-            learned_data.get("prior", sensor_config["default_prior"]),
+            sensor_config["prob_given_true"],
+            sensor_config["prob_given_false"],
+            sensor_config["default_prior"],
         )
 
     def _calculate_sensor_probability(

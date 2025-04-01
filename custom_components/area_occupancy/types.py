@@ -6,6 +6,9 @@ from datetime import datetime
 from typing import TypedDict, Any, Literal, Sequence, Set, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 from homeassistant.core import State
+from homeassistant.util import dt as dt_util
+
+from .const import MIN_PROBABILITY
 
 MotionState = Literal["on", "off"]
 
@@ -68,6 +71,7 @@ class SensorProbability(TypedDict):
     weight: float
     weighted_probability: float
 
+
 @dataclass
 class SensorCalculation:
     """Data class to hold sensor calculation results."""
@@ -89,6 +93,7 @@ class SensorCalculation:
             details={"probability": 0.0, "weight": 0.0, "weighted_probability": 0.0},
         )
 
+
 @dataclass
 class ProbabilityState:
     """State of probability calculations."""
@@ -100,7 +105,9 @@ class ProbabilityState:
     sensor_probabilities: Dict[str, Dict[str, float]] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
     current_states: Dict[str, Dict[str, Union[str, bool]]] = field(default_factory=dict)
-    previous_states: Dict[str, Dict[str, Union[str, bool]]] = field(default_factory=dict)
+    previous_states: Dict[str, Dict[str, Union[str, bool]]] = field(
+        default_factory=dict
+    )
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
 
@@ -205,6 +212,192 @@ class ProbabilityState:
             previous_states=dict(data.get("previous_states", {})),
             is_occupied=bool(data["is_occupied"]),
             decaying=bool(data.get("decaying", False)),
+        )
+
+
+@dataclass
+class PriorState:
+    """State of prior probability calculations."""
+
+    # Overall prior probability for the area
+    overall_prior: float = field(default=0.0)
+
+    # Prior probabilities by sensor type
+    motion_prior: float = field(default=0.0)
+    media_prior: float = field(default=0.0)
+    appliance_prior: float = field(default=0.0)
+    door_prior: float = field(default=0.0)
+    window_prior: float = field(default=0.0)
+    light_prior: float = field(default=0.0)
+    environmental_prior: float = field(default=0.0)
+
+    # Individual entity priors
+    entity_priors: Dict[str, Dict[str, float]] = field(default_factory=dict)
+
+    # Last updated timestamps
+    last_updated: Dict[str, str] = field(default_factory=dict)
+
+    # Analysis period in days
+    analysis_period: int = field(default=7)
+
+    def __post_init__(self) -> None:
+        """Validate prior values."""
+        for attr_name in [
+            "overall_prior",
+            "motion_prior",
+            "media_prior",
+            "appliance_prior",
+            "door_prior",
+            "window_prior",
+            "light_prior",
+            "environmental_prior",
+        ]:
+            value = getattr(self, attr_name)
+            if not 0 <= value <= 1:
+                raise ValueError(f"{attr_name} must be between 0 and 1")
+
+    def update(
+        self,
+        overall_prior: float | None = None,
+        motion_prior: float | None = None,
+        media_prior: float | None = None,
+        appliance_prior: float | None = None,
+        door_prior: float | None = None,
+        window_prior: float | None = None,
+        light_prior: float | None = None,
+        environmental_prior: float | None = None,
+        entity_priors: Dict[str, Dict[str, float]] | None = None,
+        last_updated: Dict[str, str] | None = None,
+        analysis_period: int | None = None,
+    ) -> None:
+        """Update the state with new values while maintaining the same instance."""
+        if overall_prior is not None:
+            self.overall_prior = max(0.0, min(overall_prior, 1.0))
+        if motion_prior is not None:
+            self.motion_prior = max(0.0, min(motion_prior, 1.0))
+        if media_prior is not None:
+            self.media_prior = max(0.0, min(media_prior, 1.0))
+        if appliance_prior is not None:
+            self.appliance_prior = max(0.0, min(appliance_prior, 1.0))
+        if door_prior is not None:
+            self.door_prior = max(0.0, min(door_prior, 1.0))
+        if window_prior is not None:
+            self.window_prior = max(0.0, min(window_prior, 1.0))
+        if light_prior is not None:
+            self.light_prior = max(0.0, min(light_prior, 1.0))
+        if environmental_prior is not None:
+            self.environmental_prior = max(0.0, min(environmental_prior, 1.0))
+        if entity_priors is not None:
+            self.entity_priors = entity_priors
+        if last_updated is not None:
+            self.last_updated = last_updated
+        if analysis_period is not None:
+            self.analysis_period = analysis_period
+
+    def update_entity_prior(
+        self,
+        entity_id: str,
+        prob_given_true: float,
+        prob_given_false: float,
+        prior: float,
+        timestamp: str,
+    ) -> None:
+        """Update prior for a specific entity."""
+        self.entity_priors[entity_id] = {
+            "prob_given_true": max(0.0, min(prob_given_true, 1.0)),
+            "prob_given_false": max(0.0, min(prob_given_false, 1.0)),
+            "prior": max(0.0, min(prior, 1.0)),
+        }
+        self.last_updated[entity_id] = timestamp
+
+    def update_type_prior(
+        self,
+        sensor_type: str,
+        prior_value: float,
+        timestamp: str,
+    ) -> None:
+        """Update prior for a specific sensor type."""
+        if sensor_type == "motion":
+            self.motion_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "media":
+            self.media_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "appliance":
+            self.appliance_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "door":
+            self.door_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "window":
+            self.window_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "light":
+            self.light_prior = max(0.0, min(prior_value, 1.0))
+        elif sensor_type == "environmental":
+            self.environmental_prior = max(0.0, min(prior_value, 1.0))
+        self.last_updated[sensor_type] = timestamp
+
+    def calculate_overall_prior(self) -> float:
+        """Calculate the overall prior from all sensor type priors."""
+        type_priors = [
+            self.motion_prior,
+            self.media_prior,
+            self.appliance_prior,
+            self.door_prior,
+            self.window_prior,
+            self.light_prior,
+            self.environmental_prior,
+        ]
+        valid_priors = [p for p in type_priors if p > 0]
+        if not valid_priors:
+            return 0.0
+        return sum(valid_priors) / len(valid_priors)
+
+    def initialize_from_defaults(self, probabilities) -> None:
+        """Initialize the state from default type priors.
+
+        Args:
+            probabilities: The probabilities configuration instance
+        """
+        timestamp = dt_util.utcnow().isoformat()
+
+        # Initialize from default type priors
+        for sensor_type, prior_data in probabilities.get_initial_type_priors().items():
+            self.update_type_prior(
+                sensor_type, prior_data.get("prior", MIN_PROBABILITY), timestamp
+            )
+
+        # Calculate and set the overall prior
+        overall_prior = self.calculate_overall_prior()
+        self.update(overall_prior=overall_prior)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the dataclass to a dictionary."""
+        return {
+            "overall_prior": self.overall_prior,
+            "motion_prior": self.motion_prior,
+            "media_prior": self.media_prior,
+            "appliance_prior": self.appliance_prior,
+            "door_prior": self.door_prior,
+            "window_prior": self.window_prior,
+            "light_prior": self.light_prior,
+            "environmental_prior": self.environmental_prior,
+            "entity_priors": self.entity_priors,
+            "last_updated": self.last_updated,
+            "analysis_period": self.analysis_period,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PriorState":
+        """Create a PriorState from a dictionary."""
+        return cls(
+            overall_prior=float(data.get("overall_prior", 0.0)),
+            motion_prior=float(data.get("motion_prior", 0.0)),
+            media_prior=float(data.get("media_prior", 0.0)),
+            appliance_prior=float(data.get("appliance_prior", 0.0)),
+            door_prior=float(data.get("door_prior", 0.0)),
+            window_prior=float(data.get("window_prior", 0.0)),
+            light_prior=float(data.get("light_prior", 0.0)),
+            environmental_prior=float(data.get("environmental_prior", 0.0)),
+            entity_priors=dict(data.get("entity_priors", {})),
+            last_updated=dict(data.get("last_updated", {})),
+            analysis_period=int(data.get("analysis_period", 7)),
         )
 
 
