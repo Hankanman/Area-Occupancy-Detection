@@ -1,49 +1,47 @@
 """Probability constants and defaults for Area Occupancy Detection."""
 
 from __future__ import annotations
+
 import logging
-from typing import Final, Dict, Any, Optional
+from typing import Any, Final
 
-from homeassistant.const import (
-    STATE_ON,
-)
-
-from .types import EntityType, LearnedPrior, SensorConfig
-from .exceptions import ConfigurationError
+from homeassistant.const import STATE_ON
 
 from .const import (
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
+    CONF_APPLIANCE_ACTIVE_STATES,
+    CONF_APPLIANCES,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_DOOR_ACTIVE_STATE,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
 )
+from .exceptions import ConfigurationError
+from .types import EntityType, ProbabilityConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,7 +93,7 @@ LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
 ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
 
 # Media device state probabilities
-MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
+MEDIA_STATE_PROBABILITIES: Final[dict[str, float]] = {
     "playing": 0.9,
     "paused": 0.7,
     "idle": 0.3,
@@ -104,7 +102,7 @@ MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
 }
 
 # Appliance state probabilities
-APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
+APPLIANCE_STATE_PROBABILITIES: Final[dict[str, float]] = {
     "active": 0.8,
     "on": 0.8,
     "standby": 0.4,
@@ -116,9 +114,7 @@ APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
 class Probabilities:
     """Class to handle probability calculations and weights."""
 
-    def __init__(
-        self, config: dict[str, Any], coordinator: Optional[Any] = None
-    ) -> None:
+    def __init__(self, config: dict[str, Any], coordinator: Any | None = None) -> None:
         """Initialize the probabilities handler.
 
         Args:
@@ -127,6 +123,7 @@ class Probabilities:
 
         Raises:
             ConfigurationError: If configuration is invalid
+
         """
         self.config = config
         self.coordinator = coordinator
@@ -146,7 +143,13 @@ class Probabilities:
 
         Raises:
             ConfigurationError: If entity mapping fails
+
         """
+
+        def _validate_entity_id(entity_id: str, config_key: str) -> None:
+            if not entity_id:
+                raise ConfigurationError(f"Empty entity ID in {config_key}")
+
         try:
             mappings = [
                 (CONF_MOTION_SENSORS, "motion"),
@@ -162,14 +165,13 @@ class Probabilities:
 
             for config_key, sensor_type in mappings:
                 for entity_id in self.config.get(config_key, []):
-                    if not entity_id:
-                        raise ConfigurationError(f"Empty entity ID in {config_key}")
+                    _validate_entity_id(entity_id, config_key)
                     self.entity_types[entity_id] = sensor_type
 
             _LOGGER.debug(
                 "Mapped %d entities to types: %s",
                 len(self.entity_types),
-                {k: v for k, v in self.entity_types.items()},
+                dict(self.entity_types.items()),
             )
         except Exception as err:
             raise ConfigurationError(f"Failed to map entities to types: {err}") from err
@@ -182,7 +184,15 @@ class Probabilities:
 
         Raises:
             ConfigurationError: If weights are invalid
+
         """
+
+        def _validate_weight(sensor_type: str, weight: float) -> None:
+            if not 0 <= weight <= 1:
+                raise ConfigurationError(
+                    f"Invalid weight for {sensor_type}: {weight}. Must be between 0 and 1."
+                )
+
         try:
             weights = {
                 "motion": self.config.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
@@ -200,17 +210,16 @@ class Probabilities:
 
             # Validate weights
             for sensor_type, weight in weights.items():
-                if not 0 <= weight <= 1:
-                    raise ConfigurationError(
-                        f"Invalid weight for {sensor_type}: {weight}. Must be between 0 and 1."
-                    )
+                _validate_weight(sensor_type, weight)
 
             _LOGGER.debug("Sensor weights configured: %s", weights)
-            return weights
+
         except Exception as err:
             raise ConfigurationError(f"Failed to get sensor weights: {err}") from err
+        else:
+            return weights
 
-    def _build_sensor_configs(self) -> dict[str, SensorConfig]:
+    def _build_sensor_configs(self) -> dict[str, ProbabilityConfig]:
         """Build sensor configurations using current weights and type priors.
 
         Returns:
@@ -218,7 +227,27 @@ class Probabilities:
 
         Raises:
             ConfigurationError: If sensor configurations are invalid
+
         """
+
+        def _validate_probability(
+            sensor_type: str, prob_name: str, value: float
+        ) -> None:
+            if not 0 <= value <= 1:
+                raise ConfigurationError(
+                    f"Invalid {prob_name} for {sensor_type}: {value}"
+                )
+
+        def _validate_config(sensor_type: str, config: dict) -> None:
+            _validate_probability(
+                sensor_type, "prob_given_true", config["prob_given_true"]
+            )
+            _validate_probability(
+                sensor_type, "prob_given_false", config["prob_given_false"]
+            )
+            _validate_probability(sensor_type, "default_prior", config["default_prior"])
+            _validate_probability(sensor_type, "weight", config["weight"])
+
         try:
             # Get the configured door active state
             door_active_state = self.config.get(
@@ -308,27 +337,13 @@ class Probabilities:
 
             # Validate configurations
             for sensor_type, config in configs.items():
-                if not 0 <= config["prob_given_true"] <= 1:
-                    raise ConfigurationError(
-                        f"Invalid prob_given_true for {sensor_type}: {config['prob_given_true']}"
-                    )
-                if not 0 <= config["prob_given_false"] <= 1:
-                    raise ConfigurationError(
-                        f"Invalid prob_given_false for {sensor_type}: {config['prob_given_false']}"
-                    )
-                if not 0 <= config["default_prior"] <= 1:
-                    raise ConfigurationError(
-                        f"Invalid default_prior for {sensor_type}: {config['default_prior']}"
-                    )
-                if not 0 <= config["weight"] <= 1:
-                    raise ConfigurationError(
-                        f"Invalid weight for {sensor_type}: {config['weight']}"
-                    )
+                _validate_config(sensor_type, config)
 
             _LOGGER.debug("Built sensor configurations: %s", configs)
-            return configs
         except Exception as err:
             raise ConfigurationError(f"Failed to build sensor configs: {err}") from err
+        else:
+            return configs
 
     @property
     def sensor_weights(self) -> dict[str, float]:
@@ -336,7 +351,7 @@ class Probabilities:
         return self._sensor_weights
 
     @property
-    def sensor_configs(self) -> dict[str, SensorConfig]:
+    def sensor_configs(self) -> dict[str, ProbabilityConfig]:
         """Get the current sensor configurations."""
         return self._sensor_configs
 
@@ -351,6 +366,7 @@ class Probabilities:
 
         Raises:
             ValueError: If entity_id is not found
+
         """
         if entity_id not in self.entity_types:
             raise ValueError(f"Entity {entity_id} not found in entity types")
@@ -371,6 +387,7 @@ class Probabilities:
 
         Raises:
             ConfigurationError: If new configuration is invalid
+
         """
         try:
             self.config = config
@@ -383,7 +400,7 @@ class Probabilities:
         except Exception as err:
             raise ConfigurationError(f"Failed to update configuration: {err}") from err
 
-    def get_sensor_config(self, entity_id: str) -> Optional[SensorConfig]:
+    def get_sensor_config(self, entity_id: str) -> ProbabilityConfig | None:
         """Get the configuration for a specific sensor.
 
         Args:
@@ -394,6 +411,7 @@ class Probabilities:
 
         Raises:
             ValueError: If entity_id is not found
+
         """
         if entity_id not in self.entity_types:
             raise ValueError(f"Entity {entity_id} not found in entity types")
@@ -422,6 +440,7 @@ class Probabilities:
 
         Raises:
             ValueError: If entity_id is not found
+
         """
         if entity_id not in self.entity_types:
             raise ValueError(f"Entity {entity_id} not found in entity types")
@@ -433,15 +452,14 @@ class Probabilities:
             )
 
         active_states = self._sensor_configs[sensor_type]["active_states"]
-        is_active = state in active_states
+        return state in active_states
 
-        return is_active
-
-    def get_initial_type_priors(self) -> dict[str, LearnedPrior]:
+    def get_initial_type_priors(self) -> dict[str, ProbabilityConfig]:
         """Get the initial type priors for all sensor types.
 
         Returns:
             Dictionary of sensor type to initial prior mapping
+
         """
         try:
             priors = {}
@@ -453,7 +471,8 @@ class Probabilities:
                 }
 
             _LOGGER.debug("Initial type priors: %s", priors)
-            return priors
-        except (KeyError, ValueError, TypeError) as err:
-            _LOGGER.error("Failed to get initial type priors: %s", err, exc_info=True)
+        except (KeyError, ValueError, TypeError):
+            _LOGGER.exception("Failed to get initial type priors: %s")
             return {}
+        else:
+            return priors

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Final, List, TypedDict
 from dataclasses import dataclass
+from typing import Final, TypedDict
 
 from homeassistant.const import (
-    STATE_ON,
-    STATE_OFF,
-    STATE_OPEN,
     STATE_CLOSED,
-    STATE_PLAYING,
-    STATE_PAUSED,
     STATE_IDLE,
+    STATE_OFF,
+    STATE_ON,
+    STATE_OPEN,
+    STATE_PAUSED,
+    STATE_PLAYING,
     STATE_STANDBY,
 )
 
@@ -29,7 +29,7 @@ class StateOption:
 class PlatformStates(TypedDict):
     """Type for platform states configuration."""
 
-    options: List[StateOption]
+    options: list[StateOption]
     default: str
 
 

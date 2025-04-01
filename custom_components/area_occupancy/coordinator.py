@@ -1,69 +1,67 @@
 """Area Occupancy Coordinator."""
 
 from __future__ import annotations
-import asyncio
-import logging
-from datetime import datetime, timedelta
-from typing import Any, Callable
 
-from homeassistant.core import HomeAssistant, callback, CALLBACK_TYPE
+import asyncio
+from collections.abc import Callable
+from datetime import datetime, timedelta
+import logging
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from homeassistant.exceptions import (
-    HomeAssistantError,
-    ServiceValidationError,
-    ConfigEntryError,
-    ConfigEntryNotReady,
-)
-from homeassistant.config_entries import ConfigEntry
 
+from .calculate_prior import PriorCalculator
+from .calculate_prob import ProbabilityCalculator
 from .const import (
-    CONF_MOTION_SENSORS,
+    CONF_APPLIANCES,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_WINDOW,
+    CONF_DOOR_SENSORS,
     CONF_HISTORY_PERIOD,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
     CONF_NAME,
-    DOMAIN,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_THRESHOLD,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
-    CONF_APPLIANCES,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_MEDIA_DEVICES,
-    CONF_THRESHOLD,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_THRESHOLD,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    DOMAIN,
     MIN_PROBABILITY,
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
 )
-from .storage import AreaOccupancyStorage
-from .calculate_prob import ProbabilityCalculator
-from .calculate_prior import PriorCalculator
-from .probabilities import Probabilities
-from .state_management import OccupancyStateManager
 from .decay_handler import DecayHandler
 from .exceptions import (
-    StateError,
     CalculationError,
-    StorageError,
     PriorCalculationError,
+    StateError,
+    StorageError,
 )
-from .types import (
-    ProbabilityState,
-    PriorState,
-    DeviceInfo,
-)
+from .probabilities import Probabilities
+from .state_management import OccupancyStateManager
+from .storage import AreaOccupancyStorage
+from .types import DeviceInfo, PriorState, ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -356,11 +354,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                             await self._state_manager.get_active_sensors()
                         )
                     except (
+                        TimeoutError,
                         ValueError,
                         AttributeError,
                         TypeError,
                         KeyError,
-                        asyncio.TimeoutError,
                     ) as err:
                         _LOGGER.error("Error updating state cache: %s", err)
 
@@ -368,13 +366,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.hass.async_create_task(self._debounced_refresh.async_call())
 
             except (
+                TimeoutError,
                 AttributeError,
                 KeyError,
                 TypeError,
                 ValueError,
                 HomeAssistantError,
                 asyncio.CancelledError,
-                asyncio.TimeoutError,
             ) as err:
                 _LOGGER.error("Error in state change listener: %s", err)
 
@@ -431,10 +429,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             for sensor_id in sensors:
                 if sensor_id != self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR):
                     try:
-                        prob_given_true, prob_given_false, prior = (
-                            await self._prior_calculator.calculate_prior(
-                                sensor_id, start_time, end_time
-                            )
+                        (
+                            prob_given_true,
+                            prob_given_false,
+                            prior,
+                        ) = await self._prior_calculator.calculate_prior(
+                            sensor_id, start_time, end_time
                         )
                     except Exception as err:
                         raise PriorCalculationError(
@@ -467,12 +467,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         async def _update_priors_wrapper(_):
             try:
                 await self.update_learned_priors()
-            except (
-                HomeAssistantError,
-                ValueError,
-                RuntimeError,
-                asyncio.TimeoutError,
-            ) as err:
+            except (TimeoutError, HomeAssistantError, ValueError, RuntimeError) as err:
                 _LOGGER.error("Error in scheduled prior update: %s", err)
 
         if hasattr(self, "_prior_update_tracker"):
@@ -511,7 +506,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 # Still update decay status even when skipping main update
                 self.data.update(decaying=probability_state.decaying)
                 return self.data
-
             # Store previous states before updating
             previous_states = self.data.current_states.copy()
 
@@ -520,19 +514,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self.data.current_states = self.data.current_states
             self.data.previous_states = previous_states
 
-            return probability_state
-
         except (
+            TimeoutError,
             ValueError,
             TypeError,
             KeyError,
             AttributeError,
             HomeAssistantError,
-            asyncio.TimeoutError,
             asyncio.CancelledError,
         ) as err:
             _LOGGER.error("Error updating occupancy data: %s", err)
             return self.data
+        else:
+            return probability_state
 
     async def _save_debounced_data(self) -> None:
         """Save data with debouncing."""
@@ -553,6 +547,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         Raises:
             ServiceValidationError: If the value is invalid
             HomeAssistantError: If there's an error updating the config entry
+
         """
         _LOGGER.debug("Updating threshold to %.2f", value)
 

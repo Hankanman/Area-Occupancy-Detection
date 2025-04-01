@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
-from typing import Dict, Tuple
+import logging
 
-from .types import (
-    ProbabilityState,
-    SensorState,
-    SensorProbability,
-    SensorCalculation,
-)
-from .const import (
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
-)
+from .const import MAX_PROBABILITY, MIN_PROBABILITY
+from .types import ProbabilityState, SensorCalculation, SensorProbability, SensorState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +20,7 @@ class ProbabilityCalculator:
         Args:
             coordinator: The coordinator instance managing the integration state
             probabilities: The probabilities configuration instance
+
         """
         self.probabilities = probabilities
         self.decay_handler = coordinator.decay_handler
@@ -38,7 +30,7 @@ class ProbabilityCalculator:
 
     def calculate_occupancy_probability(
         self,
-        active_sensor_states: Dict[str, SensorState],
+        active_sensor_states: dict[str, SensorState],
         now: datetime,
     ) -> ProbabilityState:
         """Calculate the current occupancy probability using Bayesian inference.
@@ -55,9 +47,10 @@ class ProbabilityCalculator:
 
         Returns:
             Updated probability state
+
         """
         _LOGGER.debug("Starting occupancy probability calculation")
-        sensor_probs: Dict[str, SensorProbability] = {}
+        sensor_probs: dict[str, SensorProbability] = {}
 
         try:
             # Calculate base probability
@@ -102,10 +95,8 @@ class ProbabilityCalculator:
                 active_sensor_states=active_sensor_states,
             )
 
-            return self.probability_state
-
-        except (ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error in probability calculation: %s", err, exc_info=True)
+        except (ValueError, ZeroDivisionError):
+            _LOGGER.exception("Error in probability calculation: %s")
             # Reset the state to minimum values
             self._update_probability_state(
                 final_probability=MIN_PROBABILITY,
@@ -116,11 +107,13 @@ class ProbabilityCalculator:
                 active_sensor_states={},
             )
             return self.probability_state
+        else:
+            return self.probability_state
 
     def _calculate_complementary_probability(
         self,
-        sensor_states: Dict[str, SensorState],
-        sensor_probs: Dict[str, SensorProbability],
+        sensor_states: dict[str, SensorState],
+        sensor_probs: dict[str, SensorProbability],
     ) -> float:
         """Calculate the complementary probability for multiple sensors.
 
@@ -134,6 +127,7 @@ class ProbabilityCalculator:
 
         Returns:
             The calculated complementary probability
+
         """
         complementary_prob = 1.0
 
@@ -152,7 +146,7 @@ class ProbabilityCalculator:
         return max(MIN_PROBABILITY, min(calculated_probability, MAX_PROBABILITY))
 
     def _calculate_prior_probability(
-        self, sensor_states: Dict[str, SensorState]
+        self, sensor_states: dict[str, SensorState]
     ) -> float:
         """Calculate the prior probability based on sensor states.
 
@@ -161,6 +155,7 @@ class ProbabilityCalculator:
 
         Returns:
             The calculated prior probability
+
         """
         prior_sum = 0.0
         total_sensors = 0
@@ -183,8 +178,8 @@ class ProbabilityCalculator:
         return max(MIN_PROBABILITY, min(prior_sum / total_sensors, MAX_PROBABILITY))
 
     def _get_sensor_priors(
-        self, entity_id: str, sensor_config: Dict[str, float]
-    ) -> Tuple[float, float, float]:
+        self, entity_id: str, sensor_config: dict[str, float]
+    ) -> tuple[float, float, float]:
         """Get the priors for a sensor, using learned values if available.
 
         Args:
@@ -193,6 +188,7 @@ class ProbabilityCalculator:
 
         Returns:
             Tuple of (p_true, p_false, prior) probabilities
+
         """
         # Check for entity-specific learned priors
         entity_prior = self.prior_state.entity_priors.get(entity_id, {})
@@ -232,6 +228,7 @@ class ProbabilityCalculator:
 
         Returns:
             SensorCalculation containing the weighted probability and details
+
         """
         if not state.get("availability", False):
             _LOGGER.debug("Sensor %s is not available", entity_id)
@@ -281,17 +278,19 @@ class ProbabilityCalculator:
         previous_probability: float,
         prior_probability: float,
         decay_status: float,
-        sensor_probs: Dict[str, SensorProbability],
-        active_sensor_states: Dict[str, SensorState],
+        sensor_probs: dict[str, SensorProbability],
+        active_sensor_states: dict[str, SensorState],
     ) -> None:
         """Update the probability state with all calculated values.
 
         Args:
             final_probability: The final calculated probability
             previous_probability: The calculated prior probability
+            prior_probability: The prior probability used in the calculation
             decay_status: The current decay status
             sensor_probs: Dictionary of sensor probability details
             active_sensor_states: Dictionary of active sensor states
+
         """
         self.probability_state.update(
             probability=final_probability,
@@ -328,6 +327,7 @@ def bayesian_update(
     Raises:
         ValueError: If any input probability is invalid
         ZeroDivisionError: If the denominator would be zero
+
     """
     # Validate input probabilities
     if not all(0 <= p <= 1 for p in (prior, prob_given_true, prob_given_false)):

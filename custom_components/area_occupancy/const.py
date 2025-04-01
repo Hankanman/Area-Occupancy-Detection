@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Final
 from datetime import timedelta
+from typing import Final
+
 from homeassistant.const import (
-    Platform,
     STATE_CLOSED,
-    STATE_PLAYING,
-    STATE_PAUSED,
     STATE_ON,
     STATE_OPEN,
+    STATE_PAUSED,
+    STATE_PLAYING,
     STATE_STANDBY,
+    Platform,
 )
 
 DOMAIN: Final = "area_occupancy"
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"

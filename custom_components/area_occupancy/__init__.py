@@ -8,14 +8,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import (
-    DOMAIN,
-    PLATFORMS,
-    CONF_VERSION,
-)
+from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
-from .service import async_setup_services
 from .migrations import async_migrate_entry
+from .service import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,16 +68,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Add an update listener to handle configuration updates
         entry.async_on_unload(entry.add_update_listener(async_update_options))
 
-        _LOGGER.debug("Setup complete for entry %s", entry.entry_id)
-        return True
-
     except Exception as err:
         _LOGGER.exception(
-            "Failed to set up Area Occupancy integration for entry %s: %s",
+            "Failed to set up Area Occupancy integration for entry %s",
             entry.entry_id,
-            err,
         )
         raise ConfigEntryNotReady(str(err)) from err
+    else:
+        _LOGGER.debug("Setup complete for entry %s", entry.entry_id)
+        return True
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

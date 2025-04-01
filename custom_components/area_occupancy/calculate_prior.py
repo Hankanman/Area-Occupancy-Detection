@@ -1,41 +1,35 @@
-import logging
+"""Prior probability calculations for Area Occupancy Detection."""
+
+from collections.abc import Sequence
 from datetime import datetime
-from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
+import logging
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.const import (
-    STATE_ON,
-    STATE_OFF,
-)
-from sqlalchemy.exc import SQLAlchemyError
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
     CONF_APPLIANCES,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
     CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
     CONF_LIGHTS,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
-    MIN_PROBABILITY,
-    MAX_PROBABILITY,
-    DEFAULT_PROB_GIVEN_TRUE,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_WINDOW_SENSORS,
     DEFAULT_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
 )
-from .types import (
-    StateInterval,
-    StateDurations,
-    ConditionalProbability,
-    StateList,
-    StateSequence,
-    MotionState,
-)
+from .types import ProbabilityConfig, TimeInterval
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +57,7 @@ class PriorCalculator:
 
     async def calculate_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
-    ) -> ConditionalProbability:
+    ) -> ProbabilityConfig:
         """Calculate learned priors for a given entity."""
         _LOGGER.debug("Calculating prior for %s", entity_id)
 
@@ -174,11 +168,15 @@ class PriorCalculator:
         # Calculate and update type priors by averaging all sensors of this type
         await self._update_type_priors(sensor_type)
 
-        return prob_given_true, prob_given_false, prior
+        return ProbabilityConfig(
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
+            prior=prior,
+        )
 
     async def _get_states_from_recorder(
         self, entity_id: str, start_time: datetime, end_time: datetime
-    ) -> StateList | None:
+    ) -> list[State] | None:
         """Fetch states history from recorder."""
         try:
             states = await get_instance(self.hass).async_add_executor_job(
@@ -196,54 +194,76 @@ class PriorCalculator:
             return None
 
     def _states_to_intervals(
-        self, states: StateSequence, start: datetime, end: datetime
-    ) -> list[StateInterval]:
+        self, states: Sequence[State], start: datetime, end: datetime
+    ) -> list[TimeInterval]:
         """Convert a list of states into intervals."""
-        intervals: list[StateInterval] = []
+        intervals: list[TimeInterval] = []
         sorted_states = sorted(states, key=lambda s: s.last_changed)
         current_start = start
         current_state = None
 
         for s in sorted_states:
             s_start = s.last_changed
-            if s_start < start:
-                s_start = start
+            s_start = max(s_start, start)
             if current_state is None:
                 current_state = s.state
                 current_start = s_start
             else:
                 if s_start > current_start:
-                    intervals.append((current_start, s_start, current_state))
+                    intervals.append(
+                        {"start": current_start, "end": s_start, "state": current_state}
+                    )
                 current_state = s.state
                 current_start = s_start
 
         if current_start < end:
-            intervals.append((current_start, end, current_state))
+            intervals.append(
+                {"start": current_start, "end": end, "state": current_state}
+            )
 
         return intervals
 
     def _compute_state_durations_from_intervals(
-        self, intervals_dict: dict[str, list[StateInterval]]
-    ) -> StateDurations:
+        self, intervals_dict: dict[str, list[TimeInterval]]
+    ) -> TimeInterval:
         """Compute total durations for each state from precomputed intervals."""
         _LOGGER.debug("Computing state durations from intervals")
-        durations: StateDurations = {
-            "total_motion_active_time": 0.0,
-            "total_motion_inactive_time": 0.0,
-            "total_motion_time": 0.0,
+        durations: TimeInterval = {
+            "total_active_time": 0.0,
+            "total_inactive_time": 0.0,
+            "total_time": 0.0,
+            "start": min(
+                (
+                    interval["start"]
+                    for intervals in intervals_dict.values()
+                    for interval in intervals
+                ),
+                default=dt_util.utcnow(),
+            ),
+            "end": max(
+                (
+                    interval["end"]
+                    for intervals in intervals_dict.values()
+                    for interval in intervals
+                ),
+                default=dt_util.utcnow(),
+            ),
         }
         for intervals in intervals_dict.values():
-            for interval_start, interval_end, state_val in intervals:
-                duration = (interval_end - interval_start).total_seconds()
-                durations[state_val] = durations.get(state_val, 0.0) + duration
+            for interval in intervals:
+                duration = (interval["end"] - interval["start"]).total_seconds()
+                if "state" in interval:
+                    durations[interval["state"]] = (
+                        durations.get(interval["state"], 0.0) + duration
+                    )
         return durations
 
     def _calculate_conditional_probability_with_intervals(
         self,
         entity_id: str,
-        entity_intervals: list[StateInterval],
-        motion_intervals_by_sensor: dict[str, list[StateInterval]],
-        motion_state_filter: MotionState,
+        entity_intervals: list[TimeInterval],
+        motion_intervals_by_sensor: dict[str, list[TimeInterval]],
+        motion_state_filter: str,
     ) -> float:
         """Calculate P(entity_active | motion_state) using precomputed intervals."""
         _LOGGER.debug("Calculating conditional probability for %s", entity_id)
@@ -251,13 +271,14 @@ class PriorCalculator:
         motion_intervals = []
         for intervals in motion_intervals_by_sensor.values():
             motion_intervals.extend(
-                (start, end)
-                for start, end, state in intervals
-                if state == motion_state_filter
+                {"start": interval["start"], "end": interval["end"]}
+                for interval in intervals
+                if interval.get("state") == motion_state_filter
             )
 
         total_motion_duration = sum(
-            (end - start).total_seconds() for start, end in motion_intervals
+            (interval["end"] - interval["start"]).total_seconds()
+            for interval in motion_intervals
         )
         if total_motion_duration == 0:
             return (
@@ -268,20 +289,20 @@ class PriorCalculator:
 
         # Get entity active intervals
         entity_active_intervals = [
-            (start, end)
-            for start, end, state in entity_intervals
+            {"start": interval["start"], "end": interval["end"]}
+            for interval in entity_intervals
             if self.probabilities.is_entity_active(
                 entity_id,
-                state,
+                interval.get("state", ""),
             )
         ]
 
         # Calculate the overlap duration
         overlap_duration = 0.0
-        for e_start, e_end in entity_active_intervals:
-            for m_start, m_end in motion_intervals:
-                overlap_start = max(e_start, m_start)
-                overlap_end = min(e_end, m_end)
+        for e_interval in entity_active_intervals:
+            for m_interval in motion_intervals:
+                overlap_start = max(e_interval["start"], m_interval["start"])
+                overlap_end = min(e_interval["end"], m_interval["end"])
                 if overlap_start < overlap_end:
                     overlap_duration += (overlap_end - overlap_start).total_seconds()
 
