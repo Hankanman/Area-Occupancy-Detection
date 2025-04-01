@@ -15,7 +15,9 @@ from .const import (
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancyBinarySensor(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity):
+class AreaOccupancyBinarySensor(
+    CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity
+):
     """Binary sensor for the occupancy status."""
 
     def __init__(
@@ -26,7 +28,9 @@ class AreaOccupancyBinarySensor(CoordinatorEntity[AreaOccupancyCoordinator], Bin
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
-        self._attr_unique_id = f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+        )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = "occupancy"
         self._attr_device_info = coordinator.device_info
@@ -45,7 +49,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Area Occupancy Detection binary sensors."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][config_entry.entry_id][
+        "coordinator"
+    ]
     async_add_entities(
         [
             AreaOccupancyBinarySensor(

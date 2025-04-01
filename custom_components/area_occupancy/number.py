@@ -21,7 +21,9 @@ from .const import (
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):  # pylint: disable=abstract-method
+class AreaOccupancyThreshold(
+    CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity
+):  # pylint: disable=abstract-method
     """Number entity for adjusting occupancy threshold."""
 
     def __init__(

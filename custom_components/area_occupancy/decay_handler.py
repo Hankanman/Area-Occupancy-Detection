@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class DecayHandler:
     """Handle decay calculations for probability values.
-    
+
     This class manages the exponential decay of probability values over time.
     It implements a decay model where the probability decreases exponentially
     based on elapsed time since the last probability increase.
@@ -33,7 +33,7 @@ class DecayHandler:
 
     def __init__(self, config: dict) -> None:
         """Initialize the decay handler.
-        
+
         Args:
             config: Configuration dictionary containing decay settings
         """
@@ -83,10 +83,7 @@ class DecayHandler:
             probability_state.decaying = False
             return probability_state.probability, 1.0
 
-        if (
-            probability_state.probability
-            >= probability_state.previous_probability
-        ):
+        if probability_state.probability >= probability_state.previous_probability:
             if self.decay_start_time:
                 _LOGGER.debug(
                     "Probability increased (%.3f >= %.3f), resetting decay",
