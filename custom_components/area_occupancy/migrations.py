@@ -5,32 +5,32 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import async_get
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
-    DOMAIN,
-    STORAGE_VERSION,
-    PLATFORMS,
-    CONF_AREA_ID,
-    NAME_PROBABILITY_SENSOR,
-    NAME_DECAY_SENSOR,
-    NAME_BINARY_SENSOR,
-    NAME_THRESHOLD_NUMBER,
-    NAME_PRIORS_SENSOR,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_WINDOW_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
     CONF_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_AREA_ID,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_WINDOW_ACTIVE_STATE,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DOMAIN,
+    NAME_BINARY_SENSOR,
+    NAME_DECAY_SENSOR,
+    NAME_PRIORS_SENSOR,
+    NAME_PROBABILITY_SENSOR,
+    NAME_THRESHOLD_NUMBER,
+    PLATFORMS,
+    STORAGE_VERSION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def generate_migration_map(
             )
 
         return migration_map
-    elif platform == "binary_sensor":
+    if platform == "binary_sensor":
         return {
             # Handle old format with area_id
             f"{DOMAIN}_{area_id}_occupancy": f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
@@ -90,7 +90,7 @@ def generate_migration_map(
                 f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
             ),
         }
-    elif platform == "number":
+    if platform == "number":
         return {
             # Handle old format with area_id
             f"{DOMAIN}_{area_id}_threshold": f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}",
@@ -106,7 +106,7 @@ async def async_migrate_unique_ids(
     hass: HomeAssistant, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
-    entity_registry = async_get(hass)
+    entity_registry = er.async_get(hass)
     updated_entries = 0
 
     # Get area_id from config entry data
@@ -150,6 +150,7 @@ def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         The migrated configuration
+
     """
     if CONF_PRIMARY_OCCUPANCY_SENSOR not in config:
         motion_sensors = config.get(CONF_MOTION_SENSORS, [])
@@ -175,11 +176,10 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         The migrated configuration
+
     """
     # Apply migrations in order
-    config = migrate_primary_occupancy_sensor(config)
-
-    return config
+    return migrate_primary_occupancy_sensor(config)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -191,7 +191,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     options = {**config_entry.options}
 
     # Get the entity registry
-    entity_registry = async_get(hass)
+    entity_registry = er.async_get(hass)
 
     # List of old prior sensor suffixes to remove
     old_prior_sensors = [
@@ -261,7 +261,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             version=STORAGE_VERSION,
         )
         _LOGGER.info("Successfully migrated config entry")
-        return True
     except (ValueError, KeyError, HomeAssistantError) as err:
         _LOGGER.error("Error during config migration: %s", err)
         return False
+    else:
+        return True

@@ -1,12 +1,11 @@
+"""Service definitions for the Area Occupancy Detection integration."""
+
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import (
-    DOMAIN,
-    DEFAULT_HISTORY_PERIOD,
-)
+from .const import DEFAULT_HISTORY_PERIOD, DOMAIN
 
 
 async def async_setup_services(hass: HomeAssistant):

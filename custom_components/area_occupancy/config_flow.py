@@ -14,89 +14,84 @@ from homeassistant.config_entries import (
     ConfigFlow,
     OptionsFlowWithConfigEntry,
 )
-from homeassistant.const import (
-    CONF_NAME,
-    Platform,
-)
-from homeassistant.core import callback
+from homeassistant.const import CONF_NAME, Platform
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, section
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
-    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     SelectSelector,
     SelectSelectorConfig,
 )
-from homeassistant.helpers import entity_registry
-from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
-    DOMAIN,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_APPLIANCES,
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_WINDOW_ACTIVE_STATE,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_THRESHOLD,
-    CONF_HISTORY_PERIOD,
+    CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
     CONF_DECAY_MIN_DELAY,
+    CONF_DECAY_WINDOW,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_VERSION,
+    CONF_HISTORY_PERIOD,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
-    DEFAULT_THRESHOLD,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_MIN_DELAY,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_DOOR_ACTIVE_STATE,
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
+    CONF_VERSION,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    DOMAIN,
 )
-
-from .state_mapping import (
-    get_state_options,
-    get_default_state,
-)
+from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def create_schema(
-    hass, defaults: dict[str, Any] | None = None, is_options: bool = False
+    hass: HomeAssistant,
+    defaults: dict[str, Any] | None = None,
+    is_options: bool = False,
 ) -> dict:
     """Create a schema with optional default values."""
     if defaults is None:
         defaults = {}
 
-    registry = entity_registry.async_get(hass)
+    registry = er.async_get(hass)
 
     # Get state options
     door_states = get_state_options("door")
@@ -675,7 +670,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
-            except Exception as err:  # pylint: disable=broad-except
+            except (ValueError, KeyError, TypeError) as err:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
@@ -687,7 +682,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> "AreaOccupancyOptionsFlow":
+    def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow."""
         return AreaOccupancyOptionsFlow(config_entry)
 
@@ -724,7 +719,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
-            except Exception as err:  # pylint: disable=broad-except
+            except (ValueError, KeyError, TypeError) as err:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 

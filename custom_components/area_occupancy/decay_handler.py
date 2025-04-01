@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import math
-from datetime import datetime
-from typing import Tuple
 
 from .const import (
-    DECAY_LAMBDA,
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
+    DECAY_LAMBDA,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
 )
 from .exceptions import ConfigurationError
-
 from .types import ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +34,7 @@ class DecayHandler:
 
         Args:
             config: Configuration dictionary containing decay settings
+
         """
         self.config = config
         self.decay_enabled = self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
@@ -55,7 +54,7 @@ class DecayHandler:
 
     def calculate_decay(
         self, probability_state: ProbabilityState
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """Calculate decay factor and apply it to probability.
 
         Args:
@@ -66,6 +65,7 @@ class DecayHandler:
 
         Raises:
             ValueError: If probabilities are invalid or threshold is invalid
+
         """
         # Validate inputs
         if not all(
@@ -135,12 +135,13 @@ class DecayHandler:
             )
 
             probability_state.decaying = True
-            return decayed_probability, decay_factor
 
-        except (ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error in decay calculation: %s", err, exc_info=True)
+        except (ValueError, ZeroDivisionError):
+            _LOGGER.exception("Error in decay calculation: %s")
             probability_state.decaying = False
             return probability_state.probability, 1.0
+        else:
+            return decayed_probability, decay_factor
 
     def reset(self) -> None:
         """Reset the decay handler state."""

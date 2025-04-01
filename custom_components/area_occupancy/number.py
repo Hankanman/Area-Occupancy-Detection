@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
-from homeassistant.components.number import (
-    NumberEntity,
-    NumberMode,
-)
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.exceptions import ServiceValidationError
 
-from .const import (
-    DOMAIN,
-    NAME_THRESHOLD_NUMBER,
-    CONF_THRESHOLD,
-    DEFAULT_THRESHOLD,
-)
+from .const import CONF_THRESHOLD, DEFAULT_THRESHOLD, DOMAIN, NAME_THRESHOLD_NUMBER
 from .coordinator import AreaOccupancyCoordinator
 
 
-class AreaOccupancyThreshold(
-    CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity
-):  # pylint: disable=abstract-method
+class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
     """Number entity for adjusting occupancy threshold."""
 
     def __init__(

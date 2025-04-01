@@ -10,30 +10,23 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    PERCENTAGE,
-    EntityCategory,
-)
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
-    NAME_PROBABILITY_SENSOR,
-    NAME_PRIORS_SENSOR,
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
+    DOMAIN,
     NAME_DECAY_SENSOR,
+    NAME_PRIORS_SENSOR,
+    NAME_PROBABILITY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .types import (
-    ProbabilityState,
-    ProbabilityAttributes,
-    PriorsAttributes,
-)
 from .helpers import format_float
+from .types import PriorsAttributes, ProbabilityAttributes, ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -143,11 +136,11 @@ class PriorsSensor(AreaOccupancySensorBase):
                 }
             )
 
-            return attributes
-
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting prior attributes: %s", err)
             return {}
+        else:
+            return attributes
 
 
 class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
@@ -179,8 +172,8 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             probability = self.coordinator.data.probability
             return format_float(probability * 100)
 
-        except (TypeError, ValueError, AttributeError) as err:
-            _LOGGER.error("Error getting probability value: %s", err, exc_info=True)
+        except (TypeError, ValueError, AttributeError):
+            _LOGGER.exception("Error getting probability value: %s")
             return 0.0
 
     @property
@@ -218,8 +211,8 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                 "sensor_probabilities": sensor_probabilities,
                 "threshold": f"{data.threshold * 100}%",
             }
-        except (TypeError, AttributeError, KeyError) as err:
-            _LOGGER.error("Error getting probability attributes: %s", err)
+        except (TypeError, AttributeError, KeyError):
+            _LOGGER.exception("Error getting probability attributes: %s")
             return {}
 
 
@@ -250,8 +243,8 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
                 return 0.0
             return format_float(100 - (self.coordinator.data.decay_status * 100))
 
-        except (TypeError, KeyError, ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error getting decay value: %s", err)
+        except (TypeError, KeyError, ValueError, ZeroDivisionError):
+            _LOGGER.exception("Error getting decay value: %s")
             return 0.0
 
 

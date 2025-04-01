@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TypedDict, Any, Literal, Sequence, Set, Dict, List, Optional, Union
 from dataclasses import dataclass, field
-from homeassistant.core import State
+from datetime import datetime
+from typing import Any, Literal, NotRequired, TypedDict
+
 from homeassistant.util import dt as dt_util
 
 from .const import MIN_PROBABILITY
-
-MotionState = Literal["on", "off"]
-
-StateList = list[State]
-
-StateSequence = Sequence[State]
 
 EntityType = Literal[
     "motion",
@@ -28,8 +22,30 @@ EntityType = Literal[
 
 
 # Unified configuration type
-class Config(TypedDict, total=False):
-    """Unified configuration for the integration."""
+class Config(TypedDict):
+    """Unified configuration for the integration.
+
+    Required fields:
+        name: The display name for the area
+        area_id: The unique identifier for the area
+        motion_sensors: List of motion sensor entity IDs to monitor
+
+    Optional fields:
+        media_devices: List of media player entity IDs to monitor
+        appliances: List of appliance entity IDs to monitor
+        illuminance_sensors: List of illuminance sensor entity IDs
+        humidity_sensors: List of humidity sensor entity IDs
+        temperature_sensors: List of temperature sensor entity IDs
+        door_sensors: List of door sensor entity IDs
+        window_sensors: List of window sensor entity IDs
+        lights: List of light entity IDs to monitor
+        threshold: Probability threshold for occupancy detection
+        history_period: Number of days of historical data to analyze
+        decay_enabled: Whether to enable probability decay
+        decay_window: Time window for probability decay in minutes
+        decay_min_delay: Minimum delay before decay starts in minutes
+        historical_analysis_enabled: Whether to enable historical data analysis
+    """
 
     # Required fields
     name: str
@@ -37,24 +53,32 @@ class Config(TypedDict, total=False):
     motion_sensors: list[str]
 
     # Optional fields
-    media_devices: list[str]
-    appliances: list[str]
-    illuminance_sensors: list[str]
-    humidity_sensors: list[str]
-    temperature_sensors: list[str]
-    door_sensors: list[str]
-    window_sensors: list[str]
-    lights: list[str]
-    threshold: float
-    history_period: int
-    decay_enabled: bool
-    decay_window: int
-    decay_min_delay: int
-    historical_analysis_enabled: bool
+    media_devices: NotRequired[list[str]]
+    appliances: NotRequired[list[str]]
+    illuminance_sensors: NotRequired[list[str]]
+    humidity_sensors: NotRequired[list[str]]
+    temperature_sensors: NotRequired[list[str]]
+    door_sensors: NotRequired[list[str]]
+    window_sensors: NotRequired[list[str]]
+    lights: NotRequired[list[str]]
+    threshold: NotRequired[float]
+    history_period: NotRequired[int]
+    decay_enabled: NotRequired[bool]
+    decay_window: NotRequired[int]
+    decay_min_delay: NotRequired[int]
+    historical_analysis_enabled: NotRequired[bool]
 
 
 class DeviceInfo(TypedDict):
-    """Type for device information."""
+    """Device information for Home Assistant device registry.
+
+    Required fields:
+        identifiers: Dictionary of identifiers for the device
+        name: Display name of the device
+        manufacturer: Name of the device manufacturer
+        model: Model name of the device
+        sw_version: Software version running on the device
+    """
 
     identifiers: dict[str, str]
     name: str
@@ -63,9 +87,14 @@ class DeviceInfo(TypedDict):
     sw_version: str
 
 
-# Probability calculation types
 class SensorProbability(TypedDict):
-    """Type for sensor probability details."""
+    """Probability details for a single sensor.
+
+    Required fields:
+        probability: Raw probability value (0-1)
+        weight: Weight factor for this sensor (0-1)
+        weighted_probability: Probability after applying weight
+    """
 
     probability: float
     weight: float
@@ -78,14 +107,15 @@ class SensorCalculation:
 
     weighted_probability: float
     is_active: bool
-    details: Dict[str, float]
+    details: dict[str, float]
 
     @classmethod
-    def empty(cls) -> "SensorCalculation":
+    def empty(cls) -> SensorCalculation:
         """Create an empty sensor calculation with zero values.
 
         Returns:
             A SensorCalculation instance with zero values
+
         """
         return cls(
             weighted_probability=0.0,
@@ -102,17 +132,15 @@ class ProbabilityState:
     previous_probability: float = field(default=0.0)
     threshold: float = field(default=0.5)
     prior_probability: float = field(default=0.0)
-    sensor_probabilities: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    sensor_probabilities: dict[str, dict[str, float]] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
-    current_states: Dict[str, Dict[str, Union[str, bool]]] = field(default_factory=dict)
-    previous_states: Dict[str, Dict[str, Union[str, bool]]] = field(
-        default_factory=dict
-    )
+    current_states: dict[str, dict[str, str | bool]] = field(default_factory=dict)
+    previous_states: dict[str, dict[str, str | bool]] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
 
     @property
-    def active_triggers(self) -> List[str]:
+    def active_triggers(self) -> list[str]:
         """Get list of active triggers from sensor probabilities."""
         return list(self.sensor_probabilities.keys())
 
@@ -135,10 +163,10 @@ class ProbabilityState:
         previous_probability: float | None = None,
         threshold: float | None = None,
         prior_probability: float | None = None,
-        sensor_probabilities: Dict[str, Dict[str, float]] | None = None,
+        sensor_probabilities: dict[str, dict[str, float]] | None = None,
         decay_status: float | None = None,
-        current_states: Dict[str, Dict[str, Union[str, bool]]] | None = None,
-        previous_states: Dict[str, Dict[str, Union[str, bool]]] | None = None,
+        current_states: dict[str, dict[str, str | bool]] | None = None,
+        previous_states: dict[str, dict[str, str | bool]] | None = None,
         is_occupied: bool | None = None,
         decaying: bool | None = None,
     ) -> None:
@@ -166,13 +194,9 @@ class ProbabilityState:
 
     def to_dict(
         self,
-    ) -> Dict[
+    ) -> dict[
         str,
-        Union[
-            float,
-            List[str],
-            Dict[str, Union[float, Dict[str, Union[str, bool]], bool]],
-        ],
+        float | list[str] | dict[str, float | dict[str, str | bool] | bool],
     ]:
         """Convert the dataclass to a dictionary."""
         return {
@@ -191,13 +215,9 @@ class ProbabilityState:
     @classmethod
     def from_dict(
         cls,
-        data: Dict[
+        data: dict[
             str,
-            Union[
-                float,
-                List[str],
-                Dict[str, Union[float, Dict[str, Union[str, bool]], bool]],
-            ],
+            float | list[str] | dict[str, float | dict[str, str | bool] | bool],
         ],
     ) -> ProbabilityState:
         """Create a ProbabilityState from a dictionary."""
@@ -232,10 +252,10 @@ class PriorState:
     environmental_prior: float = field(default=0.0)
 
     # Individual entity priors
-    entity_priors: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    entity_priors: dict[str, dict[str, float]] = field(default_factory=dict)
 
     # Last updated timestamps
-    last_updated: Dict[str, str] = field(default_factory=dict)
+    last_updated: dict[str, str] = field(default_factory=dict)
 
     # Analysis period in days
     analysis_period: int = field(default=7)
@@ -266,8 +286,8 @@ class PriorState:
         window_prior: float | None = None,
         light_prior: float | None = None,
         environmental_prior: float | None = None,
-        entity_priors: Dict[str, Dict[str, float]] | None = None,
-        last_updated: Dict[str, str] | None = None,
+        entity_priors: dict[str, dict[str, float]] | None = None,
+        last_updated: dict[str, str] | None = None,
         analysis_period: int | None = None,
     ) -> None:
         """Update the state with new values while maintaining the same instance."""
@@ -354,6 +374,7 @@ class PriorState:
 
         Args:
             probabilities: The probabilities configuration instance
+
         """
         timestamp = dt_util.utcnow().isoformat()
 
@@ -367,7 +388,7 @@ class PriorState:
         overall_prior = self.calculate_overall_prior()
         self.update(overall_prior=overall_prior)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the dataclass to a dictionary."""
         return {
             "overall_prior": self.overall_prior,
@@ -384,7 +405,7 @@ class PriorState:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PriorState":
+    def from_dict(cls, data: dict[str, Any]) -> PriorState:
         """Create a PriorState from a dictionary."""
         return cls(
             overall_prior=float(data.get("overall_prior", 0.0)),
@@ -402,93 +423,112 @@ class PriorState:
 
 
 class SensorState(TypedDict):
-    """State of a sensor."""
+    """Current state information for a sensor.
+
+    Required fields:
+        state: Current state value as a string
+        attributes: Dictionary of state attributes
+        availability: Whether the sensor is available
+
+    Optional fields:
+        last_updated: ISO formatted timestamp of last update
+    """
 
     state: str
-    attributes: Dict[str, Union[str, float, bool]]
-    last_updated: Optional[str]
+    attributes: dict[str, str | float | bool]
     availability: bool
+    last_updated: NotRequired[str | None]
 
 
-class SensorStates(TypedDict):
-    """Type for collection of sensor states."""
+class ProbabilityConfig(TypedDict, total=False):
+    """Configuration for probability calculations.
 
-    states: dict[str, SensorState]
+    Required fields:
+        prob_given_true: Probability when condition is true/area is occupied
+        prob_given_false: Probability when condition is false/area is not occupied
+        prior: Prior probability value
 
-
-class SensorConfig(TypedDict):
-    """Type for sensor configuration."""
-
-    prob_given_true: float
-    prob_given_false: float
-    default_prior: float
-    weight: float
-
-
-class StateInterval(TypedDict):
-    """Type for state interval data."""
-
-    start: datetime
-    end: datetime
-    state: Any
-
-
-class MotionInterval(TypedDict):
-    """Type for motion interval data."""
-
-    start: datetime
-    end: datetime
-
-
-class StateDurations(TypedDict):
-    """Type for state durations."""
-
-    total_motion_active_time: float
-    total_motion_inactive_time: float
-    total_motion_time: float
-
-
-class ConditionalProbability(TypedDict):
-    """Type for conditional probability calculation results."""
+    Optional fields:
+        weight: Weight factor for sensor calculations
+        last_updated: Timestamp of last update
+    """
 
     prob_given_true: float
     prob_given_false: float
     prior: float
+    weight: NotRequired[float]
+    last_updated: NotRequired[str]
+
+
+class TimeInterval(TypedDict, total=False):
+    """Time interval and duration data.
+
+    Required fields:
+        start: Start time of the interval
+        end: End time of the interval
+
+    Optional fields:
+        state: State value during the interval
+        total_active_time: Total time active
+        total_inactive_time: Total time inactive
+        total_time: Total time period analyzed
+    """
+
+    start: datetime
+    end: datetime
+    state: NotRequired[Any]
+    total_active_time: NotRequired[float]
+    total_inactive_time: NotRequired[float]
+    total_time: NotRequired[float]
 
 
 class CalculationResult(TypedDict):
-    """Result of a probability calculation."""
+    """Result of a probability calculation.
+
+    Required fields:
+        probability: Calculated probability value
+        is_active: Whether the sensor is currently active
+        details: Dictionary containing calculation details
+    """
 
     probability: float
     is_active: bool
-    details: Dict[str, float]
+    details: dict[str, float]
 
 
-class ProbabilityAttributes(TypedDict, total=False):
-    """Type for probability sensor attributes."""
+class ProbabilityAttributes(TypedDict):
+    """Attributes for the probability sensor.
 
-    active_triggers: list[str]
-    sensor_probabilities: Set[str]
-    threshold: str
+    Optional fields:
+        active_triggers: List of currently active triggers
+        sensor_probabilities: Set of sensor probability strings
+        threshold: Threshold value as string
+    """
 
-
-class PriorsAttributes(TypedDict, total=False):
-    """Type for priors sensor attributes."""
-
-    motion_prior: str
-    media_prior: str
-    appliance_prior: str
-    door_prior: str
-    window_prior: str
-    light_prior: str
-    last_updated: str
-    total_period: str
+    active_triggers: NotRequired[list[str]]
+    sensor_probabilities: NotRequired[set[str]]
+    threshold: NotRequired[str]
 
 
-class LearnedPrior(TypedDict):
-    """Type for learned prior data."""
+class PriorsAttributes(TypedDict):
+    """Attributes for the priors sensor.
 
-    prob_given_true: float
-    prob_given_false: float
-    prior: float
-    last_updated: str
+    Optional fields:
+        motion_prior: Motion sensor prior probability
+        media_prior: Media device prior probability
+        appliance_prior: Appliance prior probability
+        door_prior: Door sensor prior probability
+        window_prior: Window sensor prior probability
+        light_prior: Light prior probability
+        last_updated: Last update timestamp
+        total_period: Total analysis period
+    """
+
+    motion_prior: NotRequired[str]
+    media_prior: NotRequired[str]
+    appliance_prior: NotRequired[str]
+    door_prior: NotRequired[str]
+    window_prior: NotRequired[str]
+    light_prior: NotRequired[str]
+    last_updated: NotRequired[str]
+    total_period: NotRequired[str]
