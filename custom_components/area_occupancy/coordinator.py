@@ -112,8 +112,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             prior_probability=MIN_PROBABILITY,
             sensor_probabilities={},
             decay_status=0.0,
-            device_states={},
-            sensor_availability={},
+            current_states={},
+            previous_states={},
             is_occupied=False,
         )
         self.decay_handler = DecayHandler(self.config)
@@ -145,7 +145,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._debouncer = Debouncer(
             hass,
             _LOGGER,
-            cooldown=0.5,
+            cooldown=1,
             immediate=True,
             function=self.async_refresh,
         )
@@ -400,6 +400,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 if not new_state or entity_id not in entities:
                     return
 
+                # Store previous state before updating
+                if entity_id in self.data.current_states:
+                    self.data.previous_states[entity_id] = self.data.current_states[
+                        entity_id
+                    ]
+
+                # Update current state
+                self.data.current_states[entity_id] = {
+                    "state": new_state.state,
+                    "availability": True,
+                }
+
                 # Update sensor state in state manager
                 self.hass.async_create_task(
                     self._state_manager.update_sensor(entity_id, new_state)
@@ -444,26 +456,61 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     async def _async_update_data(self) -> ProbabilityState:
         """Update data via library."""
         try:
-            # Get current states of all configured entities
-            active_sensor_states = {}
-            for entity_id in self.get_configured_sensors():
-                state = self.hass.states.get(entity_id)
-                if state is not None:
-                    active_sensor_states[entity_id] = {
-                        "state": state.state,
-                        "attributes": state.attributes,
-                        "last_updated": state.last_updated,
-                        "availability": True,
-                    }
+            # Check if there's a reason to update before performing expensive calculations
+            should_update = False
 
-            # Calculate probabilities
+            # Check if this is the first update or decay is active
+            if not self.data.current_states:
+                _LOGGER.debug("Updating because this is the first update")
+                should_update = True
+            elif self.data.decaying:
+                _LOGGER.debug("Updating because decay is active")
+                should_update = True
+
+            # Check if sensor states or availability have changed
+            if not should_update:
+
+                if self.data.current_states != self.data.previous_states:
+                    _LOGGER.debug(
+                        "Updating because sensor states or availability have changed"
+                    )
+                    should_update = True
+
+            # If no reason to update, return existing data
+            if not should_update:
+                _LOGGER.debug("No significant changes, skipping calculation and update")
+                return self.data
+
+            # Only calculate probabilities if we need to update
             probability_state = self.calculator.calculate_occupancy_probability(
-                active_sensor_states,
+                self.data.current_states,
                 datetime.now(),
             )
 
+            # Check if probability has changed significantly
+            if abs(probability_state.probability - self.data.probability) <= 0.01:
+                _LOGGER.debug(
+                    "No significant probability change (%.3f vs %.3f)",
+                    probability_state.probability,
+                    self.data.probability,
+                )
+
+                # Still update decay status even when skipping main update
+                self.data.update(decaying=probability_state.decaying)
+
+                # Skip additional updates if change is minor
+                if should_update is False:  # Only true for first run or explicit changes
+                    return self.data
+
+            _LOGGER.debug("Updating because probability has changed significantly")
+
+            # Store previous states before updating
+            previous_states = self.data.current_states.copy()
+
             # Update coordinator data
             self.data = probability_state
+            self.data.current_states = self.data.current_states
+            self.data.previous_states = previous_states
 
             _LOGGER.debug(
                 "Updated occupancy state: prob=%.3f, prior=%.3f, threshold=%.3f, active=%d, decay=%.3f",
@@ -495,8 +542,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             prior_probability=MIN_PROBABILITY,
             sensor_probabilities={},
             decay_status=0.0,
-            device_states={},
-            sensor_availability={},
+            current_states={},
+            previous_states={},
             is_occupied=False,
         )
         self.decay_handler.reset()

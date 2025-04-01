@@ -99,8 +99,8 @@ class ProbabilityState:
     prior_probability: float = field(default=0.0)
     sensor_probabilities: Dict[str, Dict[str, float]] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
-    device_states: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    sensor_availability: Dict[str, bool] = field(default_factory=dict)
+    current_states: Dict[str, Dict[str, Union[str, bool]]] = field(default_factory=dict)
+    previous_states: Dict[str, Dict[str, Union[str, bool]]] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
 
@@ -130,8 +130,8 @@ class ProbabilityState:
         prior_probability: float | None = None,
         sensor_probabilities: Dict[str, Dict[str, float]] | None = None,
         decay_status: float | None = None,
-        device_states: Dict[str, Dict[str, str]] | None = None,
-        sensor_availability: Dict[str, bool] | None = None,
+        current_states: Dict[str, Dict[str, Union[str, bool]]] | None = None,
+        previous_states: Dict[str, Dict[str, Union[str, bool]]] | None = None,
         is_occupied: bool | None = None,
         decaying: bool | None = None,
     ) -> None:
@@ -148,10 +148,10 @@ class ProbabilityState:
             self.sensor_probabilities = sensor_probabilities
         if decay_status is not None:
             self.decay_status = max(0.0, min(decay_status, 1.0))
-        if device_states is not None:
-            self.device_states = device_states
-        if sensor_availability is not None:
-            self.sensor_availability = sensor_availability
+        if current_states is not None:
+            self.current_states = current_states
+        if previous_states is not None:
+            self.previous_states = previous_states
         if is_occupied is not None:
             self.is_occupied = is_occupied
         if decaying is not None:
@@ -164,7 +164,7 @@ class ProbabilityState:
         Union[
             float,
             List[str],
-            Dict[str, Union[float, Dict[str, str], Dict[str, bool], bool]],
+            Dict[str, Union[float, Dict[str, Union[str, bool]], bool]],
         ],
     ]:
         """Convert the dataclass to a dictionary."""
@@ -175,8 +175,8 @@ class ProbabilityState:
             "prior_probability": self.prior_probability,
             "sensor_probabilities": self.sensor_probabilities,
             "decay_status": self.decay_status,
-            "device_states": self.device_states,
-            "sensor_availability": self.sensor_availability,
+            "current_states": self.current_states,
+            "previous_states": self.previous_states,
             "is_occupied": self.is_occupied,
             "decaying": self.decaying,
         }
@@ -189,7 +189,7 @@ class ProbabilityState:
             Union[
                 float,
                 List[str],
-                Dict[str, Union[float, Dict[str, str], Dict[str, bool], bool]],
+                Dict[str, Union[float, Dict[str, Union[str, bool]], bool]],
             ],
         ],
     ) -> ProbabilityState:
@@ -201,8 +201,8 @@ class ProbabilityState:
             prior_probability=float(data["prior_probability"]),
             sensor_probabilities=dict(data["sensor_probabilities"]),
             decay_status=float(data["decay_status"]),
-            device_states=dict(data["device_states"]),
-            sensor_availability=dict(data["sensor_availability"]),
+            current_states=dict(data["current_states"]),
+            previous_states=dict(data.get("previous_states", {})),
             is_occupied=bool(data["is_occupied"]),
             decaying=bool(data.get("decaying", False)),
         )
