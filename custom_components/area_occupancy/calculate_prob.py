@@ -302,7 +302,7 @@ class ProbabilityCalculator:
             current_states={
                 entity_id: {
                     "state": state.get("state"),
-                    "availability": state.get("availability", False)
+                    "availability": state.get("availability", False),
                 }
                 for entity_id, state in active_sensor_states.items()
             },
