@@ -21,3 +21,7 @@ class CalculationError(AreaOccupancyError):
 
 class StorageError(AreaOccupancyError):
     """Raised when there is an error with storage operations."""
+
+
+class PriorCalculationError(HomeAssistantError):
+    """Error when prior probability calculation fails."""
