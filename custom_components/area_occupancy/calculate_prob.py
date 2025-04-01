@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 from .types import (
     ProbabilityState,
@@ -269,7 +269,7 @@ class ProbabilityCalculator:
 
         Args:
             final_probability: The final calculated probability
-            prior_probability: The calculated prior probability
+            previous_probability: The calculated prior probability
             decay_status: The current decay status
             sensor_probs: Dictionary of sensor probability details
             active_sensor_states: Dictionary of active sensor states
@@ -280,12 +280,11 @@ class ProbabilityCalculator:
             prior_probability=prior_probability,
             sensor_probabilities=sensor_probs,
             decay_status=decay_status,
-            device_states={
-                entity_id: {"state": state.get("state")}
-                for entity_id, state in active_sensor_states.items()
-            },
-            sensor_availability={
-                entity_id: state.get("availability", False)
+            current_states={
+                entity_id: {
+                    "state": state.get("state"),
+                    "availability": state.get("availability", False)
+                }
                 for entity_id, state in active_sensor_states.items()
             },
             is_occupied=final_probability >= self.probability_state.threshold,

@@ -158,7 +158,6 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                 return 0.0
 
             probability = self.coordinator.data.probability
-            _LOGGER.debug("Current probability: %s", probability)
             return format_float(probability * 100)
 
         except (TypeError, ValueError, AttributeError) as err:
@@ -176,7 +175,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             # Create formatted probability entries with details
             sensor_probabilities = set()  # Use a set instead of dict
             active_triggers = []
-            
+
             for entity_id, prob_details in data.sensor_probabilities.items():
                 friendly_name = (
                     self.hass.states.get(entity_id).attributes.get(
