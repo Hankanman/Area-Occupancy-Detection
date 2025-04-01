@@ -26,7 +26,7 @@ The individual prior sensors are the prior probabilities of the input sensors fr
 - Language: Python
 - Framework: Home Assistant Core
 - Testing: Pytest
-- Linting: Pylint, Flake8
+- Linting: Pylint
 
 ## Project Structure
 
@@ -60,7 +60,6 @@ Follow these rules strictly to ensure high-quality development.
 - Maintain consistency with Home Assistant patterns and practices.
 - Use snake_case for all file names and variables.
 - Follow PEP8 standards.
-- Use `asyncio.Lock` for state locking.
 - All constants should be defined in `const.py`.
 - All types should be defined in `types.py`.
 - All configuration should be defined in `config_flow.py`.

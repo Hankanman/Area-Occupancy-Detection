@@ -14,3 +14,4 @@ scripts/*.py
 scripts/*.csv
 repomix*.md
 *.sql
+.pytest_cache/

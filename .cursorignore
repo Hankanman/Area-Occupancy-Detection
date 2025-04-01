@@ -14,5 +14,6 @@ setup.cfg
 LICENSE
 pytest.ini
 repomix.config.json
-tests
 *.sql
+.pytest_cache
+.vscode
