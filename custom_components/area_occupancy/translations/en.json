@@ -12,16 +12,16 @@
                 },
                 "sections": {
                     "motion": {
-                        "name": "Motion & Occupancy Sensors",
-                        "description": "Configure motion and occupancy sensors",
+                        "name": "Motion & Presence Sensors",
+                        "description": "Configure motion and presence sensors",
                         "data": {
-                            "motion_sensors": "Motion/Presence Sensors",
                             "primary_occupancy_sensor": "Primary Occupancy Sensor",
+                            "motion_sensors": "Motion/Presence Sensors",
                             "weight_motion": "Motion Weight"
                         },
                         "data_description": {
+                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability. This should be your most reliable indicator of occupancy as it will be used as the baseline probability.",
                             "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
-                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability.",
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation."
                         }
                     },
@@ -132,16 +132,16 @@
                 "description": "Modify area occupancy detection configuration",
                 "sections": {
                     "motion": {
-                        "name": "Motion & Occupancy Sensors",
-                        "description": "Configure motion and occupancy sensors",
+                        "name": "Motion & Presence Sensors",
+                        "description": "Configure motion and presence sensors",
                         "data": {
-                            "motion_sensors": "Motion/Presence Sensors",
                             "primary_occupancy_sensor": "Primary Occupancy Sensor",
+                            "motion_sensors": "Motion/Presence Sensors",
                             "weight_motion": "Motion Weight"
                         },
                         "data_description": {
+                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability. This should be your most reliable indicator of occupancy as it will be used as the baseline probability.",
                             "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
-                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability.",
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation."
                         }
                     },

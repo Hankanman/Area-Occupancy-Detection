@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import math
+from typing import Final
 
 from .const import (
     CONF_DECAY_ENABLED,
@@ -20,6 +21,10 @@ from .types import ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
 
+# Validation constants
+MIN_DECAY_WINDOW: Final[int] = 1  # Minimum decay window in seconds
+MAX_DECAY_WINDOW: Final[int] = 3600  # Maximum decay window in seconds
+
 
 class DecayHandler:
     """Handle decay calculations for probability values.
@@ -27,6 +32,12 @@ class DecayHandler:
     This class manages the exponential decay of probability values over time.
     It implements a decay model where the probability decreases exponentially
     based on elapsed time since the last probability increase.
+
+    Attributes:
+        decay_enabled: Whether decay is enabled
+        decay_window: Time window in seconds over which decay occurs
+        config: Configuration dictionary containing decay settings
+
     """
 
     def __init__(self, config: dict) -> None:
@@ -35,19 +46,26 @@ class DecayHandler:
         Args:
             config: Configuration dictionary containing decay settings
 
+        Raises:
+            ConfigurationError: If decay window is invalid
+
         """
         self.config = config
         self.decay_enabled = self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         self.decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
-        self.decay_start_time: datetime | None = None
 
-        if self.decay_window <= 0:
+        # Validate decay window
+        if not isinstance(self.decay_window, (int, float)):
             raise ConfigurationError(
-                f"Decay window must be positive, got {self.decay_window}"
+                f"Decay window must be a number, got {type(self.decay_window)}"
+            )
+        if not MIN_DECAY_WINDOW <= self.decay_window <= MAX_DECAY_WINDOW:
+            raise ConfigurationError(
+                f"Decay window must be between {MIN_DECAY_WINDOW} and {MAX_DECAY_WINDOW} seconds"
             )
 
         _LOGGER.debug(
-            "DecayHandler initialized with enabled=%s, window=%d seconds",
+            "Initialized: enabled=%s window=%ds",
             self.decay_enabled,
             self.decay_window,
         )
@@ -65,70 +83,60 @@ class DecayHandler:
 
         Raises:
             ValueError: If probabilities are invalid or threshold is invalid
+            ConfigurationError: If decay parameters are invalid
 
         """
         # Validate inputs
-        if not all(
-            0 <= p <= 1
-            for p in (
-                probability_state.probability,
-                probability_state.previous_probability,
-                probability_state.threshold,
-            )
-        ):
+        if not self._validate_probabilities(probability_state):
             raise ValueError("Probabilities and threshold must be between 0 and 1")
 
         if not self.decay_enabled:
-            _LOGGER.debug("Decay disabled, returning current probability")
+            _LOGGER.debug("Decay disabled")
             probability_state.decaying = False
+            probability_state.decay_start_time = None
             return probability_state.probability, 1.0
 
         if probability_state.probability >= probability_state.previous_probability:
-            if self.decay_start_time:
+            if probability_state.decay_start_time:
                 _LOGGER.debug(
-                    "Probability increased (%.3f >= %.3f), resetting decay",
-                    probability_state.probability,
+                    "Probability increased: %.3f -> %.3f",
                     probability_state.previous_probability,
+                    probability_state.probability,
                 )
-            self.decay_start_time = None
+            probability_state.decay_start_time = None
             probability_state.decaying = False
             return probability_state.probability, 1.0
 
-        if not self.decay_start_time:
+        if not probability_state.decay_start_time:
             _LOGGER.debug(
-                "Starting decay from %.3f to %.3f",
+                "Starting decay: %.3f -> %.3f",
                 probability_state.previous_probability,
                 probability_state.probability,
             )
-            self.decay_start_time = datetime.now()
+            probability_state.decay_start_time = datetime.now()
             probability_state.decaying = True
             return probability_state.previous_probability, 1.0
 
         try:
-            elapsed = (datetime.now() - self.decay_start_time).total_seconds()
+            elapsed = (
+                datetime.now() - probability_state.decay_start_time
+            ).total_seconds()
             # Calculate exponential decay factor based on elapsed time and window
-            decay_factor = math.exp(-DECAY_LAMBDA * (elapsed / self.decay_window))
+            decay_factor = self._calculate_decay_factor(elapsed)
 
-            decayed_probability = max(
-                MIN_PROBABILITY,
-                min(
-                    probability_state.previous_probability * decay_factor,
-                    MAX_PROBABILITY,
-                ),
+            decayed_probability = self._apply_decay_factor(
+                probability_state.previous_probability, decay_factor
             )
 
-            if decayed_probability < probability_state.threshold:
-                _LOGGER.debug(
-                    "Decayed probability (%.3f) fell below threshold (%.3f), resetting decay",
-                    decayed_probability,
-                    probability_state.threshold,
-                )
-                self.decay_start_time = None
+            # Continue decay even if below threshold, only stop at MIN_PROBABILITY
+            if decayed_probability <= MIN_PROBABILITY:
+                _LOGGER.debug("Decay complete: reached minimum probability")
+                probability_state.decay_start_time = None
                 probability_state.decaying = False
-                return probability_state.probability, decay_factor
+                return MIN_PROBABILITY, decay_factor
 
             _LOGGER.debug(
-                "Decay progress: elapsed=%.1fs, factor=%.3f, probability=%.3f",
+                "Decay: t=%.1fs f=%.3f p=%.3f",
                 elapsed,
                 decay_factor,
                 decayed_probability,
@@ -136,13 +144,62 @@ class DecayHandler:
 
             probability_state.decaying = True
 
-        except (ValueError, ZeroDivisionError):
-            _LOGGER.exception("Error in decay calculation: %s")
+        except (ValueError, ZeroDivisionError) as err:
+            _LOGGER.error("Error in decay calculation: %s", err)
             probability_state.decaying = False
+            probability_state.decay_start_time = None
             return probability_state.probability, 1.0
         else:
             return decayed_probability, decay_factor
 
+    def _validate_probabilities(self, probability_state: ProbabilityState) -> bool:
+        """Validate probability values.
+
+        Args:
+            probability_state: The probability state to validate
+
+        Returns:
+            True if all probabilities are valid, False otherwise
+
+        """
+        return all(
+            0 <= p <= 1
+            for p in (
+                probability_state.probability,
+                probability_state.previous_probability,
+                probability_state.threshold,
+            )
+        )
+
+    def _calculate_decay_factor(self, elapsed_seconds: float) -> float:
+        """Calculate the decay factor based on elapsed time.
+
+        Args:
+            elapsed_seconds: Number of seconds elapsed since decay start
+
+        Returns:
+            Calculated decay factor
+
+        """
+        return math.exp(-DECAY_LAMBDA * (elapsed_seconds / self.decay_window))
+
+    def _apply_decay_factor(self, probability: float, decay_factor: float) -> float:
+        """Apply decay factor to probability with bounds checking.
+
+        Args:
+            probability: The probability to decay
+            decay_factor: The decay factor to apply
+
+        Returns:
+            The decayed probability, bounded between MIN_PROBABILITY and MAX_PROBABILITY
+
+        """
+        return max(
+            MIN_PROBABILITY,
+            min(probability * decay_factor, MAX_PROBABILITY),
+        )
+
     def reset(self) -> None:
-        """Reset the decay handler state."""
-        self.decay_start_time = None
+        """Reset the decay handler configuration to defaults."""
+        self.decay_enabled = DEFAULT_DECAY_ENABLED
+        self.decay_window = DEFAULT_DECAY_WINDOW

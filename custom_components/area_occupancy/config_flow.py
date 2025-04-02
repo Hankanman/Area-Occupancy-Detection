@@ -1,4 +1,9 @@
-"""Config flow for Area Occupancy Detection integration."""
+"""Config flow for Area Occupancy Detection integration.
+
+This module handles the configuration flow for the Area Occupancy Detection integration.
+It provides both initial configuration and options update capabilities, with comprehensive
+validation of all inputs to ensure a valid configuration.
+"""
 
 from __future__ import annotations
 
@@ -80,6 +85,27 @@ from .const import (
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
+
+# UI Configuration Constants
+WEIGHT_STEP = 0.05
+WEIGHT_MIN = 0
+WEIGHT_MAX = 1
+
+THRESHOLD_STEP = 1
+THRESHOLD_MIN = 0
+THRESHOLD_MAX = 100
+
+HISTORY_PERIOD_STEP = 1
+HISTORY_PERIOD_MIN = 1
+HISTORY_PERIOD_MAX = 30
+
+DECAY_WINDOW_STEP = 60
+DECAY_WINDOW_MIN = 60
+DECAY_WINDOW_MAX = 3600
+
+DECAY_MIN_DELAY_STEP = 10
+DECAY_MIN_DELAY_MIN = 0
+DECAY_MIN_DELAY_MAX = 3600
 
 
 def create_schema(
@@ -197,20 +223,6 @@ def create_schema(
                 vol.Schema(
                     {
                         vol.Required(
-                            CONF_MOTION_SENSORS,
-                            default=defaults.get(CONF_MOTION_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.BINARY_SENSOR,
-                                device_class=[
-                                    BinarySensorDeviceClass.MOTION,
-                                    BinarySensorDeviceClass.OCCUPANCY,
-                                    BinarySensorDeviceClass.PRESENCE,
-                                ],
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Required(
                             CONF_PRIMARY_OCCUPANCY_SENSOR,
                             default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
                         ): EntitySelector(
@@ -224,6 +236,20 @@ def create_schema(
                                 multiple=False,
                             ),
                         ),
+                        vol.Required(
+                            CONF_MOTION_SENSORS,
+                            default=defaults.get(CONF_MOTION_SENSORS, []),
+                        ): EntitySelector(
+                            EntitySelectorConfig(
+                                domain=Platform.BINARY_SENSOR,
+                                device_class=[
+                                    BinarySensorDeviceClass.MOTION,
+                                    BinarySensorDeviceClass.OCCUPANCY,
+                                    BinarySensorDeviceClass.PRESENCE,
+                                ],
+                                multiple=True,
+                            ),
+                        ),
                         vol.Optional(
                             CONF_WEIGHT_MOTION,
                             default=defaults.get(
@@ -231,9 +257,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -269,9 +295,9 @@ def create_schema(
                             default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -309,9 +335,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -337,9 +363,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -378,9 +404,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -419,9 +445,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -469,9 +495,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -487,9 +513,9 @@ def create_schema(
                             default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=100,
-                                step=1,
+                                min=THRESHOLD_MIN,
+                                max=THRESHOLD_MAX,
+                                step=THRESHOLD_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -500,9 +526,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=1,
-                                max=30,
-                                step=1,
+                                min=HISTORY_PERIOD_MIN,
+                                max=HISTORY_PERIOD_MAX,
+                                step=HISTORY_PERIOD_STEP,
                                 mode="slider",
                                 unit_of_measurement="days",
                             ),
@@ -520,9 +546,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=60,
-                                max=3600,
-                                step=60,
+                                min=DECAY_WINDOW_MIN,
+                                max=DECAY_WINDOW_MAX,
+                                step=DECAY_WINDOW_STEP,
                                 mode="slider",
                                 unit_of_measurement="seconds",
                             ),
@@ -534,9 +560,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=3600,
-                                step=10,
+                                min=DECAY_MIN_DELAY_MIN,
+                                max=DECAY_MIN_DELAY_MAX,
+                                step=DECAY_MIN_DELAY_STEP,
                                 mode="box",
                                 unit_of_measurement="seconds",
                             )
@@ -559,10 +585,27 @@ def create_schema(
 
 
 class BaseOccupancyFlow:
-    """Base class for config and options flow."""
+    """Base class for config and options flow.
+
+    This class provides shared validation logic used by both the config flow
+    and options flow. It ensures consistent validation across both flows.
+    """
 
     def _validate_config(self, data: dict[str, Any]) -> None:
-        """Validate the configuration."""
+        """Validate the configuration.
+
+        Performs comprehensive validation of all configuration fields including:
+        - Required sensors and their relationships
+        - State configurations for different device types
+        - Weight values and their ranges
+
+        Args:
+            data: Dictionary containing the configuration to validate
+
+        Raises:
+            ValueError: If any validation check fails
+
+        """
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
             raise ValueError("At least one motion sensor is required")
@@ -626,17 +669,27 @@ class BaseOccupancyFlow:
             ),
         ]
         for name, weight in weights:
-            if not 0 <= weight <= 1:
-                raise ValueError(f"{name} must be between 0 and 1")
+            if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
+                raise ValueError(
+                    f"{name} must be between {WEIGHT_MIN} and {WEIGHT_MAX}"
+                )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
-    """Handle a config flow for Area Occupancy Detection."""
+    """Handle a config flow for Area Occupancy Detection.
+
+    This class handles the initial configuration flow when the integration is first set up.
+    It provides a multi-step configuration process with comprehensive validation.
+    """
 
     VERSION = CONF_VERSION
 
     def __init__(self) -> None:
-        """Initialize config flow."""
+        """Initialize config flow.
+
+        Sets up the initial empty data dictionary that will store configuration
+        as it is built through the flow.
+        """
         self._data: dict[str, Any] = {}
 
     def is_matching(self, other_flow: ConfigEntry) -> bool:
