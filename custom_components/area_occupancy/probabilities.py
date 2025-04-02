@@ -1,50 +1,49 @@
 """Probability constants and defaults for Area Occupancy Detection."""
 
 from __future__ import annotations
-from typing import Final, Dict, Any
 
-from homeassistant.const import (
-    STATE_ON,
-)
+import logging
+from typing import Any, Final
 
-from homeassistant.util import dt as dt_util
-
-from .types import EntityType, LearnedPrior
+from homeassistant.const import STATE_ON
 
 from .const import (
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
+    CONF_APPLIANCE_ACTIVE_STATES,
+    CONF_APPLIANCES,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_DOOR_ACTIVE_STATE,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_PRIOR,
-    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
 )
+from .exceptions import ConfigurationError
+from .types import EntityType, ProbabilityConfig
+
+_LOGGER = logging.getLogger(__name__)
 
 # Environmental detection baseline settings
 ENVIRONMENTAL_BASELINE_PERCENT: Final[float] = 0.05  # 5% deviation allowed around mean
@@ -94,7 +93,7 @@ LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
 ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
 
 # Media device state probabilities
-MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
+MEDIA_STATE_PROBABILITIES: Final[dict[str, float]] = {
     "playing": 0.9,
     "paused": 0.7,
     "idle": 0.3,
@@ -103,7 +102,7 @@ MEDIA_STATE_PROBABILITIES: Final[Dict[str, float]] = {
 }
 
 # Appliance state probabilities
-APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
+APPLIANCE_STATE_PROBABILITIES: Final[dict[str, float]] = {
     "active": 0.8,
     "on": 0.8,
     "standby": 0.4,
@@ -115,141 +114,236 @@ APPLIANCE_STATE_PROBABILITIES: Final[Dict[str, float]] = {
 class Probabilities:
     """Class to handle probability calculations and weights."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        """Initialize the probabilities handler."""
+    def __init__(self, config: dict[str, Any], coordinator: Any | None = None) -> None:
+        """Initialize the probabilities handler.
+
+        Args:
+            config: Configuration dictionary
+            coordinator: Optional coordinator instance for learned priors
+
+        Raises:
+            ConfigurationError: If configuration is invalid
+
+        """
         self.config = config
+        self.coordinator = coordinator
         self._sensor_weights = self._get_sensor_weights()
         self._sensor_configs = self._build_sensor_configs()
         self.entity_types: dict[str, EntityType] = {}
         self._map_entities_to_types()
 
+        _LOGGER.debug(
+            "Probabilities initialized with %d entity types and %d sensor configs",
+            len(self.entity_types),
+            len(self._sensor_configs),
+        )
+
     def _map_entities_to_types(self) -> None:
-        """Create mapping of entity IDs to their sensor types."""
+        """Create mapping of entity IDs to their sensor types.
 
-        mappings = [
-            (CONF_MOTION_SENSORS, "motion"),
-            (CONF_MEDIA_DEVICES, "media"),
-            (CONF_APPLIANCES, "appliance"),
-            (CONF_DOOR_SENSORS, "door"),
-            (CONF_WINDOW_SENSORS, "window"),
-            (CONF_LIGHTS, "light"),
-            (CONF_ILLUMINANCE_SENSORS, "environmental"),
-            (CONF_HUMIDITY_SENSORS, "environmental"),
-            (CONF_TEMPERATURE_SENSORS, "environmental"),
-        ]
+        Raises:
+            ConfigurationError: If entity mapping fails
 
-        for config_key, sensor_type in mappings:
-            for entity_id in self.config.get(config_key, []):
-                self.entity_types[entity_id] = sensor_type
+        """
+
+        def _validate_entity_id(entity_id: str, config_key: str) -> None:
+            if not entity_id:
+                raise ConfigurationError(f"Empty entity ID in {config_key}")
+
+        try:
+            mappings = [
+                (CONF_MOTION_SENSORS, "motion"),
+                (CONF_MEDIA_DEVICES, "media"),
+                (CONF_APPLIANCES, "appliance"),
+                (CONF_DOOR_SENSORS, "door"),
+                (CONF_WINDOW_SENSORS, "window"),
+                (CONF_LIGHTS, "light"),
+                (CONF_ILLUMINANCE_SENSORS, "environmental"),
+                (CONF_HUMIDITY_SENSORS, "environmental"),
+                (CONF_TEMPERATURE_SENSORS, "environmental"),
+            ]
+
+            for config_key, sensor_type in mappings:
+                for entity_id in self.config.get(config_key, []):
+                    _validate_entity_id(entity_id, config_key)
+                    self.entity_types[entity_id] = sensor_type
+
+            _LOGGER.debug(
+                "Mapped %d entities to types: %s",
+                len(self.entity_types),
+                dict(self.entity_types.items()),
+            )
+        except Exception as err:
+            raise ConfigurationError(f"Failed to map entities to types: {err}") from err
 
     def _get_sensor_weights(self) -> dict[str, float]:
-        """Get the configured sensor weights, falling back to defaults if not configured."""
-        return {
-            "motion": self.config.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
-            "media": self.config.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
-            "appliance": self.config.get(
-                CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
-            ),
-            "door": self.config.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
-            "window": self.config.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
-            "light": self.config.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
-            "environmental": self.config.get(
-                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
-            ),
-        }
+        """Get the configured sensor weights, falling back to defaults if not configured.
 
-    def _build_sensor_configs(self) -> dict:
-        """Build sensor configurations using current weights and type priors."""
-        type_priors = (
-            self.coordinator.type_priors if hasattr(self, "coordinator") else {}
-        )
+        Returns:
+            Dictionary of sensor type to weight mapping
 
-        # Get the configured door active state
-        door_active_state = self.config.get(
-            CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
-        )
+        Raises:
+            ConfigurationError: If weights are invalid
 
-        # Get the configured window active state
-        window_active_state = self.config.get(
-            CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
-        )
+        """
 
-        # Get the configured media active states
-        media_active_states = set(
-            self.config.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
-        )
-
-        # Get the configured appliance active states
-        appliance_active_states = set(
-            self.config.get(
-                CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
-            )
-        )
-
-        configs = {
-            "motion": {
-                "prob_given_true": MOTION_PROB_GIVEN_TRUE,
-                "prob_given_false": MOTION_PROB_GIVEN_FALSE,
-                "default_prior": MOTION_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["motion"],
-                "active_states": {STATE_ON},
-            },
-            "media": {
-                "prob_given_true": MEDIA_PROB_GIVEN_TRUE,
-                "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
-                "default_prior": MEDIA_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["media"],
-                "active_states": media_active_states,
-            },
-            "appliance": {
-                "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
-                "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
-                "default_prior": APPLIANCE_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["appliance"],
-                "active_states": appliance_active_states,
-            },
-            "door": {
-                "prob_given_true": DOOR_PROB_GIVEN_TRUE,
-                "prob_given_false": DOOR_PROB_GIVEN_FALSE,
-                "default_prior": DOOR_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["door"],
-                "active_states": {door_active_state},
-            },
-            "window": {
-                "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
-                "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
-                "default_prior": WINDOW_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["window"],
-                "active_states": {window_active_state},
-            },
-            "light": {
-                "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
-                "prob_given_false": LIGHT_PROB_GIVEN_FALSE,
-                "default_prior": LIGHT_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["light"],
-                "active_states": {STATE_ON},
-            },
-            "environmental": {
-                "prob_given_true": ENVIRONMENTAL_PROB_GIVEN_TRUE,
-                "prob_given_false": ENVIRONMENTAL_PROB_GIVEN_FALSE,
-                "default_prior": ENVIRONMENTAL_DEFAULT_PRIOR,
-                "weight": self._sensor_weights["environmental"],
-                "active_states": {STATE_ON},
-            },
-        }
-
-        # Update configs with learned type priors if available
-        for sensor_type, config in configs.items():
-            if type_prior := type_priors.get(sensor_type):
-                config.update(
-                    {
-                        "prob_given_true": type_prior["prob_given_true"],
-                        "prob_given_false": type_prior["prob_given_false"],
-                        "default_prior": type_prior["prior"],
-                    }
+        def _validate_weight(sensor_type: str, weight: float) -> None:
+            if not 0 <= weight <= 1:
+                raise ConfigurationError(
+                    f"Invalid weight for {sensor_type}: {weight}. Must be between 0 and 1."
                 )
 
-        return configs
+        try:
+            weights = {
+                "motion": self.config.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+                "media": self.config.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+                "appliance": self.config.get(
+                    CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
+                ),
+                "door": self.config.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+                "window": self.config.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+                "light": self.config.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
+                "environmental": self.config.get(
+                    CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+                ),
+            }
+
+            # Validate weights
+            for sensor_type, weight in weights.items():
+                _validate_weight(sensor_type, weight)
+
+            _LOGGER.debug("Sensor weights configured: %s", weights)
+
+        except Exception as err:
+            raise ConfigurationError(f"Failed to get sensor weights: {err}") from err
+        else:
+            return weights
+
+    def _build_sensor_configs(self) -> dict[str, ProbabilityConfig]:
+        """Build sensor configurations using current weights and type priors.
+
+        Returns:
+            Dictionary of sensor configurations
+
+        Raises:
+            ConfigurationError: If sensor configurations are invalid
+
+        """
+
+        def _validate_probability(
+            sensor_type: str, prob_name: str, value: float
+        ) -> None:
+            if not 0 <= value <= 1:
+                raise ConfigurationError(
+                    f"Invalid {prob_name} for {sensor_type}: {value}"
+                )
+
+        def _validate_config(sensor_type: str, config: dict) -> None:
+            _validate_probability(
+                sensor_type, "prob_given_true", config["prob_given_true"]
+            )
+            _validate_probability(
+                sensor_type, "prob_given_false", config["prob_given_false"]
+            )
+            _validate_probability(sensor_type, "default_prior", config["default_prior"])
+            _validate_probability(sensor_type, "weight", config["weight"])
+
+        try:
+            # Get the configured door active state
+            door_active_state = self.config.get(
+                CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
+            )
+
+            # Get the configured window active state
+            window_active_state = self.config.get(
+                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+            )
+
+            # Get the configured media active states
+            media_active_states = set(
+                self.config.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
+            )
+
+            # Get the configured appliance active states
+            appliance_active_states = set(
+                self.config.get(
+                    CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
+                )
+            )
+
+            configs = {
+                "motion": {
+                    "prob_given_true": MOTION_PROB_GIVEN_TRUE,
+                    "prob_given_false": MOTION_PROB_GIVEN_FALSE,
+                    "default_prior": MOTION_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["motion"],
+                    "active_states": {STATE_ON},
+                },
+                "media": {
+                    "prob_given_true": MEDIA_PROB_GIVEN_TRUE,
+                    "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
+                    "default_prior": MEDIA_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["media"],
+                    "active_states": media_active_states,
+                },
+                "appliance": {
+                    "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
+                    "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
+                    "default_prior": APPLIANCE_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["appliance"],
+                    "active_states": appliance_active_states,
+                },
+                "door": {
+                    "prob_given_true": DOOR_PROB_GIVEN_TRUE,
+                    "prob_given_false": DOOR_PROB_GIVEN_FALSE,
+                    "default_prior": DOOR_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["door"],
+                    "active_states": {door_active_state},
+                },
+                "window": {
+                    "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
+                    "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
+                    "default_prior": WINDOW_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["window"],
+                    "active_states": {window_active_state},
+                },
+                "light": {
+                    "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
+                    "prob_given_false": LIGHT_PROB_GIVEN_FALSE,
+                    "default_prior": LIGHT_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["light"],
+                    "active_states": {STATE_ON},
+                },
+                "environmental": {
+                    "prob_given_true": ENVIRONMENTAL_PROB_GIVEN_TRUE,
+                    "prob_given_false": ENVIRONMENTAL_PROB_GIVEN_FALSE,
+                    "default_prior": ENVIRONMENTAL_DEFAULT_PRIOR,
+                    "weight": self._sensor_weights["environmental"],
+                    "active_states": {STATE_ON},
+                },
+            }
+
+            # Update configs with learned type priors if available
+            if self.coordinator and hasattr(self.coordinator, "type_priors"):
+                for sensor_type, config in configs.items():
+                    if type_prior := self.coordinator.type_priors.get(sensor_type):
+                        config.update(
+                            {
+                                "prob_given_true": type_prior["prob_given_true"],
+                                "prob_given_false": type_prior["prob_given_false"],
+                                "default_prior": type_prior["prior"],
+                            }
+                        )
+
+            # Validate configurations
+            for sensor_type, config in configs.items():
+                _validate_config(sensor_type, config)
+
+            _LOGGER.debug("Built sensor configurations: %s", configs)
+        except Exception as err:
+            raise ConfigurationError(f"Failed to build sensor configs: {err}") from err
+        else:
+            return configs
 
     @property
     def sensor_weights(self) -> dict[str, float]:
@@ -257,27 +351,78 @@ class Probabilities:
         return self._sensor_weights
 
     @property
-    def sensor_configs(self) -> dict:
+    def sensor_configs(self) -> dict[str, ProbabilityConfig]:
         """Get the current sensor configurations."""
         return self._sensor_configs
 
     def get_default_prior(self, entity_id: str) -> float:
-        """Get the default prior for an entity."""
-        sensor_type = self.entity_types.get(entity_id)
-        return self._sensor_configs.get(sensor_type, {}).get(
-            "default_prior", DEFAULT_PRIOR
-        )
+        """Get the default prior probability for an entity.
+
+        Args:
+            entity_id: The entity ID to get the prior for
+
+        Returns:
+            The default prior probability
+
+        Raises:
+            ValueError: If entity_id is not found
+
+        """
+        if entity_id not in self.entity_types:
+            raise ValueError(f"Entity {entity_id} not found in entity types")
+
+        sensor_type = self.entity_types[entity_id]
+        if sensor_type not in self._sensor_configs:
+            raise ValueError(
+                f"Invalid sensor type {sensor_type} for entity {entity_id}"
+            )
+
+        return self._sensor_configs[sensor_type]["default_prior"]
 
     def update_config(self, config: dict[str, Any]) -> None:
-        """Update the configuration and recalculate weights and configs."""
-        self.config = config
-        self._sensor_weights = self._get_sensor_weights()
-        self._sensor_configs = self._build_sensor_configs()
+        """Update the configuration.
 
-    def get_sensor_config(self, entity_id: str) -> dict[str, Any]:
-        """Get sensor configuration based on entity type."""
-        sensor_type = self.entity_types.get(entity_id)
-        return self._sensor_configs.get(sensor_type, {})
+        Args:
+            config: New configuration dictionary
+
+        Raises:
+            ConfigurationError: If new configuration is invalid
+
+        """
+        try:
+            self.config = config
+            self._sensor_weights = self._get_sensor_weights()
+            self._sensor_configs = self._build_sensor_configs()
+            self.entity_types.clear()
+            self._map_entities_to_types()
+
+            _LOGGER.debug("Configuration updated successfully")
+        except Exception as err:
+            raise ConfigurationError(f"Failed to update configuration: {err}") from err
+
+    def get_sensor_config(self, entity_id: str) -> ProbabilityConfig | None:
+        """Get the configuration for a specific sensor.
+
+        Args:
+            entity_id: The entity ID to get the config for
+
+        Returns:
+            The sensor configuration or None if not found
+
+        Raises:
+            ValueError: If entity_id is not found
+
+        """
+        if entity_id not in self.entity_types:
+            raise ValueError(f"Entity {entity_id} not found in entity types")
+
+        sensor_type = self.entity_types[entity_id]
+        if sensor_type not in self._sensor_configs:
+            raise ValueError(
+                f"Invalid sensor type {sensor_type} for entity {entity_id}"
+            )
+
+        return self._sensor_configs[sensor_type]
 
     def is_entity_active(
         self,
@@ -288,59 +433,46 @@ class Probabilities:
 
         Args:
             entity_id: The entity ID to check
-            state: The current state of the entity
+            state: The current state to check
 
         Returns:
-            bool: True if the entity is considered active, False otherwise
+            True if the entity is active, False otherwise
+
+        Raises:
+            ValueError: If entity_id is not found
+
         """
-        sensor_type = self.entity_types.get(entity_id)
-        if not sensor_type:
-            return False
+        if entity_id not in self.entity_types:
+            raise ValueError(f"Entity {entity_id} not found in entity types")
 
-        sensor_config = self.sensor_configs.get(sensor_type, {})
-        if not sensor_config:
-            return False
+        sensor_type = self.entity_types[entity_id]
+        if sensor_type not in self._sensor_configs:
+            raise ValueError(
+                f"Invalid sensor type {sensor_type} for entity {entity_id}"
+            )
 
-        return state in sensor_config.get("active_states", set())
+        active_states = self._sensor_configs[sensor_type]["active_states"]
+        return state in active_states
 
-    def get_initial_type_priors(self) -> dict[str, LearnedPrior]:
-        """Get initial type priors with default values."""
-        now = dt_util.utcnow().isoformat()
-        return {
-            "motion": {
-                "prob_given_true": MOTION_PROB_GIVEN_TRUE,
-                "prob_given_false": MOTION_PROB_GIVEN_FALSE,
-                "prior": MOTION_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-            "media": {
-                "prob_given_true": MEDIA_PROB_GIVEN_TRUE,
-                "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
-                "prior": MEDIA_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-            "appliance": {
-                "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
-                "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
-                "prior": APPLIANCE_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-            "door": {
-                "prob_given_true": DOOR_PROB_GIVEN_TRUE,
-                "prob_given_false": DOOR_PROB_GIVEN_FALSE,
-                "prior": DOOR_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-            "window": {
-                "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
-                "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
-                "prior": WINDOW_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-            "light": {
-                "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
-                "prob_given_false": LIGHT_PROB_GIVEN_FALSE,
-                "prior": LIGHT_DEFAULT_PRIOR,
-                "last_updated": now,
-            },
-        }
+    def get_initial_type_priors(self) -> dict[str, ProbabilityConfig]:
+        """Get the initial type priors for all sensor types.
+
+        Returns:
+            Dictionary of sensor type to initial prior mapping
+
+        """
+        try:
+            priors = {}
+            for sensor_type, config in self._sensor_configs.items():
+                priors[sensor_type] = {
+                    "prob_given_true": config["prob_given_true"],
+                    "prob_given_false": config["prob_given_false"],
+                    "prior": config["default_prior"],
+                }
+
+            _LOGGER.debug("Initial type priors: %s", priors)
+        except (KeyError, ValueError, TypeError):
+            _LOGGER.exception("Failed to get initial type priors: %s")
+            return {}
+        else:
+            return priors

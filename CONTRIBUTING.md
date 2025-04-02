@@ -1,199 +1,61 @@
-# Area Occupancy Integration - Developer Guide
+# Contribution guidelines
 
-This document contains technical information for developers who want to contribute to or modify the Area Occupancy Detection integration.
+Contributing to this project should be as easy and transparent as possible, whether it's:
 
-## Development Environment Setup
+- Reporting a bug
+- Discussing the current state of the code
+- Submitting a fix
+- Proposing new features
 
-### Prerequisites
+## Github is used for everything
 
-- Python 3.10 or higher
-- Home Assistant development environment
-- Git
-- Visual Studio Code (recommended)
-- Docker (optional, for container-based development)
+Github is used to host code, to track issues and feature requests, as well as accept pull requests.
 
-### Local Development Setup
+Pull requests are the best way to propose changes to the codebase.
 
-1. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/macOS
-   .\venv\Scripts\activate   # Windows
-   ```
+1. Fork the repo and create your branch from `main`.
+2. If you've changed something, update the documentation.
+3. Make sure your code lints (using `scripts/lint`).
+4. Test you contribution.
+5. Issue that pull request!
 
-2. Install development dependencies:
-   ```bash
-   pip install -r requirements.dev.txt
-   ```
+## Any contributions you make will be under the MIT Software License
 
-3. Install pre-commit hooks:
-   ```bash
-   pre-commit install
-   ```
+In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
 
-## Project Structure
+## Report bugs using Github's [issues](../../issues)
 
-```
-custom_components/area_occupancy/
-├── __init__.py           # Integration initialization
-├── manifest.json         # Integration metadata
-├── const.py             # Constants and configuration
-├── config_flow.py       # Configuration UI
-├── coordinator.py       # Data update coordinator
-├── calculations.py      # Bayesian calculations
-├── base.py             # Base entity classes
-├── sensor.py           # Probability sensor
-├── binary_sensor.py    # Occupancy sensor
-├── strings.json        # String resources
-└── translations/       # Localization
-    └── en.json        # English translations
-```
+GitHub issues are used to track public bugs.
+Report a bug by [opening a new issue](../../issues/new/choose); it's that easy!
 
-## Core Components
+## Write bug reports with detail, background, and sample code
 
-### Data Flow
+**Great Bug Reports** tend to have:
 
-1. `coordinator.py`: Manages sensor updates and scheduling
-2. `calculations.py`: Handles Bayesian probability calculations
-3. `base.py`: Provides shared entity functionality
-4. `sensor.py`/`binary_sensor.py`: Entity implementations
+- A quick summary and/or background
+- Steps to reproduce
+  - Be specific!
+  - Give sample code if you can.
+- What you expected would happen
+- What actually happens
+- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
 
-### Key Classes
+People *love* thorough bug reports. I'm not even kidding.
 
-- `AreaOccupancyCoordinator`: Manages data updates and sensor state tracking
-- `ProbabilityCalculator`: Implements Bayesian probability calculations
-- `AreaOccupancySensorBase`: Base class for sensor entities
-- `AreaOccupancyConfigFlow`: Handles UI configuration
+## Use a Consistent Coding Style
 
-## Testing
+Use [black](https://github.com/ambv/black) to make sure the code follows the style.
 
-### Running Tests
+## Test your code modification
 
-```bash
-# Run all tests
-pytest
+This custom component is based on [integration_blueprint template](https://github.com/ludeeus/integration_blueprint).
 
-# Run specific test file
-pytest tests/test_sensor.py
+It comes with development environment in a container, easy to launch
+if you use Visual Studio Code. With this container you will have a stand alone
+Home Assistant instance running and already configured with the included
+[`configuration.yaml`](./config/configuration.yaml)
+file.
 
-# Run with coverage
-pytest --cov=custom_components.area_occupancy
-```
+## License
 
-### Test Structure
-
-```
-tests/
-├── conftest.py           # Test fixtures
-├── test_init.py         # Integration tests
-├── test_config_flow.py  # Configuration tests
-├── test_coordinator.py  # Coordinator tests
-└── test_sensor.py      # Entity tests
-```
-
-## Contributing Guidelines
-
-### Code Style
-
-- Follow [Home Assistant's style guide](https://developers.home-assistant.io/docs/development_guidelines)
-- Use `black` for code formatting
-- Use `isort` for import sorting
-- Maintain pylint score above 9/10
-
-### Pull Request Process
-
-1. Fork the repository
-2. Create feature branch from `dev`
-3. Write tests for new functionality
-4. Update documentation
-5. Submit PR against `dev` branch
-6. Ensure all checks pass
-
-## Debugging
-
-### Enable Debug Logging
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.area_occupancy: debug
-```
-
-### Development Container
-
-1. Open in VS Code with Remote Containers extension
-2. Select "Reopen in Container"
-3. Use provided debug configurations
-
-## Technical Documentation
-
-### Probability Calculation
-
-The integration uses Bayesian probability with:
-- Prior probability based on historical data
-- Likelihood calculations for each sensor type
-- Weighted sensor contributions
-- Time-based decay of sensor readings
-
-### State Management
-
-- Coordinator manages sensor state updates
-- Historical data stored in rolling windows
-- Decay implemented using configurable time windows
-- Sensor availability tracking and fallback
-
-### Configuration System
-
-- UI-based configuration using config flows
-- Dynamic validation of sensor entities
-- Runtime configuration updates
-- Options flow for post-install modification
-
-## Performance Considerations
-
-### Memory Usage
-
-- Limited historical data storage
-- Efficient state tracking
-- Cleanup of unused data
-
-### CPU Usage
-
-- Optimized calculation frequency
-- Caching of intermediate results
-- Batched sensor updates
-
-## Release Process
-
-1. Version Management
-   - Update `manifest.json` version
-   - Update `CHANGELOG.md`
-   - Create release tag
-
-2. Testing
-   - Run full test suite
-   - Perform manual testing
-   - Test upgrade path
-
-3. Documentation
-   - Update documentation
-   - Update example configurations
-
-4. Release
-   - Create GitHub release
-   - Update HACS repository
-
-## Security Notes
-
-- Input validation on all configuration
-- Sensor state verification
-- Proper error handling
-- Secure default values
-
-## Additional Resources
-
-- [Home Assistant Development](https://developers.home-assistant.io/)
-- [Integration Reference](https://developers.home-assistant.io/docs/creating_integration_manifest)
-- [Testing Documentation](https://developers.home-assistant.io/docs/development_testing)
-- [Code Review Guidelines](https://developers.home-assistant.io/docs/development_code_review)
+By contributing, you agree that your contributions will be licensed under its MIT License.

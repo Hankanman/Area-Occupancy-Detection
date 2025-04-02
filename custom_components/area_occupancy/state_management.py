@@ -1,4 +1,8 @@
+"""State management for the Area Occupancy Detection integration."""
+
 import asyncio
+
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 
@@ -10,11 +14,14 @@ class OccupancyStateManager:
     """
 
     def __init__(self) -> None:
+        """Initialize the OccupancyStateManager."""
         self._all_sensor_states: dict[str, dict] = {}
         self._active_sensors: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
-    async def initialize_states(self, hass, sensor_ids: list[str]) -> None:
+    async def initialize_states(
+        self, hass: HomeAssistant, sensor_ids: list[str]
+    ) -> None:
         """Initialize sensor states from Home Assistant for the given sensor IDs."""
         async with self._lock:
             for entity_id in sensor_ids:
