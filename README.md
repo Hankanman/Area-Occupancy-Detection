@@ -17,6 +17,10 @@ This integration provides advanced room occupancy detection by combining multipl
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability
 
+## Documentation
+
+All documentation is available at the [Documentation Site](https://hankanman.github.io/Area-Occupancy-Detection/).
+
 ## Installation
 
 ### Option 1: HACS (Recommended)
