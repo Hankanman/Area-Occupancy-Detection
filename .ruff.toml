@@ -22,8 +22,6 @@ lint.select = [
     "T20",  # flake8-print
     "TRY004", # Prefer TypeError exception for invalid type
     "RUF006", # Store a reference to the return value of asyncio.create_task
-    "UP",  # pyupgrade
-    "W",  # pycodestyle
 ]
 
 lint.ignore = [
