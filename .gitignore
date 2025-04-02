@@ -1,17 +1,18 @@
-.jekyll-cache/
-_site/
+# artifacts
 __pycache__
-pythonenv*
-venv
-.venv
+.pytest*
+*.egg-info
+*/build/*
+*/dist/*
+
+
+# misc
 .coverage
-.idea
-custom_components/hacs
-x_*
-.haconfig
-ha-area-occupancy-code.md
-scripts/*.py
-scripts/*.csv
-repomix*.md
-*.sql
-.pytest_cache/
+.vscode
+coverage.xml
+.ruff_cache
+
+
+# Home Assistant configuration
+config/*
+!config/configuration.yaml
