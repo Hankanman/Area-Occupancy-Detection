@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -36,90 +35,33 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def generate_migration_map(
-    area_id: str, entry_id: str, platform: str
-) -> dict[str, str]:
-    """Generate migration map for unique IDs based on platform."""
-    if platform == "sensor":
-        # Add migration for old prior sensors to new priors sensor
-        old_prior_sensors = [
-            "motion_prior",
-            "media_prior",
-            "appliance_prior",
-            "door_prior",
-            "window_prior",
-            "light_prior",
-            "occupancy_prior",
-        ]
-
-        migration_map = {
-            # Handle old format with area_id
-            f"{DOMAIN}_{area_id}_probability": (
-                f"{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
-            ),
-            f"{DOMAIN}_{area_id}_decay": (
-                f"{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
-            ),
-            # Handle new format with entry_id
-            f"{DOMAIN}_{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}": (
-                f"{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
-            ),
-            f"{DOMAIN}_{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}": (
-                f"{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
-            ),
-        }
-
-        # Add migrations for all old prior sensors to the new priors sensor
-        for old_prior in old_prior_sensors:
-            # Handle old format with area_id
-            migration_map[f"{DOMAIN}_{area_id}_{old_prior}"] = (
-                f"{entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
-            )
-            # Handle new format with entry_id
-            migration_map[f"{DOMAIN}_{entry_id}_{old_prior}"] = (
-                f"{entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
-            )
-
-        return migration_map
-    if platform == "binary_sensor":
-        return {
-            # Handle old format with area_id
-            f"{DOMAIN}_{area_id}_occupancy": f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}",
-            # Handle new format with entry_id
-            f"{DOMAIN}_{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}": (
-                f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
-            ),
-        }
-    if platform == "number":
-        return {
-            # Handle old format with area_id
-            f"{DOMAIN}_{area_id}_threshold": f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}",
-            # Handle new format with entry_id
-            f"{DOMAIN}_{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}": (
-                f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
-            ),
-        }
-    return {}
-
-
 async def async_migrate_unique_ids(
     hass: HomeAssistant, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
     entity_registry = er.async_get(hass)
     updated_entries = 0
-
-    # Get area_id from config entry data
-    area_id = config_entry.data.get(CONF_AREA_ID)
     entry_id = config_entry.entry_id
 
-    # Generate the migration map for this specific entry
-    migration_map = generate_migration_map(area_id, entry_id, platform)
+    # Define which entity types to look for based on platform
+    entity_types = {
+        "sensor": [NAME_PROBABILITY_SENSOR, NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR],
+        "binary_sensor": [NAME_BINARY_SENSOR],
+        "number": [NAME_THRESHOLD_NUMBER],
+    }
+
+    if platform not in entity_types:
+        return
+
+    # Get the old format prefix to look for
+    old_prefix = f"{DOMAIN}_{entry_id}_"
 
     for entity_id, entity_entry in entity_registry.entities.items():
         old_unique_id = entity_entry.unique_id
-        if old_unique_id in migration_map:
-            new_unique_id = migration_map[old_unique_id]
+        # Check if this is one of our entities that needs migration
+        if old_unique_id.startswith(old_prefix):
+            # Simply remove the domain prefix to get the new ID
+            new_unique_id = old_unique_id.replace(old_prefix, f"{entry_id}_")
 
             # Update the unique ID in the registry
             _LOGGER.info(
@@ -132,9 +74,7 @@ async def async_migrate_unique_ids(
             updated_entries += 1
 
     if updated_entries > 0:
-        _LOGGER.info(
-            "Completed migrating %s unique IDs for area %s", updated_entries, area_id
-        )
+        _LOGGER.info("Completed migrating %s unique IDs", updated_entries)
 
 
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
@@ -189,34 +129,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     # Get existing data
     data = {**config_entry.data}
     options = {**config_entry.options}
-
-    # Get the entity registry
-    entity_registry = er.async_get(hass)
-
-    # List of old prior sensor suffixes to remove
-    old_prior_sensors = [
-        "motion_prior",
-        "media_prior",
-        "appliance_prior",
-        "door_prior",
-        "window_prior",
-        "light_prior",
-        "occupancy_prior",
-    ]
-
-    try:
-        # Remove old prior sensors from registry
-        for old_prior in old_prior_sensors:
-            unique_id = f"{DOMAIN}_{config_entry.entry_id}_{old_prior}"
-            if entity_entry := entity_registry.async_get_entity_id(
-                Platform.SENSOR, DOMAIN, unique_id
-            ):
-                _LOGGER.info(
-                    "Found and removing prior sensor with unique_id: %s", unique_id
-                )
-                entity_registry.async_remove(entity_entry)
-    except HomeAssistantError as err:
-        _LOGGER.error("Error accessing entity registry: %s", err)
 
     try:
         # Run the unique ID migrations
