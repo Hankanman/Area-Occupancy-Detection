@@ -8,7 +8,19 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util
 
-from .const import MIN_PROBABILITY
+from .const import (
+    CONF_APPLIANCES,
+    CONF_DOOR_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_WINDOW_SENSORS,
+    MIN_PROBABILITY,
+)
 
 EntityType = Literal[
     "motion",
@@ -138,6 +150,7 @@ class ProbabilityState:
     previous_states: dict[str, dict[str, str | bool]] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
+    decay_start_time: datetime | None = field(default=None)
 
     @property
     def active_triggers(self) -> list[str]:
@@ -169,6 +182,7 @@ class ProbabilityState:
         previous_states: dict[str, dict[str, str | bool]] | None = None,
         is_occupied: bool | None = None,
         decaying: bool | None = None,
+        decay_start_time: datetime | None = None,
     ) -> None:
         """Update the state with new values while maintaining the same instance."""
         if probability is not None:
@@ -191,12 +205,18 @@ class ProbabilityState:
             self.is_occupied = is_occupied
         if decaying is not None:
             self.decaying = decaying
+        if decay_start_time is not None:
+            self.decay_start_time = decay_start_time
 
     def to_dict(
         self,
     ) -> dict[
         str,
-        float | list[str] | dict[str, float | dict[str, str | bool] | bool],
+        float
+        | list[str]
+        | dict[str, float | dict[str, str | bool] | bool]
+        | str
+        | None,
     ]:
         """Convert the dataclass to a dictionary."""
         return {
@@ -210,6 +230,9 @@ class ProbabilityState:
             "previous_states": self.previous_states,
             "is_occupied": self.is_occupied,
             "decaying": self.decaying,
+            "decay_start_time": self.decay_start_time.isoformat()
+            if self.decay_start_time
+            else None,
         }
 
     @classmethod
@@ -217,10 +240,20 @@ class ProbabilityState:
         cls,
         data: dict[
             str,
-            float | list[str] | dict[str, float | dict[str, str | bool] | bool],
+            float
+            | list[str]
+            | dict[str, float | dict[str, str | bool] | bool]
+            | str
+            | None,
         ],
     ) -> ProbabilityState:
         """Create a ProbabilityState from a dictionary."""
+        decay_start_time_str = data.get("decay_start_time")
+        decay_start_time = (
+            dt_util.parse_datetime(str(decay_start_time_str))
+            if decay_start_time_str
+            else None
+        )
         return cls(
             probability=float(data["probability"]),
             previous_probability=float(data["previous_probability"]),
@@ -232,6 +265,7 @@ class ProbabilityState:
             previous_states=dict(data.get("previous_states", {})),
             is_occupied=bool(data["is_occupied"]),
             decaying=bool(data.get("decaying", False)),
+            decay_start_time=decay_start_time,
         )
 
 
@@ -532,3 +566,167 @@ class PriorsAttributes(TypedDict):
     light_prior: NotRequired[str]
     last_updated: NotRequired[str]
     total_period: NotRequired[str]
+
+
+@dataclass
+class SensorInputs:
+    """Container for all sensor inputs used in area occupancy detection.
+
+    This class handles the storage, validation, and management of all sensor inputs
+    used in area occupancy detection. It provides methods for validating entity IDs,
+    managing sensor lists, and retrieving combined sensor lists.
+
+    Attributes:
+        motion_sensors: List of motion sensor entity IDs
+        primary_sensor: Primary occupancy sensor entity ID
+        media_devices: List of media device entity IDs
+        appliances: List of appliance entity IDs
+        illuminance_sensors: List of illuminance sensor entity IDs
+        humidity_sensors: List of humidity sensor entity IDs
+        temperature_sensors: List of temperature sensor entity IDs
+        door_sensors: List of door sensor entity IDs
+        window_sensors: List of window sensor entity IDs
+        lights: List of light entity IDs
+
+    """
+
+    motion_sensors: list[str]
+    primary_sensor: str
+    media_devices: list[str]
+    appliances: list[str]
+    illuminance_sensors: list[str]
+    humidity_sensors: list[str]
+    temperature_sensors: list[str]
+    door_sensors: list[str]
+    window_sensors: list[str]
+    lights: list[str]
+
+    @staticmethod
+    def is_valid_entity_id(entity_id: str) -> bool:
+        """Check if an entity ID has valid format.
+
+        Args:
+            entity_id: Entity ID to validate
+
+        Returns:
+            True if valid, False otherwise
+
+        """
+        if not isinstance(entity_id, str):
+            return False
+        parts = entity_id.split(".")
+        return len(parts) == 2 and all(parts)
+
+    @classmethod
+    def validate_entity(cls, conf_key: str, config: dict, default: str = "") -> str:
+        """Validate a single entity ID from configuration.
+
+        Args:
+            conf_key: Configuration key to validate
+            config: Configuration dictionary containing the entity ID
+            default: Default value if not found
+
+        Returns:
+            Validated entity ID
+
+        Raises:
+            ValueError: If entity ID format is invalid
+
+        """
+        entity_id = config.get(conf_key, default)
+        if entity_id and not cls.is_valid_entity_id(entity_id):
+            raise ValueError(f"Invalid entity ID format for {conf_key}: {entity_id}")
+        return entity_id
+
+    @classmethod
+    def validate_entity_list(
+        cls, conf_key: str, config: dict, default: list | None = None
+    ) -> list[str]:
+        """Validate a list of entity IDs from configuration.
+
+        Args:
+            conf_key: Configuration key to validate
+            config: Configuration dictionary containing the entity IDs
+            default: Default value if not found, defaults to empty list
+
+        Returns:
+            List of validated entity IDs
+
+        Raises:
+            TypeError: If configuration value is not a list
+            ValueError: If any entity ID format is invalid
+
+        """
+        if default is None:
+            default = []
+        entity_ids = config.get(conf_key, default)
+        if not isinstance(entity_ids, list):
+            raise TypeError(f"Configuration {conf_key} must be a list")
+
+        for entity_id in entity_ids:
+            if not cls.is_valid_entity_id(entity_id):
+                raise ValueError(f"Invalid entity ID format in {conf_key}: {entity_id}")
+        return entity_ids
+
+    @classmethod
+    def from_config(cls, config: dict) -> SensorInputs:
+        """Create a SensorInputs instance from a configuration dictionary.
+
+        Args:
+            config: Configuration dictionary containing sensor settings
+
+        Returns:
+            Initialized SensorInputs instance
+
+        Raises:
+            ValueError: If required configuration is missing or invalid
+            TypeError: If configuration values have wrong types
+
+        """
+        return cls(
+            motion_sensors=cls.validate_entity_list(CONF_MOTION_SENSORS, config, []),
+            primary_sensor=cls.validate_entity(
+                CONF_PRIMARY_OCCUPANCY_SENSOR, config, ""
+            ),
+            media_devices=cls.validate_entity_list(CONF_MEDIA_DEVICES, config, []),
+            appliances=cls.validate_entity_list(CONF_APPLIANCES, config, []),
+            illuminance_sensors=cls.validate_entity_list(
+                CONF_ILLUMINANCE_SENSORS, config, []
+            ),
+            humidity_sensors=cls.validate_entity_list(
+                CONF_HUMIDITY_SENSORS, config, []
+            ),
+            temperature_sensors=cls.validate_entity_list(
+                CONF_TEMPERATURE_SENSORS, config, []
+            ),
+            door_sensors=cls.validate_entity_list(CONF_DOOR_SENSORS, config, []),
+            window_sensors=cls.validate_entity_list(CONF_WINDOW_SENSORS, config, []),
+            lights=cls.validate_entity_list(CONF_LIGHTS, config, []),
+        )
+
+    def get_all_sensors(self) -> list[str]:
+        """Get a list of all sensor entity IDs.
+
+        Returns:
+            List of all sensor entity IDs
+
+        """
+        all_sensors = []
+        for sensor_list in [
+            self.motion_sensors,
+            self.media_devices,
+            self.appliances,
+            self.illuminance_sensors,
+            self.humidity_sensors,
+            self.temperature_sensors,
+            self.door_sensors,
+            self.window_sensors,
+            self.lights,
+        ]:
+            all_sensors.extend(sensor_list)
+
+        # Add primary sensor if not already included
+        if self.primary_sensor not in all_sensors:
+            all_sensors.append(self.primary_sensor)
+
+        return all_sensors

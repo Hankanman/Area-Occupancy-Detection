@@ -33,8 +33,19 @@ class AreaOccupancyBinarySensor(
         self._attr_device_info = coordinator.device_info
 
     @property
+    def icon(self) -> str:
+        """Return the icon to use in the frontend."""
+        return "mdi:home-account" if self.is_on else "mdi:home-outline"
+
+    @property
     def is_on(self) -> bool:
-        """Return the state of the sensor."""
+        """Return true if the area is occupied.
+
+        Returns:
+            bool: True if the area is currently occupied based on coordinator data,
+                 False if no data is available or area is unoccupied.
+
+        """
         if not self.coordinator.data:
             return False
         return self.coordinator.data.is_occupied

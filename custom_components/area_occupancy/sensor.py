@@ -165,15 +165,17 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        try:
-            if not self.coordinator.data:
-                return 0.0
+        if not self.coordinator.data:
+            return 0.0
 
+        try:
             probability = self.coordinator.data.probability
             return format_float(probability * 100)
-
-        except (TypeError, ValueError, AttributeError):
-            _LOGGER.exception("Error getting probability value: %s")
+        except AttributeError:
+            _LOGGER.error("Coordinator data missing probability attribute")
+            return 0.0
+        except (TypeError, ValueError) as err:
+            _LOGGER.error("Error calculating probability value: %s", err)
             return 0.0
 
     @property
@@ -238,13 +240,16 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        try:
-            if not self.coordinator.data:
-                return 0.0
-            return format_float(100 - (self.coordinator.data.decay_status * 100))
+        if not self.coordinator.data:
+            return 0.0
 
-        except (TypeError, KeyError, ValueError, ZeroDivisionError):
-            _LOGGER.exception("Error getting decay value: %s")
+        try:
+            return format_float(100 - (self.coordinator.data.decay_status * 100))
+        except AttributeError:
+            _LOGGER.error("Coordinator data missing decay_status attribute")
+            return 0.0
+        except (TypeError, ValueError, ZeroDivisionError) as err:
+            _LOGGER.error("Error calculating decay value: %s", err)
             return 0.0
 
 

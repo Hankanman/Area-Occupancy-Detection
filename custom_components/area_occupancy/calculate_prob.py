@@ -14,19 +14,28 @@ _LOGGER = logging.getLogger(__name__)
 class ProbabilityCalculator:
     """Handle probability calculations using Bayesian inference."""
 
-    def __init__(self, coordinator, probabilities) -> None:
+    def __init__(
+        self,
+        decay_handler,
+        probability_state,
+        prior_state,
+        probabilities,
+    ) -> None:
         """Initialize the calculator.
 
         Args:
-            coordinator: The coordinator instance managing the integration state
+            decay_handler: The decay handler instance
+            probability_state: The current probability state
+            previous_probability: The previous probability value
+            prior_state: The prior state information
             probabilities: The probabilities configuration instance
 
         """
         self.probabilities = probabilities
-        self.decay_handler = coordinator.decay_handler
-        self.probability_state = coordinator.data
-        self.previous_probability = coordinator.data.previous_probability
-        self.prior_state = coordinator.prior_state
+        self.decay_handler = decay_handler
+        self.probability_state = probability_state
+        self.previous_probability = probability_state.previous_probability
+        self.prior_state = prior_state
 
     def calculate_occupancy_probability(
         self,
@@ -49,7 +58,7 @@ class ProbabilityCalculator:
             Updated probability state
 
         """
-        _LOGGER.debug("Starting occupancy probability calculation")
+        _LOGGER.debug("Starting probability calculation")
         sensor_probs: dict[str, SensorProbability] = {}
 
         try:
@@ -79,7 +88,7 @@ class ProbabilityCalculator:
             )
 
             _LOGGER.debug(
-                "Final probability calculation: base=%.3f, final=%.3f, decay_status=%.3f",
+                "Final: base=%.3f final=%.3f decay=%.3f",
                 decayed_probability,
                 final_probability,
                 decay_status,
@@ -231,7 +240,7 @@ class ProbabilityCalculator:
 
         """
         if not state.get("availability", False):
-            _LOGGER.debug("Sensor %s is not available", entity_id)
+            _LOGGER.debug("Sensor %s unavailable", entity_id)
             return SensorCalculation.empty()
 
         sensor_config = self.probabilities.get_sensor_config(entity_id)
@@ -248,11 +257,8 @@ class ProbabilityCalculator:
             weighted_prob = unweighted_prob * sensor_config["weight"]
 
             _LOGGER.debug(
-                "Sensor %s: prior=%.3f, p_true=%.3f, p_false=%.3f, prob=%.3f, weight=%.3f",
+                "Sensor %s: p=%.3f w=%.3f",
                 entity_id,
-                prior,
-                p_true,
-                p_false,
                 unweighted_prob,
                 sensor_config["weight"],
             )
