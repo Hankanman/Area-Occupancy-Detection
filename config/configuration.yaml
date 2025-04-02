@@ -1,16 +1,15 @@
-# # Loads default set of integrations. Do not remove.
+# https://www.home-assistant.io/integrations/default_config/
 default_config:
 
-# automation: !include automations.yaml
-# script: !include scripts.yaml
-# scene: !include scenes.yaml
+# https://www.home-assistant.io/integrations/homeassistant/
+homeassistant:
+  debug: true
 
+# https://www.home-assistant.io/integrations/logger/
 logger:
-  default: CRITICAL
+  default: info
   logs:
-    custom_components.area_occupancy: DEBUG
-
-# debugpy:
+     custom_components.area_occupancy: DEBUG
 
 # Input controls for testing
 
@@ -261,3 +260,4 @@ media_player:
         data:
           entity_id: input_select.mock_media_state
           option: idle
+
