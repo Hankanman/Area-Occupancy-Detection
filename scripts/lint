@@ -4,6 +4,5 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-python3 -m pip install homeassistant
-
-echo "Done."
+ruff format .
+ruff check . --fix

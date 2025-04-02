@@ -6,16 +6,20 @@ This integration provides advanced room occupancy detection by combining multipl
 
 - **Intelligent Occupancy Detection**: Uses multiple sensor inputs and Bayesian statistics
 - **Multiple Sensor Support**:
-  - Motion Sensors: Primary input for detecting presence
+  - Motion/Occupancy Sensors: Primary input for detecting presence
   - Media Devices: TV, media players, and similar devices used as activity indicators
   - Appliances: Sensors or switches representing devices like fans, PCs, or other appliances
   - Environmental Sensors: Illuminance, humidity, and temperature sensors contribute subtle occupancy clues
   - Doors, Windows, and Lights: These can influence or correlate with presence
-- **Probability-Based Output**: Provides an occupancy probability (0-100%) and a binary occupancy status based on a configurable threshold
+- **Probability-Based Output**: Provides an occupancy probability (1-99%) and a binary occupancy status based on a configurable threshold
 - **Adaptive Historical Analysis**: Learns sensor priors over time, improving accuracy as it gathers data
 - **Configurable Time Decay**: Gradually reduces occupancy probability if no new triggers occur
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability
+
+## Documentation
+
+All documentation is available at the [Documentation Site](https://hankanman.github.io/Area-Occupancy-Detection/).
 
 ## Installation
 
@@ -31,9 +35,11 @@ This integration provides advanced room occupancy detection by combining multipl
 
 ## Requirements
 
-- Home Assistant version 2024.11.0 or newer
-- Recorder integration enabled
-- At least one motion sensor
+- Home Assistant with the following required integrations:
+  - recorder
+  - sensor
+  - binary_sensor
+  - number
 
 ## Configuration
 
@@ -47,14 +53,15 @@ The setup wizard will guide you through:
 
 1. **Basic Setup**:
    - Name: Label for your monitored area
+   - Primary Occupancy Sensor: Main occupancy sensor for learning (optional but recommended)
    - Motion Sensors: Select one or more motion sensors (required)
 
 2. **Device Configuration**:
-   - Media Players: Entertainment devices
-   - Appliances: Various device sensors
+   - Media Players: Entertainment devices (active when "playing" or "paused")
+   - Appliances: Various device sensors (active when "on" or "standby")
    - Lights: Light entities
-   - Window Sensors: Window contact sensors
-   - Door Sensors: Door contact sensors
+   - Window Sensors: Window contact sensors (active when "open")
+   - Door Sensors: Door contact sensors (active when "closed")
 
 3. **Environmental Sensors**:
    - Illuminance Sensors
@@ -78,6 +85,27 @@ The setup wizard will guide you through:
    - Decay Minimum Delay: Wait time before starting decay (default: 60 seconds)
    - Enable Historical Analysis: Whether to learn from historical data
 
+## Technical Details
+
+### Probability Calculation
+
+- Probability values are bounded between 1% and 99% to prevent extreme certainty
+- Default prior probability is 17.13% based on typical home occupancy patterns
+- Probability given true state: 50%
+- Probability given false state: 10%
+
+### Time Decay
+
+- Uses an exponential decay function with λ = 0.866433976
+- This decay rate reduces probability to 25% at half of the decay window
+- Example: With default 600s window, probability reduces to 25% after 300s
+
+### Historical Analysis
+
+- Prior probabilities are learned from historical data
+- Analysis results are cached for 6 hours to improve performance
+- Historical data lookback period: 1-30 days (default: 7 days)
+
 ## Entities Created
 
 The integration creates several entities, all prefixed with your configured area name:
@@ -89,21 +117,33 @@ The integration creates several entities, all prefixed with your configured area
 
 ### Sensors
 - `sensor.[name]_occupancy_probability`: Current calculated occupancy probability
-  - Value: 0-100%
+  - Value: 1-99%
   - Attributes:
     - `active_triggers`: List of sensors currently indicating activity
     - `sensor_probabilities`: Individual probability details for each sensor
     - `threshold`: Current threshold setting
+    - `decay_active`: Whether decay is currently active
+    - `last_trigger_time`: Timestamp of last sensor trigger
 
 - `sensor.[name]_prior_probability`: Learned prior probabilities from historical analysis
-  - Value: 0-100% (average of all sensor type priors)
+  - Value: 1-99% (average of all sensor type priors)
   - Attributes:
-    - Individual prior probabilities for each sensor type
-    - Last updated timestamp
-    - Analysis period
+    - `motion_prior`: Prior probability for motion sensors
+    - `media_prior`: Prior probability for media devices
+    - `appliance_prior`: Prior probability for appliances
+    - `door_prior`: Prior probability for doors
+    - `window_prior`: Prior probability for windows
+    - `light_prior`: Prior probability for lights
+    - `environmental_prior`: Prior probability for environmental sensors
+    - `last_update`: Timestamp of last prior update
+    - `analysis_period`: Days of history analyzed
 
 - `sensor.[name]_decay_status`: Current decay influence on probability
   - Value: 0-100% (amount of decay applied)
+  - Attributes:
+    - `decay_start_time`: When decay began
+    - `original_probability`: Probability before decay started
+    - `decay_window`: Current decay window setting
 
 ### Number
 - `number.[name]_occupancy_threshold`: Adjustable threshold for occupancy determination
@@ -119,7 +159,7 @@ Manually trigger an update of the learned prior probabilities.
 Service Data:
 ```yaml
 entry_id: "<config_entry_id>"  # Required: ID of the Area Occupancy instance
-history_period: 7              # Optional: Days of history to analyze (default: configured history_period)
+history_period: 7              # Optional: Days of history to analyze (1-30 days)
 ```
 
 ## Example Automations

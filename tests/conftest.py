@@ -139,18 +139,23 @@ def mock_recorder(hass: HomeAssistant):
     def get_instance(hass):
         return mock_instance
 
-    with patch(
-        "homeassistant.components.recorder.Recorder",
-        mock_recorder_class,
-    ), patch(
-        "homeassistant.components.recorder.get_instance",
-        get_instance,
-    ), patch(
-        "homeassistant.components.recorder.core.Recorder",
-        mock_recorder_class,
-    ), patch(
-        "homeassistant.components.recorder.async_setup",
-        AsyncMock(return_value=True),
+    with (
+        patch(
+            "homeassistant.components.recorder.Recorder",
+            mock_recorder_class,
+        ),
+        patch(
+            "homeassistant.components.recorder.get_instance",
+            get_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.core.Recorder",
+            mock_recorder_class,
+        ),
+        patch(
+            "homeassistant.components.recorder.async_setup",
+            AsyncMock(return_value=True),
+        ),
     ):
         yield mock_instance
 

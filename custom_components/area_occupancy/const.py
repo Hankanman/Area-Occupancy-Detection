@@ -2,29 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Final
 from datetime import timedelta
+from typing import Final
+
 from homeassistant.const import (
-    Platform,
     STATE_CLOSED,
-    STATE_PLAYING,
-    STATE_PAUSED,
     STATE_ON,
     STATE_OPEN,
+    STATE_PAUSED,
+    STATE_PLAYING,
     STATE_STANDBY,
+    Platform,
 )
 
 DOMAIN: Final = "area_occupancy"
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.2.1"
+DEVICE_SW_VERSION: Final = "2025.4.1"
+CONF_VERSION: Final = 6
+STORAGE_VERSION: Final = 6
+STORAGE_VERSION_MINOR: Final = 1
 
 # Configuration constants
 CONF_NAME: Final = "name"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
+CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
@@ -56,9 +61,6 @@ CONF_WEIGHT_LIGHT: Final = "weight_light"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 
 # File paths and configuration
-CONF_VERSION: Final = 5
-STORAGE_VERSION: Final = 5
-STORAGE_VERSION_MINOR: Final = 1
 CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
@@ -98,8 +100,8 @@ MAX_PROBABILITY: Final[float] = 0.99
 
 # Default prior probabilities
 DEFAULT_PRIOR: Final[float] = 0.1713
-DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.3
-DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.02
+DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
+DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2

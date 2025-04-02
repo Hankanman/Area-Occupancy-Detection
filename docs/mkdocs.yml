@@ -1,0 +1,92 @@
+site_name: Area Occupancy Detection
+site_description: Documentation for the Home Assistant Area Occupancy Detection integration
+site_author: Hankanman
+repo_url: https://github.com/Hankanman/Area-Occupancy-Detection
+repo_name: Hankanman/Area-Occupancy-Detection
+edit_uri: edit/main/docs/docs/
+
+theme:
+  name: material
+  favicon: https://brands.home-assistant.io/area_occupancy/dark_icon.png
+  logo: https://brands.home-assistant.io/area_occupancy/dark_icon.png
+  palette:
+    scheme: slate
+    primary: slate
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.share
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+    - toc.integrate
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+  - pymdownx.arithmatex:
+      generic: true
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+      toc_depth: 3
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - minify:
+      minify_html: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Hankanman/Area-Occupancy-Detection
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Basic Usage: getting-started/basic-usage.md
+  - Features:
+    - Overview: features/overview.md
+    - Probability Calculation: features/probability-calculation.md
+    - Sensor Types: features/sensor-types.md
+    - Time-Based Decay: features/time-decay.md
+    - Historical Analysis: features/historical-analysis.md

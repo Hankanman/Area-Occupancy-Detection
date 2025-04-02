@@ -1,4 +1,9 @@
-"""Config flow for Area Occupancy Detection integration."""
+"""Config flow for Area Occupancy Detection integration.
+
+This module handles the configuration flow for the Area Occupancy Detection integration.
+It provides both initial configuration and options update capabilities, with comprehensive
+validation of all inputs to ensure a valid configuration.
+"""
 
 from __future__ import annotations
 
@@ -14,87 +19,105 @@ from homeassistant.config_entries import (
     ConfigFlow,
     OptionsFlowWithConfigEntry,
 )
-from homeassistant.const import (
-    CONF_NAME,
-    Platform,
-)
-from homeassistant.core import callback
+from homeassistant.const import CONF_NAME, Platform
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, section
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
-    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     SelectSelector,
     SelectSelectorConfig,
 )
-from homeassistant.helpers import entity_registry
-from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
-    DOMAIN,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_APPLIANCES,
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_WINDOW_ACTIVE_STATE,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_THRESHOLD,
-    CONF_HISTORY_PERIOD,
+    CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
     CONF_DECAY_MIN_DELAY,
+    CONF_DECAY_WINDOW,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_HISTORY_PERIOD,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
     CONF_VERSION,
-    DEFAULT_THRESHOLD,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_MIN_DELAY,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    DOMAIN,
 )
-
-from .state_mapping import (
-    get_state_options,
-    get_default_state,
-)
+from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
 
+# UI Configuration Constants
+WEIGHT_STEP = 0.05
+WEIGHT_MIN = 0
+WEIGHT_MAX = 1
+
+THRESHOLD_STEP = 1
+THRESHOLD_MIN = 0
+THRESHOLD_MAX = 100
+
+HISTORY_PERIOD_STEP = 1
+HISTORY_PERIOD_MIN = 1
+HISTORY_PERIOD_MAX = 30
+
+DECAY_WINDOW_STEP = 60
+DECAY_WINDOW_MIN = 60
+DECAY_WINDOW_MAX = 3600
+
+DECAY_MIN_DELAY_STEP = 10
+DECAY_MIN_DELAY_MIN = 0
+DECAY_MIN_DELAY_MAX = 3600
+
 
 def create_schema(
-    hass, defaults: dict[str, Any] | None = None, is_options: bool = False
+    hass: HomeAssistant,
+    defaults: dict[str, Any] | None = None,
+    is_options: bool = False,
 ) -> dict:
     """Create a schema with optional default values."""
     if defaults is None:
         defaults = {}
 
-    registry = entity_registry.async_get(hass)
+    registry = er.async_get(hass)
 
     # Get state options
     door_states = get_state_options("door")
@@ -200,6 +223,20 @@ def create_schema(
                 vol.Schema(
                     {
                         vol.Required(
+                            CONF_PRIMARY_OCCUPANCY_SENSOR,
+                            default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
+                        ): EntitySelector(
+                            EntitySelectorConfig(
+                                domain=Platform.BINARY_SENSOR,
+                                device_class=[
+                                    BinarySensorDeviceClass.MOTION,
+                                    BinarySensorDeviceClass.OCCUPANCY,
+                                    BinarySensorDeviceClass.PRESENCE,
+                                ],
+                                multiple=False,
+                            ),
+                        ),
+                        vol.Required(
                             CONF_MOTION_SENSORS,
                             default=defaults.get(CONF_MOTION_SENSORS, []),
                         ): EntitySelector(
@@ -220,9 +257,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -258,9 +295,9 @@ def create_schema(
                             default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -298,9 +335,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -326,9 +363,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -367,9 +404,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -408,9 +445,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -458,9 +495,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=WEIGHT_MIN,
+                                max=WEIGHT_MAX,
+                                step=WEIGHT_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -476,9 +513,9 @@ def create_schema(
                             default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=100,
-                                step=1,
+                                min=THRESHOLD_MIN,
+                                max=THRESHOLD_MAX,
+                                step=THRESHOLD_STEP,
                                 mode="slider",
                             ),
                         ),
@@ -489,9 +526,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=1,
-                                max=30,
-                                step=1,
+                                min=HISTORY_PERIOD_MIN,
+                                max=HISTORY_PERIOD_MAX,
+                                step=HISTORY_PERIOD_STEP,
                                 mode="slider",
                                 unit_of_measurement="days",
                             ),
@@ -509,9 +546,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=60,
-                                max=3600,
-                                step=60,
+                                min=DECAY_WINDOW_MIN,
+                                max=DECAY_WINDOW_MAX,
+                                step=DECAY_WINDOW_STEP,
                                 mode="slider",
                                 unit_of_measurement="seconds",
                             ),
@@ -523,9 +560,9 @@ def create_schema(
                             ),
                         ): NumberSelector(
                             NumberSelectorConfig(
-                                min=0,
-                                max=3600,
-                                step=10,
+                                min=DECAY_MIN_DELAY_MIN,
+                                max=DECAY_MIN_DELAY_MAX,
+                                step=DECAY_MIN_DELAY_STEP,
                                 mode="box",
                                 unit_of_measurement="seconds",
                             )
@@ -548,38 +585,111 @@ def create_schema(
 
 
 class BaseOccupancyFlow:
-    """Base class for config and options flow."""
+    """Base class for config and options flow.
+
+    This class provides shared validation logic used by both the config flow
+    and options flow. It ensures consistent validation across both flows.
+    """
 
     def _validate_config(self, data: dict[str, Any]) -> None:
-        """Validate configuration data."""
-        # Core validation
-        if CONF_NAME in data and not data.get(CONF_NAME):
-            raise HomeAssistantError("Name is required")
+        """Validate the configuration.
 
-        if CONF_MOTION_SENSORS in data and not data.get(CONF_MOTION_SENSORS):
-            raise HomeAssistantError("At least one motion sensor is required")
+        Performs comprehensive validation of all configuration fields including:
+        - Required sensors and their relationships
+        - State configurations for different device types
+        - Weight values and their ranges
 
-        # Numeric bounds validation
-        bounds = {
-            CONF_THRESHOLD: (0, 100),
-            CONF_HISTORY_PERIOD: (1, 30),
-            CONF_DECAY_WINDOW: (60, 3600),
-        }
+        Args:
+            data: Dictionary containing the configuration to validate
 
-        for field, (min_val, max_val) in bounds.items():
-            if field in data and not min_val <= data[field] <= max_val:
-                raise HomeAssistantError(
-                    f"{field.replace('_', ' ').title()} must be between {min_val} and {max_val}"
+        Raises:
+            ValueError: If any validation check fails
+
+        """
+        motion_sensors = data.get(CONF_MOTION_SENSORS, [])
+        if not motion_sensors:
+            raise ValueError("At least one motion sensor is required")
+
+        primary_sensor = data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        if not primary_sensor:
+            raise ValueError("A primary occupancy sensor must be selected")
+        if primary_sensor not in motion_sensors:
+            raise ValueError(
+                "Primary occupancy sensor must be selected from the motion sensors"
+            )
+
+        # Validate media devices
+        media_devices = data.get(CONF_MEDIA_DEVICES, [])
+        media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
+        if media_devices and not media_states:
+            raise ValueError(
+                "Media active states are required when media devices are configured"
+            )
+
+        # Validate appliances
+        appliances = data.get(CONF_APPLIANCES, [])
+        appliance_states = data.get(
+            CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
+        )
+        if appliances and not appliance_states:
+            raise ValueError(
+                "Appliance active states are required when appliances are configured"
+            )
+
+        # Validate doors
+        door_sensors = data.get(CONF_DOOR_SENSORS, [])
+        door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
+        if door_sensors and not door_state:
+            raise ValueError(
+                "Door active state is required when door sensors are configured"
+            )
+
+        # Validate windows
+        window_sensors = data.get(CONF_WINDOW_SENSORS, [])
+        window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
+        if window_sensors and not window_state:
+            raise ValueError(
+                "Window active state is required when window sensors are configured"
+            )
+
+        # Validate weights
+        weights = [
+            (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
+            (CONF_WEIGHT_MEDIA, data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA)),
+            (
+                CONF_WEIGHT_APPLIANCE,
+                data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            ),
+            (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
+            (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
+            (CONF_WEIGHT_LIGHT, data.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT)),
+            (
+                CONF_WEIGHT_ENVIRONMENTAL,
+                data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
+            ),
+        ]
+        for name, weight in weights:
+            if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
+                raise ValueError(
+                    f"{name} must be between {WEIGHT_MIN} and {WEIGHT_MAX}"
                 )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
-    """Handle a config flow for Area Occupancy Detection."""
+    """Handle a config flow for Area Occupancy Detection.
+
+    This class handles the initial configuration flow when the integration is first set up.
+    It provides a multi-step configuration process with comprehensive validation.
+    """
 
     VERSION = CONF_VERSION
 
     def __init__(self) -> None:
-        """Initialize config flow."""
+        """Initialize config flow.
+
+        Sets up the initial empty data dictionary that will store configuration
+        as it is built through the flow.
+        """
         self._data: dict[str, Any] = {}
 
     def is_matching(self, other_flow: ConfigEntry) -> bool:
@@ -613,7 +723,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
-            except Exception as err:  # pylint: disable=broad-except
+            except (ValueError, KeyError, TypeError) as err:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
@@ -625,7 +735,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> "AreaOccupancyOptionsFlow":
+    def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow."""
         return AreaOccupancyOptionsFlow(config_entry)
 
@@ -662,7 +772,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
-            except Exception as err:  # pylint: disable=broad-except
+            except (ValueError, KeyError, TypeError) as err:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 

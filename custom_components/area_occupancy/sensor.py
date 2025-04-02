@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,33 +10,23 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    PERCENTAGE,
-    EntityCategory,
-)
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
-    NAME_PROBABILITY_SENSOR,
-    NAME_PRIORS_SENSOR,
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
+    DOMAIN,
     NAME_DECAY_SENSOR,
-    CONF_NAME,
-    CONF_THRESHOLD,
-    DEFAULT_THRESHOLD,
+    NAME_PRIORS_SENSOR,
+    NAME_PROBABILITY_SENSOR,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .types import (
-    ProbabilityResult,
-    ProbabilityAttributes,
-    PriorsAttributes,
-)
 from .helpers import format_float
+from .types import PriorsAttributes, ProbabilityAttributes, ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,10 +41,10 @@ class AreaOccupancySensorBase(
         coordinator: AreaOccupancyCoordinator,
         entry_id: str,
     ) -> None:
+        """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._area_name = coordinator.config[CONF_NAME]
         self._attr_device_info = coordinator.device_info
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1
@@ -76,7 +65,9 @@ class PriorsSensor(AreaOccupancySensorBase):
         """Initialize the priors sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_PRIORS_SENSOR
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
+        )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -86,13 +77,11 @@ class PriorsSensor(AreaOccupancySensorBase):
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
         try:
-            type_priors = self.coordinator.type_priors
-            if not type_priors:
+            if not self.coordinator.prior_state:
                 return None
 
-            # Calculate average of all type priors
-            priors = [prior["prior"] for prior in type_priors.values()]
-            return sum(priors) / len(priors) * 100
+            # Return the overall prior directly from prior_state
+            return self.coordinator.prior_state.overall_prior * 100
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error calculating priors: %s", err)
@@ -102,43 +91,72 @@ class PriorsSensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> PriorsAttributes:
         """Return all prior probabilities as attributes."""
         try:
-            type_priors = self.coordinator.type_priors
+            if not self.coordinator.prior_state:
+                return {}
 
-            attributes = {
-                f"{sensor_type}": (
-                    f"T: {round(format_float(prior['prob_given_true']) * 100, 1)}% | "
-                    f"F: {round(format_float(prior['prob_given_false']) * 100, 1)}%"
-                )
-                for sensor_type, prior in type_priors.items()
+            prior_state = self.coordinator.prior_state
+
+            # Map sensor types to corresponding prior values from prior_state
+            type_prior_map = {
+                "motion": prior_state.motion_prior,
+                "media": prior_state.media_prior,
+                "appliance": prior_state.appliance_prior,
+                "door": prior_state.door_prior,
+                "window": prior_state.window_prior,
+                "light": prior_state.light_prior,
+                "environmental": prior_state.environmental_prior,
             }
+
+            # Build attribute dictionary using entity_priors for detailed values
+            attributes = {}
+            for sensor_type, prior_value in type_prior_map.items():
+                # Skip types with zero prior (not used in system)
+                if prior_value <= 0:
+                    continue
+
+                # Format attribute with consistent format
+                attributes[sensor_type] = f"Prior: {round(prior_value * 100, 1)}%"
+
+            # Add metadata attributes
+            last_updated = (
+                max(prior_state.last_updated.values())
+                if prior_state.last_updated
+                else dt_util.utcnow().isoformat()
+            )
+
+            # Check if we have any learned priors
+            has_learned_priors = bool(prior_state.entity_priors)
 
             attributes.update(
                 {
-                    "last_updated": dt_util.utcnow().isoformat(),
-                    "total_period": f"{str(
-                        timedelta(
-                            days=self.coordinator.config.get(
-                                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                            )
-                        ).days
-                    )} days",
+                    "last_updated": last_updated,
+                    "total_period": f"{prior_state.analysis_period} days",
+                    "entity_count": len(prior_state.entity_priors),
+                    "using_learned_priors": has_learned_priors,
                 }
             )
-
-            return attributes
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting prior attributes: %s", err)
             return {}
+        else:
+            return attributes
 
 
 class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
     """Probability sensor for current area occupancy."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entry_id: str,
+    ) -> None:
+        """Initialize the probability sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_PROBABILITY_SENSOR
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+        )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -146,14 +164,19 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
     @property
     def native_value(self) -> float | None:
+        """Return the current occupancy probability as a percentage."""
+        if not self.coordinator.data:
+            return 0.0
+
         try:
-            if not self.coordinator.data:
-                return None
-            probability = self.coordinator.data.get("probability", 0.0)
+            probability = self.coordinator.data.probability
             return format_float(probability * 100)
-        except (TypeError, ValueError, AttributeError) as err:
-            _LOGGER.error("Error getting probability value: %s", err)
-            return None
+        except AttributeError:
+            _LOGGER.error("Coordinator data missing probability attribute")
+            return 0.0
+        except (TypeError, ValueError) as err:
+            _LOGGER.error("Error calculating probability value: %s", err)
+            return 0.0
 
     @property
     def extra_state_attributes(self) -> ProbabilityAttributes:
@@ -161,11 +184,13 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            data: ProbabilityResult = self.coordinator.data
+            data: ProbabilityState = self.coordinator.data
 
             # Create formatted probability entries with details
             sensor_probabilities = set()  # Use a set instead of dict
-            for entity_id, prob_details in data.get("sensor_probabilities", {}).items():
+            active_triggers = []
+
+            for entity_id, prob_details in data.sensor_probabilities.items():
                 friendly_name = (
                     self.hass.states.get(entity_id).attributes.get(
                         "friendly_name", entity_id
@@ -181,30 +206,32 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
                     f"WP: {format_float(prob_details['weighted_probability'])}"
                 )
                 sensor_probabilities.add(formatted_entry)
+                active_triggers.append(friendly_name)
 
             return {
-                "active_triggers": [
-                    self.hass.states.get(entity_id).attributes.get(
-                        "friendly_name", entity_id
-                    )
-                    for entity_id in data.get("active_triggers", [])
-                    if self.hass.states.get(entity_id)
-                ],
+                "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probabilities,
-                "threshold": f"{self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)}%",
+                "threshold": f"{data.threshold * 100}%",
             }
-        except (TypeError, AttributeError, KeyError) as err:
-            _LOGGER.error("Error getting probability attributes: %s", err)
+        except (TypeError, AttributeError, KeyError):
+            _LOGGER.exception("Error getting probability attributes: %s")
             return {}
 
 
 class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
     """Decay status sensor for area occupancy."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entry_id: str,
+    ) -> None:
+        """Initialize the decay sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_DECAY_SENSOR
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+        )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -212,23 +239,16 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
 
     @property
     def native_value(self) -> float | None:
+        """Return the decay status as a percentage."""
+        if not self.coordinator.data:
+            return 0.0
+
         try:
-            if not self.coordinator.data or "decay_status" not in self.coordinator.data:
-                return 0.0
-
-            decay_values = [
-                v
-                for v in self.coordinator.data["decay_status"].values()
-                if v is not None
-            ]
-
-            if not decay_values:
-                return 0.0
-
-            average_decay = sum(decay_values) / len(decay_values)
-            return format_float(average_decay * 100)
-
-        except (TypeError, KeyError, ValueError, ZeroDivisionError) as err:
+            return format_float(100 - (self.coordinator.data.decay_status * 100))
+        except AttributeError:
+            _LOGGER.error("Coordinator data missing decay_status attribute")
+            return 0.0
+        except (TypeError, ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error calculating decay value: %s", err)
             return 0.0
 
@@ -239,7 +259,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Area Occupancy sensors based on a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
 
     sensors = [
         AreaOccupancyProbabilitySensor(coordinator, entry.entry_id),
