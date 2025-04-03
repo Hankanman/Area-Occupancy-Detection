@@ -53,7 +53,6 @@ from .const import (
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
-    CONF_VERSION,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -681,8 +680,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     This class handles the initial configuration flow when the integration is first set up.
     It provides a multi-step configuration process with comprehensive validation.
     """
-
-    VERSION = CONF_VERSION
 
     def __init__(self) -> None:
         """Initialize config flow.

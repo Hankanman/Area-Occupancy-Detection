@@ -255,13 +255,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Load and restore data from storage."""
         try:
             _LOGGER.debug("Loading stored data from storage")
+
+            # Attempt storage migration first
+            try:
+                await self.storage.async_migrate_storage()
+            except StorageError as err:
+                _LOGGER.warning(
+                    "Storage migration failed, proceeding with load: %s", err
+                )
+
+            # Load prior state after migration attempt
             name, stored_prior_state = await self.storage.async_load_prior_state()
 
             if stored_prior_state:
-                _LOGGER.debug("Found stored prior state, restoring")
+                _LOGGER.debug(
+                    "Found stored prior state for instance %s, restoring",
+                    self.config_entry.entry_id,
+                )
                 self.prior_state = stored_prior_state
             else:
-                _LOGGER.info("No stored prior state found, initializing with defaults")
+                _LOGGER.info(
+                    "No stored prior state found for instance %s, initializing with defaults",
+                    self.config_entry.entry_id,
+                )
                 # Initialize from default priors if no stored prior state
                 self.data.update(
                     probability=MIN_PROBABILITY,
@@ -292,11 +308,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 await self.storage.async_save_prior_state(
                     self.config[CONF_NAME],
                     self.prior_state,
+                    immediate=True,  # Save immediately for initial setup
                 )
 
-            _LOGGER.debug("Successfully restored stored data")
+            _LOGGER.debug(
+                "Successfully restored stored data for instance %s",
+                self.config_entry.entry_id,
+            )
         except StorageError as err:
-            _LOGGER.warning("Storage error, initializing with defaults: %s", err)
+            _LOGGER.warning(
+                "Storage error for instance %s, initializing with defaults: %s",
+                self.config_entry.entry_id,
+                err,
+            )
             # Initialize with defaults on storage error
             self.prior_state = PriorState()
             self.prior_state.initialize_from_defaults(self.probabilities)
@@ -642,15 +666,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Log current status
             _LOGGER.debug(
-                "Status: p=%.3f d=%.3f t=%s s=%s",
+                "Status: probability=%.3f threshold=%.3f decay_status=%.3f decaying=%s is_occupied=%s",
                 probability_state.probability,
+                probability_state.threshold,
                 probability_state.decay_status,
-                self._decay_unsub is not None,
-                [
-                    k
-                    for k, v in self.data.current_states.items()
-                    if v.get("state") == "on"
-                ],
+                probability_state.decaying,
+                probability_state.is_occupied,
             )
 
             # Manage decay timer
@@ -789,5 +810,4 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self, update_callback: CALLBACK_TYPE, context: Any = None
     ) -> Callable[[], None]:
         """Add a listener for data updates with improved tracking."""
-        _LOGGER.debug("Added listener: %s", self.name)
         return super().async_add_listener(update_callback, context)
