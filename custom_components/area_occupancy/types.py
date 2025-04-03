@@ -288,6 +288,9 @@ class PriorState:
     # Individual entity priors
     entity_priors: dict[str, dict[str, float]] = field(default_factory=dict)
 
+    # Type-level priors with full probability data
+    type_priors: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     # Last updated timestamps
     last_updated: dict[str, str] = field(default_factory=dict)
 
@@ -369,8 +372,20 @@ class PriorState:
         sensor_type: str,
         prior_value: float,
         timestamp: str,
+        prob_given_true: float | None = None,
+        prob_given_false: float | None = None,
     ) -> None:
-        """Update prior for a specific sensor type."""
+        """Update prior for a specific sensor type.
+
+        Args:
+            sensor_type: The type of sensor to update
+            prior_value: The prior probability value
+            timestamp: The timestamp of the update
+            prob_given_true: Optional P(sensor active | area occupied)
+            prob_given_false: Optional P(sensor active | area not occupied)
+
+        """
+        # Update the prior value
         if sensor_type == "motion":
             self.motion_prior = max(0.0, min(prior_value, 1.0))
         elif sensor_type == "media":
@@ -385,22 +400,85 @@ class PriorState:
             self.light_prior = max(0.0, min(prior_value, 1.0))
         elif sensor_type == "environmental":
             self.environmental_prior = max(0.0, min(prior_value, 1.0))
+
+        # Store the update timestamp
         self.last_updated[sensor_type] = timestamp
 
-    def calculate_overall_prior(self) -> float:
-        """Calculate the overall prior from all sensor type priors."""
-        type_priors = [
-            self.motion_prior,
-            self.media_prior,
-            self.appliance_prior,
-            self.door_prior,
-            self.window_prior,
-            self.light_prior,
-            self.environmental_prior,
-        ]
-        valid_priors = [p for p in type_priors if p > 0]
+        # Create or update type prior entry
+        type_prior = {
+            "prior": prior_value,
+            "last_updated": timestamp,
+        }
+
+        # Add conditional probabilities if provided
+        if prob_given_true is not None:
+            type_prior["prob_given_true"] = max(0.0, min(prob_given_true, 1.0))
+        if prob_given_false is not None:
+            type_prior["prob_given_false"] = max(0.0, min(prob_given_false, 1.0))
+
+        # Store the complete type prior
+        self.type_priors[sensor_type] = type_prior
+
+        # Recalculate overall prior
+        self.overall_prior = self.calculate_overall_prior()
+
+    def calculate_overall_prior(self, probabilities=None) -> float:
+        """Calculate the overall prior from sensor type priors that have configured sensors.
+
+        Args:
+            probabilities: Optional probabilities instance from coordinator
+
+        Returns:
+            Average prior probability from configured sensor types
+
+        """
+        if not probabilities:
+            # Fall back to simple calculation if no probabilities instance
+            type_priors = [
+                self.motion_prior,
+                self.media_prior,
+                self.appliance_prior,
+                self.door_prior,
+                self.window_prior,
+                self.light_prior,
+                self.environmental_prior,
+            ]
+            valid_priors = [p for p in type_priors if p > 0]
+            if not valid_priors:
+                return 0.0
+            return sum(valid_priors) / len(valid_priors)
+
+        # Get all configured entity types from entity_priors
+        configured_types = set()
+        for entity_id, prior_data in self.entity_priors.items():
+            # Skip entities with no prior data
+            if not prior_data:
+                continue
+
+            # Get entity type from probabilities
+            if entity_type := probabilities.get_entity_type(entity_id):
+                configured_types.add(entity_type)
+
+        # Only include priors for configured types
+        valid_priors = []
+        if "motion" in configured_types and self.motion_prior > 0:
+            valid_priors.append(self.motion_prior)
+        if "media" in configured_types and self.media_prior > 0:
+            valid_priors.append(self.media_prior)
+        if "appliance" in configured_types and self.appliance_prior > 0:
+            valid_priors.append(self.appliance_prior)
+        if "door" in configured_types and self.door_prior > 0:
+            valid_priors.append(self.door_prior)
+        if "window" in configured_types and self.window_prior > 0:
+            valid_priors.append(self.window_prior)
+        if "light" in configured_types and self.light_prior > 0:
+            valid_priors.append(self.light_prior)
+        if "environmental" in configured_types and self.environmental_prior > 0:
+            valid_priors.append(self.environmental_prior)
+
         if not valid_priors:
             return 0.0
+
         return sum(valid_priors) / len(valid_priors)
 
     def initialize_from_defaults(self, probabilities) -> None:
@@ -412,36 +490,62 @@ class PriorState:
         """
         timestamp = dt_util.utcnow().isoformat()
 
-        # Initialize from default type priors
+        # Get configured sensor types
+        configured_types = set()
+        for entity_id in probabilities.entity_types:
+            if entity_type := probabilities.get_entity_type(entity_id):
+                configured_types.add(entity_type)
+
+        # Initialize only configured type priors
         for sensor_type, prior_data in probabilities.get_initial_type_priors().items():
-            self.update_type_prior(
-                sensor_type, prior_data.get("prior", MIN_PROBABILITY), timestamp
-            )
+            if sensor_type in configured_types:
+                self.update_type_prior(
+                    sensor_type, prior_data.get("prior", MIN_PROBABILITY), timestamp
+                )
+            else:
+                # Set unconfigured types to 0
+                self.update_type_prior(sensor_type, 0.0, timestamp)
 
         # Calculate and set the overall prior
-        overall_prior = self.calculate_overall_prior()
+        overall_prior = self.calculate_overall_prior(probabilities)
         self.update(overall_prior=overall_prior)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the dataclass to a dictionary."""
-        return {
+        # Build base dictionary
+        result = {
             "overall_prior": self.overall_prior,
-            "motion_prior": self.motion_prior,
-            "media_prior": self.media_prior,
-            "appliance_prior": self.appliance_prior,
-            "door_prior": self.door_prior,
-            "window_prior": self.window_prior,
-            "light_prior": self.light_prior,
-            "environmental_prior": self.environmental_prior,
             "entity_priors": self.entity_priors,
             "last_updated": self.last_updated,
             "analysis_period": self.analysis_period,
         }
 
+        # Include type priors that have non-zero values
+        if self.motion_prior > 0:
+            result["motion_prior"] = self.motion_prior
+        if self.media_prior > 0:
+            result["media_prior"] = self.media_prior
+        if self.appliance_prior > 0:
+            result["appliance_prior"] = self.appliance_prior
+        if self.door_prior > 0:
+            result["door_prior"] = self.door_prior
+        if self.window_prior > 0:
+            result["window_prior"] = self.window_prior
+        if self.light_prior > 0:
+            result["light_prior"] = self.light_prior
+        if self.environmental_prior > 0:
+            result["environmental_prior"] = self.environmental_prior
+
+        # Include type_priors if not empty
+        if self.type_priors:
+            result["type_priors"] = self.type_priors
+
+        return result
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PriorState:
         """Create a PriorState from a dictionary."""
-        return cls(
+        instance = cls(
             overall_prior=float(data.get("overall_prior", 0.0)),
             motion_prior=float(data.get("motion_prior", 0.0)),
             media_prior=float(data.get("media_prior", 0.0)),
@@ -454,6 +558,12 @@ class PriorState:
             last_updated=dict(data.get("last_updated", {})),
             analysis_period=int(data.get("analysis_period", 7)),
         )
+
+        # Restore type_priors if present
+        if "type_priors" in data:
+            instance.type_priors = dict(data["type_priors"])
+
+        return instance
 
 
 class SensorState(TypedDict):

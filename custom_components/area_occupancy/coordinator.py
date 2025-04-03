@@ -184,6 +184,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Return active sensors from the synchronous cache."""
         return self._state_cache
 
+    @property
+    def prior_update_interval(self) -> timedelta:
+        """Return the interval between prior updates."""
+        return self._prior_update_interval
+
+    @property
+    def next_prior_update(self) -> datetime | None:
+        """Return the next scheduled prior update time."""
+        return self._next_prior_update
+
     async def _async_setup(self) -> None:
         """Set up the coordinator and load stored data."""
         try:
@@ -308,12 +318,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
                 self.decay_handler.reset()
 
-                # Save the initial state to ensure storage is created
-                await self.storage.async_save_prior_state(
-                    self.config[CONF_NAME],
-                    self.prior_state,
-                    immediate=True,  # Save immediately for initial setup
-                )
+                # Schedule initial save to ensure storage is created
+                await self._save_debounced_data()
 
             _LOGGER.debug(
                 "Successfully restored stored data for instance %s",
@@ -542,42 +548,41 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Calculating prior for %s sensors", len(sensors))
 
             for sensor_id in sensors:
-                if sensor_id != self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR):
-                    _LOGGER.debug("Calculating prior for sensor: %s", sensor_id)
-                    try:
-                        (
-                            prob_given_true,
-                            prob_given_false,
-                            prior,
-                        ) = await self._prior_calculator.calculate_prior(
-                            sensor_id, start_time, end_time
-                        )
-                        _LOGGER.debug(
-                            "Calculated probabilities for %s - prob_given_true: %s (type: %s), "
-                            "prob_given_false: %s (type: %s), prior: %s (type: %s)",
-                            sensor_id,
-                            prob_given_true,
-                            type(prob_given_true),
-                            prob_given_false,
-                            type(prob_given_false),
-                            prior,
-                            type(prior),
-                        )
-                    except Exception as err:
-                        _LOGGER.exception("Error calculating prior for %s", sensor_id)
-                        raise PriorCalculationError(
-                            f"Failed to calculate prior for {sensor_id}: {err}"
-                        ) from err
-
-                    # Update the prior state with entity prior
-                    _LOGGER.debug("Updating prior state for %s", sensor_id)
-                    self.prior_state.update_entity_prior(
-                        sensor_id,
+                _LOGGER.debug("Calculating prior for sensor: %s", sensor_id)
+                try:
+                    (
                         prob_given_true,
                         prob_given_false,
                         prior,
-                        dt_util.utcnow().isoformat(),
+                    ) = await self._prior_calculator.calculate_prior(
+                        sensor_id, start_time, end_time
                     )
+                    _LOGGER.debug(
+                        "Calculated probabilities for %s - prob_given_true: %s (type: %s), "
+                        "prob_given_false: %s (type: %s), prior: %s (type: %s)",
+                        sensor_id,
+                        prob_given_true,
+                        type(prob_given_true),
+                        prob_given_false,
+                        type(prob_given_false),
+                        prior,
+                        type(prior),
+                    )
+                except Exception as err:
+                    _LOGGER.exception("Error calculating prior for %s", sensor_id)
+                    raise PriorCalculationError(
+                        f"Failed to calculate prior for {sensor_id}: {err}"
+                    ) from err
+
+                # Update the prior state with entity prior
+                _LOGGER.debug("Updating prior state for %s", sensor_id)
+                self.prior_state.update_entity_prior(
+                    sensor_id,
+                    prob_given_true,
+                    prob_given_false,
+                    prior,
+                    dt_util.utcnow().isoformat(),
+                )
 
             # Calculate the overall prior after updating all entity priors
             _LOGGER.debug("Calculating overall prior")
@@ -595,17 +600,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Prior update complete, saving data")
 
             _LOGGER.info("Successfully updated learned priors")
-        except (
-            CalculationError,
-            PriorCalculationError,
-            StorageError,
-            HomeAssistantError,
-        ) as err:
-            _LOGGER.error(
-                "Error updating learned priors for area %s: %s",
-                self.config[CONF_NAME],
-                err,
-            )
+        except Exception as err:
+            _LOGGER.exception("Failed to update learned priors")
             raise CalculationError(f"Failed to update learned priors: {err}") from err
 
     async def _schedule_next_prior_update(self) -> None:
@@ -802,6 +798,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.config[CONF_NAME],
                 self.prior_state,
             )
+            self._last_save = dt_util.utcnow()
         except (TimeoutError, HomeAssistantError, ValueError, RuntimeError) as err:
             raise StorageError(f"Failed to save data: {err}") from err
 

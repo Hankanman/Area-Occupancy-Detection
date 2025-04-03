@@ -16,11 +16,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Storage configuration
 STORAGE_KEY = f"{DOMAIN}.storage"
-STORAGE_SAVE_DELAY_SECONDS = 120  # Buffer writes every 2 minutes
-
-# Version control
-OLD_VERSION = 6
-OLD_VERSION_MINOR = 1
 
 # File patterns
 STORAGE_FILE_PATTERN = f"{DOMAIN}.*.storage"
@@ -72,72 +67,6 @@ class AreaOccupancyStorageStore(Store[StoredData]):
         self.hass = hass
         self._current_version = CONF_VERSION
         self._current_minor_version = CONF_VERSION_MINOR
-        self._old_version = OLD_VERSION
-        self._old_minor_version = OLD_VERSION_MINOR
-
-    async def _async_migrate_func(
-        self,
-        old_major_version: int,
-        old_minor_version: int,
-    ) -> StoredData:
-        """Migrate to the new version by deleting old files and starting fresh."""
-        _LOGGER.debug(
-            "Starting storage migration from version %s.%s to %s.%s",
-            old_major_version,
-            old_minor_version,
-            self._current_version,
-            self._current_minor_version,
-        )
-
-        try:
-            # Clean up old files first
-            storage_dir = Path(self.hass.config.path(".storage"))
-            _LOGGER.debug(
-                "Scanning %s for old storage files matching %s",
-                storage_dir,
-                STORAGE_FILE_PATTERN,
-            )
-            found_files = list(storage_dir.glob(STORAGE_FILE_PATTERN))
-            _LOGGER.debug(
-                "Found %d storage files: %s",
-                len(found_files),
-                [f.name for f in found_files],
-            )
-
-            # Delete all old files
-            for file in found_files:
-                # Skip the new consolidated file
-                if file.name == f"{STORAGE_KEY}":
-                    _LOGGER.debug(
-                        "Skipping new consolidated storage file: %s", file.name
-                    )
-                    continue
-
-                try:
-                    _LOGGER.debug("Removing old storage file: %s", file)
-                    file.unlink()
-                    _LOGGER.info("Successfully removed old storage file: %s", file)
-                except OSError as err:
-                    _LOGGER.warning("Error removing old storage file %s: %s", file, err)
-
-            # Create fresh storage
-            _LOGGER.info("Creating fresh storage file")
-            return self.create_empty_storage()
-
-        except Exception as err:
-            raise StorageMigrationError(f"Failed to migrate storage: {err}") from err
-
-    async def async_migrate_storage(self) -> None:
-        """Force migration of storage data."""
-        _LOGGER.debug("Forcing storage migration")
-        # Load data with old version to trigger migration
-        data = await self.async_load()
-        if data is None:
-            data = self.create_empty_storage()
-
-        # Save with current version
-        await self.async_save(data)
-        _LOGGER.debug("Storage migration complete")
 
     def create_empty_storage(self) -> StoredData:
         """Create default storage structure."""
@@ -164,7 +93,8 @@ class AreaOccupancyStorage:
                 data = self.store.create_empty_storage()
 
             # Save with current version to ensure migration
-            await self.store.async_save(data)
+            self._data = data.copy()
+            await self.store.async_save(self._data)
 
             # Clean up old instance-specific storage file
             old_file = Path(
@@ -200,19 +130,29 @@ class AreaOccupancyStorage:
             if data is None:
                 _LOGGER.warning("No stored data found, creating empty storage")
                 data = self.store.create_empty_storage()
+
+            # Always ensure instances dict exists
+            if "instances" not in data:
+                data["instances"] = {}
                 await self.store.async_save(data)
-            else:
-                _LOGGER.debug(
-                    "Loaded storage data with %d instances. Current instance: %s",
-                    len(data["instances"]),
-                    self.entry_id,
-                )
-            self._data = data
+
+            _LOGGER.debug(
+                "Loaded storage data with %d instances. Current instance: %s",
+                len(data["instances"]),
+                self.entry_id,
+            )
+
+            # Log all instance IDs for debugging
+            instance_ids = list(data["instances"].keys())
+            _LOGGER.debug("Current instances in storage: %s", instance_ids)
+
+            self._data = data.copy()  # Make a copy to prevent race conditions
         except FileNotFoundError:
             _LOGGER.warning("Storage file not found, creating empty storage")
             data = self.store.create_empty_storage()
+            data["instances"] = {}
             await self.store.async_save(data)
-            self._data = data
+            self._data = data.copy()
             return data
         except Exception as err:
             _LOGGER.exception("Error loading stored data")
@@ -230,8 +170,6 @@ class AreaOccupancyStorage:
         try:
             # Load existing data first
             existing_data = await self.async_load()
-            if "instances" not in existing_data:
-                existing_data["instances"] = {}
 
             # Create instance data
             instance_data = InstanceData(
@@ -243,33 +181,20 @@ class AreaOccupancyStorage:
             # Update only the current instance's data
             existing_data["instances"][self.entry_id] = instance_data
 
+            # Log the state of instances before saving
             _LOGGER.debug(
-                "Saving storage data with %d instances. Current instance: %s",
+                "Saving storage data with %d instances. Current instance: %s. All instances: %s",
                 len(existing_data["instances"]),
                 self.entry_id,
+                list(existing_data["instances"].keys()),
             )
-            await self.store.async_save(existing_data)
-            self._data = existing_data
+
+            # Update local cache and save
+            self._data = existing_data.copy()
+            await self.store.async_save(self._data)
+
         except StorageError as err:
             _LOGGER.warning("Failed to save storage data: %s", err)
-
-    def _data_to_save(self) -> StoredData:
-        """Return data to save.
-
-        Returns:
-            The current data to save, or empty storage if no data exists
-
-        """
-        if not self._data or "instances" not in self._data:
-            _LOGGER.debug("No valid data to save, creating empty storage")
-            return self.store.create_empty_storage()
-
-        _LOGGER.debug(
-            "Saving storage data with %d instances. Current instance: %s",
-            len(self._data["instances"]),
-            self.entry_id,
-        )
-        return self._data
 
     async def async_save_prior_state(
         self, name: str, prior_state: PriorState, immediate: bool = False
@@ -279,14 +204,12 @@ class AreaOccupancyStorage:
         Args:
             name: The name of the area
             prior_state: The prior state to save
-            immediate: If True, save immediately instead of using debounced save
+            immediate: Deprecated parameter, all saves are immediate
 
         """
         try:
             # Load existing data first
             existing_data = await self.async_load()
-            if "instances" not in existing_data:
-                existing_data["instances"] = {}
 
             # Create instance data for this instance
             instance_data = InstanceData(
@@ -298,29 +221,23 @@ class AreaOccupancyStorage:
             # Update only this instance's data while preserving others
             existing_data["instances"][self.entry_id] = instance_data
 
+            # Log all instances being saved
             _LOGGER.debug(
-                "Saving prior state for instance %s (total instances: %d)",
+                "Saving prior state for instance %s (total instances: %d). All instances: %s",
+                self.entry_id,
+                len(existing_data["instances"]),
+                list(existing_data["instances"].keys()),
+            )
+
+            # Update local cache and save
+            self._data = existing_data.copy()
+            await self.store.async_save(self._data)
+            _LOGGER.debug(
+                "Saved prior state for instance %s (total instances: %d)",
                 self.entry_id,
                 len(existing_data["instances"]),
             )
 
-            if immediate:
-                await self.store.async_save(existing_data)
-                _LOGGER.debug(
-                    "Immediately saved prior state for instance %s (total instances: %d)",
-                    self.entry_id,
-                    len(existing_data["instances"]),
-                )
-            else:
-                self._data = existing_data
-                self.store.async_delay_save(
-                    self._data_to_save, STORAGE_SAVE_DELAY_SECONDS
-                )
-                _LOGGER.debug(
-                    "Scheduled save of prior state for instance %s (total instances: %d)",
-                    self.entry_id,
-                    len(existing_data["instances"]),
-                )
         except StorageError as err:
             _LOGGER.warning("Failed to save prior state: %s", err)
 
