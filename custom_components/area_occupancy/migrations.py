@@ -29,7 +29,7 @@ from .const import (
     NAME_PROBABILITY_SENSOR,
     NAME_THRESHOLD_NUMBER,
     PLATFORMS,
-    STORAGE_VERSION,
+    CONF_VERSION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             config_entry,
             data=data,
             options=options,
-            version=STORAGE_VERSION,
+            version=CONF_VERSION,
         )
         _LOGGER.info("Successfully migrated config entry")
     except (ValueError, KeyError, HomeAssistantError) as err:

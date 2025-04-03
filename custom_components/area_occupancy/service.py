@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DEFAULT_HISTORY_PERIOD, DOMAIN
+from .const import CONF_NAME, DEFAULT_HISTORY_PERIOD, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,12 @@ async def async_setup_services(hass: HomeAssistant):
             else:
                 _LOGGER.debug("Calling update_learned_priors with default period")
                 await coordinator.update_learned_priors()
+
+            # Immediately save the updated priors to storage
+            _LOGGER.debug("Saving updated priors to storage")
+            await coordinator.storage.async_save_prior_state(
+                coordinator.config[CONF_NAME], coordinator.prior_state, immediate=True
+            )
 
             # Trigger a coordinator refresh
             _LOGGER.debug("Triggering coordinator refresh")

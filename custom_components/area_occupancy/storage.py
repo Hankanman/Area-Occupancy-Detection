@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_NAME, DOMAIN, STORAGE_VERSION, STORAGE_VERSION_MINOR
+from .const import CONF_NAME, DOMAIN, CONF_VERSION_MINOR, CONF_VERSION
 from .exceptions import StorageError
 from .types import PriorState
 
@@ -20,12 +20,9 @@ STORAGE_SAVE_DELAY_SECONDS = 120
 class StoredData(TypedDict):
     """TypedDict for stored data structure."""
 
-    version: int
-    version_minor: int
-    last_updated: str
-    data: dict[str, Any]
     name: str | None
     prior_state: dict[str, Any] | None
+    last_updated: str
 
 
 class AreaOccupancyStorageStore(Store[StoredData]):
@@ -39,9 +36,9 @@ class AreaOccupancyStorageStore(Store[StoredData]):
         """Initialize the store."""
         super().__init__(
             hass,
-            STORAGE_VERSION,
+            CONF_VERSION,
             f"{DOMAIN}.{entry_id}.storage",
-            minor_version=STORAGE_VERSION_MINOR,
+            minor_version=CONF_VERSION_MINOR,
             atomic_writes=True,
             private=True,  # Mark as private since it contains state data
         )
@@ -57,28 +54,33 @@ class AreaOccupancyStorageStore(Store[StoredData]):
             "Migrating storage from version %s.%s to %s.%s",
             old_major_version,
             old_minor_version,
-            STORAGE_VERSION,
-            STORAGE_VERSION_MINOR,
+            CONF_VERSION,
+            CONF_VERSION_MINOR,
         )
 
         if not old_data:
             return self.create_empty_storage()
 
-        data = dict(old_data)
-        data["version"] = STORAGE_VERSION
-        data["version_minor"] = STORAGE_VERSION_MINOR
+        # Handle migration from old nested structure to new flat structure
+        if "data" in old_data:
+            old_data = old_data["data"]
+
+        # Ensure we have all required fields
+        data = {
+            "name": old_data.get("name"),
+            "prior_state": old_data.get("prior_state"),
+            "last_updated": old_data.get("last_updated", dt_util.utcnow().isoformat()),
+        }
+
         return data
 
     def create_empty_storage(self) -> StoredData:
         """Create default storage structure."""
         now = dt_util.utcnow().isoformat()
         return StoredData(
-            version=STORAGE_VERSION,
-            version_minor=STORAGE_VERSION_MINOR,
-            last_updated=now,
-            data={},
             name=None,
             prior_state=None,
+            last_updated=now,
         )
 
 
@@ -97,8 +99,16 @@ class AreaOccupancyStorage:
         try:
             data = await self.store.async_load()
             if data is None:
+                _LOGGER.warning("No stored data found, creating empty storage")
                 data = self.store.create_empty_storage()
-                await self.async_save(data)
+                # Immediately save the empty storage to ensure the file exists
+                await self.store.async_save(data)
+            self._data = data
+        except FileNotFoundError:
+            _LOGGER.warning("Storage file not found, creating empty storage")
+            data = self.store.create_empty_storage()
+            # Immediately save the empty storage to ensure the file exists
+            await self.store.async_save(data)
             self._data = data
         except Exception as err:
             _LOGGER.exception("Error loading stored data")
@@ -122,12 +132,15 @@ class AreaOccupancyStorage:
             return self.store.create_empty_storage()
         return self._data
 
-    async def async_save_prior_state(self, name: str, prior_state: PriorState) -> None:
+    async def async_save_prior_state(
+        self, name: str, prior_state: PriorState, immediate: bool = False
+    ) -> None:
         """Save prior state data to storage.
 
         Args:
             name: The name of the area
             prior_state: The prior state to save
+            immediate: If True, save immediately instead of using debounced save
 
         """
         try:
@@ -135,7 +148,11 @@ class AreaOccupancyStorage:
             data["name"] = name
             data["prior_state"] = prior_state.to_dict()
             data["last_updated"] = dt_util.utcnow().isoformat()
-            await self.async_save(data)
+
+            if immediate:
+                await self.store.async_save(data)
+            else:
+                await self.async_save(data)
         except Exception as err:
             _LOGGER.exception("Error saving prior state")
             raise StorageError(f"Failed to save prior state: {err}") from err
