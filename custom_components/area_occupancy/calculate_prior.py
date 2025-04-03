@@ -61,17 +61,24 @@ class PriorCalculator:
         self.config = coordinator.config
         self.probabilities = probabilities
         self.hass = hass
-        self._cache_duration = timedelta(minutes=5)
+
+        # Match cache duration to update interval and track last clear
+        self._cache_duration = coordinator._prior_update_interval
         self._last_cache_clear = dt_util.utcnow()
+        self._cache = {}
 
         # Use sensor inputs from coordinator
         self.inputs = coordinator.inputs
 
     def _should_clear_cache(self) -> bool:
-        """Check if cache should be cleared based on time elapsed."""
-        now = dt_util.utcnow()
-        if now - self._last_cache_clear > self._cache_duration:
-            self._last_cache_clear = now
+        """Check if cache should be cleared based on next update time."""
+        # Clear cache if we've passed the next scheduled update time
+        if (
+            self.coordinator._next_prior_update
+            and dt_util.utcnow() >= self.coordinator._next_prior_update
+        ):
+            self._last_cache_clear = dt_util.utcnow()
+            self._cache.clear()
             return True
         return False
 

@@ -18,14 +18,21 @@ async def async_setup_services(hass: HomeAssistant):
 
     async def update_priors(call):
         """Manually trigger an update of learned priors."""
+        entry_id = call.data["entry_id"]
+
+        def raise_error(msg: str, err: Exception | None = None) -> None:
+            """Raise appropriate error with consistent format."""
+            error_msg = f"{msg}: {err}" if err else msg
+            _LOGGER.error(
+                "Failed to update priors for instance %s: %s", entry_id, error_msg
+            )
+            raise HomeAssistantError(error_msg)
+
         try:
-            entry_id = call.data["entry_id"]
             _LOGGER.debug("Updating priors for entry_id: %s", entry_id)
 
             if DOMAIN not in hass.data or entry_id not in hass.data[DOMAIN]:
-                raise HomeAssistantError(
-                    f"Integration or instance {entry_id} not found"
-                )
+                raise_error(f"Integration or instance {entry_id} not found")
 
             coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
             _LOGGER.debug("Found coordinator for entry_id %s", entry_id)
@@ -53,7 +60,7 @@ async def async_setup_services(hass: HomeAssistant):
                         entry_id,
                         err,
                     )
-                    raise
+                    raise_error("Failed to update learned priors", err)
             else:
                 _LOGGER.debug(
                     "Calling update_learned_priors with default period for instance %s",
@@ -87,18 +94,9 @@ async def async_setup_services(hass: HomeAssistant):
             )
 
         except KeyError as err:
-            _LOGGER.error("Invalid entry_id or coordinator not found: %s", err)
-            raise HomeAssistantError(
-                f"Invalid entry_id or coordinator not found: {err}"
-            ) from err
+            raise_error("Invalid entry_id or coordinator not found", err)
         except (HomeAssistantError, ValueError, RuntimeError) as err:
-            _LOGGER.error(
-                "Failed to update priors for instance %s: %s (type: %s)",
-                entry_id,
-                err,
-                type(err),
-            )
-            raise HomeAssistantError(f"Failed to update priors: {err}") from err
+            raise_error("Failed to update priors", err)
 
     service_schema_update_priors = vol.Schema(
         {
