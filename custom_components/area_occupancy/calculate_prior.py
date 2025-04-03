@@ -7,7 +7,7 @@ the likelihood of occupancy based on various sensor states.
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from typing import Any
 
