@@ -17,6 +17,7 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers.event import (
+    async_track_point_in_time,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -90,11 +91,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         # Initialize timers and intervals
         self._prior_update_interval = timedelta(hours=1)
+        self._prior_update_tracker = None
+        self._next_prior_update = None
         self._save_interval = timedelta(seconds=10)
         self._last_save = dt_util.utcnow()
 
         # Initialize tracking
-        self._prior_update_tracker = None
         self._remove_state_listener = None
 
         # Initialize state management
@@ -196,8 +198,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Calculate initial priors before scheduling updates
             await self.update_learned_priors()
 
-            # Schedule prior updates
-            self.async_track_prior_updates()
+            # Schedule prior updates at hour boundaries
+            await self._schedule_next_prior_update()
 
             _LOGGER.info(
                 "Successfully set up AreaOccupancyCoordinator for %s",
@@ -230,19 +232,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
         self._stop_decay_updates()
-        await super().async_shutdown()
-        # Additional cleanup specific to our use case
-        if hasattr(self, "_prior_update_tracker"):
+
+        # Cancel prior update tracker
+        if self._prior_update_tracker is not None:
             self._prior_update_tracker()
             self._prior_update_tracker = None
 
-        # Save final state
-        await self._save_debounced_data()
+        await super().async_shutdown()
 
-        # Remove state listener
-        if self._remove_state_listener is not None:
+        # Additional cleanup specific to our use case
+        if hasattr(self, "_remove_state_listener"):
             self._remove_state_listener()
             self._remove_state_listener = None
+
+        # Save final state
+        await self._save_debounced_data()
 
         # Clear data
         self.data = None
@@ -591,25 +595,57 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Prior update complete, saving data")
 
             _LOGGER.info("Successfully updated learned priors")
-        except Exception as err:
-            _LOGGER.exception("Failed to update learned priors")
+        except (
+            CalculationError,
+            PriorCalculationError,
+            StorageError,
+            HomeAssistantError,
+        ) as err:
+            _LOGGER.error(
+                "Error updating learned priors for area %s: %s",
+                self.config[CONF_NAME],
+                err,
+            )
             raise CalculationError(f"Failed to update learned priors: {err}") from err
 
-    def async_track_prior_updates(self) -> None:
-        """Set up periodic prior updates using Home Assistant's async_track_time_interval."""
+    async def _schedule_next_prior_update(self) -> None:
+        """Schedule the next prior update at the start of the next hour."""
+        now = dt_util.utcnow()
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        self._next_prior_update = next_hour
 
-        async def _update_priors_wrapper(_):
-            try:
-                await self.update_learned_priors()
-            except (TimeoutError, HomeAssistantError, ValueError, RuntimeError) as err:
-                _LOGGER.error("Error in scheduled prior update: %s", err)
-
-        if hasattr(self, "_prior_update_tracker"):
+        # Cancel any existing update
+        if self._prior_update_tracker is not None:
             self._prior_update_tracker()
 
-        self._prior_update_tracker = async_track_time_interval(
-            self.hass, _update_priors_wrapper, self._prior_update_interval
+        self._prior_update_tracker = async_track_point_in_time(
+            self.hass, self._handle_prior_update, next_hour
         )
+        _LOGGER.debug(
+            "Scheduled next prior update for %s in area %s",
+            next_hour,
+            self.config[CONF_NAME],
+        )
+
+    async def _handle_prior_update(self, _now: datetime) -> None:
+        """Handle the prior update and schedule the next one."""
+        try:
+            await self.update_learned_priors()
+            _LOGGER.debug("Updated learned priors for area %s", self.config[CONF_NAME])
+        except (
+            CalculationError,
+            PriorCalculationError,
+            StorageError,
+            HomeAssistantError,
+        ) as err:
+            _LOGGER.error(
+                "Error updating learned priors for area %s: %s",
+                self.config[CONF_NAME],
+                err,
+            )
+
+        # Schedule next update
+        await self._schedule_next_prior_update()
 
     def _start_decay_updates(self) -> None:
         """Start regular decay updates every 5 seconds."""

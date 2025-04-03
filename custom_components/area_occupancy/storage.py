@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
