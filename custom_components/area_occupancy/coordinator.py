@@ -254,10 +254,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
         try:
-            _, stored_prior_state = await self.storage.async_load_prior_state()
+            _LOGGER.debug("Loading stored data from storage")
+            name, stored_prior_state = await self.storage.async_load_prior_state()
+
             if stored_prior_state:
+                _LOGGER.debug("Found stored prior state, restoring")
                 self.prior_state = stored_prior_state
             else:
+                _LOGGER.info("No stored prior state found, initializing with defaults")
                 # Initialize from default priors if no stored prior state
                 self.data.update(
                     probability=MIN_PROBABILITY,
@@ -284,15 +288,75 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
                 self.decay_handler.reset()
 
+                # Save the initial state to ensure storage is created
+                await self.storage.async_save_prior_state(
+                    self.config[CONF_NAME],
+                    self.prior_state,
+                )
+
             _LOGGER.debug("Successfully restored stored data")
-        except Exception as err:
+        except StorageError as err:
+            _LOGGER.warning("Storage error, initializing with defaults: %s", err)
+            # Initialize with defaults on storage error
+            self.prior_state = PriorState()
+            self.prior_state.initialize_from_defaults(self.probabilities)
+            self.prior_state.update(
+                analysis_period=self.config.get(
+                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                ),
+            )
             raise StorageError(f"Failed to load stored data: {err}") from err
 
     async def async_update_options(self) -> None:
         """Update coordinator options with improved error handling."""
         try:
+            _LOGGER.debug(
+                "Coordinator async_update_options starting with config: %s", self.config
+            )
+
+            # Update configuration first
             self.config = {**self.config_entry.data, **self.config_entry.options}
+            _LOGGER.debug("Updated config: %s", self.config)
+
+            # Reinitialize all components with new configuration
+            _LOGGER.debug("Reinitializing all components with new configuration")
+
+            # Reset state tracking
+            self.data = ProbabilityState()
+            self.data.update(
+                probability=MIN_PROBABILITY,
+                previous_probability=MIN_PROBABILITY,
+                threshold=self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0,
+                prior_probability=MIN_PROBABILITY,
+                sensor_probabilities={},
+                decay_status=0.0,
+                current_states={},
+                previous_states={},
+                is_occupied=False,
+                decaying=False,
+                decay_start_time=None,
+            )
+
+            # Reset all components
+            self.inputs = SensorInputs.from_config(self.config)
             self.probabilities = Probabilities(config=self.config)
+
+            # Reset prior state
+            self.prior_state = PriorState()
+            self.prior_state.initialize_from_defaults(self.probabilities)
+            self.prior_state.update(
+                analysis_period=self.config.get(
+                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                ),
+            )
+
+            # Save the reset prior state immediately
+            await self.storage.async_save_prior_state(
+                self.config[CONF_NAME], self.prior_state, immediate=True
+            )
+
+            # Reset remaining components
+            self.decay_handler = DecayHandler(self.config)
             self.calculator = ProbabilityCalculator(
                 decay_handler=self.decay_handler,
                 probability_state=self.data,
@@ -305,20 +369,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 hass=self.hass,
             )
 
-            # Update prior state analysis period
-            self.prior_state.update(
-                analysis_period=self.config.get(
-                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                )
-            )
+            # Clear state cache and state manager
+            self._state_cache = {}
+            self._state_manager = OccupancyStateManager()
 
-            self._setup_entity_tracking()
+            # Initialize states for current sensors
             await self.async_initialize_states()
+
+            # Force immediate refresh to reflect changes
             await self.async_refresh()
+            _LOGGER.debug("Coordinator async_update_options completed")
 
         except (ValueError, KeyError) as err:
+            _LOGGER.error("Invalid configuration in async_update_options: %s", err)
             raise ConfigEntryError(f"Invalid configuration: {err}") from err
         except HomeAssistantError as err:
+            _LOGGER.error("Failed to update coordinator options: %s", err)
             raise ConfigEntryNotReady(
                 f"Failed to update coordinator options: {err}"
             ) from err
