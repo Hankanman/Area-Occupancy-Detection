@@ -471,3 +471,17 @@ class Probabilities:
             return {}
         else:
             return priors
+
+    def get_entity_type(self, entity_id: str) -> EntityType | None:
+        """Get the type of an entity based on configuration.
+
+        Args:
+            entity_id: The entity ID to check
+
+        Returns:
+            The entity type or None if not found
+
+        """
+        if entity_id in self.entity_types:
+            return self.entity_types[entity_id]
+        return None
