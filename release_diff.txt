@@ -1,0 +1,1113 @@
+diff --git a/custom_components/area_occupancy/__init__.py b/custom_components/area_occupancy/__init__.py
+index 698f730..0b1392a 100644
+--- a/custom_components/area_occupancy/__init__.py
++++ b/custom_components/area_occupancy/__init__.py
+@@ -28,13 +28,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+ 
+ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+     """Set up Area Occupancy Detection from a config entry."""
+-    _LOGGER.debug("Starting async_setup_entry for %s", entry.entry_id)
+     try:
+         hass.data.setdefault(DOMAIN, {})
+         _LOGGER.debug("Checking entry version")
+ 
+         # Check if area_id is present and needs migration
+-        if entry.version < CONF_VERSION or not entry.version:
++        if entry.version != CONF_VERSION or not entry.version:
+             _LOGGER.debug(
+                 "Migrating entry from version %s to %s", entry.version, CONF_VERSION
+             )
+@@ -46,22 +45,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+         # Initialize the coordinator with the unified configuration
+         coordinator = AreaOccupancyCoordinator(hass, entry)
+ 
+-        _LOGGER.debug("Loading stored data")
+         # Load stored data and initialize states
+-        await coordinator.async_load_stored_data()
++        try:
++            await coordinator.async_load_stored_data()
++            await coordinator.async_initialize_states()
++        except Exception as err:
++            _LOGGER.error("Failed to load stored data: %s", err)
++            raise ConfigEntryNotReady("Failed to load stored data") from err
+ 
+-        _LOGGER.debug("Initializing states")
+-        await coordinator.async_initialize_states()
+-
+-        _LOGGER.debug("Performing initial refresh")
+         # Trigger an initial refresh
+         await coordinator.async_refresh()
+ 
+-        _LOGGER.debug("Storing coordinator")
+         # Store the coordinator for future use
+         hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
+ 
+-        _LOGGER.debug("Setting up platforms: %s", PLATFORMS)
+         # Setup platforms
+         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+ 
+diff --git a/custom_components/area_occupancy/calculate_prior.py b/custom_components/area_occupancy/calculate_prior.py
+index fa5cf1c..30030e7 100644
+--- a/custom_components/area_occupancy/calculate_prior.py
++++ b/custom_components/area_occupancy/calculate_prior.py
+@@ -61,17 +61,24 @@ class PriorCalculator:
+         self.config = coordinator.config
+         self.probabilities = probabilities
+         self.hass = hass
+-        self._cache_duration = timedelta(minutes=5)
++
++        # Match cache duration to update interval and track last clear
++        self._cache_duration = coordinator._prior_update_interval
+         self._last_cache_clear = dt_util.utcnow()
++        self._cache = {}
+ 
+         # Use sensor inputs from coordinator
+         self.inputs = coordinator.inputs
+ 
+     def _should_clear_cache(self) -> bool:
+-        """Check if cache should be cleared based on time elapsed."""
+-        now = dt_util.utcnow()
+-        if now - self._last_cache_clear > self._cache_duration:
+-            self._last_cache_clear = now
++        """Check if cache should be cleared based on next update time."""
++        # Clear cache if we've passed the next scheduled update time
++        if (
++            self.coordinator._next_prior_update
++            and dt_util.utcnow() >= self.coordinator._next_prior_update
++        ):
++            self._last_cache_clear = dt_util.utcnow()
++            self._cache.clear()
+             return True
+         return False
+ 
+@@ -160,7 +167,11 @@ class PriorCalculator:
+         if end_time <= start_time:
+             raise ValueError("End time must be after start time")
+ 
+-        _LOGGER.debug("Prior calc: %s", entity_id)
++        _LOGGER.debug(
++            "Prior calc for instance %s: %s",
++            self.coordinator.config_entry.entry_id,
++            entity_id,
++        )
+ 
+         # Get states for both sensors in parallel for better performance
+         try:
+@@ -171,7 +182,11 @@ class PriorCalculator:
+                 self._get_states_from_recorder(entity_id, start_time, end_time),
+             )
+         except (HomeAssistantError, SQLAlchemyError, RuntimeError) as err:
+-            _LOGGER.error("Error fetching states: %s", err)
++            _LOGGER.error(
++                "Error fetching states for instance %s: %s",
++                self.coordinator.config_entry.entry_id,
++                err,
++            )
+             return (
+                 float(DEFAULT_PROB_GIVEN_TRUE),
+                 float(DEFAULT_PROB_GIVEN_FALSE),
+@@ -179,7 +194,10 @@ class PriorCalculator:
+             )
+ 
+         if not primary_states or not entity_states:
+-            _LOGGER.warning("No sensor data available")
++            _LOGGER.warning(
++                "No sensor data available for instance %s",
++                self.coordinator.config_entry.entry_id,
++            )
+             return (
+                 float(DEFAULT_PROB_GIVEN_TRUE),
+                 float(DEFAULT_PROB_GIVEN_FALSE),
+diff --git a/custom_components/area_occupancy/calculate_prob.py b/custom_components/area_occupancy/calculate_prob.py
+index 800b715..fc86dbe 100644
+--- a/custom_components/area_occupancy/calculate_prob.py
++++ b/custom_components/area_occupancy/calculate_prob.py
+@@ -58,7 +58,6 @@ class ProbabilityCalculator:
+             Updated probability state
+ 
+         """
+-        _LOGGER.debug("Starting probability calculation")
+         sensor_probs: dict[str, SensorProbability] = {}
+ 
+         try:
+@@ -87,13 +86,6 @@ class ProbabilityCalculator:
+                 MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
+             )
+ 
+-            _LOGGER.debug(
+-                "Final: base=%.3f final=%.3f decay=%.3f",
+-                decayed_probability,
+-                final_probability,
+-                decay_status,
+-            )
+-
+             # Update the state with all calculated values
+             self._update_probability_state(
+                 final_probability=final_probability,
+diff --git a/custom_components/area_occupancy/config_flow.py b/custom_components/area_occupancy/config_flow.py
+index 174c989..53436ed 100644
+--- a/custom_components/area_occupancy/config_flow.py
++++ b/custom_components/area_occupancy/config_flow.py
+@@ -53,7 +53,6 @@ from .const import (
+     CONF_PRIMARY_OCCUPANCY_SENSOR,
+     CONF_TEMPERATURE_SENSORS,
+     CONF_THRESHOLD,
+-    CONF_VERSION,
+     CONF_WEIGHT_APPLIANCE,
+     CONF_WEIGHT_DOOR,
+     CONF_WEIGHT_ENVIRONMENTAL,
+@@ -682,8 +681,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
+     It provides a multi-step configuration process with comprehensive validation.
+     """
+ 
+-    VERSION = CONF_VERSION
+-
+     def __init__(self) -> None:
+         """Initialize config flow.
+ 
+diff --git a/custom_components/area_occupancy/const.py b/custom_components/area_occupancy/const.py
+index 77b8fe5..eb2e738 100644
+--- a/custom_components/area_occupancy/const.py
++++ b/custom_components/area_occupancy/const.py
+@@ -22,9 +22,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
+ DEVICE_MANUFACTURER: Final = "Hankanman"
+ DEVICE_MODEL: Final = "Area Occupancy Detector"
+ DEVICE_SW_VERSION: Final = "2025.4.1"
+-CONF_VERSION: Final = 6
+-STORAGE_VERSION: Final = 6
+-STORAGE_VERSION_MINOR: Final = 1
++CONF_VERSION: Final = 7
++CONF_VERSION_MINOR: Final = 1
+ 
+ # Configuration constants
+ CONF_NAME: Final = "name"
+diff --git a/custom_components/area_occupancy/coordinator.py b/custom_components/area_occupancy/coordinator.py
+index 0b2b74d..fe7b1a2 100644
+--- a/custom_components/area_occupancy/coordinator.py
++++ b/custom_components/area_occupancy/coordinator.py
+@@ -17,6 +17,7 @@ from homeassistant.exceptions import (
+     ServiceValidationError,
+ )
+ from homeassistant.helpers.event import (
++    async_track_point_in_time,
+     async_track_state_change_event,
+     async_track_time_interval,
+ )
+@@ -90,11 +91,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+ 
+         # Initialize timers and intervals
+         self._prior_update_interval = timedelta(hours=1)
++        self._prior_update_tracker = None
++        self._next_prior_update = None
+         self._save_interval = timedelta(seconds=10)
+         self._last_save = dt_util.utcnow()
+ 
+         # Initialize tracking
+-        self._prior_update_tracker = None
+         self._remove_state_listener = None
+ 
+         # Initialize state management
+@@ -196,8 +198,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+             # Calculate initial priors before scheduling updates
+             await self.update_learned_priors()
+ 
+-            # Schedule prior updates
+-            self.async_track_prior_updates()
++            # Schedule prior updates at hour boundaries
++            await self._schedule_next_prior_update()
+ 
+             _LOGGER.info(
+                 "Successfully set up AreaOccupancyCoordinator for %s",
+@@ -230,20 +232,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+     async def async_shutdown(self) -> None:
+         """Shutdown the coordinator."""
+         self._stop_decay_updates()
+-        await super().async_shutdown()
+-        # Additional cleanup specific to our use case
+-        if hasattr(self, "_prior_update_tracker"):
++
++        # Cancel prior update tracker
++        if self._prior_update_tracker is not None:
+             self._prior_update_tracker()
+             self._prior_update_tracker = None
+ 
+-        # Save final state
+-        await self._save_debounced_data()
++        await super().async_shutdown()
+ 
+-        # Remove state listener
+-        if self._remove_state_listener is not None:
++        # Additional cleanup specific to our use case
++        if hasattr(self, "_remove_state_listener"):
+             self._remove_state_listener()
+             self._remove_state_listener = None
+ 
++        # Save final state
++        await self._save_debounced_data()
++
+         # Clear data
+         self.data = None
+         self.prior_state = None
+@@ -254,10 +258,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+     async def async_load_stored_data(self) -> None:
+         """Load and restore data from storage."""
+         try:
+-            _, stored_prior_state = await self.storage.async_load_prior_state()
++            _LOGGER.debug("Loading stored data from storage")
++
++            # Attempt storage migration first
++            try:
++                await self.storage.async_migrate_storage()
++            except StorageError as err:
++                _LOGGER.warning(
++                    "Storage migration failed, proceeding with load: %s", err
++                )
++
++            # Load prior state after migration attempt
++            name, stored_prior_state = await self.storage.async_load_prior_state()
++
+             if stored_prior_state:
++                _LOGGER.debug(
++                    "Found stored prior state for instance %s, restoring",
++                    self.config_entry.entry_id,
++                )
+                 self.prior_state = stored_prior_state
+             else:
++                _LOGGER.info(
++                    "No stored prior state found for instance %s, initializing with defaults",
++                    self.config_entry.entry_id,
++                )
+                 # Initialize from default priors if no stored prior state
+                 self.data.update(
+                     probability=MIN_PROBABILITY,
+@@ -284,15 +308,83 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+ 
+                 self.decay_handler.reset()
+ 
+-            _LOGGER.debug("Successfully restored stored data")
+-        except Exception as err:
++                # Save the initial state to ensure storage is created
++                await self.storage.async_save_prior_state(
++                    self.config[CONF_NAME],
++                    self.prior_state,
++                    immediate=True,  # Save immediately for initial setup
++                )
++
++            _LOGGER.debug(
++                "Successfully restored stored data for instance %s",
++                self.config_entry.entry_id,
++            )
++        except StorageError as err:
++            _LOGGER.warning(
++                "Storage error for instance %s, initializing with defaults: %s",
++                self.config_entry.entry_id,
++                err,
++            )
++            # Initialize with defaults on storage error
++            self.prior_state = PriorState()
++            self.prior_state.initialize_from_defaults(self.probabilities)
++            self.prior_state.update(
++                analysis_period=self.config.get(
++                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
++                ),
++            )
+             raise StorageError(f"Failed to load stored data: {err}") from err
+ 
+     async def async_update_options(self) -> None:
+         """Update coordinator options with improved error handling."""
+         try:
++            _LOGGER.debug(
++                "Coordinator async_update_options starting with config: %s", self.config
++            )
++
++            # Update configuration first
+             self.config = {**self.config_entry.data, **self.config_entry.options}
++            _LOGGER.debug("Updated config: %s", self.config)
++
++            # Reinitialize all components with new configuration
++            _LOGGER.debug("Reinitializing all components with new configuration")
++
++            # Reset state tracking
++            self.data = ProbabilityState()
++            self.data.update(
++                probability=MIN_PROBABILITY,
++                previous_probability=MIN_PROBABILITY,
++                threshold=self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0,
++                prior_probability=MIN_PROBABILITY,
++                sensor_probabilities={},
++                decay_status=0.0,
++                current_states={},
++                previous_states={},
++                is_occupied=False,
++                decaying=False,
++                decay_start_time=None,
++            )
++
++            # Reset all components
++            self.inputs = SensorInputs.from_config(self.config)
+             self.probabilities = Probabilities(config=self.config)
++
++            # Reset prior state
++            self.prior_state = PriorState()
++            self.prior_state.initialize_from_defaults(self.probabilities)
++            self.prior_state.update(
++                analysis_period=self.config.get(
++                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
++                ),
++            )
++
++            # Save the reset prior state immediately
++            await self.storage.async_save_prior_state(
++                self.config[CONF_NAME], self.prior_state, immediate=True
++            )
++
++            # Reset remaining components
++            self.decay_handler = DecayHandler(self.config)
+             self.calculator = ProbabilityCalculator(
+                 decay_handler=self.decay_handler,
+                 probability_state=self.data,
+@@ -305,20 +397,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+                 hass=self.hass,
+             )
+ 
+-            # Update prior state analysis period
+-            self.prior_state.update(
+-                analysis_period=self.config.get(
+-                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+-                )
+-            )
++            # Clear state cache and state manager
++            self._state_cache = {}
++            self._state_manager = OccupancyStateManager()
+ 
+-            self._setup_entity_tracking()
++            # Initialize states for current sensors
+             await self.async_initialize_states()
++
++            # Force immediate refresh to reflect changes
+             await self.async_refresh()
++            _LOGGER.debug("Coordinator async_update_options completed")
+ 
+         except (ValueError, KeyError) as err:
++            _LOGGER.error("Invalid configuration in async_update_options: %s", err)
+             raise ConfigEntryError(f"Invalid configuration: {err}") from err
+         except HomeAssistantError as err:
++            _LOGGER.error("Failed to update coordinator options: %s", err)
+             raise ConfigEntryNotReady(
+                 f"Failed to update coordinator options: {err}"
+             ) from err
+@@ -501,25 +595,57 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+             _LOGGER.debug("Prior update complete, saving data")
+ 
+             _LOGGER.info("Successfully updated learned priors")
+-        except Exception as err:
+-            _LOGGER.exception("Failed to update learned priors")
++        except (
++            CalculationError,
++            PriorCalculationError,
++            StorageError,
++            HomeAssistantError,
++        ) as err:
++            _LOGGER.error(
++                "Error updating learned priors for area %s: %s",
++                self.config[CONF_NAME],
++                err,
++            )
+             raise CalculationError(f"Failed to update learned priors: {err}") from err
+ 
+-    def async_track_prior_updates(self) -> None:
+-        """Set up periodic prior updates using Home Assistant's async_track_time_interval."""
++    async def _schedule_next_prior_update(self) -> None:
++        """Schedule the next prior update at the start of the next hour."""
++        now = dt_util.utcnow()
++        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
++        self._next_prior_update = next_hour
+ 
+-        async def _update_priors_wrapper(_):
+-            try:
+-                await self.update_learned_priors()
+-            except (TimeoutError, HomeAssistantError, ValueError, RuntimeError) as err:
+-                _LOGGER.error("Error in scheduled prior update: %s", err)
+-
+-        if hasattr(self, "_prior_update_tracker"):
++        # Cancel any existing update
++        if self._prior_update_tracker is not None:
+             self._prior_update_tracker()
+ 
+-        self._prior_update_tracker = async_track_time_interval(
+-            self.hass, _update_priors_wrapper, self._prior_update_interval
++        self._prior_update_tracker = async_track_point_in_time(
++            self.hass, self._handle_prior_update, next_hour
+         )
++        _LOGGER.debug(
++            "Scheduled next prior update for %s in area %s",
++            next_hour,
++            self.config[CONF_NAME],
++        )
++
++    async def _handle_prior_update(self, _now: datetime) -> None:
++        """Handle the prior update and schedule the next one."""
++        try:
++            await self.update_learned_priors()
++            _LOGGER.debug("Updated learned priors for area %s", self.config[CONF_NAME])
++        except (
++            CalculationError,
++            PriorCalculationError,
++            StorageError,
++            HomeAssistantError,
++        ) as err:
++            _LOGGER.error(
++                "Error updating learned priors for area %s: %s",
++                self.config[CONF_NAME],
++                err,
++            )
++
++        # Schedule next update
++        await self._schedule_next_prior_update()
+ 
+     def _start_decay_updates(self) -> None:
+         """Start regular decay updates every 5 seconds."""
+@@ -576,15 +702,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+ 
+             # Log current status
+             _LOGGER.debug(
+-                "Status: p=%.3f d=%.3f t=%s s=%s",
++                "Status: probability=%.3f threshold=%.3f decay_status=%.3f decaying=%s is_occupied=%s",
+                 probability_state.probability,
++                probability_state.threshold,
+                 probability_state.decay_status,
+-                self._decay_unsub is not None,
+-                [
+-                    k
+-                    for k, v in self.data.current_states.items()
+-                    if v.get("state") == "on"
+-                ],
++                probability_state.decaying,
++                probability_state.is_occupied,
+             )
+ 
+             # Manage decay timer
+@@ -723,5 +846,4 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
+         self, update_callback: CALLBACK_TYPE, context: Any = None
+     ) -> Callable[[], None]:
+         """Add a listener for data updates with improved tracking."""
+-        _LOGGER.debug("Added listener: %s", self.name)
+         return super().async_add_listener(update_callback, context)
+diff --git a/custom_components/area_occupancy/migrations.py b/custom_components/area_occupancy/migrations.py
+index 2e68b24..301dc6e 100644
+--- a/custom_components/area_occupancy/migrations.py
++++ b/custom_components/area_occupancy/migrations.py
+@@ -17,6 +17,7 @@ from .const import (
+     CONF_MEDIA_ACTIVE_STATES,
+     CONF_MOTION_SENSORS,
+     CONF_PRIMARY_OCCUPANCY_SENSOR,
++    CONF_VERSION,
+     CONF_WINDOW_ACTIVE_STATE,
+     DEFAULT_APPLIANCE_ACTIVE_STATES,
+     DEFAULT_DOOR_ACTIVE_STATE,
+@@ -29,7 +30,6 @@ from .const import (
+     NAME_PROBABILITY_SENSOR,
+     NAME_THRESHOLD_NUMBER,
+     PLATFORMS,
+-    STORAGE_VERSION,
+ )
+ 
+ _LOGGER = logging.getLogger(__name__)
+@@ -170,7 +170,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
+             config_entry,
+             data=data,
+             options=options,
+-            version=STORAGE_VERSION,
++            version=CONF_VERSION,
+         )
+         _LOGGER.info("Successfully migrated config entry")
+     except (ValueError, KeyError, HomeAssistantError) as err:
+diff --git a/custom_components/area_occupancy/probabilities.py b/custom_components/area_occupancy/probabilities.py
+index d6f9c0f..f2d3113 100644
+--- a/custom_components/area_occupancy/probabilities.py
++++ b/custom_components/area_occupancy/probabilities.py
+@@ -163,16 +163,15 @@ class Probabilities:
+                 (CONF_TEMPERATURE_SENSORS, "environmental"),
+             ]
+ 
++            # Clear existing mappings first
++            self.entity_types.clear()
++
+             for config_key, sensor_type in mappings:
+-                for entity_id in self.config.get(config_key, []):
++                entities = self.config.get(config_key, [])
++                for entity_id in entities:
+                     _validate_entity_id(entity_id, config_key)
+                     self.entity_types[entity_id] = sensor_type
+ 
+-            _LOGGER.debug(
+-                "Mapped %d entities to types: %s",
+-                len(self.entity_types),
+-                dict(self.entity_types.items()),
+-            )
+         except Exception as err:
+             raise ConfigurationError(f"Failed to map entities to types: {err}") from err
+ 
+@@ -212,8 +211,6 @@ class Probabilities:
+             for sensor_type, weight in weights.items():
+                 _validate_weight(sensor_type, weight)
+ 
+-            _LOGGER.debug("Sensor weights configured: %s", weights)
+-
+         except Exception as err:
+             raise ConfigurationError(f"Failed to get sensor weights: {err}") from err
+         else:
+@@ -339,7 +336,6 @@ class Probabilities:
+             for sensor_type, config in configs.items():
+                 _validate_config(sensor_type, config)
+ 
+-            _LOGGER.debug("Built sensor configurations: %s", configs)
+         except Exception as err:
+             raise ConfigurationError(f"Failed to build sensor configs: {err}") from err
+         else:
+@@ -470,7 +466,6 @@ class Probabilities:
+                     "prior": config["default_prior"],
+                 }
+ 
+-            _LOGGER.debug("Initial type priors: %s", priors)
+         except (KeyError, ValueError, TypeError):
+             _LOGGER.exception("Failed to get initial type priors: %s")
+             return {}
+diff --git a/custom_components/area_occupancy/service.py b/custom_components/area_occupancy/service.py
+index 4a7e836..7cd9219 100644
+--- a/custom_components/area_occupancy/service.py
++++ b/custom_components/area_occupancy/service.py
+@@ -7,7 +7,8 @@ import voluptuous as vol
+ from homeassistant.core import HomeAssistant
+ from homeassistant.exceptions import HomeAssistantError
+ 
+-from .const import DEFAULT_HISTORY_PERIOD, DOMAIN
++from .const import CONF_NAME, DEFAULT_HISTORY_PERIOD, DOMAIN
++from .exceptions import CalculationError, StorageError
+ 
+ _LOGGER = logging.getLogger(__name__)
+ 
+@@ -17,52 +18,85 @@ async def async_setup_services(hass: HomeAssistant):
+ 
+     async def update_priors(call):
+         """Manually trigger an update of learned priors."""
++        entry_id = call.data["entry_id"]
++
++        def raise_error(msg: str, err: Exception | None = None) -> None:
++            """Raise appropriate error with consistent format."""
++            error_msg = f"{msg}: {err}" if err else msg
++            _LOGGER.error(
++                "Failed to update priors for instance %s: %s", entry_id, error_msg
++            )
++            raise HomeAssistantError(error_msg)
++
+         try:
+-            entry_id = call.data["entry_id"]
+             _LOGGER.debug("Updating priors for entry_id: %s", entry_id)
+ 
++            if DOMAIN not in hass.data or entry_id not in hass.data[DOMAIN]:
++                raise_error(f"Integration or instance {entry_id} not found")
++
+             coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
+-            _LOGGER.debug("Found coordinator for entry_id")
++            _LOGGER.debug("Found coordinator for entry_id %s", entry_id)
+ 
+             # Get history period from service call or use configured default
+             history_period = call.data.get("history_period", DEFAULT_HISTORY_PERIOD)
+             _LOGGER.debug(
+-                "Using history period: %s (type: %s)",
++                "Using history period: %s (type: %s) for instance %s",
+                 history_period,
+                 type(history_period),
++                entry_id,
+             )
+ 
+             if history_period:
+                 _LOGGER.debug(
+-                    "Calling update_learned_priors with period: %s", history_period
++                    "Calling update_learned_priors with period: %s for instance %s",
++                    history_period,
++                    entry_id,
+                 )
+                 try:
+                     await coordinator.update_learned_priors(history_period)
+-                except Exception:
+-                    _LOGGER.exception("Error in update_learned_priors")
+-                    raise
++                except (CalculationError, HomeAssistantError) as err:
++                    _LOGGER.error(
++                        "Error in update_learned_priors for instance %s: %s",
++                        entry_id,
++                        err,
++                    )
++                    raise_error("Failed to update learned priors", err)
+             else:
+-                _LOGGER.debug("Calling update_learned_priors with default period")
++                _LOGGER.debug(
++                    "Calling update_learned_priors with default period for instance %s",
++                    entry_id,
++                )
+                 await coordinator.update_learned_priors()
+ 
++            # Load existing data first to ensure we have all instances
++            try:
++                _LOGGER.debug(
++                    "Loading existing storage data before saving for instance %s",
++                    entry_id,
++                )
++                await coordinator.storage.async_load()
++            except StorageError as err:
++                _LOGGER.warning(
++                    "Error loading existing data for instance %s: %s", entry_id, err
++                )
++
++            # Immediately save the updated priors to storage
++            _LOGGER.debug("Saving updated priors to storage for instance %s", entry_id)
++            await coordinator.storage.async_save_prior_state(
++                coordinator.config[CONF_NAME], coordinator.prior_state, immediate=True
++            )
++
+             # Trigger a coordinator refresh
+-            _LOGGER.debug("Triggering coordinator refresh")
++            _LOGGER.debug("Triggering coordinator refresh for instance %s", entry_id)
+             await coordinator.async_refresh()
+-            _LOGGER.debug("Prior update completed successfully")
++            _LOGGER.debug(
++                "Prior update completed successfully for instance %s", entry_id
++            )
+ 
+         except KeyError as err:
+-            _LOGGER.error("Invalid entry_id or coordinator not found: %s", err)
+-            raise HomeAssistantError(
+-                f"Invalid entry_id or coordinator not found: {err}"
+-            ) from err
++            raise_error("Invalid entry_id or coordinator not found", err)
+         except (HomeAssistantError, ValueError, RuntimeError) as err:
+-            _LOGGER.error("Failed to update priors: %s (type: %s)", err, type(err))
+-            raise HomeAssistantError(f"Failed to update priors: {err}") from err
+-        except Exception as err:
+-            _LOGGER.exception("Unexpected error during prior update")
+-            raise HomeAssistantError(
+-                f"Unexpected error during prior update: {err}"
+-            ) from err
++            raise_error("Failed to update priors", err)
+ 
+     service_schema_update_priors = vol.Schema(
+         {
+diff --git a/custom_components/area_occupancy/storage.py b/custom_components/area_occupancy/storage.py
+index d17d90c..bc3c7a3 100644
+--- a/custom_components/area_occupancy/storage.py
++++ b/custom_components/area_occupancy/storage.py
+@@ -1,31 +1,55 @@
+ """Storage handling for Area Occupancy Detection."""
+ 
+ import logging
++from pathlib import Path
+ from typing import Any, TypedDict
+ 
+ from homeassistant.core import HomeAssistant
+ from homeassistant.helpers.storage import Store
+ from homeassistant.util import dt as dt_util
+ 
+-from .const import CONF_NAME, DOMAIN, STORAGE_VERSION, STORAGE_VERSION_MINOR
++from .const import CONF_VERSION, CONF_VERSION_MINOR, DOMAIN
+ from .exceptions import StorageError
+ from .types import PriorState
+ 
+ _LOGGER = logging.getLogger(__name__)
+ 
+-# Buffer writes every 2 minutes (plus guaranteed to be written at shutdown)
+-STORAGE_SAVE_DELAY_SECONDS = 120
++# Storage configuration
++STORAGE_KEY = f"{DOMAIN}.storage"
++STORAGE_SAVE_DELAY_SECONDS = 120  # Buffer writes every 2 minutes
+ 
++# Version control
++OLD_VERSION = 6
++OLD_VERSION_MINOR = 1
+ 
+-class StoredData(TypedDict):
+-    """TypedDict for stored data structure."""
++# File patterns
++STORAGE_FILE_PATTERN = f"{DOMAIN}.*.storage"
++
++
++class StorageLoadError(StorageError):
++    """Error raised when loading storage fails."""
++
++
++class StorageSaveError(StorageError):
++    """Error raised when saving storage fails."""
++
++
++class StorageMigrationError(StorageError):
++    """Error raised when storage migration fails."""
++
++
++class InstanceData(TypedDict):
++    """TypedDict for stored instance data."""
+ 
+-    version: int
+-    version_minor: int
+-    last_updated: str
+-    data: dict[str, Any]
+     name: str | None
+     prior_state: dict[str, Any] | None
++    last_updated: str
++
++
++class StoredData(TypedDict):
++    """TypedDict for stored data structure."""
++
++    instances: dict[str, InstanceData]
+ 
+ 
+ class AreaOccupancyStorageStore(Store[StoredData]):
+@@ -34,52 +58,90 @@ class AreaOccupancyStorageStore(Store[StoredData]):
+     def __init__(
+         self,
+         hass: HomeAssistant,
+-        entry_id: str,
+     ) -> None:
+         """Initialize the store."""
++        # Initialize with current version - migration will handle version changes
+         super().__init__(
+             hass,
+-            STORAGE_VERSION,
+-            f"{DOMAIN}.{entry_id}.storage",
+-            minor_version=STORAGE_VERSION_MINOR,
++            CONF_VERSION,  # Start with current version
++            STORAGE_KEY,
++            minor_version=CONF_VERSION_MINOR,
+             atomic_writes=True,
+             private=True,  # Mark as private since it contains state data
+         )
++        self.hass = hass
++        self._current_version = CONF_VERSION
++        self._current_minor_version = CONF_VERSION_MINOR
++        self._old_version = OLD_VERSION
++        self._old_minor_version = OLD_VERSION_MINOR
+ 
+     async def _async_migrate_func(
+         self,
+         old_major_version: int,
+         old_minor_version: int,
+-        old_data: dict[str, Any],
+-    ) -> dict[str, Any]:
+-        """Migrate to the new version."""
++    ) -> StoredData:
++        """Migrate to the new version by deleting old files and starting fresh."""
+         _LOGGER.debug(
+-            "Migrating storage from version %s.%s to %s.%s",
++            "Starting storage migration from version %s.%s to %s.%s",
+             old_major_version,
+             old_minor_version,
+-            STORAGE_VERSION,
+-            STORAGE_VERSION_MINOR,
++            self._current_version,
++            self._current_minor_version,
+         )
+ 
+-        if not old_data:
++        try:
++            # Clean up old files first
++            storage_dir = Path(self.hass.config.path(".storage"))
++            _LOGGER.debug(
++                "Scanning %s for old storage files matching %s",
++                storage_dir,
++                STORAGE_FILE_PATTERN,
++            )
++            found_files = list(storage_dir.glob(STORAGE_FILE_PATTERN))
++            _LOGGER.debug(
++                "Found %d storage files: %s",
++                len(found_files),
++                [f.name for f in found_files],
++            )
++
++            # Delete all old files
++            for file in found_files:
++                # Skip the new consolidated file
++                if file.name == f"{STORAGE_KEY}":
++                    _LOGGER.debug(
++                        "Skipping new consolidated storage file: %s", file.name
++                    )
++                    continue
++
++                try:
++                    _LOGGER.debug("Removing old storage file: %s", file)
++                    file.unlink()
++                    _LOGGER.info("Successfully removed old storage file: %s", file)
++                except OSError as err:
++                    _LOGGER.warning("Error removing old storage file %s: %s", file, err)
++
++            # Create fresh storage
++            _LOGGER.info("Creating fresh storage file")
+             return self.create_empty_storage()
+ 
+-        data = dict(old_data)
+-        data["version"] = STORAGE_VERSION
+-        data["version_minor"] = STORAGE_VERSION_MINOR
+-        return data
++        except Exception as err:
++            raise StorageMigrationError(f"Failed to migrate storage: {err}") from err
++
++    async def async_migrate_storage(self) -> None:
++        """Force migration of storage data."""
++        _LOGGER.debug("Forcing storage migration")
++        # Load data with old version to trigger migration
++        data = await self.async_load()
++        if data is None:
++            data = self.create_empty_storage()
++
++        # Save with current version
++        await self.async_save(data)
++        _LOGGER.debug("Storage migration complete")
+ 
+     def create_empty_storage(self) -> StoredData:
+         """Create default storage structure."""
+-        now = dt_util.utcnow().isoformat()
+-        return StoredData(
+-            version=STORAGE_VERSION,
+-            version_minor=STORAGE_VERSION_MINOR,
+-            last_updated=now,
+-            data={},
+-            name=None,
+-            prior_state=None,
+-        )
++        return StoredData(instances={})
+ 
+ 
+ class AreaOccupancyStorage:
+@@ -89,56 +151,178 @@ class AreaOccupancyStorage:
+         """Initialize storage."""
+         self.hass = hass
+         self.entry_id = entry_id
+-        self.store = AreaOccupancyStorageStore(hass, entry_id)
++        self.store = AreaOccupancyStorageStore(hass)
+         self._data: StoredData | None = None
+ 
+-    async def async_load(self) -> dict[str, Any]:
+-        """Load data from storage."""
++    async def async_migrate_storage(self) -> None:
++        """Migrate storage data."""
+         try:
++            _LOGGER.debug("Starting storage migration")
++            # Load data with old version to trigger migration
+             data = await self.store.async_load()
+             if data is None:
+                 data = self.store.create_empty_storage()
+-                await self.async_save(data)
++
++            # Save with current version to ensure migration
++            await self.store.async_save(data)
++
++            # Clean up old instance-specific storage file
++            old_file = Path(
++                self.hass.config.path(".storage", f"{DOMAIN}.{self.entry_id}.storage")
++            )
++            if old_file.exists():
++                try:
++                    _LOGGER.debug("Removing old storage file: %s", old_file)
++                    old_file.unlink()
++                    _LOGGER.info("Successfully removed old storage file: %s", old_file)
++                except OSError as err:
++                    _LOGGER.warning(
++                        "Error removing old storage file %s: %s", old_file, err
++                    )
++
++            _LOGGER.debug("Storage migration complete")
++        except Exception as err:
++            _LOGGER.error("Error during storage migration: %s", err)
++            raise StorageError(f"Failed to migrate storage: {err}") from err
++
++    async def async_load(self) -> StoredData:
++        """Load data from storage.
++
++        Returns:
++            The loaded storage data
++
++        Raises:
++            StorageLoadError: If loading fails
++
++        """
++        try:
++            data = await self.store.async_load()
++            if data is None:
++                _LOGGER.warning("No stored data found, creating empty storage")
++                data = self.store.create_empty_storage()
++                await self.store.async_save(data)
++            else:
++                _LOGGER.debug(
++                    "Loaded storage data with %d instances. Current instance: %s",
++                    len(data["instances"]),
++                    self.entry_id,
++                )
++            self._data = data
++        except FileNotFoundError:
++            _LOGGER.warning("Storage file not found, creating empty storage")
++            data = self.store.create_empty_storage()
++            await self.store.async_save(data)
+             self._data = data
++            return data
+         except Exception as err:
+             _LOGGER.exception("Error loading stored data")
+-            raise StorageError(f"Failed to load stored data: {err}") from err
++            raise StorageLoadError(f"Failed to load stored data: {err}") from err
+         else:
+             return data
+ 
+-    async def async_save(self, data: dict[str, Any]) -> None:
+-        """Save data to storage."""
++    async def async_save(self, data: StoredData) -> None:
++        """Save data to storage.
++
++        Args:
++            data: The data to save
++
++        """
+         try:
+-            self._data = data
+-            self.store.async_delay_save(self._data_to_save, STORAGE_SAVE_DELAY_SECONDS)
+-            _LOGGER.debug("Successfully scheduled data save")
+-        except Exception as err:
+-            _LOGGER.exception("Error saving data")
+-            raise StorageError(f"Failed to save data: {err}") from err
++            # Load existing data first
++            existing_data = await self.async_load()
++            if "instances" not in existing_data:
++                existing_data["instances"] = {}
++
++            # Create instance data
++            instance_data = InstanceData(
++                name=data.get("name"),
++                prior_state=data.get("prior_state"),
++                last_updated=dt_util.utcnow().isoformat(),
++            )
++
++            # Update only the current instance's data
++            existing_data["instances"][self.entry_id] = instance_data
++
++            _LOGGER.debug(
++                "Saving storage data with %d instances. Current instance: %s",
++                len(existing_data["instances"]),
++                self.entry_id,
++            )
++            await self.store.async_save(existing_data)
++            self._data = existing_data
++        except StorageError as err:
++            _LOGGER.warning("Failed to save storage data: %s", err)
+ 
+     def _data_to_save(self) -> StoredData:
+-        """Return data to save."""
+-        if not self._data:
++        """Return data to save.
++
++        Returns:
++            The current data to save, or empty storage if no data exists
++
++        """
++        if not self._data or "instances" not in self._data:
++            _LOGGER.debug("No valid data to save, creating empty storage")
+             return self.store.create_empty_storage()
++
++        _LOGGER.debug(
++            "Saving storage data with %d instances. Current instance: %s",
++            len(self._data["instances"]),
++            self.entry_id,
++        )
+         return self._data
+ 
+-    async def async_save_prior_state(self, name: str, prior_state: PriorState) -> None:
++    async def async_save_prior_state(
++        self, name: str, prior_state: PriorState, immediate: bool = False
++    ) -> None:
+         """Save prior state data to storage.
+ 
+         Args:
+             name: The name of the area
+             prior_state: The prior state to save
++            immediate: If True, save immediately instead of using debounced save
+ 
+         """
+         try:
+-            data = self._data or self.store.create_empty_storage()
+-            data["name"] = name
+-            data["prior_state"] = prior_state.to_dict()
+-            data["last_updated"] = dt_util.utcnow().isoformat()
+-            await self.async_save(data)
+-        except Exception as err:
+-            _LOGGER.exception("Error saving prior state")
+-            raise StorageError(f"Failed to save prior state: {err}") from err
++            # Load existing data first
++            existing_data = await self.async_load()
++            if "instances" not in existing_data:
++                existing_data["instances"] = {}
++
++            # Create instance data for this instance
++            instance_data = InstanceData(
++                name=name,
++                prior_state=prior_state.to_dict(),
++                last_updated=dt_util.utcnow().isoformat(),
++            )
++
++            # Update only this instance's data while preserving others
++            existing_data["instances"][self.entry_id] = instance_data
++
++            _LOGGER.debug(
++                "Saving prior state for instance %s (total instances: %d)",
++                self.entry_id,
++                len(existing_data["instances"]),
++            )
++
++            if immediate:
++                await self.store.async_save(existing_data)
++                _LOGGER.debug(
++                    "Immediately saved prior state for instance %s (total instances: %d)",
++                    self.entry_id,
++                    len(existing_data["instances"]),
++                )
++            else:
++                self._data = existing_data
++                self.store.async_delay_save(
++                    self._data_to_save, STORAGE_SAVE_DELAY_SECONDS
++                )
++                _LOGGER.debug(
++                    "Scheduled save of prior state for instance %s (total instances: %d)",
++                    self.entry_id,
++                    len(existing_data["instances"]),
++                )
++        except StorageError as err:
++            _LOGGER.warning("Failed to save prior state: %s", err)
+ 
+     async def async_load_prior_state(self) -> tuple[str, PriorState | None]:
+         """Load prior state data from storage.
+@@ -146,18 +330,25 @@ class AreaOccupancyStorage:
+         Returns:
+             Tuple of (name, prior_state) where prior_state may be None if not found
+ 
++        Raises:
++            StorageLoadError: If loading fails
++
+         """
+         try:
+             data = await self.async_load()
+-            if not data:
++            if not data or "instances" not in data:
++                return "", None
++
++            instance_data = data["instances"].get(self.entry_id)
++            if not instance_data:
+                 return "", None
+ 
+-            name = data.get(CONF_NAME, "")
+-            stored_prior_state = data.get("prior_state")
++            name = instance_data.get("name", "")
++            stored_prior_state = instance_data.get("prior_state")
+             if not stored_prior_state:
+                 return name, None
+ 
+             return name, PriorState.from_dict(stored_prior_state)
+         except Exception as err:
+             _LOGGER.exception("Error loading prior state")
+-            raise StorageError(f"Failed to load prior state: {err}") from err
++            raise StorageLoadError(f"Failed to load prior state: {err}") from err

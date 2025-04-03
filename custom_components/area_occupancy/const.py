@@ -22,9 +22,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.4.1"
-CONF_VERSION: Final = 6
-STORAGE_VERSION: Final = 6
-STORAGE_VERSION_MINOR: Final = 1
+CONF_VERSION: Final = 7
+CONF_VERSION_MINOR: Final = 1
 
 # Configuration constants
 CONF_NAME: Final = "name"

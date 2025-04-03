@@ -163,16 +163,15 @@ class Probabilities:
                 (CONF_TEMPERATURE_SENSORS, "environmental"),
             ]
 
+            # Clear existing mappings first
+            self.entity_types.clear()
+
             for config_key, sensor_type in mappings:
-                for entity_id in self.config.get(config_key, []):
+                entities = self.config.get(config_key, [])
+                for entity_id in entities:
                     _validate_entity_id(entity_id, config_key)
                     self.entity_types[entity_id] = sensor_type
 
-            _LOGGER.debug(
-                "Mapped %d entities to types: %s",
-                len(self.entity_types),
-                dict(self.entity_types.items()),
-            )
         except Exception as err:
             raise ConfigurationError(f"Failed to map entities to types: {err}") from err
 
@@ -211,8 +210,6 @@ class Probabilities:
             # Validate weights
             for sensor_type, weight in weights.items():
                 _validate_weight(sensor_type, weight)
-
-            _LOGGER.debug("Sensor weights configured: %s", weights)
 
         except Exception as err:
             raise ConfigurationError(f"Failed to get sensor weights: {err}") from err
@@ -339,7 +336,6 @@ class Probabilities:
             for sensor_type, config in configs.items():
                 _validate_config(sensor_type, config)
 
-            _LOGGER.debug("Built sensor configurations: %s", configs)
         except Exception as err:
             raise ConfigurationError(f"Failed to build sensor configs: {err}") from err
         else:
@@ -470,9 +466,22 @@ class Probabilities:
                     "prior": config["default_prior"],
                 }
 
-            _LOGGER.debug("Initial type priors: %s", priors)
         except (KeyError, ValueError, TypeError):
             _LOGGER.exception("Failed to get initial type priors: %s")
             return {}
         else:
             return priors
+
+    def get_entity_type(self, entity_id: str) -> EntityType | None:
+        """Get the type of an entity based on configuration.
+
+        Args:
+            entity_id: The entity ID to check
+
+        Returns:
+            The entity type or None if not found
+
+        """
+        if entity_id in self.entity_types:
+            return self.entity_types[entity_id]
+        return None
