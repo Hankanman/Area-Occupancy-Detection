@@ -160,7 +160,11 @@ class PriorCalculator:
         if end_time <= start_time:
             raise ValueError("End time must be after start time")
 
-        _LOGGER.debug("Prior calc: %s", entity_id)
+        _LOGGER.debug(
+            "Prior calc for instance %s: %s",
+            self.coordinator.config_entry.entry_id,
+            entity_id,
+        )
 
         # Get states for both sensors in parallel for better performance
         try:
@@ -171,7 +175,11 @@ class PriorCalculator:
                 self._get_states_from_recorder(entity_id, start_time, end_time),
             )
         except (HomeAssistantError, SQLAlchemyError, RuntimeError) as err:
-            _LOGGER.error("Error fetching states: %s", err)
+            _LOGGER.error(
+                "Error fetching states for instance %s: %s",
+                self.coordinator.config_entry.entry_id,
+                err,
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),
@@ -179,7 +187,10 @@ class PriorCalculator:
             )
 
         if not primary_states or not entity_states:
-            _LOGGER.warning("No sensor data available")
+            _LOGGER.warning(
+                "No sensor data available for instance %s",
+                self.coordinator.config_entry.entry_id,
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),
