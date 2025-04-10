@@ -51,7 +51,6 @@ from .exceptions import (
     StorageError,
 )
 from .probabilities import Probabilities
-from .state_management import OccupancyStateManager
 from .storage import AreaOccupancyStorage
 from .types import DeviceInfo, PriorState, ProbabilityState, SensorInputs
 
@@ -99,9 +98,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Initialize tracking
         self._remove_state_listener = None
 
-        # Initialize state management
-        self._state_cache: dict[str, dict] = {}
-        self._state_manager = OccupancyStateManager()
+        # Initialize state management directly in the coordinator
+        self._all_sensor_states: dict[str, dict] = {}
+        self._active_sensors: dict[str, dict] = {}
 
         # Initialize data first
         self.data = ProbabilityState()
@@ -165,8 +164,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         if not primary_sensor:
             return False
-        # Use the cached state
-        return self._state_cache.get(primary_sensor, {}).get("availability", False)
+        # Use the active sensors dict directly
+        return self._active_sensors.get(primary_sensor, {}).get("availability", False)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -178,11 +177,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             "model": DEVICE_MODEL,
             "sw_version": DEVICE_SW_VERSION,
         }
-
-    @property
-    def active_sensors_for_calc(self) -> dict[str, dict]:
-        """Return active sensors from the synchronous cache."""
-        return self._state_cache
 
     @property
     def prior_update_interval(self) -> timedelta:
@@ -200,10 +194,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Load stored data first
             await self.async_load_stored_data()
 
-            # Initialize states after loading stored data using the new state manager
+            # Initialize states after loading stored data
             sensors = self.get_configured_sensors()
-            await self._state_manager.initialize_states(self.hass, sensors)
-            self._state_cache = await self._state_manager.get_active_sensors()
+            await self.async_initialize_states(sensors)
 
             # Calculate initial priors before scheduling updates
             await self.update_learned_priors()
@@ -227,17 +220,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             if (dt_util.utcnow() - self._last_save) >= self._save_interval:
                 self.hass.async_create_task(self._save_debounced_data())
 
-            # Update state cache
-            if hasattr(self.data, "current_states"):
-                self._state_cache = self.data.current_states.copy()
-
     @callback
     def async_set_updated_data(self, data: ProbabilityState) -> None:
         """Manually update data and notify listeners."""
         super().async_set_updated_data(data)
-        # Additional state management specific to our use case
-        if self.last_update_success:
-            self._state_cache = data.current_states
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
@@ -261,7 +247,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Clear data
         self.data = None
         self.prior_state = None
-        self._state_cache = {}
+        self._all_sensor_states = {}
+        self._active_sensors = {}
         self._entity_ids = set()
         self._last_save = dt_util.utcnow()
 
@@ -403,12 +390,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 hass=self.hass,
             )
 
-            # Clear state cache and state manager
-            self._state_cache = {}
-            self._state_manager = OccupancyStateManager()
+            # Clear state dictionaries
+            self._all_sensor_states = {}
+            self._active_sensors = {}
 
             # Initialize states for current sensors
-            await self.async_initialize_states()
+            sensors = self.get_configured_sensors()
+            await self.async_initialize_states(sensors)
 
             # Force immediate refresh to reflect changes
             await self.async_refresh()
@@ -452,37 +440,43 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 if entity_id in self.data.current_states:
                     self.data.previous_states[entity_id] = self.data.current_states[
                         entity_id
-                    ]
+                    ].copy()  # Ensure a copy is made
 
-                # Update current state
-                self.data.current_states[entity_id] = {
-                    "state": new_state.state,
-                    "availability": True,
+                # Update current state in self.data directly (as before)
+                is_available = new_state.state not in [
+                    "unknown",
+                    "unavailable",
+                    None,
+                    "",
+                ]
+                sensor_info = {
+                    "state": new_state.state if is_available else None,
+                    "last_changed": (
+                        new_state.last_changed.isoformat()
+                        if new_state.last_changed
+                        else dt_util.utcnow().isoformat()
+                    ),
+                    "availability": is_available,
                 }
+                self.data.current_states[entity_id] = sensor_info
 
-                # Update sensor state in state manager
-                self.hass.async_create_task(
-                    self._state_manager.update_sensor(entity_id, new_state)
-                )
+                # --- Start: Integrated state update logic ---
+                async def update_internal_state():
+                    async with self._state_lock:
+                        self._all_sensor_states[entity_id] = sensor_info
+                        if is_available:
+                            self._active_sensors[entity_id] = sensor_info
+                        else:
+                            self._active_sensors.pop(entity_id, None)
 
-                # Update local cache after state change
-                async def update_cache():
-                    try:
-                        self._state_cache = (
-                            await self._state_manager.get_active_sensors()
-                        )
-                    except (
-                        TimeoutError,
-                        ValueError,
-                        AttributeError,
-                        TypeError,
-                        KeyError,
-                    ) as err:
-                        _LOGGER.error("Error updating state cache: %s", err)
+                # --- End: Integrated state update logic ---
 
-                # Trigger an immediate update
+                # Schedule internal state update
+                self.hass.async_create_task(update_internal_state())
+
+                # Trigger an immediate update using existing mechanism
                 async def async_handle_state_change():
-                    await update_cache()
+                    # No need to call update_cache here
                     await self.async_refresh()
 
                 self.hass.async_create_task(async_handle_state_change())
@@ -504,16 +498,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             async_state_changed_listener,
         )
 
-    async def async_initialize_states(self) -> None:
-        """Initialize sensor states."""
+    async def async_initialize_states(self, sensor_ids: list[str]) -> None:
+        """Initialize sensor states directly in the coordinator."""
         try:
-            sensors = self.get_configured_sensors()
-            await self._state_manager.initialize_states(self.hass, sensors)
-            self._state_cache = await self._state_manager.get_active_sensors()
+            async with self._state_lock:
+                self._all_sensor_states.clear()
+                self._active_sensors.clear()
+                for entity_id in sensor_ids:
+                    state_obj = self.hass.states.get(entity_id)
+                    is_available = bool(
+                        state_obj
+                        and state_obj.state not in ["unknown", "unavailable", None, ""]
+                    )
+                    sensor_info = {
+                        "state": state_obj.state if is_available else None,
+                        "last_changed": (
+                            state_obj.last_changed.isoformat()
+                            if state_obj and state_obj.last_changed
+                            else dt_util.utcnow().isoformat()
+                        ),
+                        "availability": is_available,
+                    }
+                    self._all_sensor_states[entity_id] = sensor_info
+                    if is_available:
+                        self._active_sensors[entity_id] = sensor_info
+
+                    # Initialize current_states in self.data as well
+                    self.data.current_states[entity_id] = sensor_info
+
+            # Setup tracking after initialization
+            self._setup_entity_tracking()
+
         except Exception as err:
             raise StateError(f"Failed to initialize states: {err}") from err
-
-        self._setup_entity_tracking()
 
     def get_configured_sensors(self) -> list[str]:
         """Get all configured sensors including the primary occupancy sensor."""
@@ -689,7 +706,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Calculate probabilities
             probability_state = self.calculator.calculate_occupancy_probability(
-                self.data.current_states,
+                self._active_sensors,  # Use internal dict
                 datetime.now(),
             )
 
@@ -750,8 +767,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.decay_start_time = None
                 self._stop_decay_updates()
 
-                # Refresh sensor states
-                await self._refresh_sensor_states()
+                # Refresh sensor states (uses internal method now)
+                sensors = self.get_configured_sensors()
+                await self.async_initialize_states(sensors)
 
                 # Ensure minimum probability
                 self.data.probability = MIN_PROBABILITY
@@ -781,13 +799,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             sensors = self.get_configured_sensors()
             _LOGGER.debug("Refreshing %d sensor states", len(sensors))
 
-            # Get fresh states
-            await self._state_manager.initialize_states(self.hass, sensors)
-            fresh_states = await self._state_manager.get_active_sensors()
+            # Directly re-initialize states
+            await self.async_initialize_states(sensors)
 
-            # Update states
-            self.data.current_states = fresh_states
-            self.data.previous_states = {}
+            # Data states are updated within async_initialize_states now
+            # self.data.previous_states = {} # Keep previous states for off transition check
+
         except (TimeoutError, ValueError, AttributeError, HomeAssistantError) as err:
             _LOGGER.error("Error refreshing sensor states: %s", err)
 

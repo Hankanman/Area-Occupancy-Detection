@@ -91,7 +91,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Load stored data and initialize states
         try:
             await coordinator.async_load_stored_data()
-            await coordinator.async_initialize_states()
+            # Get sensor IDs before initializing states
+            sensor_ids = coordinator.get_configured_sensors()
+            await coordinator.async_initialize_states(sensor_ids)
         except Exception as err:
             _LOGGER.error("Failed to load stored data: %s", err)
             raise ConfigEntryNotReady("Failed to load stored data") from err
