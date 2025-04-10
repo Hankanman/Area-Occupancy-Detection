@@ -72,6 +72,99 @@ class AreaOccupancyStorageStore(Store[StoredData]):
         """Create default storage structure."""
         return StoredData(instances={})
 
+    async def async_remove_instance(self, entry_id: str) -> bool:
+        """Remove data for a specific instance ID from storage.
+
+        Args:
+            entry_id: The config entry ID of the instance to remove.
+
+        Returns:
+            True if data was removed, False otherwise.
+
+        """
+        try:
+            stored_data = await self.async_load()
+            if (
+                stored_data
+                and "instances" in stored_data
+                and entry_id in stored_data["instances"]
+            ):
+                _LOGGER.debug("Removing instance %s data from storage", entry_id)
+                # Create a copy to modify
+                modified_data = stored_data.copy()
+                modified_data["instances"] = modified_data["instances"].copy()
+
+                del modified_data["instances"][entry_id]
+                await self.async_save(modified_data)
+                _LOGGER.info("Successfully removed instance %s from storage", entry_id)
+                return True
+            _LOGGER.debug(
+                "Instance %s not found in storage, skipping removal", entry_id
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Error removing instance %s from storage",
+                entry_id,
+            )
+            return False  # Don't re-raise, allow flow to continue
+        else:
+            return False
+
+    async def async_cleanup_orphaned_instances(
+        self, active_entry_ids: set[str]
+    ) -> bool:
+        """Remove data for instances not present in the active_entry_ids set.
+
+        Args:
+            active_entry_ids: A set of currently active config entry IDs.
+
+        Returns:
+            True if any orphaned data was removed, False otherwise.
+
+        """
+        removed_any = False
+        try:
+            stored_data = await self.async_load()
+            if stored_data and "instances" in stored_data:
+                stored_entry_ids = set(stored_data["instances"].keys())
+                orphaned_ids = stored_entry_ids - active_entry_ids
+
+                if orphaned_ids:
+                    _LOGGER.info(
+                        "Found orphaned instance(s) in storage: %s", orphaned_ids
+                    )
+                    # Create a copy to modify
+                    modified_data = stored_data.copy()
+                    modified_data["instances"] = modified_data["instances"].copy()
+
+                    for entry_id in orphaned_ids:
+                        if entry_id in modified_data["instances"]:
+                            del modified_data["instances"][entry_id]
+                            _LOGGER.debug(
+                                "Removed orphaned instance %s from storage data",
+                                entry_id,
+                            )
+                            removed_any = True
+
+                    if removed_any:
+                        await self.async_save(modified_data)
+                        _LOGGER.info(
+                            "Saved cleaned storage data after removing %d orphan(s)",
+                            len(orphaned_ids),
+                        )
+                else:
+                    _LOGGER.debug("No orphaned instances found in storage")
+            else:
+                _LOGGER.debug(
+                    "No storage data found or 'instances' key missing, skipping cleanup"
+                )
+
+        except Exception:
+            _LOGGER.exception("Error during storage cleanup")
+            # Don't re-raise, allow setup to continue
+
+        return removed_any
+
 
 class AreaOccupancyStorage:
     """Handle storage of area occupancy data."""

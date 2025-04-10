@@ -326,7 +326,7 @@ class PriorCalculator:
         )
 
         # Calculate and update type priors by averaging all sensors of this type
-        await self._update_type_priors(entity_id)
+        await self.update_type_priors(entity_id)
 
         return (prob_given_true, prob_given_false, prior)
 
@@ -478,7 +478,7 @@ class PriorCalculator:
         result = overlap_duration / total_motion_duration
         return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
-    async def _update_type_priors(self, entity_id: str) -> None:
+    async def update_type_priors(self, entity_id: str) -> None:
         """Update type priors by averaging all sensors of the given type."""
         # Get all entities of this type
         entities = []

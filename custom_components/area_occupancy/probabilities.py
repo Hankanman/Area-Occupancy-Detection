@@ -439,10 +439,16 @@ class Probabilities:
 
         """
         if entity_id not in self.entity_types:
+            _LOGGER.error("Entity %s not found in entity types mapping", entity_id)
             raise ValueError(f"Entity {entity_id} not found in entity types")
 
         sensor_type = self.entity_types[entity_id]
         if sensor_type not in self._sensor_configs:
+            _LOGGER.error(
+                "Invalid sensor type %s for entity %s in sensor configs",
+                sensor_type,
+                entity_id,
+            )
             raise ValueError(
                 f"Invalid sensor type {sensor_type} for entity {entity_id}"
             )

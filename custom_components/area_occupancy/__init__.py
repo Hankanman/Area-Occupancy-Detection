@@ -12,18 +12,61 @@ from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
+from .storage import AreaOccupancyStorageStore
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Area Occupancy Detection integration."""
-    _LOGGER.debug("Starting async_setup")
+    _LOGGER.debug("Starting async_setup for %s", DOMAIN)
     hass.data.setdefault(DOMAIN, {})
+
+    # --- Storage Cleanup Logic Start ---
+    try:
+        _LOGGER.debug("Checking storage for orphaned instances")
+        active_entry_ids = {
+            entry.entry_id for entry in hass.config_entries.async_entries(DOMAIN)
+        }
+        _LOGGER.debug("Active entry IDs: %s", active_entry_ids)
+
+        store = AreaOccupancyStorageStore(hass)
+        await store.async_cleanup_orphaned_instances(active_entry_ids)
+
+    except Exception:
+        # Log error but don't prevent setup from continuing
+        _LOGGER.exception("Error during storage cleanup: %s")
+    # --- Storage Cleanup Logic End ---
 
     # Set up services
     await async_setup_services(hass)
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle removal of a config entry and clean up storage."""
+    entry_id = entry.entry_id
+    _LOGGER.info("Removing Area Occupancy config entry: %s", entry_id)
+
+    try:
+        store = AreaOccupancyStorageStore(hass)
+        removed = await store.async_remove_instance(entry_id)
+        if removed:
+            _LOGGER.info(
+                "Instance %s data removed from storage via store method", entry_id
+            )
+        else:
+            _LOGGER.debug(
+                "Instance %s data removal via store method reported no change",
+                entry_id,
+            )
+
+    except Exception:
+        # Log error but don't prevent removal flow
+        _LOGGER.exception(
+            "Error removing instance %s data from storage",
+            entry_id,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
