@@ -130,6 +130,7 @@ class PriorsSensor(AreaOccupancySensorBase):
             attributes.update(
                 {
                     "last_updated": last_updated,
+                    "next_update": self.coordinator.next_prior_update,
                     "total_period": f"{prior_state.analysis_period} days",
                     "entity_count": len(prior_state.entity_priors),
                     "using_learned_priors": has_learned_priors,
@@ -169,13 +170,10 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             return 0.0
 
         try:
-            probability = self.coordinator.data.probability
-            return format_float(probability * 100)
+            # Use the new coordinator property
+            return format_float(self.coordinator.probability * 100)
         except AttributeError:
-            _LOGGER.error("Coordinator data missing probability attribute")
-            return 0.0
-        except (TypeError, ValueError) as err:
-            _LOGGER.error("Error calculating probability value: %s", err)
+            _LOGGER.error("Coordinator missing probability attribute")
             return 0.0
 
     @property
@@ -211,7 +209,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             return {
                 "active_triggers": active_triggers,
                 "sensor_probabilities": sensor_probabilities,
-                "threshold": f"{data.threshold * 100}%",
+                "threshold": f"{self.coordinator.threshold * 100}%",
             }
         except (TypeError, AttributeError, KeyError):
             _LOGGER.exception("Error getting probability attributes: %s")
