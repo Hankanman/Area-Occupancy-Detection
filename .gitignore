@@ -20,3 +20,4 @@ config/*
 # Python Environment
 .venv
 commit_messages.txt
+release_diff.txt
