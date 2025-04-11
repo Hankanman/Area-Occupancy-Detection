@@ -19,3 +19,4 @@ config/*
 
 # Python Environment
 .venv
+commit_messages.txt
