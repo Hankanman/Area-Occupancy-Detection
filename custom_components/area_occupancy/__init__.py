@@ -7,9 +7,8 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, DOMAIN, PLATFORMS, MIN_PROBABILITY
+from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
