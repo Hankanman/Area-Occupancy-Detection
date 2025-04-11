@@ -138,3 +138,5 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options when config entry is updated."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     await coordinator.async_update_options()
+    # Trigger a refresh *after* options have been processed by the coordinator
+    await coordinator.async_refresh()

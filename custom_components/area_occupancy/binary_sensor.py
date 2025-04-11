@@ -46,9 +46,7 @@ class AreaOccupancyBinarySensor(
                  False if no data is available or area is unoccupied.
 
         """
-        if not self.coordinator.data:
-            return False
-        return self.coordinator.data.is_occupied
+        return self.coordinator.is_occupied
 
 
 async def async_setup_entry(
