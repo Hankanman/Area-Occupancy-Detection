@@ -270,7 +270,9 @@ class PriorCalculator:
         total_primary_time = total_primary_active_time + total_primary_inactive_time
 
         if total_primary_time == 0:
-            _LOGGER.warning("No valid duration found for primary sensor")
+            _LOGGER.info(
+                "No valid duration found for primary sensor, will use default prior"
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),

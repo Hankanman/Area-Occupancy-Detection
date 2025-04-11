@@ -283,7 +283,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Perform prior update if needed
             if force_prior_update:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Performing initial prior calculation at startup: %s", reason
                 )
                 # Call coordinator's method
@@ -640,7 +640,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 # Still update timestamp to prevent immediate retry loop
                 self._last_prior_update = dt_util.utcnow().isoformat()
 
-            _LOGGER.info("Finished update_learned_priors")
         except Exception:
             _LOGGER.exception("Unexpected error during update_learned_priors")
             # Update timestamp to prevent immediate retry loop even on unexpected errors
