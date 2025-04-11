@@ -16,7 +16,6 @@ class ProbabilityCalculator:
 
     def __init__(
         self,
-        decay_handler,
         probability_state,
         prior_state,
         probabilities,
@@ -24,7 +23,6 @@ class ProbabilityCalculator:
         """Initialize the calculator.
 
         Args:
-            decay_handler: The decay handler instance
             probability_state: The current probability state
             previous_probability: The previous probability value
             prior_state: The prior state information
@@ -32,7 +30,6 @@ class ProbabilityCalculator:
 
         """
         self.probabilities = probabilities
-        self.decay_handler = decay_handler
         self.probability_state = probability_state
         self.previous_probability = probability_state.previous_probability
         self.prior_state = prior_state
@@ -61,7 +58,16 @@ class ProbabilityCalculator:
         sensor_probs: dict[str, SensorProbability] = {}
 
         try:
-            # Calculate base probability
+            # Store the probability state at the start of the calculation cycle
+            initial_probability = self.probability_state.probability
+            # No longer need initial decay state here
+            # initial_is_decaying = self.probability_state.decaying
+            # initial_decay_start_time = self.probability_state.decay_start_time
+            # initial_decay_start_probability = (
+            #     self.probability_state.decay_start_probability
+            # )
+
+            # Calculate base probability (this is now the undecayed probability)
             calculated_probability = self._calculate_complementary_probability(
                 active_sensor_states, sensor_probs
             )
@@ -69,43 +75,38 @@ class ProbabilityCalculator:
             # Calculate prior probability
             prior_probability = self._calculate_prior_probability(active_sensor_states)
 
-            # Apply decay to the calculated probability
-            self.probability_state.update(
-                probability=calculated_probability,
-                prior_probability=prior_probability,
-            )
-            decayed_probability, decay_status = self.decay_handler.calculate_decay(
-                self.probability_state
-            )
+            # --- Decay is no longer applied here ---
 
-            # Update previous probability for next calculation
-            self.previous_probability = decayed_probability
+            # Store the previous probability *before* updating the state
+            # The coordinator will handle the final previous probability based on its initial state
+            # self.previous_probability = initial_probability # Removed - Coordinator manages previous prob context
 
-            # Calculate final probability
-            final_probability = max(
-                MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
+            # Calculate final probability (clamp the *undecayed* value)
+            # The coordinator will apply decay later
+            final_undecayed_probability = max(
+                MIN_PROBABILITY, min(calculated_probability, MAX_PROBABILITY)
             )
-
-            # Update the state with all calculated values
+            # Update the state object with calculated values, but without decay application yet
             self._update_probability_state(
-                final_probability=final_probability,
-                previous_probability=self.previous_probability,
+                undecayed_probability=final_undecayed_probability,
                 prior_probability=prior_probability,
-                decay_status=decay_status,
                 sensor_probs=sensor_probs,
                 active_sensor_states=active_sensor_states,
+                # Pass the initial probability from the start of *this* calculation cycle
+                # The coordinator will use its own initial value for decay calculation
+                current_cycle_previous_probability=initial_probability,
             )
 
         except (ValueError, ZeroDivisionError):
             _LOGGER.exception("Error in probability calculation: %s")
             # Reset the state to minimum values
             self._update_probability_state(
-                final_probability=MIN_PROBABILITY,
-                previous_probability=self.previous_probability,
+                undecayed_probability=MIN_PROBABILITY,
                 prior_probability=MIN_PROBABILITY,
-                decay_status=0.0,
                 sensor_probs={},
                 active_sensor_states={},
+                # Provide a sensible previous probability on reset
+                current_cycle_previous_probability=self.probability_state.probability,
             )
             return self.probability_state
         else:
@@ -272,30 +273,31 @@ class ProbabilityCalculator:
 
     def _update_probability_state(
         self,
-        final_probability: float,
-        previous_probability: float,
+        undecayed_probability: float,
         prior_probability: float,
-        decay_status: float,
         sensor_probs: dict[str, SensorProbability],
         active_sensor_states: dict[str, SensorState],
+        current_cycle_previous_probability: float,
     ) -> None:
-        """Update the probability state with all calculated values.
+        """Update the probability state with calculated (but not yet decayed) values.
 
         Args:
-            final_probability: The final calculated probability
-            previous_probability: The calculated prior probability
+            undecayed_probability: The calculated probability before decay application
             prior_probability: The prior probability used in the calculation
-            decay_status: The current decay status
             sensor_probs: Dictionary of sensor probability details
             active_sensor_states: Dictionary of active sensor states
+            current_cycle_previous_probability: The probability value from before this calculation cycle started.
 
         """
+        # Note: is_occupied, decaying, decay_start_time, decay_start_probability, decay_status
+        # will be set by the coordinator after applying decay.
+        # We update the core probabilities and sensor details here.
+        # The 'previous_probability' stored here reflects the state *before* this undecayed calculation.
         self.probability_state.update(
-            probability=final_probability,
-            previous_probability=previous_probability,
+            probability=undecayed_probability,
+            previous_probability=current_cycle_previous_probability,
             prior_probability=prior_probability,
             sensor_probabilities=sensor_probs,
-            decay_status=decay_status,
             current_states={
                 entity_id: {
                     "state": state.get("state"),
@@ -303,7 +305,12 @@ class ProbabilityCalculator:
                 }
                 for entity_id, state in active_sensor_states.items()
             },
-            is_occupied=final_probability >= self.probability_state.threshold,
+            # Keep existing decay state for now; coordinator will update it
+            decay_status=self.probability_state.decay_status,
+            is_occupied=self.probability_state.is_occupied, # Keep existing; coordinator updates
+            decaying=self.probability_state.decaying,
+            decay_start_time=self.probability_state.decay_start_time,
+            decay_start_probability=self.probability_state.decay_start_probability,
         )
 
 
