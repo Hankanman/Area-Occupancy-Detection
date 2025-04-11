@@ -10,7 +10,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_THRESHOLD, DEFAULT_THRESHOLD, DOMAIN, NAME_THRESHOLD_NUMBER
+from .const import DOMAIN, NAME_THRESHOLD_NUMBER
 from .coordinator import AreaOccupancyCoordinator
 
 
@@ -41,7 +41,8 @@ class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], Number
     @property
     def native_value(self) -> float:
         """Return the current threshold value as a percentage."""
-        return self.coordinator.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        # Use the coordinator property for threshold (0.0-1.0) and convert to percentage
+        return self.coordinator.threshold * 100.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""

@@ -58,7 +58,6 @@ class ProbabilityCalculator:
             Updated probability state
 
         """
-        _LOGGER.debug("Starting probability calculation")
         sensor_probs: dict[str, SensorProbability] = {}
 
         try:
@@ -85,13 +84,6 @@ class ProbabilityCalculator:
             # Calculate final probability
             final_probability = max(
                 MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
-            )
-
-            _LOGGER.debug(
-                "Final: base=%.3f final=%.3f decay=%.3f",
-                decayed_probability,
-                final_probability,
-                decay_status,
             )
 
             # Update the state with all calculated values

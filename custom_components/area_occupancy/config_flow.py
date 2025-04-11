@@ -53,7 +53,6 @@ from .const import (
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
-    CONF_VERSION,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -682,8 +681,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     It provides a multi-step configuration process with comprehensive validation.
     """
 
-    VERSION = CONF_VERSION
-
     def __init__(self) -> None:
         """Initialize config flow.
 
@@ -704,6 +701,21 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
+                # --- Auto-add primary sensor to motion sensors --- >
+                motion_section = user_input.get("motion", {})
+                primary_sensor = motion_section.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+                motion_sensors = motion_section.get(CONF_MOTION_SENSORS, [])
+
+                if primary_sensor and primary_sensor not in motion_sensors:
+                    _LOGGER.debug(
+                        "Auto-adding primary sensor %s to motion sensors list",
+                        primary_sensor,
+                    )
+                    motion_sensors.append(primary_sensor)
+                    # Update the motion section in the original user_input
+                    user_input["motion"][CONF_MOTION_SENSORS] = motion_sensors
+                # < --- End Auto-add ---
+
                 # Flatten sectioned data
                 flattened_input = {}
                 for key, value in user_input.items():
@@ -756,6 +768,21 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
 
         if user_input is not None:
             try:
+                # --- Auto-add primary sensor to motion sensors --- >
+                motion_section = user_input.get("motion", {})
+                primary_sensor = motion_section.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+                motion_sensors = motion_section.get(CONF_MOTION_SENSORS, [])
+
+                if primary_sensor and primary_sensor not in motion_sensors:
+                    _LOGGER.debug(
+                        "Auto-adding primary sensor %s to motion sensors list (Options Flow)",
+                        primary_sensor,
+                    )
+                    motion_sensors.append(primary_sensor)
+                    # Update the motion section in the original user_input
+                    user_input["motion"][CONF_MOTION_SENSORS] = motion_sensors
+                # < --- End Auto-add ---
+
                 # Flatten sectioned data
                 flattened_input = {}
                 for key, value in user_input.items():
