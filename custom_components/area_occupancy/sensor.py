@@ -118,19 +118,26 @@ class PriorsSensor(AreaOccupancySensorBase):
                 attributes[sensor_type] = f"Prior: {round(prior_value * 100, 1)}%"
 
             # Add metadata attributes
-            last_updated = (
-                max(prior_state.last_updated.values())
-                if prior_state.last_updated
-                else dt_util.utcnow().isoformat()
-            )
+            last_updated_ts = self.coordinator.last_prior_update
+            # Fallback if no timestamp is stored (e.g., first run before save)
+            if last_updated_ts is None:
+                last_updated_str = "Never"
+            else:
+                last_updated_str = last_updated_ts  # Already a string
 
             # Check if we have any learned priors
             has_learned_priors = bool(prior_state.entity_priors)
 
+            # Get next update time, format as ISO string or Unknown
+            next_update_dt = self.coordinator.next_prior_update
+            next_update_str = (
+                next_update_dt.isoformat() if next_update_dt else "Unknown"
+            )
+
             attributes.update(
                 {
-                    "last_updated": last_updated,
-                    "next_update": self.coordinator.next_prior_update,
+                    "last_updated": last_updated_str,
+                    "next_update": next_update_str,
                     "total_period": f"{prior_state.analysis_period} days",
                     "entity_count": len(prior_state.entity_priors),
                     "using_learned_priors": has_learned_priors,
