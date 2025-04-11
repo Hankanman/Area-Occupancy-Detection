@@ -334,11 +334,14 @@ class AreaOccupancyStorage:
         except StorageError as err:
             _LOGGER.warning("Failed to save prior state: %s", err)
 
-    async def async_load_prior_state(self) -> tuple[str, PriorState | None]:
+    async def async_load_prior_state(
+        self,
+    ) -> tuple[str | None, PriorState | None, str | None]:
         """Load prior state data from storage.
 
         Returns:
-            Tuple of (name, prior_state) where prior_state may be None if not found
+            Tuple of (name, prior_state, last_updated) where prior_state and last_updated
+            may be None if not found or data is invalid.
 
         Raises:
             StorageLoadError: If loading fails
@@ -347,18 +350,31 @@ class AreaOccupancyStorage:
         try:
             data = await self.async_load()
             if not data or "instances" not in data:
-                return "", None
+                _LOGGER.debug("No stored data or instances found for loading priors.")
+                return None, None, None
 
             instance_data = data["instances"].get(self.entry_id)
             if not instance_data:
-                return "", None
+                _LOGGER.debug("No instance data found for %s.", self.entry_id)
+                return None, None, None
 
-            name = instance_data.get("name", "")
-            stored_prior_state = instance_data.get("prior_state")
-            if not stored_prior_state:
-                return name, None
+            name = instance_data.get("name")
+            stored_prior_state_dict = instance_data.get("prior_state")
+            last_updated = instance_data.get("last_updated")
 
-            return name, PriorState.from_dict(stored_prior_state)
+            if not stored_prior_state_dict:
+                _LOGGER.debug("No prior_state dict found for %s.", self.entry_id)
+                return name, None, last_updated
+
+            prior_state = PriorState.from_dict(stored_prior_state_dict)
+            _LOGGER.debug(
+                "Loaded prior state for %s: name=%s, last_updated=%s",
+                self.entry_id,
+                name,
+                last_updated,
+            )
+            return name, prior_state, last_updated
+
         except Exception as err:
-            _LOGGER.exception("Error loading prior state")
+            _LOGGER.exception("Error loading prior state for %s", self.entry_id)
             raise StorageLoadError(f"Failed to load prior state: {err}") from err
