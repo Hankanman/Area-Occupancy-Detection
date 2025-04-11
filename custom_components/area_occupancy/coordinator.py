@@ -50,7 +50,7 @@ from .const import (
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
 from .probabilities import Probabilities
-from .storage import AreaOccupancyStorage
+from .storage import AreaOccupancyStore
 from .types import DeviceInfo, PriorState, ProbabilityState, SensorInputs
 
 _LOGGER = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         )
 
         # Initialize remaining components
-        self.storage = AreaOccupancyStorage(self.hass, self.config_entry.entry_id)
+        self.storage = AreaOccupancyStore(self.hass)
         self.decay_handler = DecayHandler(self.config)
         self.calculator = ProbabilityCalculator(
             probability_state=self.data,
@@ -463,12 +463,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         try:
             _LOGGER.debug("Loading stored data from storage")
 
-            # Load prior state after migration attempt
+            # Use the store's instance-specific load method
             (
                 name,
                 stored_prior_state,
                 last_updated_ts,
-            ) = await self.storage.async_load_prior_state()
+            ) = await self.storage.async_load_instance_prior_state(
+                self.config_entry.entry_id
+            )
 
             if stored_prior_state:
                 _LOGGER.debug(
@@ -1106,8 +1108,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         try:
             _LOGGER.debug("Attempting to save prior state data")
-            await self.storage.async_save_prior_state(
-                self.config.get(CONF_NAME, "Unknown Area"),  # Get name from config
+            await self.storage.async_save_instance_prior_state(
+                self.config_entry.entry_id,
+                self.config.get(CONF_NAME, "Unknown Area"),
                 self.prior_state,
             )
             # Update timestamp after successful save
