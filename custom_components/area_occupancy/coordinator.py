@@ -290,7 +290,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 await self.update_learned_priors()
             else:
                 # Add log message for skipping case
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Skipping initial prior calculation: Existing priors are complete and recent (last update: %s)",
                     self._last_prior_update or "N/A",
                 )
@@ -302,7 +302,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Trigger an initial refresh after setup is complete
             await self.async_refresh()
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s",
                 self.config[CONF_NAME],
             )
@@ -458,14 +458,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Load and restore data from storage."""
         try:
             _LOGGER.debug("Loading stored data from storage")
-
-            # Attempt storage migration first
-            try:
-                await self.storage.async_migrate_storage()
-            except StorageError as err:
-                _LOGGER.warning(
-                    "Storage migration failed, proceeding with load: %s", err
-                )
 
             # Load prior state after migration attempt
             (
@@ -998,7 +990,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._prior_update_tracker = async_track_point_in_time(
             self.hass, self._handle_prior_update, self._next_prior_update
         )
-        _LOGGER.info(
+        _LOGGER.debug(
             "Scheduled next prior update for %s in area %s",
             self._next_prior_update.isoformat(),  # Log the stored datetime object
             self.config[CONF_NAME],

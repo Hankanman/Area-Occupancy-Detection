@@ -8,9 +8,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_VERSION, DOMAIN, PLATFORMS
+from .const import DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
-from .migrations import async_migrate_entry
 from .service import async_setup_services
 from .storage import AreaOccupancyStorageStore
 
@@ -75,14 +74,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.debug("Checking entry version")
 
-        # Check if area_id is present and needs migration
-        if entry.version != CONF_VERSION or not entry.version:
-            _LOGGER.debug(
-                "Migrating entry from version %s to %s", entry.version, CONF_VERSION
-            )
-            if not await async_migrate_entry(hass, entry):
-                _LOGGER.error("Migration failed for entry %s", entry.entry_id)
-                return False
+        # # Check if area_id is present and needs migration
+        # if entry.version != CONF_VERSION or not entry.version:
+        #     _LOGGER.debug(
+        #         "Migrating entry from version %s to %s", entry.version, CONF_VERSION
+        #     )
+        #     if not await async_migrate_entry(hass, entry):
+        #         _LOGGER.error("Migration failed for entry %s", entry.entry_id)
+        #         return False
 
         _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
         # Initialize the coordinator with the unified configuration

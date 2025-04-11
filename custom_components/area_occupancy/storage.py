@@ -1,7 +1,6 @@
 """Storage handling for Area Occupancy Detection."""
 
 import logging
-from pathlib import Path
 from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
@@ -175,38 +174,6 @@ class AreaOccupancyStorage:
         self.entry_id = entry_id
         self.store = AreaOccupancyStorageStore(hass)
         self._data: StoredData | None = None
-
-    async def async_migrate_storage(self) -> None:
-        """Migrate storage data."""
-        try:
-            _LOGGER.debug("Starting storage migration")
-            # Load data with old version to trigger migration
-            data = await self.store.async_load()
-            if data is None:
-                data = self.store.create_empty_storage()
-
-            # Save with current version to ensure migration
-            self._data = data.copy()
-            await self.store.async_save(self._data)
-
-            # Clean up old instance-specific storage file
-            old_file = Path(
-                self.hass.config.path(".storage", f"{DOMAIN}.{self.entry_id}.storage")
-            )
-            if old_file.exists():
-                try:
-                    _LOGGER.debug("Removing old storage file: %s", old_file)
-                    old_file.unlink()
-                    _LOGGER.info("Successfully removed old storage file: %s", old_file)
-                except OSError as err:
-                    _LOGGER.warning(
-                        "Error removing old storage file %s: %s", old_file, err
-                    )
-
-            _LOGGER.debug("Storage migration complete")
-        except Exception as err:
-            _LOGGER.error("Error during storage migration: %s", err)
-            raise StorageError(f"Failed to migrate storage: {err}") from err
 
     async def async_load(self) -> StoredData:
         """Load data from storage.
