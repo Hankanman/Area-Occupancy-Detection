@@ -350,12 +350,12 @@ class AreaOccupancyStorage:
         try:
             data = await self.async_load()
             if not data or "instances" not in data:
-                _LOGGER.debug("No stored data or instances found for loading priors.")
+                _LOGGER.debug("No stored data or instances found for loading priors")
                 return None, None, None
 
             instance_data = data["instances"].get(self.entry_id)
             if not instance_data:
-                _LOGGER.debug("No instance data found for %s.", self.entry_id)
+                _LOGGER.debug("No instance data found for %s", self.entry_id)
                 return None, None, None
 
             name = instance_data.get("name")
@@ -363,7 +363,7 @@ class AreaOccupancyStorage:
             last_updated = instance_data.get("last_updated")
 
             if not stored_prior_state_dict:
-                _LOGGER.debug("No prior_state dict found for %s.", self.entry_id)
+                _LOGGER.debug("No prior_state dict found for %s", self.entry_id)
                 return name, None, last_updated
 
             prior_state = PriorState.from_dict(stored_prior_state_dict)
