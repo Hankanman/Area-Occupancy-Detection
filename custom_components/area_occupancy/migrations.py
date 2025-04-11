@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -17,6 +18,8 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_VERSION,
+    CONF_VERSION_MINOR,
     CONF_WINDOW_ACTIVE_STATE,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -29,8 +32,8 @@ from .const import (
     NAME_PROBABILITY_SENSOR,
     NAME_THRESHOLD_NUMBER,
     PLATFORMS,
-    STORAGE_VERSION,
 )
+from .storage import AreaOccupancyStorageStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,9 +125,72 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     return migrate_primary_occupancy_sensor(config)
 
 
+async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
+    """Migrate storage data file format."""
+    store = AreaOccupancyStorageStore(hass)
+    try:
+        _LOGGER.debug("Starting storage file format migration for %s", entry_id)
+        # Load data with old version to trigger migration
+        data = await store.async_load()
+        if data is None:
+            _LOGGER.debug("No existing storage data found, skipping format migration")
+            return
+
+        # Save with current version to ensure migration
+        await store.async_save(data)
+
+        # Clean up old instance-specific storage file
+        old_file = Path(hass.config.path(".storage", f"{DOMAIN}.{entry_id}.storage"))
+        if old_file.exists():
+            try:
+                _LOGGER.debug("Removing old storage file: %s", old_file)
+                old_file.unlink()
+                _LOGGER.info("Successfully removed old storage file: %s", old_file)
+            except OSError as err:
+                _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
+
+        _LOGGER.debug("Storage file format migration complete for %s", entry_id)
+    except Exception as err:
+        _LOGGER.error("Error during storage migration for %s: %s", entry_id, err)
+        # Do not re-raise, allow config entry migration to continue
+        # raise StorageError(f"Failed to migrate storage: {err}") from err
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to the new version."""
-    _LOGGER.info("Migrating Area Occupancy entry from version %s", config_entry.version)
+    current_major = CONF_VERSION
+    current_minor = CONF_VERSION_MINOR
+    entry_major = config_entry.version
+    entry_minor = getattr(
+        config_entry, "minor_version", 0
+    )  # Use 0 if minor_version doesn't exist
+
+    if entry_major > current_major or (
+        entry_major == current_major and entry_minor >= current_minor
+    ):
+        # Stored version is same or newer, no migration needed
+        _LOGGER.debug(
+            "Skipping migration for %s: Stored version (%s.%s) >= Current version (%s.%s)",
+            config_entry.entry_id,
+            entry_major,
+            entry_minor,
+            current_major,
+            current_minor,
+        )
+        return True  # Indicate successful (skipped) migration
+
+    _LOGGER.info(
+        "Migrating Area Occupancy entry %s from version %s.%s to %s.%s",
+        config_entry.entry_id,
+        entry_major,
+        entry_minor,
+        current_major,
+        current_minor,
+    )
+
+    # --- Run Storage File Migration First ---
+    await async_migrate_storage(hass, config_entry.entry_id)
+    # --------------------------------------
 
     # Get existing data
     data = {**config_entry.data}
@@ -170,9 +236,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             config_entry,
             data=data,
             options=options,
-            version=STORAGE_VERSION,
+            version=CONF_VERSION,
+            minor_version=CONF_VERSION_MINOR,
         )
-        _LOGGER.info("Successfully migrated config entry")
+        _LOGGER.info("Successfully migrated config entry %s", config_entry.entry_id)
     except (ValueError, KeyError, HomeAssistantError) as err:
         _LOGGER.error("Error during config migration: %s", err)
         return False

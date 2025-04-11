@@ -7,7 +7,7 @@ the likelihood of occupancy based on various sensor states.
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -61,17 +61,24 @@ class PriorCalculator:
         self.config = coordinator.config
         self.probabilities = probabilities
         self.hass = hass
-        self._cache_duration = timedelta(minutes=5)
+
+        # Match cache duration to update interval and track last clear
+        self._cache_duration = coordinator.prior_update_interval
         self._last_cache_clear = dt_util.utcnow()
+        self._cache = {}
 
         # Use sensor inputs from coordinator
         self.inputs = coordinator.inputs
 
     def _should_clear_cache(self) -> bool:
-        """Check if cache should be cleared based on time elapsed."""
-        now = dt_util.utcnow()
-        if now - self._last_cache_clear > self._cache_duration:
-            self._last_cache_clear = now
+        """Check if cache should be cleared based on next update time."""
+        # Clear cache if we've passed the next scheduled update time
+        if (
+            self.coordinator.next_prior_update
+            and dt_util.utcnow() >= self.coordinator.next_prior_update
+        ):
+            self._last_cache_clear = dt_util.utcnow()
+            self._cache.clear()
             return True
         return False
 
@@ -160,18 +167,36 @@ class PriorCalculator:
         if end_time <= start_time:
             raise ValueError("End time must be after start time")
 
-        _LOGGER.debug("Prior calc: %s", entity_id)
+        _LOGGER.debug(
+            "Prior calc for instance %s: %s",
+            self.coordinator.config_entry.entry_id,
+            entity_id,
+        )
+
+        # If this is the primary sensor, use its own state for calculations
+        is_primary = entity_id == self.inputs.primary_sensor
 
         # Get states for both sensors in parallel for better performance
         try:
-            primary_states, entity_states = await asyncio.gather(
-                self._get_states_from_recorder(
-                    self.inputs.primary_sensor, start_time, end_time
-                ),
-                self._get_states_from_recorder(entity_id, start_time, end_time),
-            )
+            if is_primary:
+                # For primary sensor, use its own state as ground truth
+                primary_states = await self._get_states_from_recorder(
+                    entity_id, start_time, end_time
+                )
+                entity_states = primary_states
+            else:
+                primary_states, entity_states = await asyncio.gather(
+                    self._get_states_from_recorder(
+                        self.inputs.primary_sensor, start_time, end_time
+                    ),
+                    self._get_states_from_recorder(entity_id, start_time, end_time),
+                )
         except (HomeAssistantError, SQLAlchemyError, RuntimeError) as err:
-            _LOGGER.error("Error fetching states: %s", err)
+            _LOGGER.error(
+                "Error fetching states for instance %s: %s",
+                self.coordinator.config_entry.entry_id,
+                err,
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),
@@ -179,12 +204,38 @@ class PriorCalculator:
             )
 
         if not primary_states or not entity_states:
-            _LOGGER.warning("No sensor data available")
+            _LOGGER.warning(
+                "No sensor data available for instance %s",
+                self.coordinator.config_entry.entry_id,
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),
                 float(self.probabilities.get_default_prior(entity_id)),
             )
+
+        # For primary sensor, use higher default probabilities since it's the ground truth
+        if is_primary:
+            prob_given_true = 0.9  # High confidence when sensor indicates occupancy
+            prob_given_false = 0.1  # Low probability of false positives
+
+            # Calculate prior based on total active time
+            intervals = self._states_to_intervals(primary_states, start_time, end_time)
+            durations = self._compute_state_durations_from_intervals(
+                {entity_id: intervals}
+            )
+            total_active_time = float(durations.get(STATE_ON, 0.0))
+            total_time = total_active_time + float(durations.get(STATE_OFF, 0.0))
+
+            if total_time > 0:
+                prior = max(
+                    MIN_PROBABILITY,
+                    min(total_active_time / total_time, MAX_PROBABILITY),
+                )
+            else:
+                prior = float(self.probabilities.get_default_prior(entity_id))
+
+            return prob_given_true, prob_given_false, prior
 
         # Compute intervals for primary sensor
         primary_intervals = self._states_to_intervals(
@@ -219,20 +270,34 @@ class PriorCalculator:
         total_primary_time = total_primary_active_time + total_primary_inactive_time
 
         if total_primary_time == 0:
-            _LOGGER.warning("No valid duration found for primary sensor")
+            _LOGGER.info(
+                "No valid duration found for primary sensor, will use default prior"
+            )
             return (
                 float(DEFAULT_PROB_GIVEN_TRUE),
                 float(DEFAULT_PROB_GIVEN_FALSE),
                 float(self.probabilities.get_default_prior(entity_id)),
             )
 
-        # Calculate prior probability based on primary sensor and clamp it
-        prior = float(
-            max(
-                MIN_PROBABILITY,
-                min(total_primary_active_time / total_primary_time, MAX_PROBABILITY),
-            )
+        # Calculate prior probability based on this sensor's own active time
+        entity_durations = self._compute_state_durations_from_intervals(
+            {entity_id: entity_intervals}
         )
+        total_entity_active_time = float(entity_durations.get(STATE_ON, 0.0))
+        total_entity_time = total_entity_active_time + float(
+            entity_durations.get(STATE_OFF, 0.0)
+        )
+
+        # Calculate prior based on this sensor's active time ratio
+        if total_entity_time > 0:
+            prior = float(
+                max(
+                    MIN_PROBABILITY,
+                    min(total_entity_active_time / total_entity_time, MAX_PROBABILITY),
+                )
+            )
+        else:
+            prior = float(self.probabilities.get_default_prior(entity_id))
 
         # Calculate conditional probabilities using intervals
         prob_given_true = float(
@@ -263,7 +328,7 @@ class PriorCalculator:
         )
 
         # Calculate and update type priors by averaging all sensors of this type
-        await self._update_type_priors(entity_id)
+        await self.update_type_priors(entity_id)
 
         return (prob_given_true, prob_given_false, prior)
 
@@ -415,25 +480,34 @@ class PriorCalculator:
         result = overlap_duration / total_motion_duration
         return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
-    async def _update_type_priors(self, entity_id: str) -> None:
+    async def update_type_priors(self, entity_id: str) -> None:
         """Update type priors by averaging all sensors of the given type."""
         # Get all entities of this type
         entities = []
         if entity_id in self.inputs.motion_sensors:
             entities = self.inputs.motion_sensors
+            sensor_type = "motion"
         elif entity_id in self.inputs.media_devices:
             entities = self.inputs.media_devices
+            sensor_type = "media"
         elif entity_id in self.inputs.appliances:
             entities = self.inputs.appliances
+            sensor_type = "appliance"
         elif entity_id in self.inputs.door_sensors:
             entities = self.inputs.door_sensors
+            sensor_type = "door"
         elif entity_id in self.inputs.window_sensors:
             entities = self.inputs.window_sensors
+            sensor_type = "window"
         elif entity_id in self.inputs.lights:
             entities = self.inputs.lights
+            sensor_type = "light"
+        else:
+            _LOGGER.debug("Unknown sensor type for %s", entity_id)
+            return
 
         if not entities:
-            _LOGGER.debug("No entities: type %s", entity_id)
+            _LOGGER.debug("No entities of type %s", sensor_type)
             return
 
         # Collect all learned priors for this type
@@ -449,16 +523,30 @@ class PriorCalculator:
                 prob_given_falses.append(learned["prob_given_false"])
 
         if not priors:
-            _LOGGER.debug("No priors: type %s", entity_id)
+            _LOGGER.debug("No learned priors for type %s", sensor_type)
             return
 
-        # Calculate averages
+        # Calculate averages for all probability values
         avg_prior = sum(priors) / len(priors)
+        avg_prob_given_true = sum(prob_given_trues) / len(prob_given_trues)
+        avg_prob_given_false = sum(prob_given_falses) / len(prob_given_falses)
 
-        # Update type priors in prior_state
+        # Log the averages for debugging
+        _LOGGER.debug(
+            "Type %s averages - prior: %.3f, p_true: %.3f, p_false: %.3f (from %d sensors)",
+            sensor_type,
+            avg_prior,
+            avg_prob_given_true,
+            avg_prob_given_false,
+            len(priors),
+        )
+
+        # Update type priors in prior_state with all averaged values
         timestamp = dt_util.utcnow().isoformat()
-        self.coordinator.prior_state.update_type_prior(entity_id, avg_prior, timestamp)
-
-        # Recalculate overall prior
-        overall_prior = self.coordinator.prior_state.calculate_overall_prior()
-        self.coordinator.prior_state.update(overall_prior=overall_prior)
+        self.coordinator.prior_state.update_type_prior(
+            sensor_type,
+            avg_prior,
+            timestamp,
+            avg_prob_given_true,
+            avg_prob_given_false,
+        )

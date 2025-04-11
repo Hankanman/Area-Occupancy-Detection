@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+git diff main..dev > release_diff.txt
+
+git log main...dev --pretty=format:"%h%n%B%n---" > commit_messages.txt
