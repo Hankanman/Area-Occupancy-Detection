@@ -248,12 +248,10 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
             return 0.0
 
         try:
-            return format_float(100 - (self.coordinator.data.decay_status * 100))
+            # decay_status is already stored as 0.0 to 100.0
+            return format_float(self.coordinator.data.decay_status)
         except AttributeError:
             _LOGGER.error("Coordinator data missing decay_status attribute")
-            return 0.0
-        except (TypeError, ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error calculating decay value: %s", err)
             return 0.0
 
 

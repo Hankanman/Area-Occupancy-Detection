@@ -44,6 +44,7 @@ from .const import (
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
+    MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
 from .decay_handler import DecayHandler
@@ -115,6 +116,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             is_occupied=False,
             decaying=False,
             decay_start_time=None,
+            decay_start_probability=None,
         )
 
         # Initialize probabilities first
@@ -141,7 +143,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.storage = AreaOccupancyStorage(self.hass, self.config_entry.entry_id)
         self.decay_handler = DecayHandler(self.config)
         self.calculator = ProbabilityCalculator(
-            decay_handler=self.decay_handler,
             probability_state=self.data,
             prior_state=self.prior_state,
             probabilities=self.probabilities,
@@ -362,6 +363,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             decay_start_time_state = self.data.decay_start_time if self.data else None
             current_states_dict = self.data.current_states if self.data else {}
             previous_states_dict = self.data.previous_states if self.data else {}
+            decay_start_probability_state = (
+                self.data.decay_start_probability if self.data else None
+            )
             sensor_probabilities_dict = (
                 self.data.sensor_probabilities if self.data else {}
             )
@@ -382,6 +386,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 is_occupied=is_occupied_state,  # Keep current occupancy state initially
                 decaying=decaying_state,
                 decay_start_time=decay_start_time_state,
+                decay_start_probability=decay_start_probability_state,
             )
 
             # Reset components that depend on config
@@ -399,9 +404,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Reinitialize the calculator with updated references
             self.calculator = ProbabilityCalculator(
-                decay_handler=self.decay_handler,
                 probability_state=self.data,
-                prior_state=self.prior_state,  # Use existing PriorState
+                prior_state=self.prior_state,
                 probabilities=self.probabilities,
             )
 
@@ -493,6 +497,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     is_occupied=False,
                     decaying=False,
                     decay_start_time=None,
+                    decay_start_probability=None,
                 )
 
                 # Reset prior state object
@@ -704,55 +709,72 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     async def _async_update_data(self) -> ProbabilityState:
         """Update data with improved error handling."""
         try:
-            # Make a copy of active sensors for this calculation run
+            # --- Store initial state before calculation ---
+            initial_prob = self.data.probability
+            initial_decaying = self.data.decaying
+            initial_decay_start_time = self.data.decay_start_time
+            initial_decay_start_prob = self.data.decay_start_probability
+            previous_states = self.data.current_states.copy()
+
+            # --- Calculate Undecayed Probability ---
+            # Use the current active sensors directly from the coordinator's state
             active_sensors_snapshot = self._active_sensors.copy()
-
-            # Check for OFF transitions using previous states stored in self.data
-            off_transition = False
-            for entity_id, current_info in self.data.current_states.items():
-                previous_info = self.data.previous_states.get(entity_id)
-                # Ensure previous_info is not None before accessing 'state'
-                if (
-                    previous_info
-                    and previous_info.get("state") == "on"
-                    and current_info.get("state") == "off"
-                ):
-                    _LOGGER.debug("Detected OFF transition for %s", entity_id)
-                    off_transition = True
-                    break
-
-            # Use the snapshot for calculation
-            probability_state = self.calculator.calculate_occupancy_probability(
+            # Calculator now returns the ProbabilityState object updated with *undecayed* probability
+            # and the pre-calculation probability stored in its 'previous_probability' field.
+            undecayed_state = self.calculator.calculate_occupancy_probability(
                 active_sensors_snapshot,
                 dt_util.now(),  # Use timezone-aware now
             )
+            undecayed_prob = undecayed_state.probability
+            # The 'previous_probability' from the calculator is the state before *its* calculation
+            # We use the 'initial_prob' captured at the start of *this* method for decay.
 
-            # Store previous states *before* updating self.data.current_states
-            previous_states = self.data.current_states.copy()
+            # --- Apply Decay ---
+            (
+                decayed_probability,
+                decay_factor,
+                new_is_decaying,
+                new_decay_start_time,
+                new_decay_start_probability,
+            ) = self.decay_handler.calculate_decay(
+                current_probability=undecayed_prob,  # Use the undecayed result
+                previous_probability=initial_prob,  # Use the state before this update cycle
+                is_decaying=initial_decaying,
+                decay_start_time=initial_decay_start_time,
+                decay_start_probability=initial_decay_start_prob,
+            )
+            decay_status_percent = (1.0 - decay_factor) * 100.0
 
-            # Update the main data object with the new probability state
-            # Preserve current/previous states dictionaries from before calculation
-            self.data.update(
-                probability=probability_state.probability,
-                previous_probability=probability_state.previous_probability,
-                threshold=probability_state.threshold,
-                prior_probability=probability_state.prior_probability,
-                sensor_probabilities=probability_state.sensor_probabilities,
-                decay_status=probability_state.decay_status,
-                # current_states = updated below
-                # previous_states = updated below
-                is_occupied=probability_state.is_occupied,
-                decaying=probability_state.decaying,
-                decay_start_time=probability_state.decay_start_time,
+            # --- Update Final State ---
+            # Clamp final probability
+            final_probability = max(
+                MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
             )
 
-            # Update current and previous states in self.data *after* calculation
+            # Update the main data object with merged results
+            self.data.update(
+                probability=final_probability,  # Use the decayed probability
+                previous_probability=initial_prob,  # Store the probability from *before* this cycle
+                threshold=undecayed_state.threshold,  # Use threshold from calculator state
+                prior_probability=undecayed_state.prior_probability,  # Use prior from calculator state
+                sensor_probabilities=undecayed_state.sensor_probabilities,  # Use sensor probs from calc state
+                decay_status=decay_status_percent,
+                # current_states are updated by the listener
+                # previous_states are updated below
+                is_occupied=final_probability
+                >= self.data.threshold,  # Calculate based on final prob & current threshold
+                decaying=new_is_decaying,  # Use result from decay handler
+                decay_start_time=new_decay_start_time,  # Use result from decay handler
+                decay_start_probability=new_decay_start_probability,  # Use result from decay handler
+            )
+
+            # Update previous states in self.data *after* the main update
             # Note: current_states are updated via the state change listener
             self.data.previous_states = previous_states
 
             # Log current status using the updated self.data
             _LOGGER.debug(
-                "Status: probability=%.3f threshold=%.3f decay_status=%.3f decaying=%s is_occupied=%s",
+                "Status: probability=%.3f threshold=%.3f decay_status=%.3f%% decaying=%s is_occupied=%s",
                 self.data.probability,
                 self.data.threshold,
                 self.data.decay_status,
@@ -760,31 +782,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.is_occupied,
             )
 
-            # Manage decay timer based on the *newly calculated* decay status
-            decay_active = self.data.decay_status < 1.0 or off_transition
-            if decay_active:
-                if not self.data.decaying:  # Check if decay wasn't already active
-                    self.data.decaying = True
-                if not self._decay_unsub:
-                    _LOGGER.debug(
-                        "Starting decay timer (decay_status=%.3f, off_transition=%s)",
-                        self.data.decay_status,
-                        off_transition,
-                    )
+            # Manage decay timer based on the decay state set by the calculator
+            if self.data.decaying:
+                if not self._decay_unsub:  # Start timer only if not already running
+                    _LOGGER.debug("Starting decay timer (decaying is True)")
                     self._start_decay_updates()
-            elif self.data.decaying:  # Check if decay was active
-                self.data.decaying = False
-                if self._decay_unsub:
-                    _LOGGER.debug(
-                        "Stopping decay timer (decay complete or no off transition)"
-                    )
-                    self._stop_decay_updates()
+            elif self._decay_unsub:  # If not decaying, stop timer if running
+                _LOGGER.debug("Stopping decay timer (decaying is False)")
+                self._stop_decay_updates()
 
             # --- Reset Logic ---
             # Check if we should reset probability to MIN_PROBABILITY
-            # Reset only when decay is complete (or wasn't active) AND no sensors are *currently* active
+            # Reset only when decay is NOT active AND no sensors are *currently* active
             # Use the up-to-date self._active_sensors for this check
-            should_reset = not decay_active and not self._active_sensors
+            should_reset = not self.data.decaying and not self._active_sensors
 
             # Perform reset if needed
             if should_reset:

@@ -151,6 +151,7 @@ class ProbabilityState:
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
     decay_start_time: datetime | None = field(default=None)
+    decay_start_probability: float | None = field(default=None)
 
     @property
     def active_triggers(self) -> list[str]:
@@ -183,6 +184,7 @@ class ProbabilityState:
         is_occupied: bool | None = None,
         decaying: bool | None = None,
         decay_start_time: datetime | None = None,
+        decay_start_probability: float | None = None,
     ) -> None:
         """Update the state with new values while maintaining the same instance."""
         if probability is not None:
@@ -196,7 +198,7 @@ class ProbabilityState:
         if sensor_probabilities is not None:
             self.sensor_probabilities = sensor_probabilities
         if decay_status is not None:
-            self.decay_status = max(0.0, min(decay_status, 1.0))
+            self.decay_status = max(0.0, min(decay_status, 100.0))
         if current_states is not None:
             self.current_states = current_states
         if previous_states is not None:
@@ -207,6 +209,8 @@ class ProbabilityState:
             self.decaying = decaying
         if decay_start_time is not None:
             self.decay_start_time = decay_start_time
+        if decay_start_probability is not None:
+            self.decay_start_probability = decay_start_probability
 
     def to_dict(
         self,
@@ -233,6 +237,7 @@ class ProbabilityState:
             "decay_start_time": self.decay_start_time.isoformat()
             if self.decay_start_time
             else None,
+            "decay_start_probability": self.decay_start_probability,
         }
 
     @classmethod
@@ -254,6 +259,7 @@ class ProbabilityState:
             if decay_start_time_str
             else None
         )
+        decay_start_probability = data.get("decay_start_probability")
         return cls(
             probability=float(data["probability"]),
             previous_probability=float(data["previous_probability"]),
@@ -266,6 +272,7 @@ class ProbabilityState:
             is_occupied=bool(data["is_occupied"]),
             decaying=bool(data.get("decaying", False)),
             decay_start_time=decay_start_time,
+            decay_start_probability=decay_start_probability,
         )
 
 
