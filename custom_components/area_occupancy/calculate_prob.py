@@ -307,7 +307,7 @@ class ProbabilityCalculator:
             },
             # Keep existing decay state for now; coordinator will update it
             decay_status=self.probability_state.decay_status,
-            is_occupied=self.probability_state.is_occupied, # Keep existing; coordinator updates
+            is_occupied=self.probability_state.is_occupied,  # Keep existing; coordinator updates
             decaying=self.probability_state.decaying,
             decay_start_time=self.probability_state.decay_start_time,
             decay_start_probability=self.probability_state.decay_start_probability,

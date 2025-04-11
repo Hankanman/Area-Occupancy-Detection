@@ -104,3 +104,6 @@ DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
+
+# Storage constants
+STORAGE_KEY: Final = f"{DOMAIN}.storage"
