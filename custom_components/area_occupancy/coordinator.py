@@ -711,16 +711,28 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     async def _async_update_data(self) -> ProbabilityState:
         """Update data with improved error handling."""
         try:
-            # --- Store initial state before calculation ---
+            # --- Update self.data state dictionaries first (under lock) ---
+            async with self._state_lock:
+                # Get a snapshot of the current internal state
+                current_internal_states = self._all_sensor_states.copy()
+                active_sensors_snapshot = self._active_sensors.copy()
+
+                # Update previous_states in self.data based on its *current* current_states
+                self.data.previous_states = self.data.current_states.copy()
+
+                # Update current_states in self.data using the snapshot from _all_sensor_states
+                self.data.current_states = current_internal_states
+            # --- End State Dictionary Update ---
+
+            # --- Store initial probability state before calculation ---
             initial_prob = self.data.probability
             initial_decaying = self.data.decaying
             initial_decay_start_time = self.data.decay_start_time
             initial_decay_start_prob = self.data.decay_start_probability
-            previous_states = self.data.current_states.copy()
 
             # --- Calculate Undecayed Probability ---
-            # Use the current active sensors directly from the coordinator's state
-            active_sensors_snapshot = self._active_sensors.copy()
+            # Use the active sensors snapshot taken earlier
+            # active_sensors_snapshot = self._active_sensors.copy() # No longer needed here
             # Calculator now returns the ProbabilityState object updated with *undecayed* probability
             # and the pre-calculation probability stored in its 'previous_probability' field.
             undecayed_state = self.calculator.calculate_occupancy_probability(
@@ -769,10 +781,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 decay_start_time=new_decay_start_time,  # Use result from decay handler
                 decay_start_probability=new_decay_start_probability,  # Use result from decay handler
             )
-
-            # Update previous states in self.data *after* the main update
-            # Note: current_states are updated via the state change listener
-            self.data.previous_states = previous_states
 
             # Log current status using the updated self.data
             _LOGGER.debug(
@@ -894,21 +902,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     "last_changed": last_changed,
                     "availability": is_available,
                 }
-
-                # Update previous state in self.data *before* updating current state
-                if entity_id in self.data.current_states:
-                    self.data.previous_states[entity_id] = self.data.current_states[
-                        entity_id
-                    ].copy()
-                else:  # Handle case where entity might not be in current_states yet
-                    self.data.previous_states[entity_id] = {
-                        "state": old_state_str,
-                        "last_changed": None,
-                        "availability": False,
-                    }  # Provide a basic previous state
-
-                # Update current state in self.data
-                self.data.current_states[entity_id] = sensor_info
 
                 # Schedule async task to update internal dictionaries under lock
                 async def update_internal_state():
