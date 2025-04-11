@@ -114,19 +114,17 @@ APPLIANCE_STATE_PROBABILITIES: Final[dict[str, float]] = {
 class Probabilities:
     """Class to handle probability calculations and weights."""
 
-    def __init__(self, config: dict[str, Any], coordinator: Any | None = None) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialize the probabilities handler.
 
         Args:
             config: Configuration dictionary
-            coordinator: Optional coordinator instance for learned priors
 
         Raises:
             ConfigurationError: If configuration is invalid
 
         """
         self.config = config
-        self.coordinator = coordinator
         self._sensor_weights = self._get_sensor_weights()
         self._sensor_configs = self._build_sensor_configs()
         self.entity_types: dict[str, EntityType] = {}
@@ -319,18 +317,6 @@ class Probabilities:
                     "active_states": {STATE_ON},
                 },
             }
-
-            # Update configs with learned type priors if available
-            if self.coordinator and hasattr(self.coordinator, "type_priors"):
-                for sensor_type, config in configs.items():
-                    if type_prior := self.coordinator.type_priors.get(sensor_type):
-                        config.update(
-                            {
-                                "prob_given_true": type_prior["prob_given_true"],
-                                "prob_given_false": type_prior["prob_given_false"],
-                                "default_prior": type_prior["prior"],
-                            }
-                        )
 
             # Validate configurations
             for sensor_type, config in configs.items():
