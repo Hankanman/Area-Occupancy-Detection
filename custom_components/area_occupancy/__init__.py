@@ -90,7 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Load stored data and initialize states
         try:
-            await coordinator._async_setup()
+            await coordinator.async_setup()
 
         except Exception as err:
             _LOGGER.error("Failed to load stored data: %s", err)

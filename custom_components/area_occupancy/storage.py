@@ -182,6 +182,11 @@ class AreaOccupancyStore(Store[StoredData]):
                 return name, None, last_updated
 
             prior_state = PriorState.from_dict(stored_prior_state_dict)
+
+        except Exception as err:
+            _LOGGER.exception("Error loading prior state for %s", entry_id)
+            raise StorageLoadError(f"Failed to load prior state: {err}") from err
+        else:
             _LOGGER.debug(
                 "Loaded prior state for %s: name=%s, last_updated=%s",
                 entry_id,
@@ -189,10 +194,6 @@ class AreaOccupancyStore(Store[StoredData]):
                 last_updated,
             )
             return name, prior_state, last_updated
-
-        except Exception as err:
-            _LOGGER.exception("Error loading prior state for %s", entry_id)
-            raise StorageLoadError(f"Failed to load prior state: {err}") from err
 
     async def async_save_instance_prior_state(
         self, entry_id: str, name: str, prior_state: PriorState
