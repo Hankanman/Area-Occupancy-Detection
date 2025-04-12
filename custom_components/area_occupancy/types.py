@@ -146,8 +146,12 @@ class ProbabilityState:
     prior_probability: float = field(default=0.0)
     sensor_probabilities: dict[str, dict[str, float]] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
-    current_states: dict[str, dict[str, str | bool]] = field(default_factory=dict)
-    previous_states: dict[str, dict[str, str | bool]] = field(default_factory=dict)
+    current_states: dict[
+        str, dict[Literal["state", "last_changed", "availability"], Any]
+    ] = field(default_factory=dict)
+    previous_states: dict[
+        str, dict[Literal["state", "last_changed", "availability"], Any]
+    ] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
     decay_start_time: datetime | None = field(default=None)
@@ -179,8 +183,14 @@ class ProbabilityState:
         prior_probability: float | None = None,
         sensor_probabilities: dict[str, dict[str, float]] | None = None,
         decay_status: float | None = None,
-        current_states: dict[str, dict[str, str | bool]] | None = None,
-        previous_states: dict[str, dict[str, str | bool]] | None = None,
+        current_states: dict[
+            str, dict[Literal["state", "last_changed", "availability"], Any]
+        ]
+        | None = None,
+        previous_states: dict[
+            str, dict[Literal["state", "last_changed", "availability"], Any]
+        ]
+        | None = None,
         is_occupied: bool | None = None,
         decaying: bool | None = None,
         decay_start_time: datetime | None = None,
@@ -216,11 +226,7 @@ class ProbabilityState:
         self,
     ) -> dict[
         str,
-        float
-        | list[str]
-        | dict[str, float | dict[str, str | bool] | bool]
-        | str
-        | None,
+        float | list[str] | dict[str, float | dict[str, Any] | bool] | str | None,
     ]:
         """Convert the dataclass to a dictionary."""
         return {
@@ -245,11 +251,7 @@ class ProbabilityState:
         cls,
         data: dict[
             str,
-            float
-            | list[str]
-            | dict[str, float | dict[str, str | bool] | bool]
-            | str
-            | None,
+            float | list[str] | dict[str, float | dict[str, Any] | bool] | str | None,
         ],
     ) -> ProbabilityState:
         """Create a ProbabilityState from a dictionary."""
@@ -267,7 +269,7 @@ class ProbabilityState:
             prior_probability=float(data["prior_probability"]),
             sensor_probabilities=dict(data["sensor_probabilities"]),
             decay_status=float(data["decay_status"]),
-            current_states=dict(data["current_states"]),
+            current_states=dict(data.get("current_states", {})),
             previous_states=dict(data.get("previous_states", {})),
             is_occupied=bool(data["is_occupied"]),
             decaying=bool(data.get("decaying", False)),

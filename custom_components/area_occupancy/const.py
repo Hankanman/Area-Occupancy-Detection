@@ -90,8 +90,10 @@ NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
-# Decay lambda such that at half of decay_window probability is 25% of original
-DECAY_LAMBDA = 0.866433976
+# Decay lambda - A higher value results in faster decay.
+# Original value (0.866) resulted in ~65% remaining at half decay_window.
+# Doubled value (1.733) results in ~42% remaining at half decay_window.
+DECAY_LAMBDA = 1.732867952
 
 # Safety bounds
 MIN_PROBABILITY: Final[float] = 0.01
