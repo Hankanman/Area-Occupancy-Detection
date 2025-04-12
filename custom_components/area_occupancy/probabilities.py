@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Final
 
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_OPEN
 
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
@@ -214,6 +214,11 @@ class Probabilities:
         else:
             return weights
 
+    def _translate_binary_sensor_active_state(self, configured_state: str) -> str:
+        """Translate a configured state (e.g., 'open', 'closed') to a binary_sensor state ('on', 'off')."""
+        # Default to STATE_OFF if the configured state isn't explicitly STATE_OPEN
+        return STATE_ON if configured_state == STATE_OPEN else STATE_OFF
+
     def _build_sensor_configs(self) -> dict[str, ProbabilityConfig]:
         """Build sensor configurations using current weights and type priors.
 
@@ -244,14 +249,22 @@ class Probabilities:
             _validate_probability(sensor_type, "weight", config["weight"])
 
         try:
-            # Get the configured door active state
-            door_active_state = self.config.get(
+            # Get the configured door active state (e.g., 'open' or 'closed')
+            configured_door_active_state = self.config.get(
                 CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
             )
+            # Translate to binary_sensor state (on/off)
+            translated_door_active_state = self._translate_binary_sensor_active_state(
+                configured_door_active_state
+            )
 
-            # Get the configured window active state
-            window_active_state = self.config.get(
+            # Get the configured window active state (e.g., 'open' or 'closed')
+            configured_window_active_state = self.config.get(
                 CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+            )
+            # Translate to binary_sensor state (on/off)
+            translated_window_active_state = self._translate_binary_sensor_active_state(
+                configured_window_active_state
             )
 
             # Get the configured media active states
@@ -293,14 +306,14 @@ class Probabilities:
                     "prob_given_false": DOOR_PROB_GIVEN_FALSE,
                     "default_prior": DOOR_DEFAULT_PRIOR,
                     "weight": self._sensor_weights["door"],
-                    "active_states": {door_active_state},
+                    "active_states": {translated_door_active_state},
                 },
                 "window": {
                     "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
                     "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
                     "default_prior": WINDOW_DEFAULT_PRIOR,
                     "weight": self._sensor_weights["window"],
-                    "active_states": {window_active_state},
+                    "active_states": {translated_window_active_state},
                 },
                 "light": {
                     "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
