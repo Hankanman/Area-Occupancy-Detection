@@ -282,8 +282,3 @@ class DecayHandler:
             MIN_PROBABILITY,
             min(probability * decay_factor, MAX_PROBABILITY),
         )
-
-    def reset(self) -> None:
-        """Reset the decay handler configuration to defaults."""
-        self.decay_enabled = DEFAULT_DECAY_ENABLED
-        self.decay_window = DEFAULT_DECAY_WINDOW

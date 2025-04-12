@@ -633,20 +633,6 @@ class TimeInterval(TypedDict, total=False):
     total_time: NotRequired[float]
 
 
-class CalculationResult(TypedDict):
-    """Result of a probability calculation.
-
-    Required fields:
-        probability: Calculated probability value
-        is_active: Whether the sensor is currently active
-        details: Dictionary containing calculation details
-    """
-
-    probability: float
-    is_active: bool
-    details: dict[str, float]
-
-
 class ProbabilityAttributes(TypedDict):
     """Attributes for the probability sensor.
 

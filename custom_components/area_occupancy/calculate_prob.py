@@ -73,7 +73,9 @@ class ProbabilityCalculator:
             )
 
             # Calculate prior probability
-            prior_probability = self._calculate_prior_probability(active_sensor_states)
+            prior_probability = self._get_average_prior_for_active_sensors(
+                active_sensor_states
+            )
 
             # --- Decay is no longer applied here ---
 
@@ -147,16 +149,16 @@ class ProbabilityCalculator:
         calculated_probability = 1.0 - complementary_prob
         return max(MIN_PROBABILITY, min(calculated_probability, MAX_PROBABILITY))
 
-    def _calculate_prior_probability(
+    def _get_average_prior_for_active_sensors(
         self, sensor_states: dict[str, SensorState]
     ) -> float:
-        """Calculate the prior probability based on sensor states.
+        """Calculate the average default/learned prior based on currently active sensor states.
 
         Args:
             sensor_states: Dictionary of sensor states
 
         Returns:
-            The calculated prior probability
+            The calculated average prior probability
 
         """
         prior_sum = 0.0

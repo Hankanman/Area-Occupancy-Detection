@@ -210,7 +210,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         return self.data.threshold if self.data else 0.0
 
     # --- Public Methods ---
-    async def _async_setup(self) -> None:
+    async def async_setup(self) -> None:
         """Set up the coordinator, load data, initialize states, check priors, and schedule updates."""
         try:
             # Load stored data first
