@@ -56,6 +56,7 @@ class PriorCalculator:
             hass: Home Assistant instance
             probabilities: Probability configuration object
             sensor_inputs: SensorInputs object containing configured sensors
+
         """
         self.hass = hass
         self.probabilities = probabilities
