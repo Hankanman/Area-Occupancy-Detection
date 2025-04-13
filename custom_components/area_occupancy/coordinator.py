@@ -510,12 +510,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     ),
                 )
 
-                # Reset decay handler state
-                self.decay_handler.reset()
-
-                # No need to save here, prior update will handle it
-                # await self._async_save_prior_state_data()
-
             _LOGGER.debug(
                 "Successfully restored stored data for instance %s",
                 self.config_entry.entry_id,
