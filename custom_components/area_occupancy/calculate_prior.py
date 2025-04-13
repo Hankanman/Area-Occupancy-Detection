@@ -7,9 +7,8 @@ the likelihood of occupancy based on various sensor states.
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
-from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -18,7 +17,6 @@ from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
 
 from .const import (
     DEFAULT_PROB_GIVEN_FALSE,
@@ -26,7 +24,8 @@ from .const import (
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from .types import TimeInterval
+from .probabilities import Probabilities  # Import Probabilities
+from .types import SensorInputs, TimeInterval  # Import SensorInputs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,48 +38,29 @@ class PriorCalculator:
     to determine the likelihood of occupancy.
 
     Attributes:
-        coordinator: The coordinator instance managing this calculator
-        config: Configuration dictionary containing sensor settings
-        probabilities: Probability configuration object
         hass: Home Assistant instance
+        probabilities: Probability configuration object
+        sensor_inputs: SensorInputs object containing configured sensors
 
     """
 
     def __init__(
-        self, coordinator: Any, probabilities: Any, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
+        probabilities: Probabilities,
+        sensor_inputs: SensorInputs,
     ) -> None:
         """Initialize the calculator.
 
         Args:
-            coordinator: The coordinator instance managing this calculator
-            probabilities: Probability configuration object
             hass: Home Assistant instance
-
+            probabilities: Probability configuration object
+            sensor_inputs: SensorInputs object containing configured sensors
         """
-        self.coordinator = coordinator
-        self.config = coordinator.config
-        self.probabilities = probabilities
         self.hass = hass
-
-        # Match cache duration to update interval and track last clear
-        self._cache_duration = coordinator.prior_update_interval
-        self._last_cache_clear = dt_util.utcnow()
-        self._cache = {}
-
-        # Use sensor inputs from coordinator
-        self.inputs = coordinator.inputs
-
-    def _should_clear_cache(self) -> bool:
-        """Check if cache should be cleared based on next update time."""
-        # Clear cache if we've passed the next scheduled update time
-        if (
-            self.coordinator.next_prior_update
-            and dt_util.utcnow() >= self.coordinator.next_prior_update
-        ):
-            self._last_cache_clear = dt_util.utcnow()
-            self._cache.clear()
-            return True
-        return False
+        self.probabilities = probabilities
+        self.inputs = sensor_inputs
+        # Coordinator reference is removed
 
     async def _get_states_from_recorder(
         self, entity_id: str, start_time: datetime, end_time: datetime
@@ -102,7 +82,7 @@ class PriorCalculator:
         """
         try:
             _LOGGER.debug(
-                "States: %s [%s -> %s]",
+                "Fetching states: %s [%s -> %s]",
                 entity_id,
                 start_time,
                 end_time,
@@ -120,24 +100,27 @@ class PriorCalculator:
                 )
             )
 
-            if states:
+            entity_states = states.get(entity_id) if states else None
+
+            if entity_states:
                 _LOGGER.debug(
-                    "Found %d states: %s",
-                    len(states.get(entity_id, [])),
+                    "Found %d states for %s",
+                    len(entity_states),
                     entity_id,
                 )
             else:
-                _LOGGER.debug("No states: %s", entity_id)
+                _LOGGER.debug("No states found for %s", entity_id)
 
-            return states.get(entity_id) if states else None
+            return entity_states
 
         except (HomeAssistantError, SQLAlchemyError) as err:
             _LOGGER.error("Error getting states for %s: %s", entity_id, err)
-            return None
+            # Propagate error to be handled by the coordinator
+            raise HomeAssistantError(f"Recorder error for {entity_id}: {err}") from err
 
     async def calculate_prior(
         self, entity_id: str, start_time: datetime, end_time: datetime
-    ) -> tuple[float, float, float]:
+    ) -> tuple[float, float, float] | None:
         """Calculate learned priors for a given entity.
 
         This method analyzes historical sensor data to calculate probability values
@@ -151,10 +134,8 @@ class PriorCalculator:
             end_time: End time for historical data analysis
 
         Returns:
-            Tuple containing:
-                - prob_given_true: P(entity active | area occupied)
-                - prob_given_false: P(entity active | area not occupied)
-                - prior: Base probability of area being occupied
+            Tuple containing (prob_given_true, prob_given_false, prior) if successful,
+            None otherwise.
 
         Raises:
             HomeAssistantError: If unable to access historical data
@@ -162,24 +143,25 @@ class PriorCalculator:
 
         """
         if not self.inputs.is_valid_entity_id(entity_id):
-            raise ValueError(f"Invalid entity ID format: {entity_id}")
+            _LOGGER.error(f"Invalid entity ID format provided: {entity_id}")
+            return None  # Return None for invalid entity ID
 
         if end_time <= start_time:
-            raise ValueError("End time must be after start time")
+            _LOGGER.error("End time must be after start time")
+            return None  # Return None for invalid time range
 
         _LOGGER.debug(
-            "Prior calc for instance %s: %s",
-            self.coordinator.config_entry.entry_id,
+            "Calculating prior for entity: %s",
             entity_id,
         )
 
-        # If this is the primary sensor, use its own state for calculations
+        # Use default priors as fallback values
+        default_prior = self.probabilities.get_default_prior(entity_id)
+
         is_primary = entity_id == self.inputs.primary_sensor
 
-        # Get states for both sensors in parallel for better performance
         try:
             if is_primary:
-                # For primary sensor, use its own state as ground truth
                 primary_states = await self._get_states_from_recorder(
                     entity_id, start_time, end_time
                 )
@@ -191,41 +173,42 @@ class PriorCalculator:
                     ),
                     self._get_states_from_recorder(entity_id, start_time, end_time),
                 )
-        except (HomeAssistantError, SQLAlchemyError, RuntimeError) as err:
-            _LOGGER.error(
-                "Error fetching states for instance %s: %s",
-                self.coordinator.config_entry.entry_id,
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Could not fetch states for prior calculation (%s): %s. Using defaults",
+                entity_id,
                 err,
             )
             return (
-                float(DEFAULT_PROB_GIVEN_TRUE),
-                float(DEFAULT_PROB_GIVEN_FALSE),
-                float(self.probabilities.get_default_prior(entity_id)),
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                default_prior,
             )
 
-        if not primary_states or not entity_states:
+        if not primary_states or (not is_primary and not entity_states):
             _LOGGER.warning(
-                "No sensor data available for instance %s",
-                self.coordinator.config_entry.entry_id,
+                "No historical sensor data available for %s in the given period. Using defaults",
+                entity_id,
             )
             return (
-                float(DEFAULT_PROB_GIVEN_TRUE),
-                float(DEFAULT_PROB_GIVEN_FALSE),
-                float(self.probabilities.get_default_prior(entity_id)),
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                default_prior,
             )
 
-        # For primary sensor, use higher default probabilities since it's the ground truth
+        # For primary sensor, calculate based on its own active time
         if is_primary:
-            prob_given_true = 0.9  # High confidence when sensor indicates occupancy
-            prob_given_false = 0.1  # Low probability of false positives
+            prob_given_true = 0.9  # Higher confidence for primary
+            prob_given_false = 0.1  # Lower false positive for primary
 
-            # Calculate prior based on total active time
-            intervals = self._states_to_intervals(primary_states, start_time, end_time)
+            intervals = await self._states_to_intervals(
+                primary_states, start_time, end_time
+            )
             durations = self._compute_state_durations_from_intervals(
                 {entity_id: intervals}
             )
-            total_active_time = float(durations.get(STATE_ON, 0.0))
-            total_time = total_active_time + float(durations.get(STATE_OFF, 0.0))
+            total_active_time = durations.get(STATE_ON, 0.0)
+            total_time = total_active_time + durations.get(STATE_OFF, 0.0)
 
             if total_time > 0:
                 prior = max(
@@ -233,106 +216,87 @@ class PriorCalculator:
                     min(total_active_time / total_time, MAX_PROBABILITY),
                 )
             else:
-                prior = float(self.probabilities.get_default_prior(entity_id))
+                prior = default_prior
 
-            return prob_given_true, prob_given_false, prior
+            return float(prob_given_true), float(prob_given_false), float(prior)
+
+        # ---- Calculation for non-primary sensors ----
 
         # Compute intervals for primary sensor
-        primary_intervals = self._states_to_intervals(
+        primary_intervals = await self._states_to_intervals(
             primary_states, start_time, end_time
         )
         if not primary_intervals:
-            _LOGGER.warning("No valid intervals found for primary sensor")
+            _LOGGER.warning(
+                "No valid intervals found for primary sensor. Using defaults for %s",
+                entity_id,
+            )
             return (
-                float(DEFAULT_PROB_GIVEN_TRUE),
-                float(DEFAULT_PROB_GIVEN_FALSE),
-                float(self.probabilities.get_default_prior(entity_id)),
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                default_prior,
             )
 
         # Compute intervals for the entity
-        entity_intervals = self._states_to_intervals(
+        entity_intervals = await self._states_to_intervals(
             entity_states, start_time, end_time
         )
         if not entity_intervals:
-            _LOGGER.warning("No valid intervals found for entity %s", entity_id)
-            return (
-                float(DEFAULT_PROB_GIVEN_TRUE),
-                float(DEFAULT_PROB_GIVEN_FALSE),
-                float(self.probabilities.get_default_prior(entity_id)),
-            )
-
-        # Calculate prior probability based on primary sensor
-        primary_durations = self._compute_state_durations_from_intervals(
-            {self.inputs.primary_sensor: primary_intervals}
-        )
-        total_primary_active_time = float(primary_durations.get(STATE_ON, 0.0))
-        total_primary_inactive_time = float(primary_durations.get(STATE_OFF, 0.0))
-        total_primary_time = total_primary_active_time + total_primary_inactive_time
-
-        if total_primary_time == 0:
-            _LOGGER.info(
-                "No valid duration found for primary sensor, will use default prior"
+            _LOGGER.warning(
+                "No valid intervals found for entity %s. Using defaults", entity_id
             )
             return (
-                float(DEFAULT_PROB_GIVEN_TRUE),
-                float(DEFAULT_PROB_GIVEN_FALSE),
-                float(self.probabilities.get_default_prior(entity_id)),
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                default_prior,
             )
 
-        # Calculate prior probability based on this sensor's own active time
+        # Calculate prior based on this sensor's active time ratio
         entity_durations = self._compute_state_durations_from_intervals(
             {entity_id: entity_intervals}
         )
-        total_entity_active_time = float(entity_durations.get(STATE_ON, 0.0))
-        total_entity_time = total_entity_active_time + float(
-            entity_durations.get(STATE_OFF, 0.0)
-        )
+        total_entity_active_time = entity_durations.get(STATE_ON, 0.0)
+        total_entity_inactive_time = entity_durations.get(STATE_OFF, 0.0)
+        total_entity_time = total_entity_active_time + total_entity_inactive_time
 
-        # Calculate prior based on this sensor's active time ratio
         if total_entity_time > 0:
-            prior = float(
-                max(
-                    MIN_PROBABILITY,
-                    min(total_entity_active_time / total_entity_time, MAX_PROBABILITY),
-                )
+            prior = max(
+                MIN_PROBABILITY,
+                min(total_entity_active_time / total_entity_time, MAX_PROBABILITY),
             )
         else:
-            prior = float(self.probabilities.get_default_prior(entity_id))
+            prior = default_prior
 
         # Calculate conditional probabilities using intervals
-        prob_given_true = float(
-            self._calculate_conditional_probability_with_intervals(
+        try:
+            prob_given_true = self._calculate_conditional_probability_with_intervals(
                 entity_id,
                 entity_intervals,
                 {self.inputs.primary_sensor: primary_intervals},
                 STATE_ON,
             )
-        )
-        prob_given_false = float(
-            self._calculate_conditional_probability_with_intervals(
+            prob_given_false = self._calculate_conditional_probability_with_intervals(
                 entity_id,
                 entity_intervals,
                 {self.inputs.primary_sensor: primary_intervals},
                 STATE_OFF,
             )
-        )
+        except ValueError as err:
+            _LOGGER.error(
+                "Error calculating conditional probability for %s: %s. Using defaults",
+                entity_id,
+                err,
+            )
+            return (
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
+                default_prior,
+            )
 
-        # After computing the probabilities, update learned priors in prior_state
-        timestamp = dt_util.utcnow().isoformat()
-        self.coordinator.prior_state.update_entity_prior(
-            entity_id,
-            prob_given_true,
-            prob_given_false,
-            prior,
-            timestamp,
-        )
+        # Return calculated values
+        return float(prob_given_true), float(prob_given_false), float(prior)
 
-        # Calculate and update type priors by averaging all sensors of this type
-        await self.update_type_priors(entity_id)
-
-        return (prob_given_true, prob_given_false, prior)
-
-    def _states_to_intervals(
+    async def _states_to_intervals(
         self, states: Sequence[State], start: datetime, end: datetime
     ) -> list[TimeInterval]:
         """Convert a list of states into time intervals.
@@ -356,25 +320,81 @@ class PriorCalculator:
             raise ValueError("End time must be after start time")
 
         intervals: list[TimeInterval] = []
+        if not states:  # Handle empty states list
+            return intervals
+
         sorted_states = sorted(states, key=lambda s: s.last_changed)
         current_start = start
-        current_state = None
+        # Determine initial state before the first recorded state in the window
+        first_state_in_window = sorted_states[0]
+        initial_state_obj = None
+        if first_state_in_window.last_changed > start:
+            # Get state just before the window starts
+            try:
+                # Fetch states in a small window just before the main start time
+                prior_states = await get_instance(
+                    self.hass
+                ).async_add_executor_job(
+                    lambda: get_significant_states(
+                        self.hass,
+                        start - timedelta(seconds=1),  # Small window before start
+                        start,
+                        [first_state_in_window.entity_id],  # Only for this entity
+                        minimal_response=True,  # We only need the state
+                        significant_changes_only=False,  # Get the last state regardless of change
+                    )
+                )
+                entity_prior_states = prior_states.get(first_state_in_window.entity_id)
+                if entity_prior_states:
+                    initial_state_obj = entity_prior_states[
+                        0
+                    ]  # Get the most recent state before 'start'
+
+            except Exception:
+                _LOGGER.warning(
+                    "Could not fetch state before window for %s",
+                    first_state_in_window.entity_id,
+                    exc_info=True,
+                )
+
+        current_state = initial_state_obj.state if initial_state_obj else None
+        # If no state before window, assume the state of the first item *was* the state at window start
+        if current_state is None:
+            current_state = first_state_in_window.state
 
         for s in sorted_states:
-            s_start = s.last_changed
-            s_start = max(s_start, start)
-            if current_state is None:
-                current_state = s.state
-                current_start = s_start
-            else:
-                if s_start > current_start:
-                    intervals.append(
-                        {"start": current_start, "end": s_start, "state": current_state}
-                    )
-                current_state = s.state
-                current_start = s_start
+            # Clamp state change time to be within the [start, end] window
+            s_change_time = max(start, s.last_changed)
+            s_change_time = min(
+                end, s_change_time
+            )  # Ensure change time doesn't exceed end
 
-        if current_start < end:
+            # If the state change happens after the current interval start
+            if s_change_time > current_start:
+                # Add the previous interval, ensuring its end doesn't exceed the overall end time
+                interval_end = min(s_change_time, end)
+                if (
+                    current_state is not None and interval_end > current_start
+                ):  # Ensure valid interval
+                    intervals.append(
+                        {
+                            "start": current_start,
+                            "end": interval_end,
+                            "state": current_state,
+                        }
+                    )
+                # Start the new interval from the state change time
+                current_start = s_change_time
+                current_state = s.state
+            # Handle cases where multiple state changes might occur at the exact same microsecond
+            # or if the first state change is exactly at 'start'
+            elif s_change_time == current_start:
+                current_state = (
+                    s.state
+                )  # Update state but don't create a zero-duration interval
+
+        # Add the final interval from the last state change to the end time
+        if current_start < end and current_state is not None:
             intervals.append(
                 {"start": current_start, "end": end, "state": current_state}
             )
@@ -399,32 +419,21 @@ class PriorCalculator:
         """
         _LOGGER.debug("Computing durations")
         durations: dict[str, float] = {
-            "total_active_time": 0.0,
-            "total_inactive_time": 0.0,
-            "total_time": 0.0,
-            "start": min(
-                (
-                    interval["start"]
-                    for intervals in intervals_dict.values()
-                    for interval in intervals
-                ),
-                default=dt_util.utcnow(),
-            ),
-            "end": max(
-                (
-                    interval["end"]
-                    for intervals in intervals_dict.values()
-                    for interval in intervals
-                ),
-                default=dt_util.utcnow(),
-            ),
+            STATE_ON: 0.0,
+            STATE_OFF: 0.0,
         }
         for intervals in intervals_dict.values():
             for interval in intervals:
                 duration = (interval["end"] - interval["start"]).total_seconds()
-                if "state" in interval:
-                    durations[interval["state"]] = (
-                        durations.get(interval["state"], 0.0) + duration
+                state = interval.get("state")
+                if state is not None:
+                    # Normalize common 'on' states to STATE_ON for duration calculation
+                    # This needs context from the probability config (which state is active)
+                    # For simplicity here, we'll map known binary states directly
+                    # A more robust solution might involve passing active_states config
+                    normalized_state = STATE_ON if state == STATE_ON else STATE_OFF
+                    durations[normalized_state] = (
+                        durations.get(normalized_state, 0.0) + duration
                     )
         return durations
 
@@ -433,120 +442,73 @@ class PriorCalculator:
         entity_id: str,
         entity_intervals: list[TimeInterval],
         motion_intervals_by_sensor: dict[str, list[TimeInterval]],
-        motion_state_filter: str,
+        motion_state_filter: str,  # Should be STATE_ON or STATE_OFF
     ) -> float:
-        """Calculate P(entity_active | motion_state) using precomputed intervals."""
-        _LOGGER.debug("Conditional prob: %s", entity_id)
-        # Combine motion intervals for the specified motion state
-        motion_intervals = []
-        for intervals in motion_intervals_by_sensor.values():
-            motion_intervals.extend(
+        """Calculate P(entity_active | primary_sensor_state) using precomputed intervals."""
+        _LOGGER.debug(
+            "Calculating conditional prob P( %s active | primary = %s )",
+            entity_id,
+            motion_state_filter,
+        )
+
+        # Combine intervals for the primary sensor matching the filter state
+        primary_intervals_filtered = []
+        primary_sensor_id = self.inputs.primary_sensor
+        if primary_sensor_id in motion_intervals_by_sensor:
+            primary_intervals_filtered.extend(
                 {"start": interval["start"], "end": interval["end"]}
-                for interval in intervals
+                for interval in motion_intervals_by_sensor[primary_sensor_id]
                 if interval.get("state") == motion_state_filter
             )
 
-        total_motion_duration = sum(
+        total_primary_duration_filtered = sum(
             (interval["end"] - interval["start"]).total_seconds()
-            for interval in motion_intervals
+            for interval in primary_intervals_filtered
         )
-        if total_motion_duration == 0:
+
+        if total_primary_duration_filtered == 0:
+            _LOGGER.debug(
+                "Primary sensor total duration for state '%s' is zero",
+                motion_state_filter,
+            )
+            # Return default based on the state we are conditioning on
             return (
                 DEFAULT_PROB_GIVEN_TRUE
                 if motion_state_filter == STATE_ON
                 else DEFAULT_PROB_GIVEN_FALSE
             )
 
-        # Get entity active intervals
+        # Get entity intervals considered 'active' based on probabilities config
         entity_active_intervals = [
             {"start": interval["start"], "end": interval["end"]}
             for interval in entity_intervals
             if self.probabilities.is_entity_active(
                 entity_id,
-                interval.get("state", ""),
+                interval.get("state"),
             )
         ]
 
-        # Calculate the overlap duration
+        # Calculate the total duration of overlap between entity_active and primary_filtered intervals
         overlap_duration = 0.0
         for e_interval in entity_active_intervals:
-            for m_interval in motion_intervals:
-                overlap_start = max(e_interval["start"], m_interval["start"])
-                overlap_end = min(e_interval["end"], m_interval["end"])
+            for p_interval in primary_intervals_filtered:
+                overlap_start = max(e_interval["start"], p_interval["start"])
+                overlap_end = min(e_interval["end"], p_interval["end"])
                 if overlap_start < overlap_end:
                     overlap_duration += (overlap_end - overlap_start).total_seconds()
 
-        # Clamp the final probability before returning
-        result = overlap_duration / total_motion_duration
-        return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
+        # Calculate conditional probability P(Entity Active | Primary State)
+        result = overlap_duration / total_primary_duration_filtered
+        clamped_result = max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
 
-    async def update_type_priors(self, entity_id: str) -> None:
-        """Update type priors by averaging all sensors of the given type."""
-        # Get all entities of this type
-        entities = []
-        if entity_id in self.inputs.motion_sensors:
-            entities = self.inputs.motion_sensors
-            sensor_type = "motion"
-        elif entity_id in self.inputs.media_devices:
-            entities = self.inputs.media_devices
-            sensor_type = "media"
-        elif entity_id in self.inputs.appliances:
-            entities = self.inputs.appliances
-            sensor_type = "appliance"
-        elif entity_id in self.inputs.door_sensors:
-            entities = self.inputs.door_sensors
-            sensor_type = "door"
-        elif entity_id in self.inputs.window_sensors:
-            entities = self.inputs.window_sensors
-            sensor_type = "window"
-        elif entity_id in self.inputs.lights:
-            entities = self.inputs.lights
-            sensor_type = "light"
-        else:
-            _LOGGER.debug("Unknown sensor type for %s", entity_id)
-            return
-
-        if not entities:
-            _LOGGER.debug("No entities of type %s", sensor_type)
-            return
-
-        # Collect all learned priors for this type
-        priors = []
-        prob_given_trues = []
-        prob_given_falses = []
-
-        for entity in entities:
-            learned = self.coordinator.prior_state.entity_priors.get(entity)
-            if learned:
-                priors.append(learned["prior"])
-                prob_given_trues.append(learned["prob_given_true"])
-                prob_given_falses.append(learned["prob_given_false"])
-
-        if not priors:
-            _LOGGER.debug("No learned priors for type %s", sensor_type)
-            return
-
-        # Calculate averages for all probability values
-        avg_prior = sum(priors) / len(priors)
-        avg_prob_given_true = sum(prob_given_trues) / len(prob_given_trues)
-        avg_prob_given_false = sum(prob_given_falses) / len(prob_given_falses)
-
-        # Log the averages for debugging
         _LOGGER.debug(
-            "Type %s averages - prior: %.3f, p_true: %.3f, p_false: %.3f (from %d sensors)",
-            sensor_type,
-            avg_prior,
-            avg_prob_given_true,
-            avg_prob_given_false,
-            len(priors),
+            "Conditional prob result for %s (primary=%s): overlap=%.2fs / total=%.2fs = %.3f -> %.3f",
+            entity_id,
+            motion_state_filter,
+            overlap_duration,
+            total_primary_duration_filtered,
+            result,
+            clamped_result,
         )
 
-        # Update type priors in prior_state with all averaged values
-        timestamp = dt_util.utcnow().isoformat()
-        self.coordinator.prior_state.update_type_prior(
-            sensor_type,
-            avg_prior,
-            timestamp,
-            avg_prob_given_true,
-            avg_prob_given_false,
-        )
+        return clamped_result
