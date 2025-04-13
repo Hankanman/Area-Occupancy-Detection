@@ -13,6 +13,9 @@ from typing import Any, Final
 from homeassistant.const import STATE_OFF, STATE_ON
 
 from .const import (
+    APPLIANCE_DEFAULT_PRIOR,
+    APPLIANCE_PROB_GIVEN_FALSE,
+    APPLIANCE_PROB_GIVEN_TRUE,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DOOR_ACTIVE_STATE,
@@ -44,6 +47,24 @@ from .const import (
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    DOOR_DEFAULT_PRIOR,
+    DOOR_PROB_GIVEN_FALSE,
+    DOOR_PROB_GIVEN_TRUE,
+    ENVIRONMENTAL_DEFAULT_PRIOR,
+    ENVIRONMENTAL_PROB_GIVEN_FALSE,
+    ENVIRONMENTAL_PROB_GIVEN_TRUE,
+    LIGHT_DEFAULT_PRIOR,
+    LIGHT_PROB_GIVEN_FALSE,
+    LIGHT_PROB_GIVEN_TRUE,
+    MEDIA_DEFAULT_PRIOR,
+    MEDIA_PROB_GIVEN_FALSE,
+    MEDIA_PROB_GIVEN_TRUE,
+    MOTION_DEFAULT_PRIOR,
+    MOTION_PROB_GIVEN_FALSE,
+    MOTION_PROB_GIVEN_TRUE,
+    WINDOW_DEFAULT_PRIOR,
+    WINDOW_PROB_GIVEN_FALSE,
+    WINDOW_PROB_GIVEN_TRUE,
 )
 from .exceptions import ConfigurationError
 from .types import EntityType, ProbabilityConfig
@@ -54,48 +75,11 @@ _LOGGER = logging.getLogger(__name__)
 ENVIRONMENTAL_BASELINE_PERCENT: Final[float] = 0.05  # 5% deviation allowed around mean
 ENVIRONMENTAL_MIN_ACTIVE_DURATION: Final[int] = 300  # seconds of active data needed
 
-# Motion sensor defaults
-MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
-MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
-
-# Door sensor defaults
-DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
-DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
-
-# Window sensor defaults
-WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
-WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
-
-# Light sensor defaults
-LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
-LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
-
-# Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
-MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
-
-# Appliance defaults
-APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
-APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
-
-# Environmental defaults
-ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
-ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
-
 # Minimum active duration for storing learned priors
 MIN_ACTIVE_DURATION_FOR_PRIORS: Final[int] = 300
 
 # Baseline cache TTL (to avoid hitting DB repeatedly)
 BASELINE_CACHE_TTL: Final[int] = 21600  # 6 hours in seconds
-
-# Default Priors
-MOTION_DEFAULT_PRIOR: Final[float] = 0.35
-MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
-APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
-DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
-WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
-LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
-ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
 
 # Media device state probabilities
 MEDIA_STATE_PROBABILITIES: Final[dict[str, float]] = {

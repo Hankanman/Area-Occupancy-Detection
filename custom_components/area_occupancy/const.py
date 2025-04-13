@@ -104,6 +104,41 @@ DEFAULT_PRIOR: Final[float] = 0.1713
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
+# Motion sensor defaults
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
+MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
+MOTION_DEFAULT_PRIOR: Final[float] = 0.35
+
+# Door sensor defaults
+DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
+DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
+DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
+
+# Window sensor defaults
+WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
+WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
+WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
+
+# Light sensor defaults
+LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
+LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
+LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
+
+# Media device defaults
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
+MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
+MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
+
+# Appliance defaults
+APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
+APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
+APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
+
+# Environmental defaults
+ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
+ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
+ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
+
 # Helper constants
 ROUNDING_PRECISION: Final = 2
 
