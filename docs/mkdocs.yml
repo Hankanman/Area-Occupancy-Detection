@@ -11,7 +11,8 @@ theme:
   logo: https://brands.home-assistant.io/area_occupancy/dark_icon.png
   palette:
     scheme: slate
-    primary: slate
+    primary: black
+    accent: cyan
   features:
     - navigation.tabs
     - navigation.sections
@@ -75,7 +76,7 @@ extra:
       link: https://github.com/Hankanman/Area-Occupancy-Detection
 
 extra_javascript:
-  - javascripts/mathjax.js
+  - javascript/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
@@ -85,9 +86,10 @@ nav:
     - Configuration: getting-started/configuration.md
     - Basic Usage: getting-started/basic-usage.md
   - Features:
-    - Overview: features/overview.md
-    - Probability Calculation: features/probability-calculation.md
-    - Sensor Types: features/sensor-types.md
-    - Time-Based Decay: features/time-decay.md
-    - Historical Analysis: features/historical-analysis.md
-    - Detailed Explanation: features/detailed-explanation.md
+    - Bayesian Calculation: features/calculation.md
+    - Prior Learning: features/prior-learning.md
+    - Probability Decay: features/decay.md
+    - Entities: features/entities.md
+    - Services: features/services.md
+  - Technical:
+    - Deep Dive: technical/deep-dive.md
