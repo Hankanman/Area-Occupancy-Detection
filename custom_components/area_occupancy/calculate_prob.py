@@ -43,6 +43,7 @@ class ProbabilityCalculator:
         Raises:
             ValueError: If calculation encounters invalid inputs.
             ZeroDivisionError: If a division by zero occurs during calculation.
+
         """
         sensor_probs: dict[str, SensorProbability] = {}
         active_sensor_states = {
