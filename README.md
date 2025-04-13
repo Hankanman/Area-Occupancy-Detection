@@ -254,6 +254,10 @@ Key things to check in the logs:
 - Prior probability updates
 - Decay calculations
 
+## Screenshots
+
+![Probability Cards](docs/docs/images/probability-cards.png)
+
 ## Support & Feedback
 
 - **Issues**: [GitHub Issues][issues]
