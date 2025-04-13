@@ -1,11 +1,16 @@
-"""Probability constants and defaults for Area Occupancy Detection."""
+"""Handles probability configurations, weights, and state mappings for Area Occupancy Detection.
+
+This module defines default probability values (priors, likelihoods) for different
+sensor types, retrieves configured weights, builds the final probability
+configuration used by calculators, and maps entity IDs to their types.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Final
 
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_OPEN
+from homeassistant.const import STATE_OFF, STATE_ON
 
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
@@ -112,23 +117,30 @@ APPLIANCE_STATE_PROBABILITIES: Final[dict[str, float]] = {
 
 
 class Probabilities:
-    """Class to handle probability calculations and weights."""
+    """Manages sensor type configurations including probabilities, weights, and active states.
+
+    This class loads configuration values, applies defaults, validates inputs,
+    and provides access to the processed probability settings for each sensor type
+    and individual entity.
+    """
 
     def __init__(self, config: dict[str, Any]) -> None:
-        """Initialize the probabilities handler.
+        """Initialize the probabilities handler with the provided configuration.
 
         Args:
-            config: Configuration dictionary
+            config: The configuration dictionary for the area occupancy instance.
 
         Raises:
-            ConfigurationError: If configuration is invalid
+            ConfigurationError: If the provided configuration is invalid (e.g.,
+                incorrect types, invalid weights, missing required keys).
 
         """
         self.config = config
         self._sensor_weights = self._get_sensor_weights()
-        self._sensor_configs = self._build_sensor_configs()
         self.entity_types: dict[str, EntityType] = {}
         self._map_entities_to_types()
+        # Build configs *after* mapping types
+        self._sensor_configs = self._build_sensor_configs()
 
         _LOGGER.debug(
             "Probabilities initialized with %d entity types and %d sensor configs",
@@ -137,16 +149,24 @@ class Probabilities:
         )
 
     def _map_entities_to_types(self) -> None:
-        """Create mapping of entity IDs to their sensor types.
+        """Create a mapping of entity IDs to their corresponding sensor types based on configuration.
+
+        Iterates through the configured sensor lists (motion, media, etc.) and populates
+        the `self.entity_types` dictionary.
 
         Raises:
-            ConfigurationError: If entity mapping fails
+            ConfigurationError: If mapping fails due to invalid configuration
+                (e.g., non-list value for a sensor type, invalid entity ID format).
 
         """
 
         def _validate_entity_id(entity_id: str, config_key: str) -> None:
-            if not entity_id:
-                raise ConfigurationError(f"Empty entity ID in {config_key}")
+            """Validate a single entity ID format."""
+            if not entity_id or not isinstance(entity_id, str) or "." not in entity_id:
+                # Raise directly
+                raise ConfigurationError(
+                    f"Invalid entity ID '{entity_id}' found in {config_key}"
+                )
 
         try:
             mappings = [
@@ -166,28 +186,40 @@ class Probabilities:
 
             for config_key, sensor_type in mappings:
                 entities = self.config.get(config_key, [])
+                if not isinstance(entities, list):
+                    # Raise directly
+                    raise ConfigurationError(
+                        f"Configuration for {config_key} must be a list, got {type(entities)}"
+                    )
                 for entity_id in entities:
                     _validate_entity_id(entity_id, config_key)
                     self.entity_types[entity_id] = sensor_type
 
-        except Exception as err:
-            raise ConfigurationError(f"Failed to map entities to types: {err}") from err
+        except (TypeError, ValueError) as err:
+            # Catch potential unexpected type or value errors during entity processing
+            # Raise directly, chaining the original exception
+            raise ConfigurationError(
+                f"Unexpected error mapping entities to types: {err}"
+            ) from err
+        # Note: ConfigurationError raised by _validate_entity_id will propagate naturally.
 
     def _get_sensor_weights(self) -> dict[str, float]:
-        """Get the configured sensor weights, falling back to defaults if not configured.
+        """Retrieve and validate sensor weights from the configuration, using defaults if necessary.
 
         Returns:
-            Dictionary of sensor type to weight mapping
+            A dictionary mapping sensor types ('motion', 'media', etc.) to their weights (0.0-1.0).
 
         Raises:
-            ConfigurationError: If weights are invalid
+            ConfigurationError: If any configured weight is outside the valid range [0, 1]
+                or if the configuration format is incorrect.
 
         """
 
         def _validate_weight(sensor_type: str, weight: float) -> None:
-            if not 0 <= weight <= 1:
+            """Validate a single weight value."""
+            if not isinstance(weight, (int, float)) or not 0 <= weight <= 1:
                 raise ConfigurationError(
-                    f"Invalid weight for {sensor_type}: {weight}. Must be between 0 and 1."
+                    f"Invalid weight for {sensor_type}: {weight}. Must be a number between 0 and 1."
                 )
 
         try:
@@ -210,283 +242,433 @@ class Probabilities:
                 _validate_weight(sensor_type, weight)
 
         except Exception as err:
+            # Catch potential errors during config access or validation
             raise ConfigurationError(f"Failed to get sensor weights: {err}") from err
         else:
             return weights
 
     def _translate_binary_sensor_active_state(self, configured_state: str) -> str:
-        """Translate a configured state (e.g., 'open', 'closed') to a binary_sensor state ('on', 'off')."""
-        # Default to STATE_OFF if the configured state isn't explicitly STATE_OPEN
-        return STATE_ON if configured_state == STATE_OPEN else STATE_OFF
+        """Translate a configured display state (e.g., 'Open', 'Detected', 'Low') to the corresponding internal binary_sensor state ('on', 'off') that represents this user-defined active condition.
 
-    def _build_sensor_configs(self) -> dict[str, ProbabilityConfig]:
-        """Build sensor configurations using current weights and type priors.
+        Args:
+            configured_state: The user-configured state string (e.g., 'Open').
 
         Returns:
-            Dictionary of sensor configurations
+            The internal Home Assistant state ('on' or 'off') corresponding
+            to the configured active display state.
+
+        """
+        # Lowercase for case-insensitive comparison
+        configured_state_lower = configured_state.lower()
+
+        # Define common display states that typically represent the 'on' (active/problem) internal state
+        on_state_display_values = {
+            # Common Active States
+            "open",
+            "detected",
+            "occupied",
+            "home",  # presence
+            "wet",  # moisture
+            "moving",
+            "running",
+            "connected",
+            "charging",  # battery_charging
+            "plugged in",
+            "on",  # Generic fallback / some integrations might use this display value
+            # Common Problem/Alert States
+            "low",  # battery
+            "cold",
+            "hot",  # heat
+            "unlocked",  # lock (ON = unsafe/unlocked)
+            "problem",
+            "unsafe",  # safety (ON = unsafe)
+            "update available",
+        }
+
+        if configured_state_lower in on_state_display_values:
+            return STATE_ON
+        # Assume all other configured states (like "Closed", "Clear", "Normal", "Locked", "Safe", "OK", etc.)
+        # mean the user wants the internal STATE_OFF to be the trigger condition.
+        return STATE_OFF
+
+    def _build_sensor_configs(self) -> dict[str, ProbabilityConfig]:
+        """Build the final sensor configurations dictionary used for calculations.
+
+        Combines default probabilities, configured weights, and processed active
+        state configurations for each sensor type. Uses a dynamic approach based
+        on `type_specifics` metadata.
+
+        Returns:
+            A dictionary where keys are sensor types and values are
+            `ProbabilityConfig` dictionaries containing 'prob_given_true',
+            'prob_given_false', 'default_prior', 'weight', and 'active_states'.
 
         Raises:
-            ConfigurationError: If sensor configurations are invalid
+            ConfigurationError: If building the configurations fails due to invalid
+                settings (e.g., incorrect types, invalid probabilities, missing keys).
 
         """
 
+        # --- Helper function for validation (as before) ---
         def _validate_probability(
             sensor_type: str, prob_name: str, value: float
         ) -> None:
-            if not 0 <= value <= 1:
+            """Validate a single probability value."""
+            if not isinstance(value, (int, float)) or not 0 <= value <= 1:
                 raise ConfigurationError(
-                    f"Invalid {prob_name} for {sensor_type}: {value}"
+                    f"Invalid {prob_name} for {sensor_type}: {value}. Must be a number between 0 and 1."
                 )
 
         def _validate_config(sensor_type: str, config: dict) -> None:
-            _validate_probability(
-                sensor_type, "prob_given_true", config["prob_given_true"]
-            )
-            _validate_probability(
-                sensor_type, "prob_given_false", config["prob_given_false"]
-            )
-            _validate_probability(sensor_type, "default_prior", config["default_prior"])
-            _validate_probability(sensor_type, "weight", config["weight"])
+            """Validate the core probability and weight values for a sensor type config."""
+            for key in [
+                "prob_given_true",
+                "prob_given_false",
+                "default_prior",
+                "weight",
+            ]:
+                if key not in config:
+                    raise ConfigurationError(
+                        f"Missing key '{key}' in config for sensor type '{sensor_type}'"
+                    )
+                _validate_probability(sensor_type, key, config[key])
+
+        # --- End Helper functions ---
 
         try:
-            # Get the configured door active state (e.g., 'open' or 'closed')
-            configured_door_active_state = self.config.get(
-                CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
-            )
-            # Translate to binary_sensor state (on/off)
-            translated_door_active_state = self._translate_binary_sensor_active_state(
-                configured_door_active_state
-            )
-
-            # Get the configured window active state (e.g., 'open' or 'closed')
-            configured_window_active_state = self.config.get(
-                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
-            )
-            # Translate to binary_sensor state (on/off)
-            translated_window_active_state = self._translate_binary_sensor_active_state(
-                configured_window_active_state
-            )
-
-            # Get the configured media active states
-            media_active_states = set(
-                self.config.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
-            )
-
-            # Get the configured appliance active states
-            appliance_active_states = set(
-                self.config.get(
-                    CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
-                )
-            )
-
-            configs = {
+            # --- Define Sensor Type Specifics ---
+            # Map sensor types to their specific configuration keys and default values
+            type_specifics = {
                 "motion": {
-                    "prob_given_true": MOTION_PROB_GIVEN_TRUE,
-                    "prob_given_false": MOTION_PROB_GIVEN_FALSE,
-                    "default_prior": MOTION_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["motion"],
+                    "prob_true": MOTION_PROB_GIVEN_TRUE,
+                    "prob_false": MOTION_PROB_GIVEN_FALSE,
+                    "prior": MOTION_DEFAULT_PRIOR,
                     "active_states": {STATE_ON},
                 },
                 "media": {
-                    "prob_given_true": MEDIA_PROB_GIVEN_TRUE,
-                    "prob_given_false": MEDIA_PROB_GIVEN_FALSE,
-                    "default_prior": MEDIA_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["media"],
-                    "active_states": media_active_states,
+                    "prob_true": MEDIA_PROB_GIVEN_TRUE,
+                    "prob_false": MEDIA_PROB_GIVEN_FALSE,
+                    "prior": MEDIA_DEFAULT_PRIOR,
+                    "active_states_key": CONF_MEDIA_ACTIVE_STATES,
+                    "active_states_default": DEFAULT_MEDIA_ACTIVE_STATES,
+                    "multiple_states": True,
                 },
                 "appliance": {
-                    "prob_given_true": APPLIANCE_PROB_GIVEN_TRUE,
-                    "prob_given_false": APPLIANCE_PROB_GIVEN_FALSE,
-                    "default_prior": APPLIANCE_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["appliance"],
-                    "active_states": appliance_active_states,
+                    "prob_true": APPLIANCE_PROB_GIVEN_TRUE,
+                    "prob_false": APPLIANCE_PROB_GIVEN_FALSE,
+                    "prior": APPLIANCE_DEFAULT_PRIOR,
+                    "active_states_key": CONF_APPLIANCE_ACTIVE_STATES,
+                    "active_states_default": DEFAULT_APPLIANCE_ACTIVE_STATES,
+                    "multiple_states": True,
                 },
                 "door": {
-                    "prob_given_true": DOOR_PROB_GIVEN_TRUE,
-                    "prob_given_false": DOOR_PROB_GIVEN_FALSE,
-                    "default_prior": DOOR_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["door"],
-                    "active_states": {translated_door_active_state},
+                    "prob_true": DOOR_PROB_GIVEN_TRUE,
+                    "prob_false": DOOR_PROB_GIVEN_FALSE,
+                    "prior": DOOR_DEFAULT_PRIOR,
+                    "active_states_key": CONF_DOOR_ACTIVE_STATE,
+                    "active_states_default": DEFAULT_DOOR_ACTIVE_STATE,
+                    "translate_state": True,
                 },
                 "window": {
-                    "prob_given_true": WINDOW_PROB_GIVEN_TRUE,
-                    "prob_given_false": WINDOW_PROB_GIVEN_FALSE,
-                    "default_prior": WINDOW_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["window"],
-                    "active_states": {translated_window_active_state},
+                    "prob_true": WINDOW_PROB_GIVEN_TRUE,
+                    "prob_false": WINDOW_PROB_GIVEN_FALSE,
+                    "prior": WINDOW_DEFAULT_PRIOR,
+                    "active_states_key": CONF_WINDOW_ACTIVE_STATE,
+                    "active_states_default": DEFAULT_WINDOW_ACTIVE_STATE,
+                    "translate_state": True,
                 },
                 "light": {
-                    "prob_given_true": LIGHT_PROB_GIVEN_TRUE,
-                    "prob_given_false": LIGHT_PROB_GIVEN_FALSE,
-                    "default_prior": LIGHT_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["light"],
+                    "prob_true": LIGHT_PROB_GIVEN_TRUE,
+                    "prob_false": LIGHT_PROB_GIVEN_FALSE,
+                    "prior": LIGHT_DEFAULT_PRIOR,
                     "active_states": {STATE_ON},
                 },
                 "environmental": {
-                    "prob_given_true": ENVIRONMENTAL_PROB_GIVEN_TRUE,
-                    "prob_given_false": ENVIRONMENTAL_PROB_GIVEN_FALSE,
-                    "default_prior": ENVIRONMENTAL_DEFAULT_PRIOR,
-                    "weight": self._sensor_weights["environmental"],
+                    "prob_true": ENVIRONMENTAL_PROB_GIVEN_TRUE,
+                    "prob_false": ENVIRONMENTAL_PROB_GIVEN_FALSE,
+                    "prior": ENVIRONMENTAL_DEFAULT_PRIOR,
                     "active_states": {STATE_ON},
-                },
+                },  # Assuming environmental is active when 'on' (needs data)
             }
+            # --- End Sensor Type Specifics ---
+
+            configs = {}
+            for sensor_type, specifics in type_specifics.items():
+                # Determine active states dynamically
+                active_states_set = set()
+                if "active_states" in specifics:
+                    # Hardcoded states (motion, light, environmental)
+                    active_states_set = specifics["active_states"]
+                elif "active_states_key" in specifics:
+                    # Configurable states (media, appliance, door, window)
+                    key = specifics["active_states_key"]
+                    default = specifics["active_states_default"]
+                    is_multiple = specifics.get("multiple_states", False)
+                    needs_translation = specifics.get("translate_state", False)
+
+                    configured_value = self.config.get(key, default)
+
+                    if is_multiple:
+                        # Handle multiple states (media, appliance)
+                        if not isinstance(configured_value, list):
+                            _LOGGER.warning(
+                                "Expected list for %s, got %s. Using default: %s",
+                                key,
+                                type(configured_value),
+                                default,
+                            )
+                            configured_value = default
+                        active_states_set = set(configured_value)
+                    else:
+                        # Handle single state (door, window)
+                        # Ensure configured_value is a string before processing/translation
+                        if not isinstance(configured_value, str):
+                            _LOGGER.warning(
+                                "Expected string for %s, got %s. Using default: %s",
+                                key,
+                                type(configured_value),
+                                default,
+                            )
+                            configured_value = str(
+                                default
+                            )  # Convert default to string as fallback
+
+                        state_to_process = configured_value
+                        if needs_translation:
+                            state_to_process = (
+                                self._translate_binary_sensor_active_state(
+                                    state_to_process
+                                )
+                            )
+                        active_states_set = {state_to_process}
+                else:
+                    # Should not happen if type_specifics is defined correctly
+                    _LOGGER.error(
+                        "Missing active state definition for sensor type: %s",
+                        sensor_type,
+                    )
+                    active_states_set = {STATE_ON}  # Default fallback
+
+                # Build the config dictionary
+                current_config: ProbabilityConfig = {
+                    "prob_given_true": specifics["prob_true"],
+                    "prob_given_false": specifics["prob_false"],
+                    "default_prior": specifics["prior"],
+                    "weight": self._sensor_weights[sensor_type],
+                    "active_states": active_states_set,
+                }
+                configs[sensor_type] = current_config
 
             # Validate configurations
-            for sensor_type, config in configs.items():
-                _validate_config(sensor_type, config)
+            for sensor_type, config_data in configs.items():
+                _validate_config(sensor_type, config_data)
 
         except Exception as err:
+            # Catch potential errors during config access, processing, or validation
             raise ConfigurationError(f"Failed to build sensor configs: {err}") from err
         else:
             return configs
 
     @property
     def sensor_weights(self) -> dict[str, float]:
-        """Get the current sensor weights."""
+        """Return the dictionary of configured sensor weights by type."""
         return self._sensor_weights
 
     @property
     def sensor_configs(self) -> dict[str, ProbabilityConfig]:
-        """Get the current sensor configurations."""
+        """Return the dictionary of final sensor configurations by type."""
         return self._sensor_configs
 
     def get_default_prior(self, entity_id: str) -> float:
-        """Get the default prior probability for an entity.
+        """Get the default prior probability defined for an entity's type.
 
         Args:
-            entity_id: The entity ID to get the prior for
+            entity_id: The entity ID to get the default prior for.
 
         Returns:
-            The default prior probability
+            The default prior probability (0.0-1.0) for the entity's type.
 
         Raises:
-            ValueError: If entity_id is not found
+            ValueError: If the entity_id is not mapped to a known sensor type
+                or if the sensor type configuration is missing.
 
         """
         if entity_id not in self.entity_types:
-            raise ValueError(f"Entity {entity_id} not found in entity types")
+            raise ValueError(f"Entity '{entity_id}' not found in entity types mapping.")
 
         sensor_type = self.entity_types[entity_id]
-        if sensor_type not in self._sensor_configs:
+        sensor_config = self._sensor_configs.get(sensor_type)
+
+        if not sensor_config:
+            # This should ideally not happen if initialization is correct
             raise ValueError(
-                f"Invalid sensor type {sensor_type} for entity {entity_id}"
+                f"Configuration missing for sensor type '{sensor_type}' derived from entity '{entity_id}'."
             )
 
-        return self._sensor_configs[sensor_type]["default_prior"]
+        # Ensure 'default_prior' key exists, though it should based on _build_sensor_configs logic
+        if "default_prior" not in sensor_config:
+            raise ValueError(
+                f"Key 'default_prior' missing in configuration for sensor type '{sensor_type}'."
+            )
+
+        return sensor_config["default_prior"]
 
     def update_config(self, config: dict[str, Any]) -> None:
-        """Update the configuration.
+        """Update the internal configuration and rebuild derived settings.
+
+        This should be called when the integration's configuration options change.
 
         Args:
-            config: New configuration dictionary
+            config: The new configuration dictionary.
 
         Raises:
-            ConfigurationError: If new configuration is invalid
+            ConfigurationError: If the new configuration is invalid and causes errors
+                during reprocessing (e.g., invalid weights, types).
 
         """
         try:
             self.config = config
+            # Re-calculate weights, map entities, and build configs based on new config
             self._sensor_weights = self._get_sensor_weights()
-            self._sensor_configs = self._build_sensor_configs()
-            self.entity_types.clear()
+            self.entity_types.clear()  # Clear before remapping
             self._map_entities_to_types()
+            self._sensor_configs = self._build_sensor_configs()
 
-            _LOGGER.debug("Configuration updated successfully")
+            _LOGGER.debug("Probabilities configuration updated successfully")
         except Exception as err:
-            raise ConfigurationError(f"Failed to update configuration: {err}") from err
+            # Catch errors during the reprocessing steps
+            raise ConfigurationError(
+                f"Failed to update probabilities configuration: {err}"
+            ) from err
 
     def get_sensor_config(self, entity_id: str) -> ProbabilityConfig | None:
-        """Get the configuration for a specific sensor.
+        """Get the final calculated configuration for a specific sensor entity.
 
         Args:
-            entity_id: The entity ID to get the config for
+            entity_id: The entity ID to retrieve the configuration for.
 
         Returns:
-            The sensor configuration or None if not found
+            The `ProbabilityConfig` dictionary for the entity's type,
+            or None if the entity or its type configuration is not found.
 
         Raises:
-            ValueError: If entity_id is not found
+            ValueError: If the entity ID is not mapped to a known sensor type
+                or if the type configuration is unexpectedly missing.
 
         """
         if entity_id not in self.entity_types:
-            raise ValueError(f"Entity {entity_id} not found in entity types")
+            # Log potentially useful info instead of raising immediately? Or keep ValueError?
+            _LOGGER.warning(
+                "Entity '%s' not found in entity types mapping during config lookup",
+                entity_id,
+            )
+            # Raise ValueError to signal a problem upstream that needs handling.
+            raise ValueError(f"Entity '{entity_id}' not found in entity types mapping.")
 
         sensor_type = self.entity_types[entity_id]
-        if sensor_type not in self._sensor_configs:
-            raise ValueError(
-                f"Invalid sensor type {sensor_type} for entity {entity_id}"
-            )
+        sensor_config = self._sensor_configs.get(sensor_type)
 
-        return self._sensor_configs[sensor_type]
+        if not sensor_config:
+            # This indicates an internal inconsistency, likely during initialization or update.
+            _LOGGER.error(
+                "Internal Error: Configuration missing for sensor type '%s' derived from entity '%s'",
+                sensor_type,
+                entity_id,
+            )
+            raise ValueError(f"Configuration missing for sensor type '{sensor_type}'.")
+
+        return sensor_config
 
     def is_entity_active(
         self,
         entity_id: str,
-        state: str,
+        state: str | None,  # Allow None state
     ) -> bool:
-        """Check if an entity is in an active state.
+        """Check if the given state corresponds to an 'active' state for the entity's type.
 
         Args:
-            entity_id: The entity ID to check
-            state: The current state to check
+            entity_id: The entity ID to check.
+            state: The current state value of the entity (can be None).
 
         Returns:
-            True if the entity is active, False otherwise
+            True if the provided state is considered active for the entity's type,
+            False otherwise (including if state is None or entity/config not found).
 
         Raises:
-            ValueError: If entity_id is not found
+            ValueError: If the entity_id is not mapped to a known sensor type
+                or if the sensor type configuration is missing.
 
         """
-        if entity_id not in self.entity_types:
-            _LOGGER.error("Entity %s not found in entity types mapping", entity_id)
-            raise ValueError(f"Entity {entity_id} not found in entity types")
+        if state is None:
+            return False  # None state is never active
 
-        sensor_type = self.entity_types[entity_id]
-        if sensor_type not in self._sensor_configs:
-            _LOGGER.error(
-                "Invalid sensor type %s for entity %s in sensor configs",
-                sensor_type,
+        sensor_config = self.get_sensor_config(entity_id)
+        if not sensor_config:
+            # get_sensor_config now raises ValueError if config missing
+            # This path should ideally not be reached if exceptions are handled.
+            _LOGGER.warning(
+                "Could not find sensor config for '%s' to check active state",
                 entity_id,
             )
-            raise ValueError(
-                f"Invalid sensor type {sensor_type} for entity {entity_id}"
-            )
+            return False
 
-        active_states = self._sensor_configs[sensor_type]["active_states"]
+        active_states = sensor_config.get("active_states")
+        if not active_states:
+            _LOGGER.warning(
+                "No active states defined for sensor type of '%s'", entity_id
+            )
+            return False  # Treat as inactive if no active states defined
         return state in active_states
 
-    def get_initial_type_priors(self) -> dict[str, ProbabilityConfig]:
-        """Get the initial type priors for all sensor types.
+    def get_initial_type_priors(self) -> dict[str, dict[str, float]]:
+        """Get the default 'prob_given_true', 'prob_given_false', and 'prior' for all sensor types.
+
+        Used for initializing the PriorState if no learned data exists.
 
         Returns:
-            Dictionary of sensor type to initial prior mapping
+            A dictionary where keys are sensor types and values are dictionaries
+            containing 'prob_given_true', 'prob_given_false', and 'prior'.
 
         """
         try:
             priors = {}
             for sensor_type, config in self._sensor_configs.items():
-                priors[sensor_type] = {
-                    "prob_given_true": config["prob_given_true"],
-                    "prob_given_false": config["prob_given_false"],
-                    "prior": config["default_prior"],
-                }
+                # Ensure all required keys are present before adding
+                if all(
+                    k in config
+                    for k in ("prob_given_true", "prob_given_false", "default_prior")
+                ):
+                    priors[sensor_type] = {
+                        "prob_given_true": config["prob_given_true"],
+                        "prob_given_false": config["prob_given_false"],
+                        "prior": config[
+                            "default_prior"
+                        ],  # Use the key name consistently
+                    }
+                else:
+                    _LOGGER.warning(
+                        "Skipping initial priors for type '%s' due to missing keys in config: %s",
+                        sensor_type,
+                        config,
+                    )
 
         except (KeyError, ValueError, TypeError):
-            _LOGGER.exception("Failed to get initial type priors: %s")
+            _LOGGER.exception(
+                "Failed to get initial type priors"
+            )  # Keep general exception log
             return {}
         else:
             return priors
 
     def get_entity_type(self, entity_id: str) -> EntityType | None:
-        """Get the type of an entity based on configuration.
+        """Get the configured sensor type for a given entity ID.
 
         Args:
-            entity_id: The entity ID to check
+            entity_id: The entity ID to look up.
 
         Returns:
-            The entity type or None if not found
+            The sensor type (e.g., 'motion', 'media') as a string,
+            or None if the entity ID is not found in the mapping.
 
         """
-        if entity_id in self.entity_types:
-            return self.entity_types[entity_id]
-        return None
+        return self.entity_types.get(entity_id)
