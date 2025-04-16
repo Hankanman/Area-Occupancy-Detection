@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -29,8 +33,8 @@ class AreaOccupancyBinarySensor(
             f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_name = NAME_BINARY_SENSOR
-        self._attr_device_class = "occupancy"
-        self._attr_device_info = coordinator.device_info
+        self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+        self._attr_device_info: DeviceInfo | None = coordinator.device_info
 
     @property
     def icon(self) -> str:

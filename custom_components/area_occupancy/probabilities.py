@@ -67,7 +67,7 @@ from .const import (
     WINDOW_PROB_GIVEN_TRUE,
 )
 from .exceptions import ConfigurationError
-from .types import EntityType, ProbabilityConfig
+from .types import EntityType, PriorData, ProbabilityConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,16 +153,16 @@ class Probabilities:
                 )
 
         try:
-            mappings = [
-                (CONF_MOTION_SENSORS, "motion"),
-                (CONF_MEDIA_DEVICES, "media"),
-                (CONF_APPLIANCES, "appliance"),
-                (CONF_DOOR_SENSORS, "door"),
-                (CONF_WINDOW_SENSORS, "window"),
-                (CONF_LIGHTS, "light"),
-                (CONF_ILLUMINANCE_SENSORS, "environmental"),
-                (CONF_HUMIDITY_SENSORS, "environmental"),
-                (CONF_TEMPERATURE_SENSORS, "environmental"),
+            mappings: list[tuple[str, EntityType]] = [
+                (CONF_MOTION_SENSORS, EntityType.MOTION),
+                (CONF_MEDIA_DEVICES, EntityType.MEDIA),
+                (CONF_APPLIANCES, EntityType.APPLIANCE),
+                (CONF_DOOR_SENSORS, EntityType.DOOR),
+                (CONF_WINDOW_SENSORS, EntityType.WINDOW),
+                (CONF_LIGHTS, EntityType.LIGHT),
+                (CONF_ILLUMINANCE_SENSORS, EntityType.ENVIRONMENTAL),
+                (CONF_HUMIDITY_SENSORS, EntityType.ENVIRONMENTAL),
+                (CONF_TEMPERATURE_SENSORS, EntityType.ENVIRONMENTAL),
             ]
 
             # Clear existing mappings first
@@ -604,14 +604,16 @@ class Probabilities:
             return False  # Treat as inactive if no active states defined
         return state in active_states
 
-    def get_initial_type_priors(self) -> dict[str, dict[str, float]]:
+    def get_initial_type_priors(self) -> dict[str, PriorData]:
         """Get the default 'prob_given_true', 'prob_given_false', and 'prior' for all sensor types.
 
         Used for initializing the PriorState if no learned data exists.
 
         Returns:
-            A dictionary where keys are sensor types and values are dictionaries
+            A dictionary where keys are sensor types and values are PriorData objects
             containing 'prob_given_true', 'prob_given_false', and 'prior'.
+
+        Note: This uses PriorData structure for consistency, but values are defaults.
 
         """
         try:
@@ -622,13 +624,12 @@ class Probabilities:
                     k in config
                     for k in ("prob_given_true", "prob_given_false", "default_prior")
                 ):
-                    priors[sensor_type] = {
-                        "prob_given_true": config["prob_given_true"],
-                        "prob_given_false": config["prob_given_false"],
-                        "prior": config[
-                            "default_prior"
-                        ],  # Use the key name consistently
-                    }
+                    priors[sensor_type] = PriorData(
+                        prob_given_true=config["prob_given_true"],
+                        prob_given_false=config["prob_given_false"],
+                        prior=config["default_prior"],
+                        last_updated=None,  # Default priors have no update time initially
+                    )
                 else:
                     _LOGGER.warning(
                         "Skipping initial priors for type '%s' due to missing keys in config: %s",

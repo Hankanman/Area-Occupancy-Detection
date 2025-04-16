@@ -8,7 +8,7 @@ validation of all inputs to ensure a valid configuration.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 
@@ -30,8 +30,11 @@ from homeassistant.helpers.selector import (
     EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
@@ -241,7 +244,7 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -251,7 +254,7 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
 def _create_doors_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
-    state_options: list[dict[str, str]],
+    state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the doors section."""
     return vol.Schema(
@@ -271,7 +274,7 @@ def _create_doors_section_schema(
             ): SelectSelector(
                 SelectSelectorConfig(
                     options=state_options,
-                    mode="dropdown",
+                    mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
             vol.Optional(
@@ -282,7 +285,7 @@ def _create_doors_section_schema(
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -292,7 +295,7 @@ def _create_doors_section_schema(
 def _create_windows_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
-    state_options: list[dict[str, str]],
+    state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the windows section."""
     return vol.Schema(
@@ -314,7 +317,7 @@ def _create_windows_section_schema(
             ): SelectSelector(
                 SelectSelectorConfig(
                     options=state_options,
-                    mode="dropdown",
+                    mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
             vol.Optional(
@@ -325,7 +328,7 @@ def _create_windows_section_schema(
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -352,7 +355,7 @@ def _create_lights_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -360,7 +363,7 @@ def _create_lights_section_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 
 def _create_media_section_schema(
-    defaults: dict[str, Any], state_options: list[dict[str, str]]
+    defaults: dict[str, Any], state_options: list[SelectOptionDict]
 ) -> vol.Schema:
     """Create schema for the media section."""
     return vol.Schema(
@@ -383,7 +386,7 @@ def _create_media_section_schema(
                 SelectSelectorConfig(
                     options=state_options,
                     multiple=True,
-                    mode="dropdown",
+                    mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
             vol.Optional(
@@ -394,7 +397,7 @@ def _create_media_section_schema(
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -404,7 +407,7 @@ def _create_media_section_schema(
 def _create_appliances_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
-    state_options: list[dict[str, str]],
+    state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the appliances section."""
     return vol.Schema(
@@ -427,7 +430,7 @@ def _create_appliances_section_schema(
                 SelectSelectorConfig(
                     options=state_options,
                     multiple=True,
-                    mode="dropdown",
+                    mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
             vol.Optional(
@@ -438,7 +441,7 @@ def _create_appliances_section_schema(
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -489,7 +492,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     min=WEIGHT_MIN,
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
@@ -508,7 +511,7 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=THRESHOLD_MIN,
                     max=THRESHOLD_MAX,
                     step=THRESHOLD_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
             vol.Optional(
@@ -519,7 +522,7 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=HISTORY_PERIOD_MIN,
                     max=HISTORY_PERIOD_MAX,
                     step=HISTORY_PERIOD_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                     unit_of_measurement="days",
                 ),
             ),
@@ -535,7 +538,7 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=DECAY_WINDOW_MIN,
                     max=DECAY_WINDOW_MAX,
                     step=DECAY_WINDOW_STEP,
-                    mode="slider",
+                    mode=NumberSelectorMode.SLIDER,
                     unit_of_measurement="seconds",
                 ),
             ),
@@ -547,7 +550,7 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     min=DECAY_MIN_DELAY_MIN,
                     max=DECAY_MIN_DELAY_MAX,
                     step=DECAY_MIN_DELAY_STEP,
-                    mode="box",
+                    mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
                 )
             ),
@@ -568,8 +571,8 @@ def create_schema(
     is_options: bool = False,
 ) -> dict:
     """Create a schema with optional default values, using helper functions."""
-    if defaults is None:
-        defaults = {}
+    # Ensure defaults is a dictionary
+    defaults = defaults if defaults is not None else {}
 
     # Pre-calculate expensive lookups
     include_entities = _get_include_entities(hass)
@@ -578,60 +581,60 @@ def create_schema(
     window_state_options = _get_state_select_options("window")
     appliance_state_options = _get_state_select_options("appliance")
 
-    schema = {}
-    if not is_options:
-        schema[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
+    # Initialize the dictionary for the schema
+    schema_dict: dict[vol.Marker, Any] = {}
 
-    schema.update(
-        {
-            vol.Required("motion"): section(
-                _create_motion_section_schema(defaults),
-                {"collapsed": True},
-            ),
-            vol.Required("doors"): section(
-                _create_doors_section_schema(
-                    defaults,
-                    include_entities["door"],
-                    door_state_options,
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("windows"): section(
-                _create_windows_section_schema(
-                    defaults,
-                    include_entities["window"],
-                    window_state_options,
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("lights"): section(
-                _create_lights_section_schema(defaults),
-                {"collapsed": True},
-            ),
-            vol.Required("media"): section(
-                _create_media_section_schema(defaults, media_state_options),
-                {"collapsed": True},
-            ),
-            vol.Required("appliances"): section(
-                _create_appliances_section_schema(
-                    defaults,
-                    include_entities["appliance"],
-                    appliance_state_options,
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("environmental"): section(
-                _create_environmental_section_schema(defaults),
-                {"collapsed": True},
-            ),
-            vol.Required("parameters"): section(
-                _create_parameters_section_schema(defaults),
-                {"collapsed": True},
-            ),
-        }
+    if not is_options:
+        # Add the name field only for the initial config flow
+        schema_dict[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
+
+    # Add sections by assigning keys directly to the dictionary
+    schema_dict[vol.Required("motion")] = section(
+        _create_motion_section_schema(defaults),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("doors")] = section(
+        _create_doors_section_schema(
+            defaults,
+            include_entities["door"],
+            cast(list[SelectOptionDict], door_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("windows")] = section(
+        _create_windows_section_schema(
+            defaults,
+            include_entities["window"],
+            cast(list[SelectOptionDict], window_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("lights")] = section(
+        _create_lights_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("media")] = section(
+        _create_media_section_schema(
+            defaults, cast(list[SelectOptionDict], media_state_options)
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("appliances")] = section(
+        _create_appliances_section_schema(
+            defaults,
+            include_entities["appliance"],
+            cast(list[SelectOptionDict], appliance_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("environmental")] = section(
+        _create_environmental_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("parameters")] = section(
+        _create_parameters_section_schema(defaults), {"collapsed": True}
     )
 
-    return schema
+    # Pass the correctly structured dictionary to vol.Schema
+    return schema_dict
 
 
 class BaseOccupancyFlow:
@@ -771,16 +774,13 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 flattened_input = {}
                 for key, value in user_input.items():
                     if isinstance(value, dict):
-                        # If the value is a dictionary (section), merge its contents
                         flattened_input.update(value)
                     else:
-                        # If the value is not a dictionary, add it directly
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)
                 return self.async_create_entry(
-                    title=flattened_input.get(CONF_NAME, ""),
-                    data=flattened_input,
+                    title=flattened_input.get(CONF_NAME, ""), data=flattened_input
                 )
 
             except HomeAssistantError as err:
@@ -838,10 +838,8 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 flattened_input = {}
                 for key, value in user_input.items():
                     if isinstance(value, dict):
-                        # If the value is a dictionary (section), merge its contents
                         flattened_input.update(value)
                     else:
-                        # If the value is not a dictionary, add it directly
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)

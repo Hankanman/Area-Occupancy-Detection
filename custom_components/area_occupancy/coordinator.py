@@ -4,7 +4,6 @@ from __future__ import annotations
 
 # Standard Library
 import asyncio
-from collections import defaultdict  # Import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
@@ -19,6 +18,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -52,7 +52,7 @@ from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
 from .probabilities import Probabilities
 from .storage import AreaOccupancyStore
-from .types import DeviceInfo, PriorState, ProbabilityState, SensorInputs
+from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,13 +167,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info for the coordinator."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config[CONF_NAME],
-            "manufacturer": DEVICE_MANUFACTURER,
-            "model": DEVICE_MODEL,
-            "sw_version": DEVICE_SW_VERSION,
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.config_entry.entry_id)},
+            name=self.config[CONF_NAME],
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            sw_version=DEVICE_SW_VERSION,
+        )
 
     @property
     def prior_update_interval(self) -> timedelta:
@@ -231,13 +231,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     or self.prior_state.type_priors == {}
                     or not self.prior_state.entity_priors
                     or self.prior_state.entity_priors == {}
-                    or not self.prior_state.last_updated
-                    # Corrected timestamp check - compare stored datetime with interval
-                    or (
-                        self.prior_state.last_updated
-                        and isinstance(self.prior_state.last_updated, dict)
-                        and not self.prior_state.last_updated
-                    )  # Check if last_updated dict exists but is empty
                     or self.prior_state.overall_prior in (MIN_PROBABILITY, 0.0)
                 )
 
@@ -319,17 +312,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         await super().async_shutdown()
 
         # Additional cleanup specific to our use case
-        if hasattr(self, "_remove_state_listener"):
+        if callable(self._remove_state_listener):
             self._remove_state_listener()
-            self._remove_state_listener = None
+        self._remove_state_listener = None
 
         # Save final state directly on shutdown
         # No need to save priors here, they are saved after calculation
         # await self._async_save_prior_state_data()
 
         # Clear data
-        self.data = None
-        self.prior_state = None
+        self.data = ProbabilityState()
+        self.prior_state = PriorState()
         # self._all_sensor_states = {}
         # self._active_sensors = {}
         self._entity_ids = set()
@@ -456,22 +449,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Loading stored data from storage")
 
             # Use the store's instance-specific load method
-            (
-                name,
-                stored_prior_state,
-                last_updated_ts,
-            ) = await self.storage.async_load_instance_prior_state(
+            loaded_data = await self.storage.async_load_instance_prior_state(
                 self.config_entry.entry_id
             )
 
-            if stored_prior_state:
+            if loaded_data and loaded_data.prior_state:
                 _LOGGER.debug(
                     "Found stored prior state for instance %s, restoring (last saved: %s)",
                     self.config_entry.entry_id,
-                    last_updated_ts,
+                    loaded_data.last_updated,
                 )
-                self.prior_state = stored_prior_state
-                self._last_prior_update = last_updated_ts  # Store the loaded timestamp
+                self.prior_state = loaded_data.prior_state
+                self._last_prior_update = (
+                    loaded_data.last_updated
+                )  # Store the loaded timestamp
             else:
                 _LOGGER.info(
                     "No stored prior state found for instance %s, initializing with defaults",
@@ -584,14 +575,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                         )
                         continue  # Skip this sensor
 
-                    # Unpack successful results
-                    prob_given_true, prob_given_false, prior = prior_result
+                    # Extract values from PriorData object
+                    prob_given_true = prior_result.prob_given_true
+                    prob_given_false = prior_result.prob_given_false
+                    prior = prior_result.prior
 
                     # Store successful calculation result temporarily
+                    # Note: Need to ensure prob_given_true/false are not None here, although calculate_prior should ensure they are floats
+                    # Add validation/fallback if necessary, but based on calculate_prior, they should be floats.
                     calculated_entity_priors[sensor_id] = {
-                        "prob_given_true": prob_given_true,
-                        "prob_given_false": prob_given_false,
-                        "prior": prior,
+                        "prob_given_true": float(prob_given_true)
+                        if prob_given_true is not None
+                        else MIN_PROBABILITY,  # Example fallback/casting
+                        "prob_given_false": float(prob_given_false)
+                        if prob_given_false is not None
+                        else MIN_PROBABILITY,
+                        "prior": float(prior),
                     }
 
                     _LOGGER.debug(
@@ -666,9 +665,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Calculate and update type priors by averaging successfully learned entity priors."""
         _LOGGER.debug("Calculating type priors based on learned entity priors")
         timestamp = dt_util.utcnow().isoformat()
-        type_aggregates = defaultdict(
-            lambda: {"priors": [], "p_true": [], "p_false": [], "count": 0}
-        )
+        type_aggregates: dict[str, TypeAggregate] = {}  # Use standard dict
 
         # Aggregate learned priors by type
         for entity_id, learned_priors in self.prior_state.entity_priors.items():
@@ -676,35 +673,36 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 continue
             entity_type = self.probabilities.get_entity_type(entity_id)
             if entity_type:
-                # Ensure required keys exist before appending
-                if all(
-                    k in learned_priors
-                    for k in ("prior", "prob_given_true", "prob_given_false")
+                # Access attributes of PriorData object
+                # Ensure required attributes are not None (prob_given_true/false can be None)
+                if (
+                    learned_priors.prob_given_true is not None
+                    and learned_priors.prob_given_false is not None
                 ):
-                    type_aggregates[entity_type]["priors"].append(
-                        learned_priors["prior"]
+                    # Get or create the TypeAggregate instance for this entity type
+                    # Use entity_type.value as the key for the dictionary
+                    aggregate = type_aggregates.setdefault(
+                        entity_type.value, TypeAggregate()
                     )
-                    type_aggregates[entity_type]["p_true"].append(
-                        learned_priors["prob_given_true"]
-                    )
-                    type_aggregates[entity_type]["p_false"].append(
-                        learned_priors["prob_given_false"]
-                    )
-                    type_aggregates[entity_type]["count"] += 1
+
+                    aggregate.priors.append(learned_priors.prior)
+                    aggregate.p_true.append(learned_priors.prob_given_true)
+                    aggregate.p_false.append(learned_priors.prob_given_false)
+                    aggregate.count += 1
                 else:
                     _LOGGER.warning(
-                        "Skipping entity %s for type prior calculation due to missing keys in learned data: %s",
+                        "Skipping entity %s for type prior calculation due to missing conditional probabilities in learned data: %s",
                         entity_id,
                         learned_priors,
                     )
 
         # Calculate averages and update PriorState
-        for sensor_type, aggregates in type_aggregates.items():
-            count = aggregates["count"]
+        for sensor_type, aggregate in type_aggregates.items():
+            count = aggregate.count
             if count > 0:
-                avg_prior = sum(aggregates["priors"]) / count
-                avg_prob_given_true = sum(aggregates["p_true"]) / count
-                avg_prob_given_false = sum(aggregates["p_false"]) / count
+                avg_prior = sum(aggregate.priors) / count
+                avg_prob_given_true = sum(aggregate.p_true) / count
+                avg_prob_given_false = sum(aggregate.p_false) / count
 
                 _LOGGER.debug(
                     "Updating type %s priors - prior: %.3f, p_true: %.3f, p_false: %.3f (from %d sensors)",
@@ -750,12 +748,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                         is_available,
                         state_obj.state if state_obj else "None",
                     )
-                    sensor_info = {
-                        "state": state_obj.state if is_available else None,
+                    sensor_info: SensorInfo = {
+                        "state": state_obj.state
+                        if (state_obj and is_available)
+                        else None,
                         "last_changed": (
                             state_obj.last_changed.isoformat()
                             if state_obj and state_obj.last_changed
-                            else dt_util.utcnow().isoformat()  # Use UTC now for consistency
+                            else dt_util.utcnow().isoformat()
                         ),
                         "availability": is_available,
                     }
@@ -803,11 +803,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # --- Calculate Undecayed Probability ---
             try:
                 # Pass snapshot and prior state to the calculator
-                (
-                    calculated_undecayed_prob,
-                    calculated_prior_prob,
-                    sensor_probs,
-                ) = self.calculator.calculate_occupancy_probability(
+                calc_result = self.calculator.calculate_occupancy_probability(
                     current_states_snapshot,  # Pass the snapshot
                     self.prior_state,
                 )
@@ -820,9 +816,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Update self.data with intermediate results *before* decay
             self.data.update(
-                probability=calculated_undecayed_prob,  # Store undecayed prob temporarily
-                prior_probability=calculated_prior_prob,
-                sensor_probabilities=sensor_probs,
+                probability=calc_result.calculated_probability,  # Store undecayed prob temporarily
+                prior_probability=calc_result.prior_probability,
+                sensor_probabilities=calc_result.sensor_probabilities,
             )
 
             # --- Apply Decay ---
@@ -833,7 +829,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 new_decay_start_time,
                 new_decay_start_probability,
             ) = self.decay_handler.calculate_decay(
-                current_probability=calculated_undecayed_prob,  # Use the result from calculation
+                current_probability=calc_result.calculated_probability,  # Use the result from calculation
                 previous_probability=initial_prob,  # Use the state before this update cycle
                 is_decaying=initial_decaying,
                 decay_start_time=initial_decay_start_time,
@@ -966,11 +962,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     else dt_util.utcnow().isoformat()
                 )
 
-                sensor_info = {
-                    "state": current_state_val,
-                    "last_changed": last_changed,
-                    "availability": is_available,
-                }
+                sensor_info = SensorInfo(
+                    state=current_state_val,
+                    last_changed=last_changed,
+                    availability=is_available,
+                )
 
                 async def update_state_and_calculate():
                     """Update state under lock then trigger calculation."""

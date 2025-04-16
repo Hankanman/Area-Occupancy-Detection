@@ -22,10 +22,10 @@ from .const import (
     NAME_DECAY_SENSOR,
     NAME_PRIORS_SENSOR,
     NAME_PROBABILITY_SENSOR,
+    ROUNDING_PRECISION,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .helpers import format_float
-from .types import PriorsAttributes, ProbabilityAttributes, ProbabilityState
+from .types import EntityType, PriorsAttributes, ProbabilityAttributes, ProbabilityState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,53 +95,31 @@ class PriorsSensor(AreaOccupancySensorBase):
 
             prior_state = self.coordinator.prior_state
 
+            # Initialize PriorsAttributes with empty dict
+            attributes: PriorsAttributes = {}
+
             # Map sensor types to corresponding prior values from prior_state
             type_prior_map = {
-                "motion": prior_state.motion_prior,
-                "media": prior_state.media_prior,
-                "appliance": prior_state.appliance_prior,
-                "door": prior_state.door_prior,
-                "window": prior_state.window_prior,
-                "light": prior_state.light_prior,
-                "environmental": prior_state.environmental_prior,
+                EntityType.MOTION: prior_state.motion_prior,
+                EntityType.MEDIA: prior_state.media_prior,
+                EntityType.APPLIANCE: prior_state.appliance_prior,
+                EntityType.DOOR: prior_state.door_prior,
+                EntityType.WINDOW: prior_state.window_prior,
+                EntityType.LIGHT: prior_state.light_prior,
             }
 
-            # Build attribute dictionary using entity_priors for detailed values
-            attributes = {}
-            for sensor_type, prior_value in type_prior_map.items():
-                # Skip types with zero prior (not used in system)
-                if prior_value <= 0:
-                    continue
-
-                # Format attribute with consistent format
-                attributes[sensor_type] = f"Prior: {round(prior_value * 100, 1)}%"
+            # Add priors that have non-zero values
+            for attr_name, prior_value in type_prior_map.items():
+                if prior_value > 0:
+                    # Use the explicit string value of the StrEnum member as the key
+                    attributes[attr_name.value] = (
+                        f"Prior: {round(prior_value * 100, 1)}%"
+                    )
 
             # Add metadata attributes
             last_updated_ts = self.coordinator.last_prior_update
-            # Fallback if no timestamp is stored (e.g., first run before save)
-            if last_updated_ts is None:
-                last_updated_str = "Never"
-            else:
-                last_updated_str = last_updated_ts  # Already a string
-
-            # Check if we have any learned priors
-            has_learned_priors = bool(prior_state.entity_priors)
-
-            # Get next update time, format as ISO string or Unknown
-            next_update_dt = self.coordinator.next_prior_update
-            next_update_str = (
-                next_update_dt.isoformat() if next_update_dt else "Unknown"
-            )
-
-            attributes.update(
-                {
-                    "last_updated": last_updated_str,
-                    "next_update": next_update_str,
-                    "total_period": f"{prior_state.analysis_period} days",
-                    "entity_count": len(prior_state.entity_priors),
-                    "using_learned_priors": has_learned_priors,
-                }
-            )
+            attributes["last_updated"] = last_updated_ts if last_updated_ts else "Never"
+            attributes["total_period"] = f"{prior_state.analysis_period} days"
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error getting prior attributes: %s", err)
@@ -196,10 +174,8 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 
             for entity_id, prob_details in data.sensor_probabilities.items():
                 friendly_name = (
-                    self.hass.states.get(entity_id).attributes.get(
-                        "friendly_name", entity_id
-                    )
-                    if self.hass.states.get(entity_id)
+                    state.attributes.get("friendly_name", entity_id)
+                    if (state := self.hass.states.get(entity_id))
                     else entity_id
                 )
 
@@ -276,3 +252,11 @@ async def async_setup_entry(
         sensors.append(PriorsSensor(coordinator, entry.entry_id))
 
     async_add_entities(sensors, update_before_add=True)
+
+
+def format_float(value: float) -> float:
+    """Format float to consistently show 2 decimal places."""
+    try:
+        return round(float(value), ROUNDING_PRECISION)
+    except (ValueError, TypeError):
+        return 0.0
