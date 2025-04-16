@@ -98,6 +98,8 @@ DECAY_LAMBDA = 1.732867952
 # Safety bounds
 MIN_PROBABILITY: Final[float] = 0.01
 MAX_PROBABILITY: Final[float] = 0.99
+MIN_PRIOR: Final[float] = 0.01
+MAX_PRIOR: Final[float] = 0.99
 
 # Default prior probabilities
 DEFAULT_PRIOR: Final[float] = 0.1713

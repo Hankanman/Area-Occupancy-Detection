@@ -150,10 +150,8 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
                 _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
 
         _LOGGER.debug("Storage file format migration complete for %s", entry_id)
-    except Exception as err:
+    except (HomeAssistantError, OSError, ValueError) as err:
         _LOGGER.error("Error during storage migration for %s: %s", entry_id, err)
-        # Do not re-raise, allow config entry migration to continue
-        # raise StorageError(f"Failed to migrate storage: {err}") from err
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

@@ -1,7 +1,6 @@
 """Storage handling for Area Occupancy Detection."""
 
 import logging
-from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -9,23 +8,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, STORAGE_KEY
 from .exceptions import StorageLoadError, StorageSaveError
-from .types import PriorState
+from .types import InstanceData, LoadedInstanceData, PriorState, StoredData
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class InstanceData(TypedDict):
-    """TypedDict for stored instance data."""
-
-    name: str | None
-    prior_state: dict[str, Any] | None
-    last_updated: str
-
-
-class StoredData(TypedDict):
-    """TypedDict for stored data structure."""
-
-    instances: dict[str, InstanceData]
 
 
 class AreaOccupancyStore(Store[StoredData]):
@@ -148,15 +133,14 @@ class AreaOccupancyStore(Store[StoredData]):
 
     async def async_load_instance_prior_state(
         self, entry_id: str
-    ) -> tuple[str | None, PriorState | None, str | None]:
+    ) -> LoadedInstanceData:
         """Load prior state data for a specific instance from storage.
 
         Args:
             entry_id: The config entry ID of the instance to load.
 
         Returns:
-            Tuple of (name, prior_state, last_updated) where prior_state and last_updated
-            may be None if not found or data is invalid.
+            LoadedInstanceData dataclass containing name, prior_state, and last_updated.
 
         Raises:
             StorageLoadError: If loading fails
@@ -166,12 +150,16 @@ class AreaOccupancyStore(Store[StoredData]):
             data = await self.async_load()  # Use the store's own load method
             if not data or "instances" not in data:
                 _LOGGER.debug("No stored data or instances found for loading priors")
-                return None, None, None
+                return LoadedInstanceData(
+                    name=None, prior_state=None, last_updated=None
+                )
 
             instance_data = data["instances"].get(entry_id)
             if not instance_data:
                 _LOGGER.debug("No instance data found for %s", entry_id)
-                return None, None, None
+                return LoadedInstanceData(
+                    name=None, prior_state=None, last_updated=None
+                )
 
             name = instance_data.get("name")
             stored_prior_state_dict = instance_data.get("prior_state")
@@ -179,7 +167,9 @@ class AreaOccupancyStore(Store[StoredData]):
 
             if not stored_prior_state_dict:
                 _LOGGER.debug("No prior_state dict found for %s", entry_id)
-                return name, None, last_updated
+                return LoadedInstanceData(
+                    name=name, prior_state=None, last_updated=last_updated
+                )
 
             prior_state = PriorState.from_dict(stored_prior_state_dict)
 
@@ -193,7 +183,11 @@ class AreaOccupancyStore(Store[StoredData]):
                 name,
                 last_updated,
             )
-            return name, prior_state, last_updated
+            return LoadedInstanceData(
+                name=name,
+                prior_state=prior_state,
+                last_updated=last_updated,
+            )
 
     async def async_save_instance_prior_state(
         self, entry_id: str, name: str, prior_state: PriorState
