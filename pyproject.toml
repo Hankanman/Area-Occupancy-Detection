@@ -1,0 +1,283 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "area-occupancy-detection"
+version = "2025.4.3"  # Start with an initial version
+license = "Apache-2.0"
+description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
+readme = "README.md"  # Assuming you'll have a README.md
+authors = [
+  { name = "Hankan Man", email = "sebburrell@outlook.com" }, # Add your details
+]
+keywords = ["home", "automation", "occupancy", "bayesian"]
+classifiers = [
+  "Development Status :: 4 - Beta", # Adjust as appropriate
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation",
+]
+requires-python = ">=3.13" # Common baseline for HA custom components
+dependencies = [
+  "homeassistant", # Add specific HA version if needed, e.g., "homeassistant>=2024.1.0"
+  "voluptuous",
+  # Add any other specific Python dependencies here
+  # Example: "numpy", "scipy"
+  # Make sure these are also reflected in manifest.json if required by HA
+]
+
+[project.urls]
+"Homepage" = "https://github.com/hankanman/Area-Occupancy-Detection" # Add your repo URL
+"Source Code" = "https://github.com/hankanman/Area-Occupancy-Detection" # Add your repo URL
+"Bug Reports" = "https://github.com/hankanman/Area-Occupancy-Detection/issues" # Add your repo URL
+
+# No script entry needed for a custom component
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["custom_components.area_occupancy*"] # Find package within custom_components
+
+[tool.pylint.MAIN]
+py-version = "3.13" # Align with requires-python
+jobs = 2
+# No specific init-hook or plugins needed unless you have custom Pylint checks
+# load-plugins = []
+persistent = false
+# No need for extension-pkg-allow-list unless using specific C extensions
+# extension-pkg-allow-list = []
+fail-on = ["I"] # Fail on informational messages (strict)
+
+[tool.pylint.BASIC]
+# Allow PascalCase for classes, snake_case for functions/methods/variables (PEP8)
+class-const-naming-style = "any" # Allow UPPER_CASE for constants in classes if needed
+# Consider setting good-names if you want to enforce specific naming conventions beyond PEP8
+
+[tool.pylint."MESSAGES CONTROL"]
+# Keep most HA core disables as they are generally good practice, but review if needed
+disable = [
+  "format", # Handled by Ruff/Formatter
+  "abstract-method",
+  "cyclic-import", # Can be problematic in larger HA structures
+  "duplicate-code", # Sometimes necessary, but monitor
+  "inconsistent-return-statements",
+  "locally-disabled",
+  "not-context-manager",
+  "too-few-public-methods",
+  "too-many-ancestors",
+  "too-many-arguments",
+  "too-many-instance-attributes",
+  "too-many-lines",
+  "too-many-locals",
+  "too-many-public-methods",
+  "too-many-boolean-expressions",
+  "too-many-positional-arguments",
+  "wrong-import-order", # Handled by Ruff/isort
+  "possibly-used-before-assignment",
+  "missing-module-docstring", # Often desired for modules
+  "missing-class-docstring", # Often desired for classes
+  "missing-function-docstring", # Often desired for functions
+
+  # Ruff handles many of these, keeping the list for explicitness/overlap
+  "await-outside-async", "bad-str-strip-call", "bad-string-format-type",
+  "bidirectional-unicode", "continue-in-finally", "duplicate-bases",
+  "misplaced-bare-raise", "format-needs-mapping", "function-redefined",
+  "invalid-all-object", "invalid-character-backspace", "invalid-character-esc",
+  "invalid-character-nul", "invalid-character-sub", "invalid-character-zero-width-space",
+  "logging-too-few-args", "logging-too-many-args", "missing-format-string-key",
+  "mixed-format-string", "no-method-argument", "no-self-argument",
+  "nonexistent-operator", "nonlocal-without-binding", "not-in-loop",
+  "notimplemented-raised", "return-in-init", "return-outside-function",
+  "syntax-error", "too-few-format-args", "too-many-format-args",
+  "too-many-star-expressions", "truncated-format-string", "undefined-all-variable",
+  "undefined-variable", "used-prior-global-declaration", "yield-inside-async-function",
+  "yield-outside-function", "anomalous-backslash-in-string", "assert-on-string-literal",
+  "assert-on-tuple", "bad-format-string", "bad-format-string-key",
+  "bare-except", "binary-op-exception", "cell-var-from-loop",
+  "duplicate-except", "duplicate-key", "duplicate-string-formatting-argument",
+  "duplicate-value", "eval-used", "exec-used", "expression-not-assigned",
+  "f-string-without-interpolation", "forgotten-debug-statement",
+  "format-string-without-interpolation", "global-variable-not-assigned",
+  "implicit-str-concat", "import-self", "inconsistent-quotes",
+  "invalid-envvar-default", "keyword-arg-before-vararg", "logging-format-interpolation",
+  "logging-fstring-interpolation", "logging-not-lazy", "misplaced-future",
+  "named-expr-without-context", "nested-min-max", "pointless-statement",
+  "raise-missing-from", "redefined-builtin", "try-except-raise",
+  "unused-argument", "unused-format-string-argument", "unused-format-string-key",
+  "unused-import", "unused-variable", "useless-else-on-loop",
+  "wildcard-import", "bad-classmethod-argument", "consider-iterating-dictionary",
+  "empty-docstring", "invalid-name", "line-too-long", # Handled by Ruff/Formatter
+  "missing-final-newline", "multiple-imports", "singleton-comparison",
+  "subprocess-run-check", "superfluous-parens", "ungrouped-imports",
+  "unidiomatic-typecheck", "unnecessary-direct-lambda-call",
+  "unnecessary-lambda-assignment", "unnecessary-pass", "unneeded-not",
+  "useless-import-alias", "wrong-import-position", "comparison-of-constants",
+  "comparison-with-itself",
+  "consider-merging-isinstance",
+  "consider-using-dict-comprehension", "consider-using-generator",
+  "consider-using-get", "consider-using-set-comprehension",
+  "consider-using-sys-exit", "consider-using-ternary", "literal-comparison",
+  "property-with-parameters", "super-with-arguments", "too-many-branches",
+  "too-many-return-statements", "too-many-statements", "trailing-comma-tuple",
+  "unnecessary-comprehension", "use-a-generator", "use-dict-literal",
+  "use-list-literal", "useless-object-inheritance", "useless-return",
+  "no-else-break", "no-else-continue", "no-else-raise", "no-else-return",
+  "broad-except", "protected-access", "broad-exception-raised",
+  "consider-using-f-string",
+
+  # Handled by mypy (if you use it)
+  "abstract-class-instantiated", "arguments-differ", "assigning-non-slot",
+  "assignment-from-no-return", "assignment-from-none", "bad-exception-cause",
+  "bad-format-character", "bad-reversed-sequence", "bad-super-call",
+  "bad-thread-instantiation", "catching-non-exception", "comparison-with-callable",
+  "deprecated-class", "dict-iter-missing-items", "format-combined-specification",
+  "global-variable-undefined", "import-error", "inconsistent-mro",
+  "inherit-non-class", "init-is-generator", "invalid-class-object",
+  "invalid-enum-extension", "invalid-envvar-value", "invalid-format-returned",
+  "invalid-hash-returned", "invalid-metaclass", "invalid-overridden-method",
+  "invalid-repr-returned", "invalid-sequence-index", "invalid-slice-index",
+  "invalid-slots-object", "invalid-slots", "invalid-star-assignment-target",
+  "invalid-str-returned", "invalid-unary-operand-type", "invalid-unicode-codec",
+  "isinstance-second-argument-not-valid-type", "method-hidden",
+  "misplaced-format-function", "missing-format-argument-key",
+  "missing-format-attribute", "missing-kwoa", "no-member",
+  "no-value-for-parameter", "non-iterator-returned",
+  "non-str-assignment-to-dunder-name", "nonlocal-and-global", "not-a-mapping",
+  "not-an-iterable", "not-async-context-manager", "not-callable",
+  "not-context-manager", # Re-enabled not-context-manager if not using mypy strictly
+  "overridden-final-method", "raising-bad-type", "raising-non-exception",
+  "redundant-keyword-arg", "relative-beyond-top-level", "self-cls-assignment",
+  "signature-differs", "star-needs-assignment-target", "subclassed-final-class",
+  "super-without-brackets", "too-many-function-args", "typevar-double-variance",
+  "typevar-name-mismatch", "unbalanced-dict-unpacking",
+  "unbalanced-tuple-unpacking", "unexpected-keyword-arg", "unhashable-member",
+  "unpacking-non-sequence", "unsubscriptable-object",
+  "unsupported-assignment-operation", "unsupported-binary-operation",
+  "unsupported-delete-operation", "unsupported-membership-test",
+  "used-before-assignment", "using-final-decorator-in-unsupported-version",
+  "wrong-exception-operation",
+]
+enable = [
+  "use-symbolic-message-instead",
+]
+
+[tool.pylint.REPORTS]
+score = false
+
+[tool.pylint.TYPECHECK]
+# ignored-classes = [] # Add if specific classes cause issues
+mixin-class-rgx = ".*[Mm]ix[Ii]n"
+
+[tool.pylint.FORMAT]
+expected-line-ending-format = "LF"
+
+[tool.pylint.EXCEPTIONS]
+# Allow HomeAssistantError for HA-specific exceptions
+overgeneral-exceptions = [
+  "builtins.BaseException",
+  "builtins.Exception",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", "custom_components"] # Don't recurse into components during test discovery
+log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(threadName)s %(name)s:%(filename)s:%(lineno)s %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Keep minimal warnings, add specific ones if needed during development
+filterwarnings = [
+    "error", # Treat most warnings as errors
+    # Ignore specific warnings if necessary, e.g.:
+    # "ignore:.*deprecated.*:DeprecationWarning:my_module",
+    "ignore:pkg_resources is deprecated as an API:DeprecationWarning", # Common warning from dependencies
+    "ignore:Deprecated call to `pkg_resources.*:DeprecationWarning:pkg_resources",
+]
+
+[tool.coverage.run]
+source = ["custom_components.area_occupancy"] # Source for coverage report
+omit = [
+    "custom_components/area_occupancy/translations/*", # Exclude translation files
+    "tests/*", # Exclude tests themselves from coverage source
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "@overload",
+  "if __name__ == .__main__.:", # Exclude main guard
+  "except ImportError:", # Often used for optional imports
+  "except Exception:", # Exclude broad exception handlers if necessary for coverage of specific logic
+  "pass", # Exclude simple pass statements
+]
+fail_under = 90 # Enforce 90% coverage minimum
+
+[tool.ruff]
+required-version = ">=0.11.5" # Keep this updated
+line-length = 88 # Standard Python line length
+target-version = "py313" # Match requires-python
+
+[tool.ruff.lint]
+# Use a comprehensive set of rules, similar to HA Core but adaptable
+select = [
+  "A", "ASYNC", "B", "BLE", "C4", "C90", "COM", "D", "DTZ", "E", "ERA", "F",
+  "FLY", "FURB", "G", "I", "ICN", "INP", "ISC", "LOG", "N", "NPY", "PERF",
+  "PGH", "PIE", "PL", "PT", "PTH", "PYI", "Q", "RET", "RSE", "RUF", "S",
+  "SIM", "SLF", "SLOT", "T10", "T20", "TC", "TCH", "TID", "TRY", "UP", "W",
+  "YTT",
+]
+
+ignore = [
+  "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", # Allow missing docstrings initially
+  "D203", "D213", "D407", # Docstring formatting preferences
+  "E501", # Handled by formatter
+
+  # General rules often disabled in HA Core or common projects:
+  "ANN101", "ANN102", "ANN401", # Less strict typing enforcement initially
+  "FIX002", # TODO comments are fine
+  "TRY003", "TRY400", # Logging preferences
+  "S101", # assert is fine in tests
+  "PLR0913", # Allow more arguments
+  "PLR2004", # Magic numbers can be okay sometimes, but monitor
+  "RUF001", "RUF002", "RUF003", # Ambiguous unicode is rare
+  "RUF012", # Mutable class attributes sometimes needed carefully
+
+  # Conflicts with formatter
+  "COM812", "COM819", "D206", "D300", "E111", "E114", "E117", "ISC001", "ISC002", "Q000", "Q001", "Q002", "Q003", "W191",
+
+  # Might re-enable later if needed
+  "C901", # Complexity can be addressed later
+  "PLR0911", "PLR0912", "PLR0915", # Limits on returns/branches/statements
+]
+
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["homeassistant", "custom_components.area_occupancy"] # Define both HA and this component as first-party
+combine-as-imports = true
+split-on-trailing-comma = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "google" # Or "numpy" or "pep257"
+property-decorators = ["homeassistant.helpers.cached_property"] # Add others if used
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.mypy]
+# Basic mypy setup, adjust as needed
+python_version = "3.13"
+warn_unused_configs = true
+ignore_missing_imports = true # Start with this, gradually reduce
+disallow_untyped_defs = false # Start with false, enable for stricter typing
