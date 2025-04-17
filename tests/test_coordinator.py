@@ -19,7 +19,6 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.types import (
     OccupancyCalculationResult,
-    PriorData,
     PriorState,
     ProbabilityState,
 )
@@ -221,14 +220,6 @@ async def test_coordinator_prior_state_management(
     # Test initial prior state
     assert coordinator.prior_state is not None
     assert coordinator.prior_state.overall_prior >= MIN_PROBABILITY
-
-    # Test prior state update
-    mock_prior_data = PriorData(
-        prior=0.75,
-        prob_given_true=0.85,
-        prob_given_false=0.15,
-        last_updated=dt_util.utcnow().isoformat(),
-    )
 
     # Update a type prior
     coordinator.prior_state.update_type_prior(

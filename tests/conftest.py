@@ -231,8 +231,8 @@ async def setup_test_entities(hass: HomeAssistant) -> None:
 async def init_integration(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,  # pylint: disable=redefined-outer-name
-    mock_recorder: MagicMock,  # Add mock_recorder as a dependency
-    setup_test_entities,  # Add test entities fixture
+    mock_recorder: MagicMock,  # pylint: disable=redefined-outer-name
+    setup_test_entities,  # pylint: disable=redefined-outer-name
 ) -> MockConfigEntry:
     """Set up the area occupancy integration for testing."""
     # Set up recorder component first
