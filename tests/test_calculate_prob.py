@@ -56,7 +56,7 @@ def mock_prior_state() -> PriorState:
 
 
 @pytest.fixture
-def calculator(mock_probabilities):
+def calculator(mock_probabilities):  # pylint: disable=redefined-outer-name
     """Create a ProbabilityCalculator instance."""
     return ProbabilityCalculator(probabilities=mock_probabilities)
 
@@ -130,7 +130,7 @@ def test_bayesian_update_edge_cases():
 # --- Tests for ProbabilityCalculator methods ---
 
 
-def test_calculate_sensor_probability(calculator, mock_prior_state):
+def test_calculate_sensor_probability(calculator, mock_prior_state):  # pylint: disable=redefined-outer-name
     """Test probability calculation for a single sensor."""
     entity_id = "binary_sensor.test"
     state_on: SensorInfo = {"state": "on", "availability": True, "last_changed": ""}
@@ -175,7 +175,7 @@ def test_calculate_sensor_probability(calculator, mock_prior_state):
     assert calc_result_no_config.weighted_probability == 0.0
 
 
-def test_calculate_complementary_probability(calculator, mock_prior_state):
+def test_calculate_complementary_probability(calculator, mock_prior_state):  # pylint: disable=redefined-outer-name
     """Test complementary probability calculation with multiple sensors."""
     sensor_states: dict[str, SensorInfo] = {
         "binary_sensor.test1": {
@@ -198,7 +198,7 @@ def test_calculate_complementary_probability(calculator, mock_prior_state):
     }
 
     # Mock configs for the sensors
-    calculator.probabilities.get_sensor_config.side_effect = lambda eid: {
+    calculator.probabilities.get_sensor_config.side_effect = lambda eid: {  # pylint: disable=unnecessary-lambda
         "binary_sensor.test1": {
             "prob_given_true": 0.9,
             "prob_given_false": 0.1,
@@ -241,7 +241,7 @@ def test_calculate_complementary_probability(calculator, mock_prior_state):
     )
 
 
-def test_calculate_occupancy_probability(calculator, mock_prior_state):
+def test_calculate_occupancy_probability(calculator, mock_prior_state):  # pylint: disable=redefined-outer-name
     """Test the main calculation logic."""
     current_states: dict[str, SensorInfo] = {
         "binary_sensor.test1": {
@@ -263,7 +263,7 @@ def test_calculate_occupancy_probability(calculator, mock_prior_state):
     }
 
     # Mock configs
-    calculator.probabilities.get_sensor_config.side_effect = lambda eid: {
+    calculator.probabilities.get_sensor_config.side_effect = lambda eid: {  # pylint: disable=unnecessary-lambda
         "binary_sensor.test1": {
             "prob_given_true": 0.9,
             "prob_given_false": 0.1,

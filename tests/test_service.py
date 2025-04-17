@@ -31,7 +31,7 @@ def mock_coordinator():
     return coordinator
 
 
-async def test_setup_services(hass: HomeAssistant, mock_coordinator):
+async def test_setup_services(hass: HomeAssistant, mock_coordinator):  # pylint: disable=redefined-outer-name
     """Test setting up services."""
     # Setup mock data
     entry_id = "test_entry_id"
@@ -44,7 +44,7 @@ async def test_setup_services(hass: HomeAssistant, mock_coordinator):
     assert hass.services.has_service(DOMAIN, "update_priors")
 
 
-async def test_update_priors_success(hass: HomeAssistant, mock_coordinator):
+async def test_update_priors_success(hass: HomeAssistant, mock_coordinator):  # pylint: disable=redefined-outer-name
     """Test successful update_priors service call."""
     # Setup mock data
     entry_id = "test_entry_id"
@@ -68,7 +68,7 @@ async def test_update_priors_success(hass: HomeAssistant, mock_coordinator):
     mock_coordinator.async_refresh.assert_called_once()
 
 
-async def test_update_priors_with_custom_period(hass: HomeAssistant, mock_coordinator):
+async def test_update_priors_with_custom_period(hass: HomeAssistant, mock_coordinator):  # pylint: disable=redefined-outer-name
     """Test update_priors service call with custom history period."""
     # Setup mock data
     entry_id = "test_entry_id"
@@ -94,7 +94,7 @@ async def test_update_priors_with_custom_period(hass: HomeAssistant, mock_coordi
     mock_coordinator.async_refresh.assert_called_once()
 
 
-async def test_update_priors_invalid_entry_id(hass: HomeAssistant):
+async def test_update_priors_invalid_entry_id(hass: HomeAssistant):  # pylint: disable=redefined-outer-name
     """Test update_priors service call with invalid entry_id."""
     # Setup services
     await async_setup_services(hass)
@@ -117,7 +117,7 @@ async def test_update_priors_invalid_entry_id(hass: HomeAssistant):
     )
 
 
-async def test_update_priors_coordinator_error(hass: HomeAssistant, mock_coordinator):
+async def test_update_priors_coordinator_error(hass: HomeAssistant, mock_coordinator):  # pylint: disable=redefined-outer-name
     """Test update_priors service call when coordinator update fails."""
     # Setup mock data
     entry_id = "test_entry_id"
@@ -142,7 +142,8 @@ async def test_update_priors_coordinator_error(hass: HomeAssistant, mock_coordin
 
 
 async def test_update_priors_invalid_history_period(
-    hass: HomeAssistant, mock_coordinator
+    hass: HomeAssistant,
+    mock_coordinator,  # pylint: disable=redefined-outer-name
 ):
     """Test update_priors service with invalid history period."""
     # Setup mock data
@@ -181,7 +182,10 @@ async def test_update_priors_invalid_history_period(
     mock_coordinator.async_refresh.assert_not_called()
 
 
-async def test_update_priors_coordinator_state(hass: HomeAssistant, mock_coordinator):
+async def test_update_priors_coordinator_state(
+    hass: HomeAssistant,
+    mock_coordinator,  # pylint: disable=redefined-outer-name
+):
     """Test coordinator state updates after update_priors service call."""
     # Setup mock data
     entry_id = "test_entry_id"
@@ -209,7 +213,8 @@ async def test_update_priors_coordinator_state(hass: HomeAssistant, mock_coordin
 
 
 async def test_update_priors_coordinator_error_handling(
-    hass: HomeAssistant, mock_coordinator
+    hass: HomeAssistant,
+    mock_coordinator,  # pylint: disable=redefined-outer-name
 ):
     """Test error handling during coordinator updates."""
     # Setup mock data

@@ -176,7 +176,7 @@ async def mock_ha(hass: HomeAssistant):
 # --- Test Cases ---
 
 
-async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -> None:
+async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -> None:  # pylint: disable=redefined-outer-name
     """Test the user initialization flow with valid data."""
     result = await mock_ha.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -186,9 +186,7 @@ async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -
     assert result.get("type") == data_entry_flow.FlowResultType.FORM
     assert result.get("step_id") == "user"
 
-    with patch(
-        f"custom_components.{DOMAIN}.async_setup_entry", return_value=True
-    ) as mock_setup_entry:
+    with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
         result2 = await mock_ha.config_entries.flow.async_configure(
             result["flow_id"], user_input=FULL_USER_INPUT_STRUCTURED
         )
@@ -205,7 +203,8 @@ async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -
 
 
 async def test_config_flow_user_input_errors(
-    mock_ha: HomeAssistant, mock_recorder
+    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
+    mock_recorder,  # pylint: disable=redefined-outer-name
 ) -> None:
     """Test user flow with various input errors."""
     result = await mock_ha.config_entries.flow.async_init(
@@ -220,7 +219,7 @@ async def test_config_flow_user_input_errors(
         await mock_ha.config_entries.flow.async_configure(flow_id, user_input=bad_input)
 
 
-async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> None:
+async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> None:  # pylint: disable=redefined-outer-name
     """Test the options flow for updating settings."""
     _LOGGER.debug("Starting test_options_flow_success")
     # 1. Set up an initial config entry
@@ -365,7 +364,8 @@ async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> No
 
 # Add new test for auto-adding primary sensor
 async def test_config_flow_auto_add_primary_sensor(
-    mock_ha: HomeAssistant, mock_recorder
+    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
+    mock_recorder,  # pylint: disable=redefined-outer-name
 ) -> None:
     """Test that primary sensor is auto-added to motion sensors."""
     result = await mock_ha.config_entries.flow.async_init(
@@ -378,9 +378,7 @@ async def test_config_flow_auto_add_primary_sensor(
     test_input["motion"][CONF_PRIMARY_OCCUPANCY_SENSOR] = primary_sensor
     test_input["motion"][CONF_MOTION_SENSORS] = ["binary_sensor.other_motion"]
 
-    with patch(
-        f"custom_components.{DOMAIN}.async_setup_entry", return_value=True
-    ) as mock_setup_entry:
+    with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
         result2 = await mock_ha.config_entries.flow.async_configure(
             result["flow_id"], user_input=test_input
         )
@@ -393,7 +391,8 @@ async def test_config_flow_auto_add_primary_sensor(
 
 # Add test for section validation
 async def test_config_flow_section_validation(
-    mock_ha: HomeAssistant, mock_recorder
+    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
+    mock_recorder,  # pylint: disable=redefined-outer-name
 ) -> None:
     """Test validation of individual sections."""
     result = await mock_ha.config_entries.flow.async_init(
@@ -421,7 +420,8 @@ async def test_config_flow_section_validation(
 
 # Add test for state translation
 async def test_config_flow_state_translation(
-    mock_ha: HomeAssistant, mock_recorder
+    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
+    mock_recorder,  # pylint: disable=redefined-outer-name
 ) -> None:
     """Test translation of display states to internal states."""
     result = await mock_ha.config_entries.flow.async_init(
@@ -431,9 +431,7 @@ async def test_config_flow_state_translation(
     test_input = copy.deepcopy(FULL_USER_INPUT_STRUCTURED)
     test_input["doors"]["door_active_state"] = "open"  # Lowercase for schema
 
-    with patch(
-        f"custom_components.{DOMAIN}.async_setup_entry", return_value=True
-    ) as mock_setup_entry:
+    with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
         result2 = await mock_ha.config_entries.flow.async_configure(
             result["flow_id"], user_input=test_input
         )
@@ -441,9 +439,3 @@ async def test_config_flow_state_translation(
 
     assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result2.get("data", {}).get("door_active_state") == "open"
-
-
-# --- Add more test cases as needed ---
-# TODO: Test flow abort if an entry with the same unique ID (area name based) already exists.
-# TODO: Test validation of specific entity domains if required by the flow (e.g., ensure primary is binary_sensor).
-# TODO: Test options flow with invalid inputs (e.g., threshold out of range).

@@ -147,11 +147,6 @@ async def test_coordinator_state_update_on_entity_change(
             "calculate_occupancy_probability",
             wraps=coordinator.calculator.calculate_occupancy_probability,
         ) as mock_calc,
-        patch.object(
-            coordinator.decay_handler,
-            "calculate_decay",
-            wraps=coordinator.decay_handler.calculate_decay,
-        ) as mock_decay,
     ):
         hass.states.async_set(motion_sensor_id, STATE_ON)
         await hass.async_block_till_done()  # Allow listener to trigger
@@ -186,18 +181,12 @@ async def test_coordinator_state_update_on_entity_change(
         )
 
     # 3. Turn motion sensor OFF
-    initial_prob_after_on = final_prob
     with (
         patch.object(
             coordinator.calculator,
             "calculate_occupancy_probability",
             wraps=coordinator.calculator.calculate_occupancy_probability,
         ) as mock_calc_off,
-        patch.object(
-            coordinator.decay_handler,
-            "calculate_decay",
-            wraps=coordinator.decay_handler.calculate_decay,
-        ) as mock_decay_off,
     ):
         hass.states.async_set(motion_sensor_id, STATE_OFF)
         await hass.async_block_till_done()
@@ -207,7 +196,6 @@ async def test_coordinator_state_update_on_entity_change(
         # Check probability decreased (or decay started)
         final_state_off = hass.states.get(prob_sensor_id)
         assert final_state_off is not None
-        final_prob_off = float(final_state_off.state)
         # Probability might not decrease immediately if decay delay is active
         # Check that active triggers list is now empty
         assert final_state_off.attributes["active_triggers"] == []
@@ -261,14 +249,9 @@ async def test_migration_handling(hass: HomeAssistant) -> None:
     with patch(
         "custom_components.area_occupancy.migrations.async_migrate_entry",
         return_value=True,
-    ) as mock_migrate:
+    ):
         # Set up the integration - should trigger migration
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-        # Migration may be skipped if version logic does not require it
-        # Remove the assertion or make it conditional
-        # assert mock_migrate.called
 
 
 # Add test for service integration
