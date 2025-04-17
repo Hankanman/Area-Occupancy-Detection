@@ -1,0 +1,4 @@
+pytest
+pytest-cov
+pytest-homeassistant-custom-component
+# Add other test dependencies if needed

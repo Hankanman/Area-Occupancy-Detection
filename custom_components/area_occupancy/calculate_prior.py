@@ -6,18 +6,17 @@ the likelihood of occupancy based on various sensor states.
 """
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-import logging
 from typing import Any
-
-from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
+from sqlalchemy.exc import SQLAlchemyError
 
 from .const import (
     DEFAULT_PROB_GIVEN_FALSE,
