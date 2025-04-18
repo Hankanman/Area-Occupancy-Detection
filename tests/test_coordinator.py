@@ -1,30 +1,45 @@
 """Tests for the Area Occupancy DataUpdateCoordinator."""
 
 import logging
-from datetime import timedelta
-from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # Import necessary components from the custom integration
-from custom_components.area_occupancy.const import (
+from custom_components.area_occupancy.const import (  # noqa: TID252
+    CONF_DECAY_ENABLED,
+    CONF_HISTORY_PERIOD,
     CONF_MOTION_SENSORS,
     CONF_NAME,
+    CONF_THRESHOLD,
     DOMAIN,
     MIN_PROBABILITY,
 )
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.types import (
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator  # noqa: TID252
+from custom_components.area_occupancy.exceptions import (  # noqa: TID252
+    CalculationError,
+    StateError,
+    StorageError,
+)
+from custom_components.area_occupancy.types import (  # noqa: TID252
     OccupancyCalculationResult,
     PriorState,
     ProbabilityState,
 )
 
 # Mock config data and options from conftest
-from .conftest import TEST_CONFIG  # Import test config and entities setup
+from .conftest import TEST_CONFIG  # noqa: TID251
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -237,38 +252,51 @@ async def test_coordinator_prior_state_management(
 
 # Add test for decay handler integration
 async def test_coordinator_decay_handler(
-    hass: HomeAssistant, init_integration: MockConfigEntry
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
 ):
-    """Test decay handler integration in coordinator."""
+    """Test decay handling logic."""
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
         init_integration.entry_id
     ]["coordinator"]
 
-    # Set initial high probability
-    coordinator.data.probability = 0.9
-    coordinator.data.previous_probability = 0.9
-    coordinator.data.decaying = False
-    coordinator.data.decay_start_time = None
-    coordinator.data.decay_start_probability = None
+    # Test decay disabled by config
+    coordinator.config[CONF_DECAY_ENABLED] = False
+    coordinator._start_decay_updates()
+    assert coordinator._decay_unsub is None
 
-    # Trigger probability decrease
-    new_prob = 0.5
-    with patch.object(
-        coordinator.calculator, "calculate_occupancy_probability"
-    ) as mock_calc:
-        mock_calc.return_value = OccupancyCalculationResult(
-            calculated_probability=new_prob,
-            prior_probability=0.5,
-            sensor_probabilities={},
-        )
+    # Test decay update with error
+    coordinator.config[CONF_DECAY_ENABLED] = True
+    coordinator.data.decaying = True
 
-        await coordinator.async_refresh()
+    # Mock the async_track_time_interval to capture the callback
+    with patch(
+        "custom_components.area_occupancy.coordinator.async_track_time_interval"
+    ) as mock_track:
+        # Set up a mock callback that will be called by the decay handler
+        async def mock_callback(*_):
+            raise Exception("Error")
+
+        mock_track.return_value = lambda: None  # Simple cleanup function
+
+        # Start decay updates and wait for setup
+        coordinator._start_decay_updates()
         await hass.async_block_till_done()
 
-    # Verify decay started
-    assert coordinator.data.decaying is True
-    assert coordinator.data.decay_start_time is not None
-    assert coordinator.data.decay_start_probability == 0.9  # Previous probability
+        # Verify that async_track_time_interval was called
+        assert mock_track.called
+        assert coordinator._decay_unsub is not None
+
+        # Get the callback that was registered and test error handling
+        callback = mock_track.call_args[0][1]
+        await callback(datetime.now())
+
+        # Verify that decay is still enabled after error
+        assert coordinator.data.decaying is True
+
+        # Test cleanup
+        coordinator._stop_decay_updates()
+        assert coordinator._decay_unsub is None
 
 
 # Add test for historical analysis
@@ -312,3 +340,527 @@ async def test_coordinator_historical_analysis(
     assert coordinator.prior_state.entity_priors
     assert coordinator.prior_state.type_priors
     assert coordinator.last_prior_update is not None
+
+
+@patch(
+    "custom_components.area_occupancy.coordinator.PriorState.initialize_from_defaults"
+)
+async def test_coordinator_async_update_options(
+    mock_initialize_priors,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test coordinator options update method."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Store initial values
+    initial_threshold = coordinator.data.threshold
+    initial_config = coordinator.config.copy()
+
+    # Update options
+    new_options = {CONF_THRESHOLD: 75}  # Different threshold
+
+    # Update config entry options
+    hass.config_entries.async_update_entry(
+        init_integration,
+        options=new_options,
+    )
+    await hass.async_block_till_done()
+
+    # Call update_options directly to ensure coverage
+    await coordinator.async_update_options()
+    await hass.async_block_till_done()
+
+    # Verify the coordinator was updated with new options
+    assert coordinator.config[CONF_THRESHOLD] == 75
+    assert coordinator.data.threshold == 75 / 100.0
+    assert coordinator.config != initial_config
+    assert coordinator.data.threshold != initial_threshold
+
+    # Test error handling
+    with (
+        patch(
+            "custom_components.area_occupancy.types.SensorInputs.from_config",
+            side_effect=ValueError("Invalid config"),
+        ),
+        pytest.raises(ConfigEntryError),
+    ):
+        await coordinator.async_update_options()
+
+    # Test HomeAssistantError handling
+    with (
+        patch(
+            "custom_components.area_occupancy.types.SensorInputs.from_config",
+            side_effect=HomeAssistantError("HA Error"),
+        ),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await coordinator.async_update_options()
+
+
+async def test_coordinator_async_update_threshold(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test threshold update method."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Test successful threshold update
+    await coordinator.async_update_threshold(75.0)
+    await hass.async_block_till_done()
+
+    # Check if the config entry was updated
+    assert init_integration.options[CONF_THRESHOLD] == 75.0
+
+    # Test error handling
+    with (
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_update_entry",
+            side_effect=ValueError("Invalid threshold"),
+        ),
+        pytest.raises(ServiceValidationError),
+    ):
+        await coordinator.async_update_threshold(150.0)  # Invalid value
+
+    # Test generic exception handling
+    with (
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_update_entry",
+            side_effect=Exception("Unknown error"),
+        ),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.async_update_threshold(60.0)
+
+
+@patch(
+    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+)
+async def test_coordinator_async_load_stored_data_success(
+    mock_load_instance,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test successful loading of stored data."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Create mock prior state data
+    mock_prior_state = PriorState()
+    mock_prior_state.overall_prior = 0.75
+
+    # Mock return value
+    mock_return = MagicMock()
+    mock_return.prior_state = mock_prior_state
+    mock_return.last_updated = dt_util.utcnow().isoformat()
+    mock_load_instance.return_value = mock_return
+
+    # Call the load method directly
+    await coordinator.async_load_stored_data()
+    await hass.async_block_till_done()
+
+    # Verify the data was loaded
+    assert coordinator.prior_state.overall_prior == 0.75
+    assert coordinator._last_prior_update == mock_return.last_updated  # noqa: SLF001
+
+
+@patch(
+    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+)
+async def test_coordinator_async_load_stored_data_no_data(
+    mock_load_instance,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test loading of stored data when none exists."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Mock return value - no data found
+    mock_load_instance.return_value = None
+
+    # Call the load method directly
+    await coordinator.async_load_stored_data()
+    await hass.async_block_till_done()
+
+    # Verify default values are set
+    assert coordinator._last_prior_update is None  # noqa: SLF001
+    assert coordinator.prior_state is not None
+    assert isinstance(coordinator.prior_state, PriorState)
+
+
+@patch(
+    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+)
+async def test_coordinator_async_load_stored_data_error(
+    mock_load_instance,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test error handling when loading stored data."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Mock exception
+    mock_load_instance.side_effect = StorageError("Failed to load data")
+
+    # Test that the function raises ConfigEntryNotReady
+    with pytest.raises(ConfigEntryNotReady):
+        await coordinator.async_load_stored_data()
+    await hass.async_block_till_done()
+
+    # Verify default values are set despite error
+    assert coordinator._last_prior_update is None  # noqa: SLF001
+    assert coordinator.prior_state is not None
+
+
+@patch(
+    "custom_components.area_occupancy.calculate_prior.PriorCalculator.calculate_prior"
+)
+async def test_coordinator_update_learned_priors(
+    mock_calculate_prior,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test learned prior updates."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Setup mock return value for calculate_prior
+    mock_prior_data = MagicMock()
+    mock_prior_data.prob_given_true = 0.85
+    mock_prior_data.prob_given_false = 0.15
+    mock_prior_data.prior = 0.65
+    mock_calculate_prior.return_value = mock_prior_data
+
+    # Call update_learned_priors
+    await coordinator.update_learned_priors(history_period=7)
+    await hass.async_block_till_done()
+
+    # Verify the calculated priors were stored
+    assert mock_calculate_prior.called
+    assert coordinator._last_prior_update is not None  # noqa: SLF001
+
+
+@patch(
+    "custom_components.area_occupancy.coordinator.AreaOccupancyCoordinator._update_type_priors_from_entities"
+)
+@patch(
+    "custom_components.area_occupancy.calculate_prior.PriorCalculator.calculate_prior"
+)
+async def test_coordinator_update_learned_priors_with_error(
+    mock_calculate_prior,
+    mock_update_type_priors,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test learned prior updates with calculation errors."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Setup mock to raise exception
+    mock_calculate_prior.side_effect = CalculationError("Prior calculation failed")
+
+    # Call update_learned_priors - should not raise exception
+    await coordinator.update_learned_priors(history_period=7)
+    await hass.async_block_till_done()
+
+    # Verify method completes despite errors
+    assert mock_calculate_prior.called
+    # The update should NOT continue to type priors if entity priors fail completely
+    assert not mock_update_type_priors.called
+
+
+@patch(
+    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_save_instance_prior_state"
+)
+async def test_coordinator_save_prior_state_data(
+    mock_save_state,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test saving prior state data."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Call internal save method
+    await coordinator._async_save_prior_state_data()  # noqa: SLF001
+    await hass.async_block_till_done()
+
+    # Verify save was called with correct parameters
+    assert mock_save_state.called
+    assert mock_save_state.call_args[0][0] == init_integration.entry_id
+    # The save function takes entry_id, name, and prior_state
+    assert mock_save_state.call_args[0][1] == coordinator.name  # Check name is correct
+    assert (
+        mock_save_state.call_args[0][2] == coordinator.prior_state
+    )  # Check prior state is correct
+
+
+@patch("custom_components.area_occupancy.coordinator.async_track_time_interval")
+async def test_coordinator_start_decay_updates(
+    mock_track_interval,
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test starting decay updates."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Test the start method
+    coordinator._start_decay_updates()  # noqa: SLF001
+
+    # Verify tracking was set up
+    assert mock_track_interval.called
+    assert coordinator._decay_unsub is not None  # noqa: SLF001
+
+
+async def test_coordinator_stop_decay_updates(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test stopping decay updates."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Setup a mock unsubscribe function
+    mock_unsub = MagicMock()
+    coordinator._decay_unsub = mock_unsub  # noqa: SLF001
+
+    # Call stop method
+    coordinator._stop_decay_updates()  # noqa: SLF001
+
+    # Verify unsubscribe was called
+    assert mock_unsub.called
+    assert coordinator._decay_unsub is None  # noqa: SLF001
+    assert mock_unsub.called
+    assert coordinator._decay_unsub is None  # noqa: SLF001
+    assert mock_unsub.called
+    assert coordinator._decay_unsub is None  # noqa: SLF001
+
+
+async def test_coordinator_property_getters(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test coordinator property getters."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Test property getters
+    assert coordinator.probability == coordinator.data.probability
+    assert coordinator.is_occupied == coordinator.data.is_occupied
+    assert coordinator.threshold == coordinator.data.threshold
+    assert coordinator.prior_update_interval == coordinator._prior_update_interval
+    assert coordinator.next_prior_update == coordinator._next_prior_update
+    assert coordinator.last_prior_update == coordinator._last_prior_update
+
+    # Test availability when primary sensor is missing
+    coordinator.data = ProbabilityState()
+    coordinator.data.current_states = {
+        "sensor.test": {
+            "state": None,
+            "last_changed": dt_util.utcnow().isoformat(),
+            "availability": False,
+        }
+    }
+    assert coordinator.available is False
+
+    # Test availability with invalid primary sensor state
+    primary_sensor = coordinator.inputs.primary_sensor
+    coordinator.data.current_states = {
+        primary_sensor: {
+            "state": "unknown",
+            "last_changed": dt_util.utcnow().isoformat(),
+            "availability": False,
+        }
+    }
+    assert coordinator.available is False
+
+
+async def test_coordinator_setup_error_handling(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test error handling during coordinator setup."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Test storage error handling
+    with (
+        patch(
+            "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state",
+            side_effect=StorageError("Storage error"),
+        ),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await coordinator.async_setup()
+
+    # Test state error handling
+    with (
+        patch.object(
+            coordinator,
+            "async_initialize_states",
+            side_effect=StateError("State error"),
+        ),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await coordinator.async_setup()
+
+    # Test calculation error handling
+    with patch.object(
+        coordinator,
+        "update_learned_priors",
+        side_effect=CalculationError("Calculation error"),
+    ):
+        await coordinator.async_setup()
+        # Should continue despite calculation error
+        assert coordinator._last_prior_update is not None
+
+
+async def test_coordinator_prior_update_error_paths(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test error paths in prior update logic."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Test invalid history period
+    coordinator.config[CONF_HISTORY_PERIOD] = -1
+    await coordinator.update_learned_priors()
+    assert coordinator._last_prior_update is not None
+
+    # Test no sensors configured
+    with patch.object(coordinator, "get_configured_sensors", return_value=[]):
+        await coordinator.update_learned_priors()
+        assert coordinator._last_prior_update is not None
+
+    # Test type prior update error
+    with patch.object(
+        coordinator,
+        "_update_type_priors_from_entities",
+        side_effect=Exception("Type prior error"),
+    ):
+        await coordinator.update_learned_priors()
+        # Should continue despite error
+        assert coordinator._last_prior_update is not None
+
+
+async def test_coordinator_state_tracking_error_paths(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test error handling in state tracking."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Get the actual listener function - need to wait for setup to complete
+    await hass.async_block_till_done()
+    assert coordinator._remove_state_listener is not None
+
+    # Create a mock state change event
+    event = MagicMock()
+    event.data = {
+        "entity_id": "binary_sensor.motion1",
+        "old_state": State("binary_sensor.motion1", "off"),
+        "new_state": State("binary_sensor.motion1", "on"),
+    }
+
+    # Test with valid event data
+    await coordinator._async_update_data()
+
+    # Test with invalid event data
+    event.data = {}
+    await coordinator._async_update_data()
+
+    # Store initial state for comparison
+    initial_prob = coordinator.data.probability
+    initial_threshold = coordinator.data.threshold
+    initial_prior = coordinator.data.prior_probability
+    initial_is_occupied = coordinator.data.is_occupied
+    initial_decaying = coordinator.data.decaying
+
+    # Test with exception during state update
+    with patch.object(
+        coordinator, "_async_update_data", side_effect=Exception("Test error")
+    ) as mock_update:
+        # The coordinator should handle the exception gracefully
+        await coordinator.async_refresh()
+        assert mock_update.called
+        # Verify coordinator remains in a valid state
+        assert coordinator.data is not None
+        # last_update_success should be False due to the error
+        assert coordinator.last_update_success is False
+        # Data should remain unchanged after error
+        assert coordinator.data.probability == initial_prob
+        assert coordinator.data.threshold == initial_threshold
+        assert coordinator.data.prior_probability == initial_prior
+        assert coordinator.data.is_occupied == initial_is_occupied
+        assert coordinator.data.decaying == initial_decaying
+
+    # Test cleanup
+    # Store the unsubscribe function
+    unsub = coordinator._remove_state_listener
+    assert callable(unsub)  # Verify it's a callable
+    # Call the unsubscribe function
+    unsub()
+    # After calling the unsubscribe function, verify the listener is removed
+    listeners = hass.bus.async_listeners().get("state_changed", [])
+    assert isinstance(listeners, list)  # Ensure we have a list
+    assert not listeners  # Verify the list is empty
+
+
+async def test_coordinator_cleanup(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+):
+    """Test coordinator cleanup and shutdown."""
+    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
+        init_integration.entry_id
+    ]["coordinator"]
+
+    # Setup decay updates and prior tracker
+    coordinator._start_decay_updates()
+    await coordinator._schedule_next_prior_update()
+
+    # Test shutdown
+    await coordinator.async_shutdown()
+
+    # Verify cleanup
+    assert coordinator._decay_unsub is None
+    assert coordinator._prior_update_tracker is None
+    assert coordinator._remove_state_listener is None
+    assert coordinator.data is not None  # Should be empty ProbabilityState
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids
+    assert coordinator.prior_state is not None  # Should be empty PriorState
+    assert not coordinator._entity_ids

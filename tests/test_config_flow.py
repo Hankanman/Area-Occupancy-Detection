@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # Import constants from the custom component
-from custom_components.area_occupancy.const import (
+from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
@@ -154,7 +154,7 @@ FULL_USER_INPUT_STRUCTURED = {
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Enable custom integrations defined in the test environment."""
-    yield
+    return
 
 
 @pytest.fixture
@@ -215,7 +215,7 @@ async def test_config_flow_user_input_errors(
     # Test missing primary sensor
     bad_input = copy.deepcopy(FULL_USER_INPUT_STRUCTURED)
     bad_input["motion"][CONF_PRIMARY_OCCUPANCY_SENSOR] = "not_an_entity"
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         await mock_ha.config_entries.flow.async_configure(flow_id, user_input=bad_input)
 
 

@@ -6,9 +6,10 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import DOMAIN
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from tests.conftest import TEST_CONFIG  # Import test config
+from custom_components.area_occupancy.const import DOMAIN  # noqa: TID252
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator  # noqa: TID252
+
+from .conftest import TEST_CONFIG  # noqa: TID251
 
 
 async def test_setup(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
@@ -304,5 +305,7 @@ async def test_entity_attribute_updates(
     assert "%" in state.attributes["threshold"]
     assert isinstance(state.attributes["active_triggers"], list)
     assert isinstance(state.attributes["sensor_probabilities"], set)
+    assert isinstance(state.attributes["threshold"], str)
+    assert "%" in state.attributes["threshold"]
     assert isinstance(state.attributes["threshold"], str)
     assert "%" in state.attributes["threshold"]
