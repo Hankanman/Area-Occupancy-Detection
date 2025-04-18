@@ -534,8 +534,8 @@ def test_probability_calculator_with_all_sensors_unavailable(
     # Calculate probability
     result = calc.calculate_occupancy_probability(current_states, prior_state)
     assert (
-        result.calculated_probability == 0.5
-    )  # Should return neutral probability when no valid data
+        result.calculated_probability == MIN_PROBABILITY
+    )  # Should return min probability when no valid data
 
 
 def test_probability_calculator_with_empty_data(default_config: ProbabilityConfig):
@@ -551,5 +551,5 @@ def test_probability_calculator_with_empty_data(default_config: ProbabilityConfi
     # Calculate probability with empty data
     result = calc.calculate_occupancy_probability({}, PriorState())
     assert (
-        result.calculated_probability == 0.5
-    )  # Should return neutral probability for empty data
+        result.calculated_probability == MIN_PROBABILITY
+    )  # Should return min probability for empty data

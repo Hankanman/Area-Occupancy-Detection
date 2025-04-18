@@ -144,7 +144,7 @@ async def test_calculate_prior_recorder_error_returns_fallback(
     assert isinstance(result, PriorData)
     assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
     assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5 or abs(result.prior - 0.5) < 0.01
+    assert result.prior == 0.5
 
 
 @pytest.mark.asyncio
@@ -339,10 +339,6 @@ async def test_calculate_prior_with_invalid_states(
     assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
     assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
     assert result.prior == 0.5
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
 
 
 @pytest.mark.asyncio
@@ -370,9 +366,9 @@ async def test_calculate_prior_with_insufficient_data(
         result = await calc.calculate_prior(entity_id, start, end)
 
     assert isinstance(result, PriorData)
-    assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
+    assert result.prob_given_true == MAX_PROBABILITY
     assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
+    assert result.prior == MAX_PROBABILITY
 
 
 @pytest.mark.asyncio
@@ -403,7 +399,7 @@ async def test_calculate_prior_with_invalid_state_values(
     assert isinstance(result, PriorData)
     assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
     assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
+    assert result.prior == MIN_PROBABILITY
 
 
 @pytest.mark.asyncio
@@ -585,18 +581,23 @@ async def test_calculate_prior_with_empty_intervals(
     mock_sensor_inputs.is_valid_entity_id = lambda eid: True
 
     calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-    result = calc._calculate_conditional_probability_with_intervals(
+    # For STATE_ON
+    result_on = calc._calculate_conditional_probability_with_intervals(
         entity_id,
         [],  # Empty intervals
         {mock_sensor_inputs.primary_sensor: []},
         STATE_ON,
     )
-
-    assert result is not None
     assert (
-        float(result) == MIN_PROBABILITY
-    )  # Should return minimum probability for empty intervals
-    assert result is not None
+        result_on == DEFAULT_PROB_GIVEN_TRUE
+    )  # Should return default prob for STATE_ON
+    # For STATE_OFF
+    result_off = calc._calculate_conditional_probability_with_intervals(
+        entity_id,
+        [],
+        {mock_sensor_inputs.primary_sensor: []},
+        STATE_OFF,
+    )
     assert (
-        float(result) == MIN_PROBABILITY
-    )  # Should return minimum probability for empty intervals
+        result_off == DEFAULT_PROB_GIVEN_FALSE
+    )  # Should return default prob for STATE_OFF
