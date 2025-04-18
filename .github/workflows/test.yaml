@@ -24,14 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install homeassistant pytest pytest-cov ruff
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Lint with ruff
-        run: |
-          ruff check .
-          ruff format --check .
+          pip install -r requirements_test.txt
 
       - name: Run tests with pytest
         run: |

@@ -112,7 +112,7 @@ class PriorCalculator:
             else:
                 _LOGGER.debug("No states found for %s", entity_id)
 
-        except (HomeAssistantError, SQLAlchemyError) as err:
+        except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
             _LOGGER.error("Error getting states for %s: %s", entity_id, err)
             # Propagate error to be handled by the coordinator
             raise HomeAssistantError(f"Recorder error for {entity_id}: {err}") from err
@@ -172,13 +172,21 @@ class PriorCalculator:
                 )
                 entity_states = primary_states
             else:
-                primary_states, entity_states = await asyncio.gather(
-                    self._get_states_from_recorder(
-                        self.inputs.primary_sensor, start_time, end_time
-                    ),
-                    self._get_states_from_recorder(entity_id, start_time, end_time),
-                )
-        except HomeAssistantError as err:
+                try:
+                    primary_states, entity_states = await asyncio.gather(
+                        self._get_states_from_recorder(
+                            self.inputs.primary_sensor, start_time, end_time
+                        ),
+                        self._get_states_from_recorder(entity_id, start_time, end_time),
+                    )
+                except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
+                    _LOGGER.warning(
+                        "Could not fetch states for prior calculation (%s): %s. Using defaults",
+                        entity_id,
+                        err,
+                    )
+                    return fallback_prior
+        except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
             _LOGGER.warning(
                 "Could not fetch states for prior calculation (%s): %s. Using defaults",
                 entity_id,
