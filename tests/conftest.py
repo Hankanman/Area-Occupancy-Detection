@@ -3,7 +3,7 @@
 import asyncio
 import os
 import sys
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +15,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.recorder import DATA_INSTANCE
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import (
+from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
@@ -62,7 +62,7 @@ from custom_components.area_occupancy.const import (
 )
 
 # Make parent directory available to tests
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))  # noqa: PTH100, PTH118, PTH120
 
 
 pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=invalid-name
@@ -102,9 +102,9 @@ TEST_CONFIG = {
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(
     enable_custom_integrations,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """Enable custom integrations for testing."""
-    yield
+    return  # type: ignore
 
 
 @pytest.fixture
@@ -253,7 +253,7 @@ def cleanup_debouncer():
 
     # Get all active timers from the event loop
     loop = asyncio.get_event_loop()
-    for handle in getattr(loop, "_scheduled", []):  # noqa: SLF001 - Accessing protected member for test cleanup
+    for handle in getattr(loop, "_scheduled", []):
         if isinstance(handle, asyncio.TimerHandle) and "Debouncer._on_debounce" in str(
             handle
         ):

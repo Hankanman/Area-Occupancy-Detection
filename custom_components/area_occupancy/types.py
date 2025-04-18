@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+import logging
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util

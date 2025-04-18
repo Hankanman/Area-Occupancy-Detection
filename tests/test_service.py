@@ -7,13 +7,13 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.area_occupancy.const import (
+from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_HISTORY_PERIOD,
     DEFAULT_HISTORY_PERIOD,
     DOMAIN,
 )
-from custom_components.area_occupancy.exceptions import CalculationError
-from custom_components.area_occupancy.service import async_setup_services
+from custom_components.area_occupancy.exceptions import CalculationError  # noqa: TID252
+from custom_components.area_occupancy.service import async_setup_services  # noqa: TID252
 
 
 @pytest.fixture
@@ -249,5 +249,7 @@ async def test_update_priors_coordinator_error_handling(
             {"entry_id": entry_id},
             blocking=True,
         )
+
+    assert "Failed to update priors" in str(exc_info.value)
 
     assert "Failed to update priors" in str(exc_info.value)
