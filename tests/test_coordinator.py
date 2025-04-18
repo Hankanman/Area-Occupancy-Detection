@@ -32,8 +32,10 @@ from custom_components.area_occupancy.exceptions import (  # noqa: TID252
     StateError,
     StorageError,
 )
-from custom_components.area_occupancy.types import (  # noqa: TID252
+from custom_components.area_occupancy.types import EntityType  # noqa: TID252
+from custom_components.area_occupancy.types import (
     OccupancyCalculationResult,
+    PriorData,
     PriorState,
     ProbabilityState,
 )
@@ -862,5 +864,91 @@ async def test_coordinator_cleanup(
     assert not coordinator._entity_ids
     assert coordinator.prior_state is not None  # Should be empty PriorState
     assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
+
+
+@pytest.mark.asyncio
+async def test_update_type_priors_from_entities_direct(
+    monkeypatch, hass, init_integration
+):
+    """Directly test _update_type_priors_from_entities for correct type prior aggregation and edge cases."""
+    coordinator = hass.data[DOMAIN][init_integration.entry_id]["coordinator"]
+
+    # Patch probabilities.get_entity_type to return types based on entity_id
+    entity_type_map = {
+        "sensor.motion1": EntityType.MOTION,
+        "sensor.media1": EntityType.MEDIA,
+        "sensor.bad": EntityType.MOTION,
+    }
+    monkeypatch.setattr(
+        coordinator.probabilities,
+        "get_entity_type",
+        lambda eid: entity_type_map.get(eid),  # pylint: disable=unnecessary-lambda
+    )
+
+    # Case 1: All valid entity priors for two types
+    coordinator.prior_state.entity_priors = {
+        "sensor.motion1": PriorData(
+            prior=0.6, prob_given_true=0.8, prob_given_false=0.2, last_updated="now"
+        ),
+        "sensor.media1": PriorData(
+            prior=0.4, prob_given_true=0.7, prob_given_false=0.3, last_updated="now"
+        ),
+    }
+    await coordinator._update_type_priors_from_entities()
+    # Should update both type_priors and simple prior attributes
+    assert "motion" in coordinator.prior_state.type_priors
+    assert "media" in coordinator.prior_state.type_priors
+    assert abs(coordinator.prior_state.type_priors["motion"].prior - 0.6) < 1e-6
+    assert abs(coordinator.prior_state.type_priors["media"].prior - 0.4) < 1e-6
+    assert (
+        abs(coordinator.prior_state.type_priors["motion"].prob_given_true - 0.8) < 1e-6
+    )
+    assert (
+        abs(coordinator.prior_state.type_priors["media"].prob_given_false - 0.3) < 1e-6
+    )
+    assert abs(coordinator.prior_state.motion_prior - 0.6) < 1e-6
+    assert abs(coordinator.prior_state.media_prior - 0.4) < 1e-6
+
+    # Case 2: One entity prior missing prob_given_true/false (should be skipped for aggregation)
+    coordinator.prior_state.entity_priors = {
+        "sensor.motion1": PriorData(
+            prior=0.5, prob_given_true=None, prob_given_false=None, last_updated="now"
+        ),
+        "sensor.media1": PriorData(
+            prior=0.7, prob_given_true=0.9, prob_given_false=0.1, last_updated="now"
+        ),
+    }
+    await coordinator._update_type_priors_from_entities()
+    # Only media type should be updated
+    assert "media" in coordinator.prior_state.type_priors
+    assert abs(coordinator.prior_state.type_priors["media"].prior - 0.7) < 1e-6
+    assert abs(coordinator.prior_state.media_prior - 0.7) < 1e-6
+    # Motion type should not be updated (remains from previous or is overwritten to default)
+    # If no valid priors, the type prior is not updated in this method
+
+    # Case 3: All entity priors missing required fields (should not update any type priors)
+    coordinator.prior_state.entity_priors = {
+        "sensor.motion1": PriorData(
+            prior=0.5, prob_given_true=None, prob_given_false=None, last_updated="now"
+        ),
+        "sensor.bad": PriorData(
+            prior=0.2, prob_given_true=None, prob_given_false=None, last_updated="now"
+        ),
+    }
+    # Save current type_priors for comparison
+    prev_type_priors = dict(coordinator.prior_state.type_priors)
+    await coordinator._update_type_priors_from_entities()
+    # No new type priors should be added or changed
+    assert coordinator.prior_state.type_priors == prev_type_priors
+
+    # Case 4: entity_priors is empty (should not fail)
+    coordinator.prior_state.entity_priors = {}
+    await coordinator._update_type_priors_from_entities()
+    # No type priors should be present or changed
+    assert isinstance(coordinator.prior_state.type_priors, dict)
+    # No type priors should be present or changed
+    assert isinstance(coordinator.prior_state.type_priors, dict)
+    # No type priors should be present or changed
+    assert isinstance(coordinator.prior_state.type_priors, dict)
+    # No type priors should be present or changed
+    assert isinstance(coordinator.prior_state.type_priors, dict)

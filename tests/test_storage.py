@@ -150,3 +150,63 @@ async def test_async_save_instance_prior_state_error(store):  # pylint: disable=
         pytest.raises(StorageSaveError),
     ):
         await store.async_save_instance_prior_state(entry_id, name, prior_state)
+
+
+@pytest.mark.asyncio
+async def test_async_cleanup_orphaned_instances_removes_orphans(store):  # pylint: disable=redefined-outer-name
+    """Test that orphaned instances are removed and async_save is called."""
+    active_ids = {"id1"}
+    orphan_id = "id2"
+    stored = {"instances": {"id1": {}, "id2": {}}}
+    with (
+        patch.object(store, "async_load", new=AsyncMock(return_value=stored)),
+        patch.object(store, "async_save", new=AsyncMock()) as mock_save,
+    ):
+        result = await store.async_cleanup_orphaned_instances(active_ids)
+        assert result is True
+        assert mock_save.call_count == 1
+        args, kwargs = mock_save.call_args
+        saved = args[0]
+        assert orphan_id not in saved["instances"]
+        assert "id1" in saved["instances"]
+
+
+@pytest.mark.asyncio
+async def test_async_cleanup_orphaned_instances_no_orphans(store):  # pylint: disable=redefined-outer-name
+    """Test that no action is taken if there are no orphaned instances."""
+    active_ids = {"id1"}
+    stored = {"instances": {"id1": {}}}
+    with (
+        patch.object(store, "async_load", new=AsyncMock(return_value=stored)),
+        patch.object(store, "async_save", new=AsyncMock()) as mock_save,
+    ):
+        result = await store.async_cleanup_orphaned_instances(active_ids)
+        assert result is False
+        assert mock_save.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_async_cleanup_orphaned_instances_missing_data(store):  # pylint: disable=redefined-outer-name
+    """Test that missing or malformed data is handled gracefully."""
+    # No data at all
+    with patch.object(store, "async_load", new=AsyncMock(return_value=None)):
+        result = await store.async_cleanup_orphaned_instances({"id1"})
+        assert result is False
+    # No 'instances' key
+    with (
+        patch.object(store, "async_load", new=AsyncMock(return_value={})),
+        patch.object(store, "async_save", new=AsyncMock()) as mock_save,
+    ):
+        result = await store.async_cleanup_orphaned_instances({"id1"})
+        assert result is False
+        assert mock_save.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_async_cleanup_orphaned_instances_handles_exception(store):  # pylint: disable=redefined-outer-name
+    """Test that exceptions during cleanup are handled and do not raise."""
+    with patch.object(
+        store, "async_load", new=AsyncMock(side_effect=Exception("fail"))
+    ):
+        result = await store.async_cleanup_orphaned_instances({"id1"})
+        assert result is False
