@@ -310,7 +310,7 @@ def test_probability_calculator_initialization():
     assert hasattr(calc, "calculate_occupancy_probability")
 
 
-def test_probability_calculator_with_single_sensor(default_config: ProbabilityConfig):
+def test_probability_calculator_with_single_sensor(default_config: ProbabilityConfig):  # pylint: disable=redefined-outer-name
     """Test ProbabilityCalculator with a single sensor."""
     probabilities = Probabilities({})  # Empty config for testing
     calc = ProbabilityCalculator(probabilities)
@@ -347,7 +347,7 @@ def test_probability_calculator_with_single_sensor(default_config: ProbabilityCo
 
 
 def test_probability_calculator_with_multiple_sensors(
-    default_config: ProbabilityConfig,
+    default_config: ProbabilityConfig,  # pylint: disable=redefined-outer-name
 ):
     """Test ProbabilityCalculator with multiple sensors."""
     probabilities = Probabilities({})  # Empty config for testing
@@ -400,7 +400,7 @@ def test_probability_calculator_with_multiple_sensors(
 
 
 def test_probability_calculator_with_unavailable_sensor(
-    default_config: ProbabilityConfig,
+    default_config: ProbabilityConfig,  # pylint: disable=redefined-outer-name
 ):
     """Test ProbabilityCalculator with unavailable sensor."""
     probabilities = Probabilities({})  # Empty config for testing
@@ -451,7 +451,7 @@ def test_probability_calculator_with_unavailable_sensor(
 
 
 def test_probability_calculator_with_invalid_probabilities(
-    default_config: ProbabilityConfig,
+    default_config: ProbabilityConfig,  # pylint: disable=redefined-outer-name
 ):
     """Test ProbabilityCalculator with invalid probability values."""
     probabilities = Probabilities({})  # Empty config for testing
@@ -487,7 +487,7 @@ def test_probability_calculator_with_invalid_probabilities(
 
 
 def test_probability_calculator_with_all_sensors_unavailable(
-    default_config: ProbabilityConfig,
+    default_config: ProbabilityConfig,  # pylint: disable=redefined-outer-name
 ):
     """Test ProbabilityCalculator when all sensors are unavailable."""
     probabilities = Probabilities({})  # Empty config for testing
@@ -538,7 +538,9 @@ def test_probability_calculator_with_all_sensors_unavailable(
     )  # Should return min probability when no valid data
 
 
-def test_probability_calculator_with_empty_data(default_config: ProbabilityConfig):
+def test_probability_calculator_with_empty_data(
+    default_config: ProbabilityConfig,  # pylint: disable=redefined-outer-name
+):
     """Test ProbabilityCalculator with empty data."""
     probabilities = Probabilities({})  # Empty config for testing
     calc = ProbabilityCalculator(probabilities)
