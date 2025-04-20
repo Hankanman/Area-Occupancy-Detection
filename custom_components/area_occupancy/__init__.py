@@ -12,7 +12,7 @@ from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
-from .storage import AreaOccupancyStorageStore
+from .storage import AreaOccupancyStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         }
         _LOGGER.debug("Active entry IDs: %s", active_entry_ids)
 
-        store = AreaOccupancyStorageStore(hass)
+        store = AreaOccupancyStore(hass)
         await store.async_cleanup_orphaned_instances(active_entry_ids)
 
     except Exception:
@@ -49,7 +49,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removing Area Occupancy config entry: %s", entry_id)
 
     try:
-        store = AreaOccupancyStorageStore(hass)
+        store = AreaOccupancyStore(hass)
         removed = await store.async_remove_instance(entry_id)
         if removed:
             _LOGGER.info(
@@ -90,7 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Load stored data and initialize states
         try:
-            await coordinator._async_setup()
+            await coordinator.async_setup()
 
         except Exception as err:
             _LOGGER.error("Failed to load stored data: %s", err)

@@ -1,7 +1,9 @@
 # Area Occupancy Detection for Home Assistant
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?branch=main)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=test)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?branch=main&label=docs)
+
 
 
 This integration provides advanced room occupancy detection by combining multiple sensors through Bayesian probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data.
@@ -253,6 +255,10 @@ Key things to check in the logs:
 - Probability calculations
 - Prior probability updates
 - Decay calculations
+
+## Screenshots
+
+![Probability Cards](docs/docs/images/probability-cards.png)
 
 ## Support & Feedback
 

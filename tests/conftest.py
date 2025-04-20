@@ -1,67 +1,68 @@
 """Fixtures for Area Occupancy Detection integration tests."""
 
+import asyncio
 import os
 import sys
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
-import pytest
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.recorder.const import DOMAIN as RECORDER_DOMAIN
 from homeassistant.const import STATE_OFF
 from homeassistant.core import HomeAssistant
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.recorder import DOMAIN as RECORDER_DOMAIN, DATA_INSTANCE
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.recorder import DATA_INSTANCE
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import (
-    CONF_NAME,
-    CONF_THRESHOLD,
-    CONF_MOTION_SENSORS,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_LIGHTS,
-    CONF_HISTORY_PERIOD,
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_DECAY_MIN_DELAY,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_WINDOW_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
+from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
+    CONF_APPLIANCES,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_MIN_DELAY,
+    CONF_DECAY_WINDOW,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_HISTORY_PERIOD,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
+    CONF_MEDIA_ACTIVE_STATES,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_NAME,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
-    DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
+    DEFAULT_WINDOW_ACTIVE_STATE,
 )
 
 # Make parent directory available to tests
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))  # noqa: PTH100, PTH118, PTH120
 
 
 pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=invalid-name
@@ -101,9 +102,9 @@ TEST_CONFIG = {
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(
     enable_custom_integrations,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """Enable custom integrations for testing."""
-    yield
+    return  # type: ignore
 
 
 @pytest.fixture
@@ -230,8 +231,8 @@ async def setup_test_entities(hass: HomeAssistant) -> None:
 async def init_integration(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,  # pylint: disable=redefined-outer-name
-    mock_recorder: MagicMock,  # Add mock_recorder as a dependency
-    setup_test_entities,  # Add test entities fixture
+    mock_recorder: MagicMock,  # pylint: disable=redefined-outer-name
+    setup_test_entities,  # pylint: disable=redefined-outer-name
 ) -> MockConfigEntry:
     """Set up the area occupancy integration for testing."""
     # Set up recorder component first
@@ -252,7 +253,7 @@ def cleanup_debouncer():
 
     # Get all active timers from the event loop
     loop = asyncio.get_event_loop()
-    for handle in loop._scheduled:
+    for handle in getattr(loop, "_scheduled", []):
         if isinstance(handle, asyncio.TimerHandle) and "Debouncer._on_debounce" in str(
             handle
         ):

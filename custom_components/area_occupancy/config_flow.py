@@ -8,20 +8,20 @@ validation of all inputs to ensure a valid configuration.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
-
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
+    ConfigFlowResult,
     OptionsFlowWithConfigEntry,
 )
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult, section
+from homeassistant.data_entry_flow import section
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
@@ -30,8 +30,11 @@ from homeassistant.helpers.selector import (
     EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
@@ -107,43 +110,21 @@ DECAY_MIN_DELAY_MIN = 0
 DECAY_MIN_DELAY_MAX = 3600
 
 
-def create_schema(
-    hass: HomeAssistant,
-    defaults: dict[str, Any] | None = None,
-    is_options: bool = False,
-) -> dict:
-    """Create a schema with optional default values."""
-    if defaults is None:
-        defaults = {}
+def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
+    """Get state options for SelectSelector."""
+    states = get_state_options(state_type)
+    return [
+        {"value": option.value, "label": option.name} for option in states["options"]
+    ]
 
+
+def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
+    """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
+    include_appliance_entities = []
+    include_window_entities = []
+    include_door_entities = []
 
-    # Get state options
-    door_states = get_state_options("door")
-    door_state_options = [
-        {"value": option.value, "label": option.name}
-        for option in door_states["options"]
-    ]
-
-    media_states = get_state_options("media")
-    media_state_options = [
-        {"value": option.value, "label": option.name}
-        for option in media_states["options"]
-    ]
-
-    window_states = get_state_options("window")
-    window_state_options = [
-        {"value": option.value, "label": option.name}
-        for option in window_states["options"]
-    ]
-
-    appliance_states = get_state_options("appliance")
-    appliance_state_options = [
-        {"value": option.value, "label": option.name}
-        for option in appliance_states["options"]
-    ]
-
-    # Get entity lists
     appliance_excluded_classes = [
         BinarySensorDeviceClass.MOTION,
         BinarySensorDeviceClass.OCCUPANCY,
@@ -155,12 +136,12 @@ def create_schema(
         BinarySensorDeviceClass.LIGHT,
     ]
 
-    domains_to_check = ["binary_sensor", "switch", "fan"]
+    # Check binary_sensor, switch, fan for potential appliances
+    domains_to_check = [Platform.BINARY_SENSOR, Platform.SWITCH, Platform.FAN]
     entity_ids = []
     for domain in domains_to_check:
         entity_ids.extend(hass.states.async_entity_ids(domain))
 
-    include_appliance_entities = []
     for eid in entity_ids:
         state = hass.states.get(eid)
         if state:
@@ -168,31 +149,32 @@ def create_schema(
             if device_class not in appliance_excluded_classes:
                 include_appliance_entities.append(eid)
 
-    include_window_entities = []
-    include_door_entities = []
+    # Check registry for specific door/window classes
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
-            if entry.device_class == BinarySensorDeviceClass.WINDOW or (
-                "window" in entry.entity_id.lower()
-                and (
-                    entry.device_class
-                    in [
-                        BinarySensorDeviceClass.DOOR,
-                        BinarySensorDeviceClass.GARAGE_DOOR,
-                        BinarySensorDeviceClass.OPENING,
-                        BinarySensorDeviceClass.WINDOW,
-                    ]
-                    or entry.original_device_class
-                    in [
-                        BinarySensorDeviceClass.DOOR,
-                        BinarySensorDeviceClass.GARAGE_DOOR,
-                        BinarySensorDeviceClass.OPENING,
-                        BinarySensorDeviceClass.WINDOW,
-                    ]
+            is_window_candidate = (
+                entry.device_class == BinarySensorDeviceClass.WINDOW
+                or (
+                    "window" in entry.entity_id.lower()
+                    and (
+                        entry.device_class
+                        in [
+                            BinarySensorDeviceClass.DOOR,
+                            BinarySensorDeviceClass.GARAGE_DOOR,
+                            BinarySensorDeviceClass.OPENING,
+                            BinarySensorDeviceClass.WINDOW,
+                        ]
+                        or entry.original_device_class
+                        in [
+                            BinarySensorDeviceClass.DOOR,
+                            BinarySensorDeviceClass.GARAGE_DOOR,
+                            BinarySensorDeviceClass.OPENING,
+                            BinarySensorDeviceClass.WINDOW,
+                        ]
+                    )
                 )
-            ):
-                include_window_entities.append(entry.entity_id)
-            elif entry.device_class == BinarySensorDeviceClass.DOOR or (
+            )
+            is_door_candidate = entry.device_class == BinarySensorDeviceClass.DOOR or (
                 "window" not in entry.entity_id.lower()
                 and (
                     entry.device_class
@@ -208,379 +190,451 @@ def create_schema(
                         BinarySensorDeviceClass.OPENING,
                     ]
                 )
-            ):
+            )
+
+            if is_window_candidate:
+                include_window_entities.append(entry.entity_id)
+            elif is_door_candidate:
                 include_door_entities.append(entry.entity_id)
 
-    schema = {}
+    return {
+        "appliance": include_appliance_entities,
+        "window": include_window_entities,
+        "door": include_door_entities,
+    }
 
-    if not is_options:
-        schema[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
 
-    schema.update(
+def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the motion section."""
+    return vol.Schema(
         {
-            vol.Required("motion"): section(
-                vol.Schema(
-                    {
-                        vol.Required(
-                            CONF_PRIMARY_OCCUPANCY_SENSOR,
-                            default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.BINARY_SENSOR,
-                                device_class=[
-                                    BinarySensorDeviceClass.MOTION,
-                                    BinarySensorDeviceClass.OCCUPANCY,
-                                    BinarySensorDeviceClass.PRESENCE,
-                                ],
-                                multiple=False,
-                            ),
-                        ),
-                        vol.Required(
-                            CONF_MOTION_SENSORS,
-                            default=defaults.get(CONF_MOTION_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.BINARY_SENSOR,
-                                device_class=[
-                                    BinarySensorDeviceClass.MOTION,
-                                    BinarySensorDeviceClass.OCCUPANCY,
-                                    BinarySensorDeviceClass.PRESENCE,
-                                ],
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_MOTION,
-                            default=defaults.get(
-                                CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
+            vol.Required(
+                CONF_PRIMARY_OCCUPANCY_SENSOR,
+                default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.BINARY_SENSOR,
+                    device_class=[
+                        BinarySensorDeviceClass.MOTION,
+                        BinarySensorDeviceClass.OCCUPANCY,
+                        BinarySensorDeviceClass.PRESENCE,
+                    ],
+                    multiple=False,
                 ),
-                {"collapsed": True},
             ),
-            vol.Required("doors"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_DOOR_SENSORS,
-                            default=defaults.get(CONF_DOOR_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                include_entities=include_door_entities,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_DOOR_ACTIVE_STATE,
-                            default=defaults.get(
-                                CONF_DOOR_ACTIVE_STATE, get_default_state("door")
-                            ),
-                        ): SelectSelector(
-                            SelectSelectorConfig(
-                                options=door_state_options,
-                                mode="dropdown",
-                            )
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_DOOR,
-                            default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
+            vol.Required(
+                CONF_MOTION_SENSORS,
+                default=defaults.get(CONF_MOTION_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.BINARY_SENSOR,
+                    device_class=[
+                        BinarySensorDeviceClass.MOTION,
+                        BinarySensorDeviceClass.OCCUPANCY,
+                        BinarySensorDeviceClass.PRESENCE,
+                    ],
+                    multiple=True,
                 ),
-                {"collapsed": True},
             ),
-            vol.Required("windows"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_WINDOW_SENSORS,
-                            default=defaults.get(CONF_WINDOW_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                include_entities=include_window_entities,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_WINDOW_ACTIVE_STATE,
-                            default=defaults.get(
-                                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
-                            ),
-                        ): SelectSelector(
-                            SelectSelectorConfig(
-                                options=window_state_options,
-                                mode="dropdown",
-                            )
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_WINDOW,
-                            default=defaults.get(
-                                CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
+            vol.Optional(
+                CONF_WEIGHT_MOTION,
+                default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
                 ),
-                {"collapsed": True},
-            ),
-            vol.Required("lights"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=[Platform.LIGHT, Platform.SWITCH],
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_LIGHT,
-                            default=defaults.get(
-                                CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("media"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_MEDIA_DEVICES,
-                            default=defaults.get(CONF_MEDIA_DEVICES, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.MEDIA_PLAYER,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_MEDIA_ACTIVE_STATES,
-                            default=defaults.get(
-                                CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
-                            ),
-                        ): SelectSelector(
-                            SelectSelectorConfig(
-                                options=media_state_options,
-                                multiple=True,
-                                mode="dropdown",
-                            )
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_MEDIA,
-                            default=defaults.get(
-                                CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("appliances"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                include_entities=include_appliance_entities,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_APPLIANCE_ACTIVE_STATES,
-                            default=defaults.get(
-                                CONF_APPLIANCE_ACTIVE_STATES,
-                                DEFAULT_APPLIANCE_ACTIVE_STATES,
-                            ),
-                        ): SelectSelector(
-                            SelectSelectorConfig(
-                                options=appliance_state_options,
-                                multiple=True,
-                                mode="dropdown",
-                            )
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_APPLIANCE,
-                            default=defaults.get(
-                                CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("environmental"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_ILLUMINANCE_SENSORS,
-                            default=defaults.get(CONF_ILLUMINANCE_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.SENSOR,
-                                device_class=SensorDeviceClass.ILLUMINANCE,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_HUMIDITY_SENSORS,
-                            default=defaults.get(CONF_HUMIDITY_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.SENSOR,
-                                device_class=SensorDeviceClass.HUMIDITY,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_TEMPERATURE_SENSORS,
-                            default=defaults.get(CONF_TEMPERATURE_SENSORS, []),
-                        ): EntitySelector(
-                            EntitySelectorConfig(
-                                domain=Platform.SENSOR,
-                                device_class=SensorDeviceClass.TEMPERATURE,
-                                multiple=True,
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_WEIGHT_ENVIRONMENTAL,
-                            default=defaults.get(
-                                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=WEIGHT_MIN,
-                                max=WEIGHT_MAX,
-                                step=WEIGHT_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                    }
-                ),
-                {"collapsed": True},
-            ),
-            vol.Required("parameters"): section(
-                vol.Schema(
-                    {
-                        vol.Optional(
-                            CONF_THRESHOLD,
-                            default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=THRESHOLD_MIN,
-                                max=THRESHOLD_MAX,
-                                step=THRESHOLD_STEP,
-                                mode="slider",
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_HISTORY_PERIOD,
-                            default=defaults.get(
-                                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=HISTORY_PERIOD_MIN,
-                                max=HISTORY_PERIOD_MAX,
-                                step=HISTORY_PERIOD_STEP,
-                                mode="slider",
-                                unit_of_measurement="days",
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_DECAY_ENABLED,
-                            default=defaults.get(
-                                CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
-                            ),
-                        ): BooleanSelector(),
-                        vol.Optional(
-                            CONF_DECAY_WINDOW,
-                            default=defaults.get(
-                                CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=DECAY_WINDOW_MIN,
-                                max=DECAY_WINDOW_MAX,
-                                step=DECAY_WINDOW_STEP,
-                                mode="slider",
-                                unit_of_measurement="seconds",
-                            ),
-                        ),
-                        vol.Optional(
-                            CONF_DECAY_MIN_DELAY,
-                            default=defaults.get(
-                                CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
-                            ),
-                        ): NumberSelector(
-                            NumberSelectorConfig(
-                                min=DECAY_MIN_DELAY_MIN,
-                                max=DECAY_MIN_DELAY_MAX,
-                                step=DECAY_MIN_DELAY_STEP,
-                                mode="box",
-                                unit_of_measurement="seconds",
-                            )
-                        ),
-                        vol.Optional(
-                            CONF_HISTORICAL_ANALYSIS_ENABLED,
-                            default=defaults.get(
-                                CONF_HISTORICAL_ANALYSIS_ENABLED,
-                                DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                            ),
-                        ): BooleanSelector(),
-                    }
-                ),
-                {"collapsed": True},
             ),
         }
     )
 
-    return schema
+
+def _create_doors_section_schema(
+    defaults: dict[str, Any],
+    include_entities: list[str],
+    state_options: list[SelectOptionDict],
+) -> vol.Schema:
+    """Create schema for the doors section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_DOOR_SENSORS,
+                default=defaults.get(CONF_DOOR_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=include_entities,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_DOOR_ACTIVE_STATE,
+                default=defaults.get(CONF_DOOR_ACTIVE_STATE, get_default_state("door")),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_DOOR,
+                default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_windows_section_schema(
+    defaults: dict[str, Any],
+    include_entities: list[str],
+    state_options: list[SelectOptionDict],
+) -> vol.Schema:
+    """Create schema for the windows section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_WINDOW_SENSORS,
+                default=defaults.get(CONF_WINDOW_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=include_entities,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_WINDOW_ACTIVE_STATE,
+                default=defaults.get(
+                    CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_WINDOW,
+                default=defaults.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_lights_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the lights section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=[Platform.LIGHT, Platform.SWITCH],
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_WEIGHT_LIGHT,
+                default=defaults.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_media_section_schema(
+    defaults: dict[str, Any], state_options: list[SelectOptionDict]
+) -> vol.Schema:
+    """Create schema for the media section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_MEDIA_DEVICES,
+                default=defaults.get(CONF_MEDIA_DEVICES, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.MEDIA_PLAYER,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_MEDIA_ACTIVE_STATES,
+                default=defaults.get(
+                    CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=state_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_MEDIA,
+                default=defaults.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_appliances_section_schema(
+    defaults: dict[str, Any],
+    include_entities: list[str],
+    state_options: list[SelectOptionDict],
+) -> vol.Schema:
+    """Create schema for the appliances section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=include_entities,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_APPLIANCE_ACTIVE_STATES,
+                default=defaults.get(
+                    CONF_APPLIANCE_ACTIVE_STATES,
+                    DEFAULT_APPLIANCE_ACTIVE_STATES,
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=state_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_APPLIANCE,
+                default=defaults.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the environmental section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_ILLUMINANCE_SENSORS,
+                default=defaults.get(CONF_ILLUMINANCE_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.ILLUMINANCE,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_HUMIDITY_SENSORS,
+                default=defaults.get(CONF_HUMIDITY_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.HUMIDITY,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_TEMPERATURE_SENSORS,
+                default=defaults.get(CONF_TEMPERATURE_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.TEMPERATURE,
+                    multiple=True,
+                ),
+            ),
+            vol.Optional(
+                CONF_WEIGHT_ENVIRONMENTAL,
+                default=defaults.get(
+                    CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+        }
+    )
+
+
+def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the parameters section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_THRESHOLD,
+                default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=THRESHOLD_MIN,
+                    max=THRESHOLD_MAX,
+                    step=THRESHOLD_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+            vol.Optional(
+                CONF_HISTORY_PERIOD,
+                default=defaults.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=HISTORY_PERIOD_MIN,
+                    max=HISTORY_PERIOD_MAX,
+                    step=HISTORY_PERIOD_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                    unit_of_measurement="days",
+                ),
+            ),
+            vol.Optional(
+                CONF_DECAY_ENABLED,
+                default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_DECAY_WINDOW,
+                default=defaults.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=DECAY_WINDOW_MIN,
+                    max=DECAY_WINDOW_MAX,
+                    step=DECAY_WINDOW_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                    unit_of_measurement="seconds",
+                ),
+            ),
+            vol.Optional(
+                CONF_DECAY_MIN_DELAY,
+                default=defaults.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=DECAY_MIN_DELAY_MIN,
+                    max=DECAY_MIN_DELAY_MAX,
+                    step=DECAY_MIN_DELAY_STEP,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
+                )
+            ),
+            vol.Optional(
+                CONF_HISTORICAL_ANALYSIS_ENABLED,
+                default=defaults.get(
+                    CONF_HISTORICAL_ANALYSIS_ENABLED,
+                    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+                ),
+            ): BooleanSelector(),
+        }
+    )
+
+
+def create_schema(
+    hass: HomeAssistant,
+    defaults: dict[str, Any] | None = None,
+    is_options: bool = False,
+) -> dict:
+    """Create a schema with optional default values, using helper functions."""
+    # Ensure defaults is a dictionary
+    defaults = defaults if defaults is not None else {}
+
+    # Pre-calculate expensive lookups
+    include_entities = _get_include_entities(hass)
+    door_state_options = _get_state_select_options("door")
+    media_state_options = _get_state_select_options("media")
+    window_state_options = _get_state_select_options("window")
+    appliance_state_options = _get_state_select_options("appliance")
+
+    # Initialize the dictionary for the schema
+    schema_dict: dict[vol.Marker, Any] = {}
+
+    if not is_options:
+        # Add the name field only for the initial config flow
+        schema_dict[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
+
+    # Add sections by assigning keys directly to the dictionary
+    schema_dict[vol.Required("motion")] = section(
+        _create_motion_section_schema(defaults),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("doors")] = section(
+        _create_doors_section_schema(
+            defaults,
+            include_entities["door"],
+            cast(list[SelectOptionDict], door_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("windows")] = section(
+        _create_windows_section_schema(
+            defaults,
+            include_entities["window"],
+            cast(list[SelectOptionDict], window_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("lights")] = section(
+        _create_lights_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("media")] = section(
+        _create_media_section_schema(
+            defaults, cast(list[SelectOptionDict], media_state_options)
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("appliances")] = section(
+        _create_appliances_section_schema(
+            defaults,
+            include_entities["appliance"],
+            cast(list[SelectOptionDict], appliance_state_options),
+        ),
+        {"collapsed": True},
+    )
+    schema_dict[vol.Required("environmental")] = section(
+        _create_environmental_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("parameters")] = section(
+        _create_parameters_section_schema(defaults), {"collapsed": True}
+    )
+
+    # Pass the correctly structured dictionary to vol.Schema
+    return schema_dict
 
 
 class BaseOccupancyFlow:
@@ -695,7 +749,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -720,16 +774,13 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 flattened_input = {}
                 for key, value in user_input.items():
                     if isinstance(value, dict):
-                        # If the value is a dictionary (section), merge its contents
                         flattened_input.update(value)
                     else:
-                        # If the value is not a dictionary, add it directly
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)
                 return self.async_create_entry(
-                    title=flattened_input.get(CONF_NAME, ""),
-                    data=flattened_input,
+                    title=flattened_input.get(CONF_NAME, ""), data=flattened_input
                 )
 
             except HomeAssistantError as err:
@@ -762,7 +813,7 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Manage the options."""
         errors: dict[str, str] = {}
 
@@ -787,10 +838,8 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 flattened_input = {}
                 for key, value in user_input.items():
                     if isinstance(value, dict):
-                        # If the value is a dictionary (section), merge its contents
                         flattened_input.update(value)
                     else:
-                        # If the value is not a dictionary, add it directly
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)

@@ -7,8 +7,8 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CONF_NAME, DEFAULT_HISTORY_PERIOD, DOMAIN
-from .exceptions import CalculationError, StorageError
+from .const import CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD, DOMAIN
+from .exceptions import CalculationError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,8 +37,13 @@ async def async_setup_services(hass: HomeAssistant):
             coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
             _LOGGER.debug("Found coordinator for entry_id %s", entry_id)
 
-            # Get history period from service call or use configured default
-            history_period = call.data.get("history_period", DEFAULT_HISTORY_PERIOD)
+            # Get history period from service call, fallback to coordinator config, then to default
+            history_period = call.data.get("history_period")
+            if history_period is None:
+                history_period = coordinator.config.get(
+                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
+                )
+
             _LOGGER.debug(
                 "Using history period: %s (type: %s) for instance %s",
                 history_period,
@@ -46,45 +51,21 @@ async def async_setup_services(hass: HomeAssistant):
                 entry_id,
             )
 
-            if history_period:
-                _LOGGER.debug(
-                    "Calling update_learned_priors with period: %s for instance %s",
-                    history_period,
-                    entry_id,
-                )
-                try:
-                    await coordinator.update_learned_priors(history_period)
-                except (CalculationError, HomeAssistantError) as err:
-                    _LOGGER.error(
-                        "Error in update_learned_priors for instance %s: %s",
-                        entry_id,
-                        err,
-                    )
-                    raise_error("Failed to update learned priors", err)
-            else:
-                _LOGGER.debug(
-                    "Calling update_learned_priors with default period for instance %s",
-                    entry_id,
-                )
-                await coordinator.update_learned_priors()
-
-            # Load existing data first to ensure we have all instances
-            try:
-                _LOGGER.debug(
-                    "Loading existing storage data before saving for instance %s",
-                    entry_id,
-                )
-                await coordinator.storage.async_load()
-            except StorageError as err:
-                _LOGGER.warning(
-                    "Error loading existing data for instance %s: %s", entry_id, err
-                )
-
-            # Immediately save the updated priors to storage
-            _LOGGER.debug("Saving updated priors to storage for instance %s", entry_id)
-            await coordinator.storage.async_save_prior_state(
-                coordinator.config[CONF_NAME], coordinator.prior_state, immediate=True
+            # Always call update_learned_priors, passing the determined period
+            _LOGGER.debug(
+                "Calling update_learned_priors with period: %s for instance %s",
+                history_period,
+                entry_id,
             )
+            try:
+                await coordinator.update_learned_priors(history_period)
+            except (CalculationError, HomeAssistantError) as err:
+                _LOGGER.error(
+                    "Error in update_learned_priors for instance %s: %s",
+                    entry_id,
+                    err,
+                )
+                raise_error("Failed to update learned priors", err)
 
             # Trigger a coordinator refresh
             _LOGGER.debug("Triggering coordinator refresh for instance %s", entry_id)
@@ -103,7 +84,6 @@ async def async_setup_services(hass: HomeAssistant):
             vol.Required("entry_id"): str,
             vol.Optional(
                 "history_period",
-                default=DEFAULT_HISTORY_PERIOD,
             ): vol.All(int, vol.Range(min=1, max=90)),
         }
     )

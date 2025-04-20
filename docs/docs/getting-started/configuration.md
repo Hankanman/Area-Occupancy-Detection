@@ -1,84 +1,65 @@
 # Configuration
 
-This guide will help you configure the Area Occupancy Detection integration through the Home Assistant UI.
+Area Occupancy Detection is configured entirely through the Home Assistant user interface.
 
-## Initial Setup
+## Adding a New Area
 
-1. Navigate to Settings → Devices & Services
-2. Click "+ Add Integration"
-3. Search for "Area Occupancy Detection"
-4. Click on the integration to begin setup
+1.  **Navigate to Integrations:** Go to **Configuration** -> **Devices & Services** -> **Integrations**.
+2.  **Add Integration:** Click the **+ Add Integration** button in the bottom right.
+3.  **Search:** Search for "Area Occupancy Detection" and select it.
+4.  **Configure Area Name:**
+    *   Enter a descriptive **Name** for the area this instance will monitor (e.g., "Living Room", "Office"). This name will be used in entity IDs.
 
-## Configuration Steps
+## Configuration Options
 
-### 1. Area Selection
+After providing the name, you'll be guided through selecting sensors and configuring parameters. You can also reconfigure these later by clicking **Configure** on the integration card.
 
-- Enter a name for the area you want to monitor (e.g., "Living Room")
-- This will be used to identify all sensors created by the integration
+### Sensor Selection
 
-### 2. Primary Motion Sensor
+You will be prompted to select entities for various categories. You only need to select sensors relevant to the specific area you are configuring.
 
-- Select a primary motion or occupancy sensor
-- This should be your most reliable sensor in the area
-- The integration will use this sensor's history to learn occupancy patterns
+| Sensor Type | Entity Type | Description | Active States |
+|-------------|-------------|-------------|---------------|
+| Primary Occupancy Sensor (Required) | `binary_sensor` | One reliable motion or occupancy sensor. Crucial as ground truth for [Prior Probability Learning](../features/prior-learning.md). | `on` |
+| Motion Sensors | `binary_sensor` | Additional motion sensors in the area. | `on` |
+| Door Sensors | `binary_sensor` | Relevant door sensors. | Default: `Closed` |
+| Window Sensors | `binary_sensor` | Relevant window sensors. | Default: `Open` |
+| Media Devices | `media_player` | Relevant media players. | Default: `playing`, `paused` |
+| Lights | `light` | Relevant light entities. | `on` |
+| Appliances | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances. | Default: `on`, `standby` |
+| Environmental Sensors (Optional) | `sensor` | - Illuminance sensors measuring light levels (lux)<br>- Temperature sensors measuring temperature<br>- Humidity sensors measuring humidity<br>*(Note: Environmental sensors typically have a lower default weight and may require more history for their priors to become meaningful)* | N/A |
 
-### 3. Additional Sensors
+### Parameters
 
-#### Motion Sensors
+| Parameter | Description | Range | Default |
+|-----------|-------------|--------|---------|
+| Occupancy Threshold (%) | The probability percentage required for the main **Occupancy Status** binary sensor to turn `on` | 1-99 | 50 |
+| History Period (Days) | The number of past days to analyze when performing [Prior Probability Learning](../features/prior-learning.md) | 1-90 | 7 |
+| Decay Enabled | Toggle whether to enable the [Probability Decay](../features/decay.md) feature | True/False | Enabled |
+| Decay Window (Seconds) | If decay is enabled, this sets the time over which the probability decays when sensors become inactive | 1-3600 | 300 (5 minutes) |
 
-- Add additional motion or occupancy sensors in the area
-- Each sensor contributes to the overall occupancy calculation
-- The integration automatically determines sensor reliability based on historical data
+### Sensor Weights
 
-#### Media Devices
+Adjust the influence of different *types* of sensors on the final probability calculation. Weights range from 0.0 (no influence) to 1.0 (maximum influence). Default values are provided based on typical sensor reliability for occupancy.
 
-- Select media players in the area (TVs, speakers, etc.)
-- The integration automatically detects relevant states (playing, paused, etc.)
-- Historical correlation with occupancy is automatically calculated
+| Sensor Type | Default Weight |
+|-------------|---------------|
+| Motion Sensor | 0.85 |
+| Media Device | 0.70 |
+| Appliance | 0.40 |
+| Door Sensor | 0.30 |
+| Window Sensor | 0.20 |
+| Light | 0.20 |
+| Environmental Sensor | 0.10 |
 
-#### Appliances
+## Reconfiguring an Existing Area
 
-- Add smart plugs, switches, or other appliances
-- The integration learns which states indicate occupancy
-- Common examples: fans, air purifiers, game consoles
+1.  Go to **Configuration** -> **Devices & Services** -> **Integrations**.
+2.  Find the Area Occupancy Detection integration card for the area you want to change.
+3.  Click **Configure**.
+4.  You can then step through and modify any of the sensor selections, parameters, or weights.
 
-#### Doors and Windows
-
-- Select door and window sensors
-- The integration learns patterns of use
-- Helps distinguish between passing through and occupancy
-
-#### Lights
-
-- Add light entities in the area
-- The integration considers both state and brightness
-- Patterns are learned from historical usage
-
-#### Environmental Sensors
-
-- Add temperature, humidity, or illuminance sensors
-- These provide additional context for occupancy
-- Changes in readings can indicate human presence
-
-### 4. Advanced Settings
-
-#### Threshold Adjustment
-
-- Set the probability threshold for occupancy detection (default: 50%)
-- Higher values require more certainty before reporting occupancy
-- Adjustable through the integration options after setup
-
-#### Historical Analysis
-
-- Choose how many days of history to analyze (default: 7 days)
-- Longer periods provide better learning but require more resources
-- Can be adjusted based on your Home Assistant's capabilities
-
-#### Time Decay
-
-- Enable/disable time-based probability decay
-- Adjust decay window (how long before probabilities start decreasing)
-- Set minimum delay between probability updates
+Click **Submit** on each step to save changes.
 
 ## Automatic Learning
 
