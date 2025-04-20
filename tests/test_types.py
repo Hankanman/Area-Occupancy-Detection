@@ -85,6 +85,7 @@ def test_prior_data_valid_and_to_from_dict():
     )
     d = pd.to_dict()
     pd2 = PriorData.from_dict(d)
+    assert pd2 is not None
     assert pd2.prior == 0.5
     assert pd2.prob_given_true == 0.6
     assert pd2.prob_given_false == 0.2

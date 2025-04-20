@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-import logging
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util
@@ -268,20 +268,22 @@ class PriorData:
     def __post_init__(self):
         """Validate probabilities."""
         if not MIN_PRIOR <= self.prior <= MAX_PRIOR:
-            raise ValueError(f"Prior must be between {MIN_PRIOR} and {MAX_PRIOR}")
+            raise ValueError(
+                f"Prior must be between {MIN_PRIOR} and {MAX_PRIOR} got: {self.prior}"
+            )
         if (
             self.prob_given_true is not None
             and not MIN_PROBABILITY <= self.prob_given_true <= MAX_PROBABILITY
         ):
             raise ValueError(
-                f"prob_given_true must be between {MIN_PROBABILITY} and {MAX_PROBABILITY}"
+                f"prob_given_true must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_true}"
             )
         if (
             self.prob_given_false is not None
             and not MIN_PROBABILITY <= self.prob_given_false <= MAX_PROBABILITY
         ):
             raise ValueError(
-                f"prob_given_false must be between {MIN_PROBABILITY} and {MAX_PROBABILITY}"
+                f"prob_given_false must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_false}"
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -297,10 +299,12 @@ class PriorData:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PriorData:
+    def from_dict(cls, data: dict[str, Any]) -> PriorData | None:
         """Create PriorData from a dictionary."""
-        # Handle potential None values during deserialization
         prior = data.get("prior")
+        if prior is None or float(prior) < MIN_PRIOR:
+            return None  # Skip invalid/zero priors
+        # Handle potential None values during deserialization
         p_true = data.get("prob_given_true")
         p_false = data.get("prob_given_false")
         last_updated = data.get("last_updated")
@@ -526,21 +530,19 @@ class PriorState:
 
         # Initialize only configured type priors using PriorData
         for sensor_type_str, default_prior_data in initial_type_data.items():
-            # Use default PriorData object's prior if type configured, else 0.0
-            prior_value = (
-                default_prior_data.prior if sensor_type_str in configured_types else 0.0
-            )
-            prob_true = default_prior_data.prob_given_true
-            prob_false = default_prior_data.prob_given_false
+            if sensor_type_str in configured_types:
+                prior_value = default_prior_data.prior
+                prob_true = default_prior_data.prob_given_true
+                prob_false = default_prior_data.prob_given_false
 
-            # update_type_prior now updates self.type_priors with PriorData
-            self.update_type_prior(
-                sensor_type_str,
-                prior_value,
-                timestamp,
-                prob_true,
-                prob_false,
-            )
+                # update_type_prior now updates self.type_priors with PriorData
+                self.update_type_prior(
+                    sensor_type_str,
+                    prior_value,
+                    timestamp,
+                    prob_true,
+                    prob_false,
+                )
 
         # Calculate and set the overall prior *after* all types are processed
         overall_prior = self.calculate_overall_prior(probabilities)
@@ -560,9 +562,15 @@ class PriorState:
             "environmental_prior": self.environmental_prior,
             # Serialize PriorData objects
             "entity_priors": {
-                k: v.to_dict() for k, v in self.entity_priors.items() if v
+                k: v.to_dict()
+                for k, v in self.entity_priors.items()
+                if v and v.prior >= MIN_PRIOR
             },
-            "type_priors": {k: v.to_dict() for k, v in self.type_priors.items() if v},
+            "type_priors": {
+                k: v.to_dict()
+                for k, v in self.type_priors.items()
+                if v and v.prior >= MIN_PRIOR
+            },
             "analysis_period": self.analysis_period,
         }
 
@@ -580,14 +588,14 @@ class PriorState:
             environmental_prior=float(data.get("environmental_prior", MIN_PROBABILITY)),
             # Deserialize PriorData objects
             entity_priors={
-                k: PriorData.from_dict(v)
+                k: pd
                 for k, v in data.get("entity_priors", {}).items()
-                if isinstance(v, dict)  # Add check for dict type
+                if isinstance(v, dict) and (pd := PriorData.from_dict(v)) is not None
             },
             type_priors={
-                k: PriorData.from_dict(v)
+                k: pd
                 for k, v in data.get("type_priors", {}).items()
-                if isinstance(v, dict)  # Add check for dict type
+                if isinstance(v, dict) and (pd := PriorData.from_dict(v)) is not None
             },
             analysis_period=int(data.get("analysis_period", 7)),
         )
