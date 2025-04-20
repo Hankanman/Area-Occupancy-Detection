@@ -27,6 +27,7 @@ from .const import (
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_TEMPERATURE_SENSORS,
+    CONF_WASP_IN_BOX_ENABLED,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -39,6 +40,7 @@ from .const import (
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_WASP_IN_BOX_ENABLED,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -62,6 +64,10 @@ from .const import (
     MOTION_DEFAULT_PRIOR,
     MOTION_PROB_GIVEN_FALSE,
     MOTION_PROB_GIVEN_TRUE,
+    WASP_DEFAULT_PRIOR,
+    WASP_PROB_GIVEN_FALSE,
+    WASP_PROB_GIVEN_TRUE,
+    WASP_WEIGHT,
     WINDOW_DEFAULT_PRIOR,
     WINDOW_PROB_GIVEN_FALSE,
     WINDOW_PROB_GIVEN_TRUE,
@@ -179,6 +185,10 @@ class Probabilities:
                     _validate_entity_id(entity_id, config_key)
                     self.entity_types[entity_id] = sensor_type
 
+            # Add wasp virtual sensor if enabled
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                self.entity_types["wasp.virtual"] = EntityType.WASP
+
         except (TypeError, ValueError) as err:
             # Catch potential unexpected type or value errors during entity processing
             # Raise directly, chaining the original exception
@@ -220,6 +230,10 @@ class Probabilities:
                     CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
                 ),
             }
+
+            # Add wasp weight if enabled
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                weights["wasp"] = WASP_WEIGHT
 
             # Validate weights
             for sensor_type, weight in weights.items():
@@ -374,6 +388,14 @@ class Probabilities:
                     "active_states": {STATE_ON},
                 },  # Assuming environmental is active when 'on' (needs data)
             }
+            # Add wasp config if enabled
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                type_specifics["wasp"] = {
+                    "prob_true": WASP_PROB_GIVEN_TRUE,
+                    "prob_false": WASP_PROB_GIVEN_FALSE,
+                    "prior": WASP_DEFAULT_PRIOR,
+                    "active_states": {"on"},
+                }
             # --- End Sensor Type Specifics ---
 
             configs = {}
@@ -561,6 +583,13 @@ class Probabilities:
             )
             raise ValueError(f"Configuration missing for sensor type '{sensor_type}'.")
 
+        # Special handling for wasp.virtual
+        if entity_id == "wasp.virtual":
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                return self._sensor_configs.get("wasp")
+            else:
+                return None
+
         return sensor_config
 
     def is_entity_active(
@@ -602,6 +631,11 @@ class Probabilities:
                 "No active states defined for sensor type of '%s'", entity_id
             )
             return False  # Treat as inactive if no active states defined
+
+        # Special handling for wasp.virtual
+        if entity_id == "wasp.virtual":
+            return state == "on"
+
         return state in active_states
 
     def get_initial_type_priors(self) -> dict[str, PriorData]:
@@ -635,6 +669,16 @@ class Probabilities:
                         "Skipping initial priors for type '%s' due to missing keys in config: %s",
                         sensor_type,
                         config,
+                    )
+
+            # Add wasp prior if enabled and not present
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                if "wasp" not in priors:
+                    priors["wasp"] = PriorData(
+                        prob_given_true=WASP_PROB_GIVEN_TRUE,
+                        prob_given_false=WASP_PROB_GIVEN_FALSE,
+                        prior=WASP_DEFAULT_PRIOR,
+                        last_updated=None,
                     )
 
         except (KeyError, ValueError, TypeError):

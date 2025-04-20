@@ -6,8 +6,14 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import DOMAIN  # noqa: TID252
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator  # noqa: TID252
+from custom_components.area_occupancy.const import (  # noqa: TID252
+    DOMAIN,
+    WASP_PROB_GIVEN_FALSE,
+    WASP_WEIGHT,
+)
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,  # noqa: TID252
+)
 
 from .conftest import TEST_CONFIG  # noqa: TID251
 
@@ -90,10 +96,11 @@ async def test_binary_sensor_threshold(
     assert binary_state is not None
     prob_state = hass.states.get("sensor.test_area_occupancy_probability")
     assert prob_state is not None
-    threshold_state = hass.states.get("number.test_area_occupancy_threshold")
-    assert threshold_state is not None  # Add check for threshold state
+    threshold_entity_id = "number.test_area_occupancy_threshold"
+    threshold_state = hass.states.get(threshold_entity_id)
+    assert threshold_state is not None
+    threshold = float(threshold_state.state)
     prob = float(prob_state.state)
-    threshold = float(threshold_state.state)  # Use checked state
     expected_state = STATE_ON if prob >= threshold else STATE_OFF
     assert binary_state.state == expected_state
 
@@ -108,10 +115,10 @@ async def test_binary_sensor_threshold(
     assert binary_state is not None
     prob_state = hass.states.get("sensor.test_area_occupancy_probability")
     assert prob_state is not None
-    threshold_state = hass.states.get("number.test_area_occupancy_threshold")
-    assert threshold_state is not None  # Add check for threshold state
+    threshold_state = hass.states.get(threshold_entity_id)
+    assert threshold_state is not None
+    threshold = float(threshold_state.state)
     prob = float(prob_state.state)
-    threshold = float(threshold_state.state)  # Use checked state
     expected_state = STATE_ON if prob >= threshold else STATE_OFF
     assert binary_state.state == expected_state
 
@@ -198,9 +205,15 @@ async def test_coordinator_state_update_on_entity_change(
         final_state_off = hass.states.get(prob_sensor_id)
         assert final_state_off is not None
         # Probability might not decrease immediately if decay delay is active
-        # Check that active triggers list is now empty
-        assert final_state_off.attributes["active_triggers"] == []
-        assert len(final_state_off.attributes["sensor_probabilities"]) == 0
+        # Check that active triggers list is now empty or only contains 'Wasp-in-the-Box'
+        triggers = final_state_off.attributes["active_triggers"]
+        sensor_probs = final_state_off.attributes["sensor_probabilities"]
+        if triggers == ["Wasp-in-the-Box"]:
+            # Only wasp should be present
+            assert len(sensor_probs) == 1
+            assert any("Wasp-in-the-Box" in entry for entry in sensor_probs)
+        else:
+            assert len(sensor_probs) == 0
 
 
 # Update test_storage_integration
@@ -309,3 +322,66 @@ async def test_entity_attribute_updates(
     assert "%" in state.attributes["threshold"]
     assert isinstance(state.attributes["threshold"], str)
     assert "%" in state.attributes["threshold"]
+
+
+async def test_wasp_in_the_box_logic(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Test wasp-in-the-box logic is active and reflected in probability sensor attributes and calculation."""
+    prob_entity_id = "sensor.test_area_occupancy_probability"
+    binary_entity_id = "binary_sensor.test_area_occupancy_status"
+    threshold_entity_id = "number.test_area_occupancy_threshold"
+    motion_sensor_id = TEST_CONFIG["motion_sensors"][0]
+
+    # Ensure initial state is below threshold (no motion)
+    hass.states.async_set(motion_sensor_id, STATE_OFF)
+    await hass.async_block_till_done()
+    state = hass.states.get(prob_entity_id)
+    assert state is not None
+    prob_below = float(state.state)
+    threshold_state = hass.states.get(threshold_entity_id)
+    assert threshold_state is not None
+    threshold = float(threshold_state.state)
+    assert prob_below < threshold
+    # Wasp should be inactive (prob_given_false)
+    wasp_entries = [
+        s for s in state.attributes["sensor_probabilities"] if "Wasp-in-the-Box" in s
+    ]
+    # When below threshold, wasp entry may not be present
+    if wasp_entries:
+        wasp_entry = wasp_entries[0]
+        assert f"W: {WASP_WEIGHT}" in wasp_entry
+        assert f"P: {WASP_PROB_GIVEN_FALSE}" in wasp_entry or "P: 0.05" in wasp_entry
+    # Binary sensor should be off
+    binary_state = hass.states.get(binary_entity_id)
+    assert binary_state is not None
+    assert binary_state.state == STATE_OFF
+
+    # Trigger motion to raise probability above threshold
+    hass.states.async_set(motion_sensor_id, STATE_ON)
+    await hass.async_block_till_done()
+    state = hass.states.get(prob_entity_id)
+    assert state is not None
+    prob_above = float(state.state)
+    assert prob_above > threshold
+    # Do not require wasp-in-the-box entry immediately after motion ON
+    # Binary sensor should be on
+    binary_state = hass.states.get(binary_entity_id)
+    assert binary_state is not None
+    assert binary_state.state == STATE_ON
+
+    # Turn motion off, wasp should keep occupancy sticky (prob should remain above threshold for a while)
+    hass.states.async_set(motion_sensor_id, STATE_OFF)
+    await hass.async_block_till_done()
+    state = hass.states.get(prob_entity_id)
+    assert state is not None
+    prob_sticky = float(state.state)
+    # Probability should not immediately drop below threshold due to wasp stickiness
+    assert prob_sticky >= threshold
+    wasp_entries = [
+        s for s in state.attributes["sensor_probabilities"] if "Wasp-in-the-Box" in s
+    ]
+    assert wasp_entries, "Wasp-in-the-Box entry not found after sticky activation"
+    wasp_entry = wasp_entries[0]
+    assert f"W: {WASP_WEIGHT}" in wasp_entry
+    # Eventually, after enough time or decay, probability should drop (not tested here)

@@ -37,10 +37,12 @@ from .const import (
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
+    CONF_WASP_IN_BOX_ENABLED,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
+    DEFAULT_WASP_IN_BOX_ENABLED,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -793,6 +795,31 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.previous_states = self.data.current_states.copy()
                 # Capture a snapshot of current states for the calculation
                 current_states_snapshot = self.data.current_states.copy()
+
+            # --- Inject wasp-in-the-box virtual sensor if enabled ---
+            if self.config.get(CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED):
+                wasp_entity_id = "wasp.virtual"
+                # Determine wasp state: 'on' if last probability >= threshold, else 'off'
+                # Use previous probability if available, else MIN_PROBABILITY
+                last_prob = (
+                    self.data.probability if hasattr(self.data, "probability") else 0.0
+                )
+                threshold = (
+                    self.data.threshold if hasattr(self.data, "threshold") else 0.5
+                )
+                wasp_state = "on" if last_prob >= threshold else "off"
+                prev_info = self.data.current_states.get(wasp_entity_id, None)
+                prev_last_changed = (
+                    prev_info["last_changed"]
+                    if prev_info and prev_info.get("state") == wasp_state
+                    else None
+                )
+                last_changed = prev_last_changed or dt_util.utcnow().isoformat()
+                current_states_snapshot[wasp_entity_id] = SensorInfo(
+                    state=wasp_state,
+                    last_changed=last_changed,
+                    availability=True,
+                )
 
             # --- Store initial probability state before calculation ---
             initial_prob = self.data.probability

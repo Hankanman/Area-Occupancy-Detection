@@ -89,6 +89,7 @@ nav:
     - Bayesian Calculation: features/calculation.md
     - Prior Learning: features/prior-learning.md
     - Probability Decay: features/decay.md
+    - Wasp-in-the-Box: features/wasp-logic.md
     - Entities: features/entities.md
     - Services: features/services.md
   - Technical:

@@ -56,6 +56,7 @@ from .const import (
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_WASP_IN_BOX_ENABLED,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -74,6 +75,7 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
+    DEFAULT_WASP_IN_BOX_ENABLED,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -559,6 +561,12 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(
                     CONF_HISTORICAL_ANALYSIS_ENABLED,
                     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+                ),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_WASP_IN_BOX_ENABLED,
+                default=defaults.get(
+                    CONF_WASP_IN_BOX_ENABLED, DEFAULT_WASP_IN_BOX_ENABLED
                 ),
             ): BooleanSelector(),
         }
