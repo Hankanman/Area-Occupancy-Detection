@@ -33,7 +33,7 @@ from .const import (
     NAME_THRESHOLD_NUMBER,
     PLATFORMS,
 )
-from .storage import AreaOccupancyStorageStore
+from .storage import AreaOccupancyStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
     """Migrate storage data file format."""
-    store = AreaOccupancyStorageStore(hass)
+    store = AreaOccupancyStore(hass)
     try:
         _LOGGER.debug("Starting storage file format migration for %s", entry_id)
         # Load data with old version to trigger migration
@@ -150,10 +150,8 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
                 _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
 
         _LOGGER.debug("Storage file format migration complete for %s", entry_id)
-    except Exception as err:
+    except (HomeAssistantError, OSError, ValueError) as err:
         _LOGGER.error("Error during storage migration for %s: %s", entry_id, err)
-        # Do not re-raise, allow config entry migration to continue
-        # raise StorageError(f"Failed to migrate storage: {err}") from err
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

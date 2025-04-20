@@ -21,7 +21,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.4.2"
+DEVICE_SW_VERSION: Final = "2025.4.3"
 CONF_VERSION: Final = 7
 CONF_VERSION_MINOR: Final = 1
 
@@ -66,7 +66,7 @@ CACHE_DURATION: Final = timedelta(hours=6)
 DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
-DEFAULT_DECAY_WINDOW: Final = 600  # seconds (10 minutes)
+DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
@@ -77,7 +77,7 @@ DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 0.85
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
-DEFAULT_WEIGHT_APPLIANCE: Final = 0.3
+DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_LIGHT: Final = 0.2
@@ -90,17 +90,59 @@ NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 
-# Decay lambda such that at half of decay_window probability is 25% of original
-DECAY_LAMBDA = 0.866433976
+# Decay lambda - A higher value results in faster decay.
+# Original value (0.866) resulted in ~65% remaining at half decay_window.
+# Doubled value (1.733) results in ~42% remaining at half decay_window.
+DECAY_LAMBDA = 1.732867952
 
 # Safety bounds
 MIN_PROBABILITY: Final[float] = 0.01
 MAX_PROBABILITY: Final[float] = 0.99
+MIN_PRIOR: Final[float] = 0.0001
+MAX_PRIOR: Final[float] = 0.9999
 
 # Default prior probabilities
 DEFAULT_PRIOR: Final[float] = 0.1713
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
+# Motion sensor defaults
+MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
+MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
+MOTION_DEFAULT_PRIOR: Final[float] = 0.35
+
+# Door sensor defaults
+DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
+DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
+DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
+
+# Window sensor defaults
+WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
+WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
+WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
+
+# Light sensor defaults
+LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
+LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
+LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
+
+# Media device defaults
+MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
+MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
+MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
+
+# Appliance defaults
+APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
+APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
+APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
+
+# Environmental defaults
+ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
+ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
+ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
+
 # Helper constants
 ROUNDING_PRECISION: Final = 2
+
+# Storage constants
+STORAGE_KEY: Final = f"{DOMAIN}.storage"

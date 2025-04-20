@@ -8,17 +8,16 @@ This integration provides intelligent room occupancy detection by combining mult
 
 ## Integration Goal
 
-Take the input entities from the configuration (motion/occupancy sensors, appliances/other devices, media devices, lights, doors, windows and environmental factors) as defined in the configuration flow, figuring out their priors based on a strong indicator such as an existing motion or occupancy sensor, so for example we should look at the history of say a media device and determine how much the "playing" or "paused" state coincides with a valid occupancy sensor being "on" over the configure history period for example the last 7 days, it should interrogate the recorder or statistics integration to do this.
+Take the input entities from the configuration (motion/occupancy sensors, appliances/other devices, media devices, lights, doors, windows and environmental factors) as defined in the configuration flow. Calculate the prior probabilities (`prob_given_false`, `prob_given_true`, `prior_probability`) for each input entity based on its historical correlation with a primary occupancy indicator (e.g., a configured motion or occupancy sensor). This requires querying the Home Assistant `recorder` or `statistics` components over a configurable history period (e.g., the last 7 days).
 
-There are constants stored in probabilities.py as defaults, they should be overridden by the "true" data found in the coordinator for a prob_given_false, prob_given_true and prior_probability. These values should then be passed into a composite bayesian calculation alongside the given sensors current state to determine the current probability of a given area being occupied based upon the input sensors of from the configuration
+Default probabilities defined in `probabilities.py` should serve as fallbacks if historical data is unavailable or insufficient for calculation. The dynamically calculated priors should override these defaults.
 
-The Occupancy Probability sensor is the overall bayesian probability calculation shown as a percentage.
+Use the current state of all input entities and their corresponding calculated (or default) priors in a composite Bayesian calculation (`calculate_prob.py`) to determine the real-time probability of the area being occupied.
 
-The Occupancy Status sensor is a binary sensor that is on if the Occupancy Probability is above the threshold and off if it is below the threshold.
-
-The Occupancy Prior sensor is the prior probability of the area being occupied based upon the input sensors from the configuration.
-
-The individual prior sensors are the prior probabilities of the input sensors from the configuration for each given category (motion, media, appliances, doors, windows, lights and environmental factors).
+The integration should expose the following sensors:
+- **Occupancy Probability Sensor:** Displays the overall Bayesian probability calculation result as a percentage.
+- **Occupancy Status Sensor:** A binary sensor that is 'on' if the Occupancy Probability exceeds a configured threshold, 'off' otherwise.
+- **Occupancy Prior Sensor:** Displays the overall prior probability of the area being occupied, derived from individual sensor priors.
 
 
 ## Tech Stack
@@ -26,27 +25,27 @@ The individual prior sensors are the prior probabilities of the input sensors fr
 - Language: Python
 - Framework: Home Assistant Core
 - Testing: Pytest
-- Linting: Pylint
+- Linting: ruff
 
 ## Project Structure
 
 - `custom_components/area_occupancy` - Main integration directory
-  - `__init__.py` - Integration setup
-  - `binary_sensor.py` - Binary sensor entity definitions
-  - `calculate_prob.py` - Probability calculations
-  - `calculate_prior.py` - Prior probability calculations
-  - `config_flow.py` - Configuration flow for the integration
-  - `const.py` - Constants used across the integration
-  - `coordinator.py` - Coordinator for the integration
-  - `manifest.json` - Integration metadata
-  - `probabilities.py` - Probability constants provider
-  - `sensor.py` - Sensor entity definitions
-  - `service.py` - Service creation and management
-  - `strings.json` - Integration strings
-  - `types.py` - Type definitions
-  - `services.yaml` - Service definitions
-  - `translations/` - Localized strings
-- `tests/` - Unit tests for the integration
+  - `__init__.py` - Integration setup, platform registration.
+  - `binary_sensor.py` - Defines the `Occupancy Status Sensor`.
+  - `calculate_prob.py` - Implements the composite Bayesian probability calculation.
+  - `calculate_prior.py` - Implements the logic for calculating prior probabilities from historical data.
+  - `config_flow.py` - Handles user configuration via the UI.
+  - `const.py` - Stores all constants (domain, platform names, config keys, event types, default values, etc.).
+  - `coordinator.py` - Manages data fetching, state updates, prior calculation orchestration, and update coordination.
+  - `manifest.json` - Integration metadata, dependencies, version.
+  - `probabilities.py` - Provides default probability constants.
+  - `sensor.py` - Defines the `Occupancy Probability Sensor`, `Occupancy Prior Sensor`, and `Individual Prior Sensors`.
+  - `service.py` - Defines and handles any integration-specific services.
+  - `strings.json` - UI strings for configuration flow and integration.
+  - `types.py` - Defines custom data types and TypedDicts used across the integration.
+  - `services.yaml` - Service definitions for Home Assistant.
+  - `translations/` - Localized strings for different languages.
+- `tests/` - Unit tests for the integration.
 
 ## Rules
 
@@ -54,86 +53,124 @@ Follow these rules strictly to ensure high-quality development.
 
 ### General Rules
 
-- Adhere to Home Assistant’s [developer documentation](https://developers.home-assistant.io/).
-- Use built-in Home Assistant utilities and constants where applicable, such as `homeassistant.helpers.entity`, `homeassistant.const`, etc.
-- Avoid custom implementations of functionality already available in Home Assistant.
-- Maintain consistency with Home Assistant patterns and practices.
-- Use snake_case for all file names and variables.
-- Follow PEP8 standards.
-- All constants should be defined in `const.py`.
-- All types should be defined in `types.py`.
-- All configuration should be defined in `config_flow.py`.
-- All services should be defined in `services.py`.
-- All sensors should be defined in `sensor.py`.
-- All binary sensors should be defined in `binary_sensor.py`.
-- All calculations should be defined in `calculate_prob.py` and `calculate_prior.py`.
-- All probabilities should be defined in `probabilities.py`.
-- All exceptions should include the stack trace.
-- NEVER truncate your code, always use the full codebase to complete the task.
-- NEVER use placeholders like "... existing logic ..." in your code, always implement the full logic.
-- NEVER use general exceptions like `Exception` or `BaseException` in your code, always use specific exceptions.
+- Adhere to Home Assistant's [developer documentation](https://developers.home-assistant.io/).
+- Use built-in Home Assistant utilities and constants where applicable (e.g., `homeassistant.helpers.entity`, `homeassistant.const`, `homeassistant.helpers.event`, `homeassistant.components.recorder`).
+- Avoid custom implementations of functionality already available in Home Assistant Core.
+- Maintain consistency with Home Assistant patterns (e.g., `DataUpdateCoordinator`, config entries).
+- Use snake_case for all file names, variables, and function names.
+- Follow PEP8 standards strictly.
+- All constants MUST be defined in `const.py`. Use descriptive names.
+- All custom types (TypedDicts, etc.) MUST be defined in `types.py`.
+- Configuration flow logic MUST reside in `config_flow.py`. Use Voluptuous for schema validation.
+- Service definitions MUST be in `services.yaml` and implementation in `service.py`.
+- Sensor entity definitions MUST be in `sensor.py`.
+- Binary sensor entity definitions MUST be in `binary_sensor.py`.
+- Core Bayesian probability calculation logic MUST be in `calculate_prob.py`.
+- Prior probability calculation logic (including history fetching) MUST be in `calculate_prior.py`.
+- Default probability values MUST be defined in `probabilities.py`.
+- Coordinator logic MUST be in `coordinator.py`.
+- All exceptions MUST include the stack trace in debug logs (`exc_info=True`).
+- NEVER truncate your code or use placeholders like `... existing logic ...`. Implement the full logic required.
+- NEVER use general exceptions like `Exception` or `BaseException`. Use specific exceptions (e.g., `ValueError`, `KeyError`, `homeassistant.exceptions.IntegrationError`).
+
+### Data Handling and Coordinator Rules
+
+- The `DataUpdateCoordinator` in `coordinator.py` is central to the integration.
+- The coordinator must fetch the current states of all configured input entities.
+- The coordinator must orchestrate the calculation of prior probabilities by calling functions in `calculate_prior.py`. This includes:
+    - Identifying the primary occupancy indicator entity.
+    - Querying historical data for all input entities and the primary indicator using `recorder.history.get_significant_states` or relevant statistics functions.
+    - Passing historical data to calculation functions in `calculate_prior.py`.
+    - Storing the calculated priors (`prob_given_false`, `prob_given_true`, `prior_probability`) for each entity, possibly in the coordinator's `data` attribute.
+- The coordinator must handle cases where historical data is insufficient and fall back to defaults from `probabilities.py`.
+- The coordinator must trigger the update of dependent sensors after calculations are complete.
+- Use efficient methods for state listeners and updates to minimize system load. Register listeners within entities or the coordinator as appropriate.
+
+### Calculation Rules
+
+- `calculate_prior.py`:
+    - Must contain pure functions for calculating `prob_given_false`, `prob_given_true`, and `prior_probability` based on historical correlation.
+    - Must clearly document the methodology used for prior calculation.
+    - Must handle potential errors during history fetching or calculation gracefully (e.g., return defaults or raise specific exceptions).
+    - Input data structures from the coordinator and output structures should use types defined in `types.py`.
+- `calculate_prob.py`:
+    - Must implement the composite Bayesian formula.
+    - Must take the current states of all input entities and their corresponding priors (calculated or default) as input.
+    - Must return the final occupancy probability.
+    - Must be a pure function where possible.
+    - Clearly document the Bayesian formula implemented.
 
 ### Environment Rules
 
-- Ensure `requirements.txt` includes all necessary Python dependencies.
-- Update `manifest.json` with correct metadata, versioning, and dependencies.
-- Use Home Assistant’s core logging facilities for debug and error logs.
-- Avoid excessive use of `try/except` blocks; handle exceptions with specific, targeted error handling.
-- Use f-strings for formatting log messages for consistency.
+- Ensure `requirements.txt` (if needed, though unlikely for this type of integration) includes all necessary Python dependencies. Core dependencies go in `manifest.json`.
+- Update `manifest.json` with correct metadata, versioning (`"version": "0.1.0"`), dependencies (e.g., `"recorder"`), and code owner. Set `"iot_class": "local_push"` or `local_polling` as appropriate (likely `local_polling` driven by the coordinator).
+- Use Home Assistant's core logging facilities (`logging.getLogger(__name__)`).
+- Avoid broad `try/except` blocks; handle specific exceptions where they occur.
+- Use f-strings for formatting log messages: `_LOGGER.debug("Processing entity %s", entity_id)`.
 
 ### Linting Rules
 
-- Run `pylint` and `flake8` before committing code.
-- Address all warnings and errors reported by the linters.
+- Run `ruff check .` and `ruff format .` before committing code.
+- Address all reported warnings and errors. Configure ruff if necessary via `pyproject.toml` or `ruff.toml`.
 
 ### Testing Rules
 
-- Write unit tests using `pytest`.
-- Cover all entities, services, and configuration flows with appropriate test cases.
-- Use the Home Assistant test harness for mocking core components.
-- Achieve at least 90% test coverage.
-- Test edge cases such as sensor unavailability, invalid configurations, and extreme input values.
-- Structure test cases to include setup, execution, and verification phases clearly.
+- Write unit tests using `pytest` in the `tests/` directory.
+- Cover core logic: coordinator updates, prior calculations (`calculate_prior.py`), probability calculations (`calculate_prob.py`), config flow validation, and entity state updates.
+- Use the Home Assistant test harness (`hass`, `mock_config_entry`, `mock_registry`, `patch`) for mocking core components, entities, and history/statistics data.
+- Achieve at least 90% test coverage for all modules. Use `pytest-cov`.
+- Test edge cases: sensor unavailability, invalid configurations, zero history data, calculation errors, boundary probability values.
+- Structure test cases clearly (Arrange, Act, Assert).
 
 ### Component Rules
 
-#### Sensor Entities
+#### Sensor Entities (`sensor.py`)
 
-- Inherit from `homeassistant.helpers.entity.SensorEntity`.
-- Use descriptive unique IDs for each sensor.
-- Implement `device_class`, `unit_of_measurement`, and `state_class` where applicable.
-- Include fallback values for attributes in case of missing data.
+- Inherit from `homeassistant.helpers.entity.SensorEntity` and `CoordinatorEntity`.
+- Implement `Occupancy Probability Sensor`, `Occupancy Prior Sensor`, and `Individual Prior Sensors`.
+- Use descriptive unique IDs (e.g., `f"{config_entry.entry_id}_occupancy_probability"`).
+- Set appropriate `device_class` (None likely), `unit_of_measurement` (PERCENTAGE for probability), and `state_class` (`measurement` for probability).
+- Ensure `available` property reflects the coordinator's status.
+- Fetch state from `self.coordinator.data`.
 
-#### Binary Sensor Entities
+#### Binary Sensor Entities (`binary_sensor.py`)
 
-- Extend `BinarySensorEntity` and provide specific logic for state determination.
-- Handle decayed states explicitly with time-based thresholds.
-- Use Home Assistant-provided constants for binary sensor states and attributes.
+- Inherit from `homeassistant.helpers.entity.BinarySensorEntity` and `CoordinatorEntity`.
+- Implement the `Occupancy Status Sensor`.
+- Use `device_class` `OCCUPANCY`.
+- Determine `is_on` state based on the `Occupancy Probability Sensor` value (from coordinator data) and the configured threshold.
+- Ensure `available` property reflects the coordinator's status.
 
-#### Configuration Flow
+#### Configuration Flow (`config_flow.py`)
 
-- Use `homeassistant.config_entries.ConfigFlow` for user setup.
-- Validate user inputs during configuration using Voluptuous schemas.
-- Provide user-friendly error messages and recovery steps.
+- Use `homeassistant.config_entries.ConfigFlow` and potentially `OptionsFlow` for reconfiguration.
+- Use `async_setup_entry` and `async_unload_entry` in `__init__.py`.
+- Validate user inputs (entity IDs, thresholds, history duration, primary indicator) using Voluptuous schemas (`vol.Schema`). Use entity selectors (`selector.EntitySelector`) in UI schema.
+- Provide user-friendly error messages (`errors` dictionary in steps).
+- Store configuration in the `ConfigEntry.data` and options in `ConfigEntry.options`.
 
-#### Services
+#### Services (`service.py`, `services.yaml`)
 
-- Define services in `services.yaml`.
-- Use descriptive names and clear schemas for service parameters.
-- Ensure services are idempotent and handle invalid states gracefully.
+- Define services in `services.yaml` (e.g., a service to manually trigger a recalculation or adjust settings).
+- Implement service handling functions in `service.py`, registered in `async_setup_entry`.
+- Use descriptive names and clear schemas (`vol.Schema`) for service parameters. Ensure services handle invalid states gracefully.
 
 ### Logging Rules
 
-- Use Home Assistant’s `logging.getLogger` for logging.
-- Include relevant context in log messages without exposing sensitive information.
-- Use appropriate log levels: `DEBUG` for development, `INFO` for general logs, `WARNING` for recoverable issues, and `ERROR` for critical failures.
-- Log exceptions with `exc_info=True` for stack traces only when debugging.
+- Use `_LOGGER = logging.getLogger(__name__)` at the top of each file.
+- Include relevant context (e.g., config entry ID, entity ID) in log messages.
+- Use appropriate log levels:
+    - `DEBUG`: Detailed information for diagnosing issues (e.g., intermediate calculation steps, fetched states, calculated priors).
+    - `INFO`: General operational messages (e.g., integration started, service called).
+    - `WARNING`: Recoverable issues or potential problems (e.g., failed to fetch history for one sensor, falling back to defaults).
+    - `ERROR`: Critical failures preventing normal operation (e.g., failed to set up integration, core calculation failure).
+- Log exceptions with `_LOGGER.exception(...)` or `_LOGGER.error(..., exc_info=True)` only when necessary for debugging critical errors, usually within `ERROR` level logs. Avoid logging expected exceptions this way (e.g., handle `KeyError` gracefully).
 
 ### Documentation Rules
 
-- Provide a README with installation instructions, feature explanations, and usage examples.
-- Add comments to explain non-trivial code sections.
-- Use docstrings for all public methods and classes.
-- Document the Bayesian calculation logic explicitly in the code.
+- Provide a README.md with clear installation instructions, configuration steps, feature explanations (including how priors are calculated), and usage examples.
+- Add comments to explain complex or non-obvious code sections, especially in calculation logic.
+- Use docstrings for all public classes, methods, and functions, explaining their purpose, arguments, and return values.
+- Explicitly document the Bayesian calculation logic and the prior calculation methodology within the code (`calculate_prob.py`, `calculate_prior.py`) and potentially in the README.
 
-By adhering to these guidelines, you will create a robust, maintainable, and high-quality integration for Home Assistant.
+By adhering to these guidelines, you will create a robust, maintainable, and high-quality Area Occupancy Detection integration for Home Assistant.
