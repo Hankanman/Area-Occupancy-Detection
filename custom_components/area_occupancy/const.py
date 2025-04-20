@@ -49,6 +49,7 @@ CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
+CONF_WASP_IN_BOX_ENABLED: Final = "wasp_in_box_enabled"
 
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
@@ -73,6 +74,7 @@ DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
+DEFAULT_WASP_IN_BOX_ENABLED: Final = False
 
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 0.85
@@ -82,6 +84,10 @@ DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_LIGHT: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
+WASP_PROB_GIVEN_TRUE: Final[float] = 0.95
+WASP_PROB_GIVEN_FALSE: Final[float] = 0.05
+WASP_DEFAULT_PRIOR: Final[float] = 0.4
+WASP_WEIGHT: Final[float] = 0.9
 
 # Entity naming
 NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"

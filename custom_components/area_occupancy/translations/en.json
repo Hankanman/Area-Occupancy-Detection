@@ -110,7 +110,8 @@
                             "decay_enabled": "Enable Time Decay",
                             "decay_window": "Decay Window (seconds)",
                             "decay_min_delay": "Delay Before Starting Decay (seconds)",
-                            "historical_analysis_enabled": "Enable Historical Analysis"
+                            "historical_analysis_enabled": "Enable Historical Analysis",
+                            "wasp_in_box_enabled": "Enable Wasp-in-the-Box Logic"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
@@ -118,7 +119,8 @@
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                             "decay_window": "Time window over which occupancy probability decays.",
                             "decay_min_delay": "Minimum time before decay starts.",
-                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
+                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations.",
+                            "wasp_in_box_enabled": "When enabled, a virtual 'wasp-in-the-box' sensor will help maintain occupancy if the area was recently occupied, even if all other sensors are inactive. This reduces false negatives in rooms with sensor blind spots or quiet activities."
                         }
                     }
                 }
@@ -230,7 +232,8 @@
                             "decay_enabled": "Enable Time Decay",
                             "decay_window": "Decay Window (seconds)",
                             "decay_min_delay": "Delay Before Starting Decay (seconds)",
-                            "historical_analysis_enabled": "Enable Historical Analysis"
+                            "historical_analysis_enabled": "Enable Historical Analysis",
+                            "wasp_in_box_enabled": "Enable Wasp-in-the-Box Logic"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
@@ -238,7 +241,8 @@
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                             "decay_window": "Time window over which occupancy probability decays.",
                             "decay_min_delay": "Minimum time before decay starts.",
-                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
+                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations.",
+                            "wasp_in_box_enabled": "When enabled, a virtual 'wasp-in-the-box' sensor will help maintain occupancy if the area was recently occupied, even if all other sensors are inactive. This reduces false negatives in rooms with sensor blind spots or quiet activities."
                         }
                     }
                 }

@@ -106,6 +106,7 @@ class PriorsSensor(AreaOccupancySensorBase):
                 EntityType.DOOR: prior_state.door_prior,
                 EntityType.WINDOW: prior_state.window_prior,
                 EntityType.LIGHT: prior_state.light_prior,
+                EntityType.WASP: prior_state.wasp_prior,
             }
 
             # Add priors that have non-zero values
@@ -173,11 +174,14 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             active_triggers = []
 
             for entity_id, prob_details in data.sensor_probabilities.items():
-                friendly_name = (
-                    state.attributes.get("friendly_name", entity_id)
-                    if (state := self.hass.states.get(entity_id))
-                    else entity_id
-                )
+                if entity_id == "wasp.virtual":
+                    friendly_name = "Wasp-in-the-Box"
+                else:
+                    friendly_name = (
+                        state.attributes.get("friendly_name", entity_id)
+                        if (state := self.hass.states.get(entity_id))
+                        else entity_id
+                    )
 
                 formatted_entry = (
                     f"{friendly_name} | "

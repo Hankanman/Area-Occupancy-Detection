@@ -1,8 +1,9 @@
 # Area Occupancy Detection for Home Assistant
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?branch=main)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=tests)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?branch=main&label=docs)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?label=build&link=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection%2Factions%2Fworkflows%2Fvalidate.yml)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=tests&link=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection%2Factions%2Fworkflows%2Ftest.yml)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?label=docs&link=https%3A%2F%2Fgithub.com%2FHankanman%2FArea-Occupancy-Detection%2Factions%2Fworkflows%2Fdocs.yml)
+
 
 
 

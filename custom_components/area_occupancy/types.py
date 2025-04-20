@@ -44,6 +44,7 @@ class EntityType(StrEnum):
     WINDOW = "window"
     LIGHT = "light"
     ENVIRONMENTAL = "environmental"
+    WASP = "wasp"
 
 
 # Unified configuration type
@@ -332,6 +333,7 @@ class PriorState:
     window_prior: float = field(default=MIN_PROBABILITY)
     light_prior: float = field(default=MIN_PROBABILITY)
     environmental_prior: float = field(default=MIN_PROBABILITY)
+    wasp_prior: float = field(default=MIN_PROBABILITY)
 
     # Individual entity priors using PriorData
     entity_priors: dict[str, PriorData] = field(default_factory=dict)
@@ -353,6 +355,7 @@ class PriorState:
             "window_prior",
             "light_prior",
             "environmental_prior",
+            "wasp_prior",
         ]:
             value = getattr(self, attr_name)
             if not MIN_PROBABILITY <= value <= MAX_PROBABILITY:
@@ -370,6 +373,7 @@ class PriorState:
         window_prior: float | None = None,
         light_prior: float | None = None,
         environmental_prior: float | None = None,
+        wasp_prior: float | None = None,
         entity_priors: dict[str, PriorData] | None = None,
         type_priors: dict[str, PriorData] | None = None,
         analysis_period: int | None = None,
@@ -397,6 +401,8 @@ class PriorState:
             self.environmental_prior = max(
                 MIN_PROBABILITY, min(environmental_prior, MAX_PROBABILITY)
             )
+        if wasp_prior is not None:
+            self.wasp_prior = max(MIN_PROBABILITY, min(wasp_prior, MAX_PROBABILITY))
         if entity_priors is not None:
             self.entity_priors = entity_priors
         if type_priors is not None:
@@ -461,6 +467,7 @@ class PriorState:
             EntityType.WINDOW.value: "window_prior",
             EntityType.LIGHT.value: "light_prior",
             EntityType.ENVIRONMENTAL.value: "environmental_prior",
+            EntityType.WASP.value: "wasp_prior",
         }
         if sensor_type in prior_attr_map:
             attr_name = prior_attr_map[sensor_type]
@@ -560,6 +567,7 @@ class PriorState:
             "window_prior": self.window_prior,
             "light_prior": self.light_prior,
             "environmental_prior": self.environmental_prior,
+            "wasp_prior": self.wasp_prior,
             # Serialize PriorData objects
             "entity_priors": {
                 k: v.to_dict()
@@ -586,6 +594,7 @@ class PriorState:
             window_prior=float(data.get("window_prior", MIN_PROBABILITY)),
             light_prior=float(data.get("light_prior", MIN_PROBABILITY)),
             environmental_prior=float(data.get("environmental_prior", MIN_PROBABILITY)),
+            wasp_prior=float(data.get("wasp_prior", MIN_PROBABILITY)),
             # Deserialize PriorData objects
             entity_priors={
                 k: pd
@@ -652,6 +661,7 @@ class PriorsAttributes(TypedDict):
         window: Window sensor prior probability
         light: Light prior probability
         environmental: Environmental prior probability
+        wasp: Wasp-in-the-Box prior probability
         last_updated: Last update timestamp
         total_period: Total analysis period
     """
@@ -663,6 +673,7 @@ class PriorsAttributes(TypedDict):
     window: NotRequired[str]
     light: NotRequired[str]
     environmental: NotRequired[str]
+    wasp: NotRequired[str]
     last_updated: NotRequired[str]
     total_period: NotRequired[str]
 
