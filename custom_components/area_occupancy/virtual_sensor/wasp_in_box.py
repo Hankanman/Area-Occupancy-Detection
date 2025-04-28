@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_state_change
 
 from .base import VirtualSensor
+from .coordinator import VirtualSensorCoordinator
 from .types import VirtualSensorConfig, VirtualSensorStateEnum
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class WaspInBoxSensor(VirtualSensor):
         self,
         hass: HomeAssistant,
         config: VirtualSensorConfig,
-        coordinator: Any,
+        coordinator: VirtualSensorCoordinator,
     ) -> None:
         """Initialize the Wasp in Box sensor."""
         super().__init__(hass, config, coordinator)
@@ -88,7 +89,7 @@ class WaspInBoxSensor(VirtualSensor):
     async def _update_state(self) -> None:
         """Update the sensor state."""
         now = datetime.now()
-        motion_timeout = timedelta(seconds=self._motion_timeout)
+        motion_timeout = timedelta(seconds=self._motion_timeout or 0)
 
         # Check if motion has timed out
         if (

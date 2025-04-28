@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 
 class VirtualSensorStateEnum(Enum):
@@ -19,66 +19,30 @@ class VirtualSensorStateEnum(Enum):
         return self.value
 
 
-class VirtualSensorConfig(TypedDict, total=False):
-    """Configuration for a virtual sensor."""
+class VirtualSensorState(TypedDict, total=False):
+    """State data for a virtual sensor."""
 
+    state: str
+    attributes: Dict[str, Any]
+    last_updated: Optional[str]
+
+
+class VirtualSensorConfig(TypedDict, total=False):
+    """Configuration for a virtual sensor or list of sensors."""
+
+    # Single sensor config
     type: str
     name: str
     update_interval: int
     weight: float
     enabled: bool
     options: Dict[str, Any]
+    door_entity_id: Optional[str]
+    motion_entity_id: Optional[str]
+    motion_timeout: Optional[int]
 
-
-class VirtualSensorStateData(TypedDict, total=False):
-    """State data for a virtual sensor."""
-
-    state: str
-    attributes: Dict[str, Any]
-    last_updated: str
-    last_changed: str
-
-
-class VirtualSensorEventData(TypedDict, total=False):
-    """Event data for virtual sensor events."""
-
-    entity_id: str
-    old_state: Optional[VirtualSensorStateData]
-    new_state: Optional[VirtualSensorStateData]
-
-
-class VirtualSensorOptions(TypedDict, total=False):
-    """Options for configuring a virtual sensor."""
-
-    name: str
-    update_interval: int
-    weight: float
-    enabled: bool
-    type_specific: Dict[str, Any]
-
-
-class VirtualSensorConfigEntry(TypedDict):
-    """Configuration entry for a virtual sensor."""
-
-    entry_id: str
-    data: VirtualSensorConfig
-    options: VirtualSensorOptions
-    version: int
-    domain: str
-    title: str
-    source: str
-    system_options: Dict[str, Any]
-    connection_class: str
-    unique_id: Optional[str]
-    disabled_by: Optional[str]
-
-
-class VirtualSensorState(TypedDict):
-    """State for a virtual sensor."""
-
-    state: str
-    attributes: Dict[str, Any]
-    last_updated: str
+    # List config
+    virtual_sensors: List["VirtualSensorConfig"]
 
 
 class VirtualSensorUpdateResult(TypedDict):
