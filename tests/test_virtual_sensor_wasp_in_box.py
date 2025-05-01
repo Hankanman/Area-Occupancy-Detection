@@ -1,7 +1,7 @@
 """Tests for the Wasp in Box virtual sensor."""
 
 from datetime import timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
@@ -27,29 +27,9 @@ from custom_components.area_occupancy.virtual_sensor.wasp_in_box import (
     async_setup_entry,
 )
 
-
-@pytest.fixture
-def mock_coordinator():
-    """Create a mock coordinator."""
-    coordinator = Mock()
-    coordinator.config_entry = Mock()
-    coordinator.config_entry.entry_id = "test_entry_id"
-    coordinator.inputs = Mock()
-    coordinator.inputs.door_sensors = ["binary_sensor.test_door"]
-    coordinator.inputs.motion_sensors = ["binary_sensor.test_motion"]
-    coordinator.inputs.virtual_sensors = []
-    coordinator.probabilities = Mock()
-    coordinator.probabilities.entity_types = {}
-    coordinator.device_info = {
-        "identifiers": {("area_occupancy", "test_entry_id")},
-        "name": "Test Area",
-        "model": "Area Occupancy Sensor",
-        "manufacturer": "Home Assistant",
-    }
-    coordinator.data = Mock()
-    coordinator.data.current_states = {}
-    coordinator.async_request_refresh = AsyncMock()
-    return coordinator
+# Note: Using fixtures from conftest.py:
+# - mock_coordinator
+# - mock_config_entry
 
 
 @pytest.fixture
@@ -73,7 +53,7 @@ def create_test_sensor(
 
 
 @pytest.fixture
-async def test_sensor(hass: HomeAssistant, mock_coordinator, wasp_config):  # pylint: disable=redefined-outer-name
+async def test_sensor(hass: HomeAssistant, mock_coordinator, wasp_config):
     """Create and clean up a test sensor."""
     sensor = create_test_sensor(hass, wasp_config, mock_coordinator, "test_entry_id")
     await sensor.async_added_to_hass()
@@ -81,14 +61,14 @@ async def test_sensor(hass: HomeAssistant, mock_coordinator, wasp_config):  # py
     await sensor.async_will_remove_from_hass()
 
 
-async def test_setup_disabled(hass: HomeAssistant, mock_coordinator):  # pylint: disable=redefined-outer-name
+async def test_setup_disabled(hass: HomeAssistant, mock_coordinator):
     """Test setup when sensor is disabled."""
     config: WaspInBoxConfig = {"enabled": False}
     result = await async_setup_entry(hass, config, Mock(), mock_coordinator)
     assert result is None
 
 
-async def test_setup_enabled(hass: HomeAssistant, mock_coordinator, wasp_config):  # pylint: disable=redefined-outer-name
+async def test_setup_enabled(hass: HomeAssistant, mock_coordinator, wasp_config):
     """Test setup when sensor is enabled."""
     sensor = await async_setup_entry(hass, wasp_config, Mock(), mock_coordinator)
     try:
@@ -105,7 +85,7 @@ async def test_setup_enabled(hass: HomeAssistant, mock_coordinator, wasp_config)
             await sensor.async_will_remove_from_hass()
 
 
-async def test_sensor_attributes(hass: HomeAssistant, test_sensor):  # pylint: disable=redefined-outer-name
+async def test_sensor_attributes(hass: HomeAssistant, test_sensor):
     """Test the sensor attributes are set correctly."""
     # Check initial attributes
     attrs = test_sensor.extra_state_attributes
@@ -123,7 +103,7 @@ async def test_sensor_attributes(hass: HomeAssistant, test_sensor):  # pylint: d
     assert test_sensor.available is True  # Should be True until added to HA
 
 
-async def test_basic_door_motion_interaction(test_sensor):  # pylint: disable=redefined-outer-name
+async def test_basic_door_motion_interaction(test_sensor):
     """Test basic interaction between door and motion states."""
     now = dt_util.utcnow()
 
@@ -147,7 +127,7 @@ async def test_basic_door_motion_interaction(test_sensor):  # pylint: disable=re
         assert not test_sensor.is_on
 
 
-async def test_state_restoration(hass: HomeAssistant, mock_coordinator, wasp_config):  # pylint: disable=redefined-outer-name
+async def test_state_restoration(hass: HomeAssistant, mock_coordinator, wasp_config):
     """Test restoring state from previous run."""
     now = dt_util.utcnow()
     last_door_time = now - timedelta(minutes=5)
@@ -202,7 +182,7 @@ async def test_state_restoration(hass: HomeAssistant, mock_coordinator, wasp_con
             await sensor.async_will_remove_from_hass()
 
 
-async def test_max_duration_timeout(test_sensor):  # pylint: disable=redefined-outer-name
+async def test_max_duration_timeout(test_sensor):
     """Test max duration timeout functionality."""
     now = dt_util.utcnow()
     max_duration = 300  # 5 minutes
@@ -226,7 +206,7 @@ async def test_max_duration_timeout(test_sensor):  # pylint: disable=redefined-o
         assert not test_sensor.is_on
 
 
-async def test_coordinator_state_updates(test_sensor, mock_coordinator):  # pylint: disable=redefined-outer-name
+async def test_coordinator_state_updates(test_sensor, mock_coordinator):
     """Test that coordinator state is updated properly."""
     # Simulate occupancy detection
     test_sensor._process_door_state("binary_sensor.test_door", STATE_OFF)
@@ -241,7 +221,7 @@ async def test_coordinator_state_updates(test_sensor, mock_coordinator):  # pyli
     assert state_data["availability"] is True
 
 
-async def test_invalid_entity_handling(test_sensor):  # pylint: disable=redefined-outer-name
+async def test_invalid_entity_handling(test_sensor):
     """Test handling of invalid or unavailable entities."""
     # Verify warning is logged when processing invalid entity
     test_sensor._process_door_state("binary_sensor.nonexistent_door", STATE_ON)

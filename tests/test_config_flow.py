@@ -9,9 +9,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-# Import constants from the custom component
 from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -73,7 +71,6 @@ logging.basicConfig(level=logging.DEBUG)
 _LOGGER = logging.getLogger(__name__)
 
 # --- Test Data ---
-MOCK_CONFIG_ENTRY_ID = "test_config_entry_1"
 MOCK_AREA_NAME = "Living Room"
 MOCK_MOTION_SENSOR_1 = "binary_sensor.motion_living_room"
 MOCK_DOOR_SENSOR_1 = "binary_sensor.door_living_room"
@@ -87,10 +84,8 @@ MINIMAL_USER_INPUT_STRUCTURED = {
     "motion": {
         CONF_PRIMARY_OCCUPANCY_SENSOR: MOCK_PRIMARY_INDICATOR,
         CONF_MOTION_SENSORS: [MOCK_MOTION_SENSOR_1],
-        # Add default weights if needed by validation before creation
         CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
     },
-    # Add other sections with default/empty values if required by schema/validation
     "doors": {CONF_DOOR_SENSORS: []},
     "windows": {CONF_WINDOW_SENSORS: []},
     "lights": {CONF_LIGHTS: []},
@@ -161,37 +156,16 @@ FULL_USER_INPUT_STRUCTURED = {
     },
 }
 
-# --- Fixtures ---
+# Note: Using fixtures from conftest.py:
+# - mock_recorder
+# - mock_config_entry
+# - setup_test_entities
+# - init_integration
 
 
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Enable custom integrations defined in the test environment."""
-    return
-
-
-@pytest.fixture
-async def mock_ha(hass: HomeAssistant):
-    """Set up a mock Home Assistant instance."""
-    # Mock essential components ONLY IF NEEDED for the flow itself.
-    # Often, the flow tests don't need fully set up components.
-    # await setup.async_setup_component(hass, "config", {})
-    # await setup.async_setup_component(hass, SENSOR_DOMAIN, {})
-    # await setup.async_setup_component(hass, BINARY_SENSOR_DOMAIN, {})
-
-    # Avoid setting states or registry entries directly here.
-    # Let the main integration setup handle entities if needed for flow validation,
-    # or mock specific hass.states.get calls if entity existence check is the only requirement.
-
-    return hass
-
-
-# --- Test Cases ---
-
-
-async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -> None:  # pylint: disable=redefined-outer-name
+async def test_config_flow_user_success(hass: HomeAssistant, mock_recorder) -> None:
     """Test the user initialization flow with valid data."""
-    result = await mock_ha.config_entries.flow.async_init(
+    result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
@@ -200,10 +174,10 @@ async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -
     assert result.get("step_id") == "user"
 
     with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
-        result2 = await mock_ha.config_entries.flow.async_configure(
+        result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input=FULL_USER_INPUT_STRUCTURED
         )
-        await mock_ha.async_block_till_done()
+        await hass.async_block_till_done()
 
     assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result2.get("title") == MOCK_AREA_NAME
@@ -216,11 +190,10 @@ async def test_config_flow_user_success(mock_ha: HomeAssistant, mock_recorder) -
 
 
 async def test_config_flow_user_input_errors(
-    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
-    mock_recorder,  # pylint: disable=redefined-outer-name
+    hass: HomeAssistant, mock_recorder
 ) -> None:
     """Test user flow with various input errors."""
-    result = await mock_ha.config_entries.flow.async_init(
+    result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     flow_id = result["flow_id"]
@@ -229,42 +202,24 @@ async def test_config_flow_user_input_errors(
     bad_input = copy.deepcopy(FULL_USER_INPUT_STRUCTURED)
     bad_input["motion"][CONF_PRIMARY_OCCUPANCY_SENSOR] = "not_an_entity"
     with pytest.raises(Exception):  # noqa: B017
-        await mock_ha.config_entries.flow.async_configure(flow_id, user_input=bad_input)
+        await hass.config_entries.flow.async_configure(flow_id, user_input=bad_input)
 
 
-async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> None:  # pylint: disable=redefined-outer-name
+async def test_options_flow_success(
+    hass: HomeAssistant,
+    mock_recorder,
+    mock_config_entry,
+    setup_test_entities,
+) -> None:
     """Test the options flow for updating settings."""
     _LOGGER.debug("Starting test_options_flow_success")
-    # 1. Set up an initial config entry
-    # Use MockConfigEntry provided by the fixture
-    entry = MockConfigEntry(
-        version=1,
-        domain=DOMAIN,
-        entry_id=MOCK_CONFIG_ENTRY_ID,
-        unique_id=MOCK_CONFIG_ENTRY_ID,  # Use entry_id as unique_id for simplicity
-        title=MOCK_AREA_NAME,
-        data={
-            CONF_NAME: MOCK_AREA_NAME,
-            CONF_PRIMARY_OCCUPANCY_SENSOR: MOCK_PRIMARY_INDICATOR,
-            CONF_MOTION_SENSORS: [MOCK_MOTION_SENSOR_1],
-            # Other required data fields based on config flow schema
-        },
-        options={
-            CONF_THRESHOLD: MOCK_THRESHOLD,
-            CONF_HISTORY_PERIOD: MOCK_HISTORY_DURATION,
-            # Other initial options
-        },
-        source=config_entries.SOURCE_USER,
-    )
-    entry.add_to_hass(mock_ha)
-
-    # Mock setup to prevent actual component loading during options flow
-    with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
-        assert await mock_ha.config_entries.async_setup(entry.entry_id)
-        await mock_ha.async_block_till_done()
+    # 1. Set up an initial config entry using mock_config_entry fixture
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     # 2. Initialize the options flow
-    result = await mock_ha.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
     _LOGGER.debug("Initial options flow result: %s", result)
 
     assert result is not None
@@ -279,98 +234,108 @@ async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> No
     updated_options_structured = {
         "motion": {
             # Include existing motion sensors if they shouldn't change
-            CONF_PRIMARY_OCCUPANCY_SENSOR: entry.options.get(
+            CONF_PRIMARY_OCCUPANCY_SENSOR: mock_config_entry.options.get(
                 CONF_PRIMARY_OCCUPANCY_SENSOR, MOCK_PRIMARY_INDICATOR
             ),
-            CONF_MOTION_SENSORS: entry.options.get(
+            CONF_MOTION_SENSORS: mock_config_entry.options.get(
                 CONF_MOTION_SENSORS, [MOCK_MOTION_SENSOR_1]
             ),
-            CONF_WEIGHT_MOTION: entry.options.get(
+            CONF_WEIGHT_MOTION: mock_config_entry.options.get(
                 CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION
             ),
         },
         # Include other sections with their current or default values
         "doors": {  # Example
-            CONF_DOOR_SENSORS: entry.options.get(CONF_DOOR_SENSORS, []),
-            CONF_DOOR_ACTIVE_STATE: entry.options.get(
+            CONF_DOOR_SENSORS: mock_config_entry.options.get(CONF_DOOR_SENSORS, []),
+            CONF_DOOR_ACTIVE_STATE: mock_config_entry.options.get(
                 CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
             ),
-            CONF_WEIGHT_DOOR: entry.options.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            CONF_WEIGHT_DOOR: mock_config_entry.options.get(
+                CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR
+            ),
         },
         "windows": {
-            CONF_WINDOW_SENSORS: entry.options.get(CONF_WINDOW_SENSORS, []),
-            CONF_WINDOW_ACTIVE_STATE: entry.options.get(
+            CONF_WINDOW_SENSORS: mock_config_entry.options.get(CONF_WINDOW_SENSORS, []),
+            CONF_WINDOW_ACTIVE_STATE: mock_config_entry.options.get(
                 CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
             ),
-            CONF_WEIGHT_WINDOW: entry.options.get(
+            CONF_WEIGHT_WINDOW: mock_config_entry.options.get(
                 CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW
             ),
         },
         "lights": {
-            CONF_LIGHTS: entry.options.get(CONF_LIGHTS, []),
-            CONF_WEIGHT_LIGHT: entry.options.get(
+            CONF_LIGHTS: mock_config_entry.options.get(CONF_LIGHTS, []),
+            CONF_WEIGHT_LIGHT: mock_config_entry.options.get(
                 CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT
             ),
         },
         "media": {
-            CONF_MEDIA_DEVICES: entry.options.get(CONF_MEDIA_DEVICES, []),
-            CONF_MEDIA_ACTIVE_STATES: entry.options.get(
+            CONF_MEDIA_DEVICES: mock_config_entry.options.get(CONF_MEDIA_DEVICES, []),
+            CONF_MEDIA_ACTIVE_STATES: mock_config_entry.options.get(
                 CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
             ),
-            CONF_WEIGHT_MEDIA: entry.options.get(
+            CONF_WEIGHT_MEDIA: mock_config_entry.options.get(
                 CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA
             ),
         },
         "appliances": {
-            CONF_APPLIANCES: entry.options.get(CONF_APPLIANCES, []),
-            CONF_APPLIANCE_ACTIVE_STATES: entry.options.get(
+            CONF_APPLIANCES: mock_config_entry.options.get(CONF_APPLIANCES, []),
+            CONF_APPLIANCE_ACTIVE_STATES: mock_config_entry.options.get(
                 CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
             ),
-            CONF_WEIGHT_APPLIANCE: entry.options.get(
+            CONF_WEIGHT_APPLIANCE: mock_config_entry.options.get(
                 CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
             ),
         },
         "environmental": {
-            CONF_ILLUMINANCE_SENSORS: entry.options.get(CONF_ILLUMINANCE_SENSORS, []),
-            CONF_HUMIDITY_SENSORS: entry.options.get(CONF_HUMIDITY_SENSORS, []),
-            CONF_TEMPERATURE_SENSORS: entry.options.get(CONF_TEMPERATURE_SENSORS, []),
-            CONF_WEIGHT_ENVIRONMENTAL: entry.options.get(
+            CONF_ILLUMINANCE_SENSORS: mock_config_entry.options.get(
+                CONF_ILLUMINANCE_SENSORS, []
+            ),
+            CONF_HUMIDITY_SENSORS: mock_config_entry.options.get(
+                CONF_HUMIDITY_SENSORS, []
+            ),
+            CONF_TEMPERATURE_SENSORS: mock_config_entry.options.get(
+                CONF_TEMPERATURE_SENSORS, []
+            ),
+            CONF_WEIGHT_ENVIRONMENTAL: mock_config_entry.options.get(
                 CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
             ),
         },
         "wasp_in_box": {
-            CONF_WASP_ENABLED: entry.options.get(CONF_WASP_ENABLED, False),
-            CONF_WASP_MOTION_TIMEOUT: entry.options.get(
+            CONF_WASP_ENABLED: mock_config_entry.options.get(CONF_WASP_ENABLED, False),
+            CONF_WASP_MOTION_TIMEOUT: mock_config_entry.options.get(
                 CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
             ),
-            CONF_WASP_WEIGHT: entry.options.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
-            CONF_WASP_MAX_DURATION: entry.options.get(
+            CONF_WASP_WEIGHT: mock_config_entry.options.get(
+                CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
+            ),
+            CONF_WASP_MAX_DURATION: mock_config_entry.options.get(
                 CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
             ),
         },
         "parameters": {
             CONF_THRESHOLD: new_threshold,  # Update the threshold
             CONF_HISTORY_PERIOD: new_history,  # Update the history period
-            CONF_DECAY_ENABLED: entry.options.get(
+            CONF_DECAY_ENABLED: mock_config_entry.options.get(
                 CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
             ),
-            CONF_DECAY_WINDOW: entry.options.get(
+            CONF_DECAY_WINDOW: mock_config_entry.options.get(
                 CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
             ),
-            CONF_DECAY_MIN_DELAY: entry.options.get(
+            CONF_DECAY_MIN_DELAY: mock_config_entry.options.get(
                 CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
             ),
-            CONF_HISTORICAL_ANALYSIS_ENABLED: entry.options.get(
+            CONF_HISTORICAL_ANALYSIS_ENABLED: mock_config_entry.options.get(
                 CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
             ),
         },
     }
 
-    result2 = await mock_ha.config_entries.options.async_configure(
+    result2 = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input=updated_options_structured,  # Use structured input
     )
-    await mock_ha.async_block_till_done()
+    await hass.async_block_till_done()
     _LOGGER.debug("Configure options flow result: %s", result2)
 
     # 4. Verify the options flow finished and updated the entry's options
@@ -381,17 +346,16 @@ async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> No
     assert result2.get("data", {}).get(CONF_HISTORY_PERIOD) == new_history
 
     # Check the actual config entry options are updated
-    assert entry.options is not None
+    assert mock_config_entry.options is not None
     _LOGGER.debug("Finished test_options_flow_success")
 
 
 # Add new test for auto-adding primary sensor
 async def test_config_flow_auto_add_primary_sensor(
-    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
-    mock_recorder,  # pylint: disable=redefined-outer-name
+    hass: HomeAssistant, mock_recorder
 ) -> None:
     """Test that primary sensor is auto-added to motion sensors."""
-    result = await mock_ha.config_entries.flow.async_init(
+    result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
@@ -402,10 +366,10 @@ async def test_config_flow_auto_add_primary_sensor(
     test_input["motion"][CONF_MOTION_SENSORS] = ["binary_sensor.other_motion"]
 
     with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
-        result2 = await mock_ha.config_entries.flow.async_configure(
+        result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input=test_input
         )
-        await mock_ha.async_block_till_done()
+        await hass.async_block_till_done()
 
     assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
     # Verify primary sensor was added to motion sensors
@@ -414,11 +378,10 @@ async def test_config_flow_auto_add_primary_sensor(
 
 # Add test for section validation
 async def test_config_flow_section_validation(
-    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
-    mock_recorder,  # pylint: disable=redefined-outer-name
+    hass: HomeAssistant, mock_recorder
 ) -> None:
     """Test validation of individual sections."""
-    result = await mock_ha.config_entries.flow.async_init(
+    result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
@@ -427,7 +390,7 @@ async def test_config_flow_section_validation(
     test_input["media"]["media_devices"] = ["media_player.test"]
     test_input["media"]["media_active_states"] = []  # Empty active states
 
-    result2 = await mock_ha.config_entries.flow.async_configure(
+    result2 = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input=test_input
     )
     assert result2.get("type") == data_entry_flow.FlowResultType.FORM
@@ -443,11 +406,10 @@ async def test_config_flow_section_validation(
 
 # Add test for state translation
 async def test_config_flow_state_translation(
-    mock_ha: HomeAssistant,  # pylint: disable=redefined-outer-name
-    mock_recorder,  # pylint: disable=redefined-outer-name
+    hass: HomeAssistant, mock_recorder
 ) -> None:
     """Test translation of display states to internal states."""
-    result = await mock_ha.config_entries.flow.async_init(
+    result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
@@ -455,10 +417,10 @@ async def test_config_flow_state_translation(
     test_input["doors"]["door_active_state"] = "open"  # Lowercase for schema
 
     with patch(f"custom_components.{DOMAIN}.async_setup_entry", return_value=True):
-        result2 = await mock_ha.config_entries.flow.async_configure(
+        result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input=test_input
         )
-        await mock_ha.async_block_till_done()
+        await hass.async_block_till_done()
 
     assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result2.get("data", {}).get("door_active_state") == "open"
