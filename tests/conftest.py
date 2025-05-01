@@ -4,12 +4,13 @@ import asyncio
 import os
 import sys
 from collections.abc import Generator
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.recorder.const import DOMAIN as RECORDER_DOMAIN
-from homeassistant.const import STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.recorder import DATA_INSTANCE
@@ -51,6 +52,8 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -59,13 +62,20 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    DOMAIN,
+)
+from custom_components.area_occupancy.probabilities import Probabilities
+from custom_components.area_occupancy.types import (
+    EntityType,
+    PriorState,
+    ProbabilityConfig,
+    SensorInputs,
 )
 
 # Make parent directory available to tests
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))  # noqa: PTH100, PTH118, PTH120
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-
-pytest_plugins = "pytest_homeassistant_custom_component"  # pylint: disable=invalid-name
+pytest_plugins = "pytest_homeassistant_custom_component"
 
 # Test data
 TEST_CONFIG = {
@@ -98,6 +108,10 @@ TEST_CONFIG = {
     CONF_DECAY_MIN_DELAY: DEFAULT_DECAY_MIN_DELAY,
 }
 
+# Common test constants
+TEST_ENTRY_ID = "test_entry_id"
+TEST_UNIQUE_ID = "uniqueid123"
+
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(
@@ -105,6 +119,17 @@ def auto_enable_custom_integrations(
 ) -> Generator[None]:
     """Enable custom integrations for testing."""
     return  # type: ignore
+
+
+@pytest.fixture
+def mock_hass() -> MagicMock:
+    """Return a MagicMock HomeAssistant instance with minimal config for testing."""
+    mock = MagicMock(spec=HomeAssistant)
+    mock.data = {DOMAIN: {}}
+    mock_config = MagicMock()
+    mock_config.config_dir = "/tmp"  # noqa: S108
+    mock.config = mock_config
+    return mock
 
 
 @pytest.fixture
@@ -165,11 +190,101 @@ def mock_recorder(hass: HomeAssistant):
 def mock_config_entry() -> MockConfigEntry:
     """Create a mock config entry for testing."""
     return MockConfigEntry(
-        domain="area_occupancy",
+        domain=DOMAIN,
         data=TEST_CONFIG,
         title="Test Area",
-        unique_id="uniqueid123",
+        unique_id=TEST_UNIQUE_ID,
+        entry_id=TEST_ENTRY_ID,
     )
+
+
+@pytest.fixture
+def mock_probabilities() -> MagicMock:
+    """Create a mock probabilities provider with default/fallback values."""
+    mock = MagicMock(spec=Probabilities)
+    mock.get_default_prior.return_value = 0.5
+    mock.is_entity_active.side_effect = lambda eid, state: state == STATE_ON
+    mock.get_sensor_config.return_value = {
+        "prob_given_true": DEFAULT_PROB_GIVEN_TRUE,
+        "prob_given_false": DEFAULT_PROB_GIVEN_FALSE,
+        "default_prior": 0.5,
+        "weight": 1.0,
+        "active_states": {STATE_ON},
+    }
+    mock.get_entity_type.return_value = EntityType.MOTION
+    mock.entity_types = {
+        "binary_sensor.test": EntityType.MOTION,
+        "binary_sensor.test1": EntityType.MOTION,
+        "binary_sensor.test2": EntityType.MOTION,
+        "binary_sensor.test3": EntityType.LIGHT,
+    }
+    return mock
+
+
+@pytest.fixture
+def mock_sensor_inputs() -> MagicMock:
+    """Create a mock sensor inputs with default test configuration."""
+    mock = MagicMock(spec=SensorInputs)
+    mock.primary_sensor = "binary_sensor.motion1"
+    mock.motion_sensors = TEST_CONFIG[CONF_MOTION_SENSORS]
+    mock.media_devices = TEST_CONFIG[CONF_MEDIA_DEVICES]
+    mock.appliances = TEST_CONFIG[CONF_APPLIANCES]
+    mock.door_sensors = TEST_CONFIG[CONF_DOOR_SENSORS]
+    mock.window_sensors = TEST_CONFIG[CONF_WINDOW_SENSORS]
+    mock.lights = TEST_CONFIG[CONF_LIGHTS]
+    mock.is_valid_entity_id = SensorInputs.is_valid_entity_id
+    return mock
+
+
+@pytest.fixture
+def mock_coordinator(
+    mock_probabilities: MagicMock, mock_sensor_inputs: MagicMock
+) -> MagicMock:
+    """Create a mock coordinator with standard configuration."""
+    coordinator = MagicMock()
+    coordinator.config_entry = MagicMock()
+    coordinator.config_entry.entry_id = TEST_ENTRY_ID
+    coordinator.inputs = mock_sensor_inputs
+    coordinator.probabilities = mock_probabilities
+    coordinator.config = TEST_CONFIG
+    coordinator.device_info = {
+        "identifiers": {(DOMAIN, TEST_ENTRY_ID)},
+        "name": TEST_CONFIG[CONF_NAME],
+        "model": "Area Occupancy Sensor",
+        "manufacturer": "Home Assistant",
+    }
+    coordinator.data = MagicMock()
+    coordinator.data.current_states = {}
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.update_learned_priors = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
+    return coordinator
+
+
+@pytest.fixture
+def mock_prior_state() -> PriorState:
+    """Create a mock PriorState object with sample learned priors."""
+    state = PriorState()
+    state.update_entity_prior(
+        "binary_sensor.test",
+        prob_given_true=0.85,
+        prob_given_false=0.15,
+        prior=0.55,
+        timestamp=datetime.now().isoformat(),
+    )
+    return state
+
+
+@pytest.fixture
+def default_config() -> ProbabilityConfig:
+    """Return a default probability configuration for testing."""
+    return {
+        "prob_given_true": DEFAULT_PROB_GIVEN_TRUE,
+        "prob_given_false": DEFAULT_PROB_GIVEN_FALSE,
+        "default_prior": 0.5,
+        "weight": 1.0,
+        "active_states": {STATE_ON},
+    }
 
 
 @pytest.fixture
@@ -230,9 +345,9 @@ async def setup_test_entities(hass: HomeAssistant) -> None:
 @pytest.fixture
 async def init_integration(
     hass: HomeAssistant,
-    mock_config_entry: MockConfigEntry,  # pylint: disable=redefined-outer-name
-    mock_recorder: MagicMock,  # pylint: disable=redefined-outer-name
-    setup_test_entities,  # pylint: disable=redefined-outer-name
+    mock_config_entry: MockConfigEntry,
+    mock_recorder: MagicMock,
+    setup_test_entities,
 ) -> MockConfigEntry:
     """Set up the area occupancy integration for testing."""
     # Set up recorder component first
