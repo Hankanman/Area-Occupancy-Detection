@@ -26,14 +26,16 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DOMAIN,
     MIN_PROBABILITY,
 )
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator  # noqa: TID252
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,  # noqa: TID252
+)
 from custom_components.area_occupancy.exceptions import (  # noqa: TID252
     CalculationError,
     StateError,
     StorageError,
 )
-from custom_components.area_occupancy.types import EntityType  # noqa: TID252
 from custom_components.area_occupancy.types import (
+    EntityType,  # noqa: TID252
     OccupancyCalculationResult,
     PriorData,
     PriorState,
