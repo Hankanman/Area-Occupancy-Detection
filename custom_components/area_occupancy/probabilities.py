@@ -27,6 +27,8 @@ from .const import (
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_TEMPERATURE_SENSORS,
+    CONF_WASP_ENABLED,
+    CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -39,6 +41,7 @@ from .const import (
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -62,6 +65,9 @@ from .const import (
     MOTION_DEFAULT_PRIOR,
     MOTION_PROB_GIVEN_FALSE,
     MOTION_PROB_GIVEN_TRUE,
+    WASP_DEFAULT_PRIOR,
+    WASP_PROB_GIVEN_FALSE,
+    WASP_PROB_GIVEN_TRUE,
     WINDOW_DEFAULT_PRIOR,
     WINDOW_PROB_GIVEN_FALSE,
     WINDOW_PROB_GIVEN_TRUE,
@@ -179,6 +185,24 @@ class Probabilities:
                     _validate_entity_id(entity_id, config_key)
                     self.entity_types[entity_id] = sensor_type
 
+            # --- Add Wasp in Box Mapping --- >
+            # Check if Wasp in Box is enabled in the main config/options
+            # Note: Config flow flattens options, so check directly in self.config
+            if self.config.get(CONF_WASP_ENABLED, False):
+                # Assume a single Wasp sensor per config entry for now
+                # Construct the expected Wasp entity ID
+                # We need the entry_id which is not directly available here.
+                # Let's assume the coordinator will add the entity ID later.
+                # For now, we prepare the probabilities, but mapping needs adjustment.
+                # --- This mapping part needs rethinking --- #
+                # We can't reliably predict the entry_id here.
+                # Alternative: Coordinator updates entity_types after Wasp sensor is created.
+                # For now, we will just prepare the config in _build_sensor_configs.
+                # The coordinator will need to ensure the Wasp sensor entity_id is added
+                # to self.entity_types map later.
+                pass  # Mapping will be handled elsewhere
+            # < --- End Wasp Mapping ---
+
         except (TypeError, ValueError) as err:
             # Catch potential unexpected type or value errors during entity processing
             # Raise directly, chaining the original exception
@@ -219,6 +243,7 @@ class Probabilities:
                 "environmental": self.config.get(
                     CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
                 ),
+                "wasp_in_box": self.config.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
             }
 
             # Validate weights
@@ -373,6 +398,13 @@ class Probabilities:
                     "prior": ENVIRONMENTAL_DEFAULT_PRIOR,
                     "active_states": {STATE_ON},
                 },  # Assuming environmental is active when 'on' (needs data)
+                "wasp_in_box": {
+                    "prob_true": WASP_PROB_GIVEN_TRUE,
+                    "prob_false": WASP_PROB_GIVEN_FALSE,
+                    "prior": WASP_DEFAULT_PRIOR,
+                    "weight_key": CONF_WASP_WEIGHT,
+                    "active_states": {STATE_ON},
+                },
             }
             # --- End Sensor Type Specifics ---
 
@@ -433,12 +465,35 @@ class Probabilities:
                     )
                     active_states_set = {STATE_ON}  # Default fallback
 
+                # Determine weight dynamically based on key or default
+                weight_key = specifics.get("weight_key")
+                weight_value = (
+                    self.config.get(
+                        weight_key, self._sensor_weights.get(sensor_type)
+                    )  # Try config first
+                    if weight_key
+                    else self._sensor_weights.get(
+                        sensor_type
+                    )  # Fallback to pre-calculated weight
+                )
+                if weight_value is None:
+                    # Use a default if still None (e.g., for Wasp if key missing somehow)
+                    weight_value = self._sensor_weights.get(
+                        sensor_type, 0.5
+                    )  # Fallback to 0.5
+                    _LOGGER.warning(
+                        "Could not determine weight for sensor type '%s' using key '%s' or default. Using fallback %.2f",
+                        sensor_type,
+                        weight_key,
+                        weight_value,
+                    )
+
                 # Build the config dictionary
                 current_config: ProbabilityConfig = {
                     "prob_given_true": specifics["prob_true"],
                     "prob_given_false": specifics["prob_false"],
                     "default_prior": specifics["prior"],
-                    "weight": self._sensor_weights[sensor_type],
+                    "weight": float(weight_value),  # Ensure weight is float
                     "active_states": active_states_set,
                 }
                 configs[sensor_type] = current_config
