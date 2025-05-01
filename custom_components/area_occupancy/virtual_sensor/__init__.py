@@ -1,118 +1,97 @@
-"""Virtual sensor framework for Area Occupancy Detection."""
+"""Virtual sensor package for Area Occupancy Detection."""
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
-from typing import Dict, Optional, Type, cast
+from typing import cast
 
-import voluptuous as vol
+from custom_components.area_occupancy.const import (
+    CONF_WASP_ENABLED,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_WEIGHT,
+    DEFAULT_WASP_MAX_DURATION,
+    DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_WEIGHT,
+)
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.types import WaspInBoxConfig
+
+from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .base import VirtualSensor
-from .config import validate_virtual_sensor_config
-from .const import CONF_VIRTUAL_SENSOR_TYPE, DEFAULT_VIRTUAL_SENSOR_UPDATE_INTERVAL
-from .coordinator import VirtualSensorCoordinator
-from .exceptions import VirtualSensorTypeError
-from .types import VirtualSensorConfig
-from .wasp_in_box import WaspInBoxSensor
+from .wasp_in_box import async_setup_entry as setup_wasp_in_box
 
 _LOGGER = logging.getLogger(__name__)
-
-# Map of virtual sensor types to their implementation classes
-VIRTUAL_SENSOR_TYPES: Dict[str, Type[VirtualSensor]] = {
-    "wasp_in_box": WaspInBoxSensor,
-}
-
-__all__ = [
-    "VirtualSensor",
-    "WaspInBoxSensor",
-    "VIRTUAL_SENSOR_TYPES",
-    "CONF_VIRTUAL_SENSOR_TYPE",
-    "async_setup_virtual_sensors",
-]
-
-# Schema for virtual sensors configuration
-VIRTUAL_SENSORS_CONFIG_SCHEMA = vol.Schema(
-    {
-        vol.Required("virtual_sensors"): vol.All(
-            cv.ensure_list,
-            [validate_virtual_sensor_config],
-        ),
-    }
-)
 
 
 async def async_setup_virtual_sensors(
     hass: HomeAssistant,
-    config: VirtualSensorConfig,
-    update_interval: Optional[timedelta] = None,
-) -> Optional[VirtualSensorCoordinator]:
-    """Set up virtual sensors from configuration.
-
-    Args:
-        hass: The Home Assistant instance.
-        config: The configuration dictionary.
-        update_interval: Optional update interval for the coordinator.
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+    coordinator: AreaOccupancyCoordinator,
+) -> list[BinarySensorEntity]:
+    """Set up virtual sensors for the area occupancy detection integration.
 
     Returns:
-        The virtual sensor coordinator if setup succeeds, None otherwise.
+        A list of created virtual sensor entities.
 
     """
-    try:
-        # Validate configuration
+    _LOGGER.debug(
+        "Setting up virtual sensors for area %s",
+        coordinator.config.get("name", "Unknown"),
+    )
+
+    created_sensors: list[BinarySensorEntity] = []
+
+    # Check for flattened wasp settings - the config flow flattens section dictionaries
+    config = coordinator.config
+    wasp_enabled = config.get(CONF_WASP_ENABLED, False)
+
+    _LOGGER.debug("Checking for wasp settings in coordinator config: %s", config)
+
+    # Set up the Wasp in Box sensor if enabled
+    if wasp_enabled:
+        _LOGGER.debug("Found wasp enabled in config: %s", wasp_enabled)
         try:
-            config = cast(VirtualSensorConfig, VIRTUAL_SENSORS_CONFIG_SCHEMA(config))
-        except vol.Invalid as err:
-            _LOGGER.error("Invalid virtual sensors configuration: %s", err)
-            return None
+            # Construct the dict
+            wasp_config_dict: WaspInBoxConfig = {
+                "enabled": True,
+                "motion_timeout": config.get(
+                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                ),
+                "weight": config.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+                "max_duration": config_entry.data.get(
+                    CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                ),
+            }
 
-        # Create coordinator
-        coordinator = VirtualSensorCoordinator(
-            hass,
-            "Virtual Sensor Coordinator",
-            update_interval
-            or timedelta(seconds=DEFAULT_VIRTUAL_SENSOR_UPDATE_INTERVAL),
-        )
+            _LOGGER.debug("Created wasp config dict: %s", wasp_config_dict)
 
-        # Get virtual sensor configurations
-        sensor_configs = config.get("virtual_sensors", [])
-        if not sensor_configs:
-            _LOGGER.warning("No virtual sensors configured")
-            return coordinator
+            # Get the sensor instance and pass the coordinator
+            wasp_sensor = await setup_wasp_in_box(
+                hass,
+                cast(WaspInBoxConfig, wasp_config_dict),
+                async_add_entities,  # Keep this for compatibility with function signature
+                coordinator,
+            )
 
-        # Set up each virtual sensor
-        for sensor_config in sensor_configs:
-            try:
-                sensor_type = sensor_config.get(CONF_VIRTUAL_SENSOR_TYPE)
-                if sensor_type not in VIRTUAL_SENSOR_TYPES:
-                    raise VirtualSensorTypeError(
-                        f"Unsupported virtual sensor type: {sensor_type}"
-                    )
-
-                sensor_class = VIRTUAL_SENSOR_TYPES[sensor_type]
-                sensor = sensor_class(hass, sensor_config, coordinator)
-
-                # Add sensor to coordinator
-                await coordinator.async_add_sensor(
-                    sensor_config.get("name", f"virtual_sensor_{sensor_type}"),
-                    sensor,
+            if wasp_sensor:
+                created_sensors.append(wasp_sensor)
+                _LOGGER.debug(
+                    "Successfully created Wasp in Box sensor: %s",
+                    getattr(wasp_sensor, "unique_id", "Unknown"),
+                )
+            else:
+                _LOGGER.warning(
+                    "Wasp in Box sensor setup did not return a sensor instance"
                 )
 
-            except Exception as err:
-                _LOGGER.error(
-                    "Failed to set up virtual sensor %s: %s",
-                    sensor_config.get("name", "unknown"),
-                    err,
-                    exc_info=True,
-                )
-                continue
+        except Exception:
+            _LOGGER.exception("Failed to set up Wasp in Box sensor")
 
-        # Start coordinator
-        await coordinator.async_config_entry_first_refresh()
-        return coordinator
-
-    except Exception as err:
-        _LOGGER.error("Failed to set up virtual sensors: %s", err, exc_info=True)
-        return None
+    # Add other virtual sensors here as they are implemented
+    _LOGGER.debug("Created %d virtual sensors", len(created_sensors))
+    return created_sensors
