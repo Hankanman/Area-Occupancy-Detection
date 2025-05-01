@@ -38,6 +38,48 @@ class AreaOccupancyStore(Store[StoredData]):
         """Create default storage structure."""
         return StoredData(instances={})
 
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict
+    ) -> dict:
+        """Migrate to the new version."""
+        _LOGGER.debug(
+            "Migrating storage from %s.%s to %s.%s",
+            old_major_version,
+            old_minor_version,
+            self._current_version,
+            self._current_minor_version,
+        )
+
+        data = old_data
+
+        # Handle migration for any version that's not current
+        if old_major_version != self._current_version:
+            _LOGGER.debug(
+                "Migrating from version %s to %s",
+                old_major_version,
+                self._current_version,
+            )
+            # Create new data structure
+            empty_storage = self.create_empty_storage()
+            new_data = dict(empty_storage)
+
+            # If old data had instances, migrate them
+            if "instances" in data:
+                new_data["instances"] = data["instances"]
+
+            data = new_data
+
+        # Add any future version migrations here as needed
+        # This structure allows for step-by-step migrations if needed
+        # For example:
+        # if old_major_version < 7:
+        #     data = migrate_to_7(data)
+        # if old_major_version < 8:
+        #     data = migrate_to_8(data)
+        # etc.
+
+        return data
+
     async def async_remove_instance(self, entry_id: str) -> bool:
         """Remove data for a specific instance ID from storage.
 

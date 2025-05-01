@@ -11,6 +11,7 @@ import logging
 from typing import Any, cast
 
 import voluptuous as vol
+
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
@@ -56,6 +57,10 @@ from .const import (
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -74,6 +79,9 @@ from .const import (
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
+    DEFAULT_WASP_MAX_DURATION,
+    DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -565,6 +573,54 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the wasp in box section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_WASP_ENABLED, default=defaults.get(CONF_WASP_ENABLED, False)
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_WASP_MOTION_TIMEOUT,
+                default=defaults.get(
+                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=3600,
+                    step=60,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
+                ),
+            ),
+            vol.Optional(
+                CONF_WASP_WEIGHT,
+                default=defaults.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+            vol.Optional(
+                CONF_WASP_MAX_DURATION,
+                default=defaults.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=86400,  # 24 hours in seconds
+                    step=300,  # 5-minute increments
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
+                ),
+            ),
+        }
+    )
+
+
 def create_schema(
     hass: HomeAssistant,
     defaults: dict[str, Any] | None = None,
@@ -628,6 +684,10 @@ def create_schema(
     )
     schema_dict[vol.Required("environmental")] = section(
         _create_environmental_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("wasp_in_box")] = section(
+        _create_wasp_in_box_section_schema(defaults),
+        {"collapsed": True},
     )
     schema_dict[vol.Required("parameters")] = section(
         _create_parameters_section_schema(defaults), {"collapsed": True}
@@ -773,9 +833,25 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 # Flatten sectioned data
                 flattened_input = {}
                 for key, value in user_input.items():
+                    # Check if the key corresponds to a section dictionary
                     if isinstance(value, dict):
-                        flattened_input.update(value)
+                        # Check if it's the wasp_in_box section specifically
+                        if key == "wasp_in_box":
+                            # Flatten wasp settings using const keys
+                            flattened_input[CONF_WASP_ENABLED] = value.get(
+                                CONF_WASP_ENABLED, False
+                            )
+                            flattened_input[CONF_WASP_MOTION_TIMEOUT] = value.get(
+                                CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                            )
+                            flattened_input[CONF_WASP_WEIGHT] = value.get(
+                                CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
+                            )
+                        else:
+                            # Flatten other sections as before
+                            flattened_input.update(value)
                     else:
+                        # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)
@@ -837,9 +913,25 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 # Flatten sectioned data
                 flattened_input = {}
                 for key, value in user_input.items():
+                    # Check if the key corresponds to a section dictionary
                     if isinstance(value, dict):
-                        flattened_input.update(value)
+                        # Check if it's the wasp_in_box section specifically
+                        if key == "wasp_in_box":
+                            # Flatten wasp settings using const keys
+                            flattened_input[CONF_WASP_ENABLED] = value.get(
+                                CONF_WASP_ENABLED, False
+                            )
+                            flattened_input[CONF_WASP_MOTION_TIMEOUT] = value.get(
+                                CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                            )
+                            flattened_input[CONF_WASP_WEIGHT] = value.get(
+                                CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
+                            )
+                        else:
+                            # Flatten other sections as before
+                            flattened_input.update(value)
                     else:
+                        # Handle top-level keys
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)

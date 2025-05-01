@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -14,6 +16,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, NAME_BINARY_SENSOR
 from .coordinator import AreaOccupancyCoordinator
+from .virtual_sensor import async_setup_virtual_sensors
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AreaOccupancyBinarySensor(
@@ -62,12 +67,33 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][config_entry.entry_id][
         "coordinator"
     ]
-    async_add_entities(
-        [
-            AreaOccupancyBinarySensor(
-                coordinator=coordinator,
-                entry_id=config_entry.entry_id,
-            ),
-        ],
-        update_before_add=True,
+
+    # 1. Create the main sensor instance
+    main_sensor = AreaOccupancyBinarySensor(
+        coordinator=coordinator,
+        entry_id=config_entry.entry_id,
     )
+
+    # 2. Call virtual sensor setup to get virtual sensor instances
+    virtual_sensors_to_add = []
+    try:
+        virtual_sensors_to_add = await async_setup_virtual_sensors(
+            hass,
+            config_entry,
+            async_add_entities,  # Pass it along, though it shouldn't be used inside now
+            coordinator,
+        )
+    except (ImportError, ModuleNotFoundError):
+        _LOGGER.warning("Virtual sensor module not available")
+    except Exception:
+        _LOGGER.exception("Error setting up virtual sensors")
+
+    # 3. Combine main and virtual sensors
+    all_sensors_to_add = [main_sensor, *virtual_sensors_to_add]
+
+    # 4. Add all entities in a single call
+    if all_sensors_to_add:
+        _LOGGER.debug("Adding %d binary sensor entities", len(all_sensors_to_add))
+        async_add_entities(all_sensors_to_add, update_before_add=True)
+    else:
+        _LOGGER.warning("No binary sensor entities to add.")

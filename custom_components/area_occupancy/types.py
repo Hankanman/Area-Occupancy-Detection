@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+import logging
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util
@@ -44,6 +44,7 @@ class EntityType(StrEnum):
     WINDOW = "window"
     LIGHT = "light"
     ENVIRONMENTAL = "environmental"
+    WASP_IN_BOX = "wasp_in_box"
 
 
 # Unified configuration type
@@ -332,6 +333,7 @@ class PriorState:
     window_prior: float = field(default=MIN_PROBABILITY)
     light_prior: float = field(default=MIN_PROBABILITY)
     environmental_prior: float = field(default=MIN_PROBABILITY)
+    wasp_in_box_prior: float = field(default=MIN_PROBABILITY)
 
     # Individual entity priors using PriorData
     entity_priors: dict[str, PriorData] = field(default_factory=dict)
@@ -353,6 +355,7 @@ class PriorState:
             "window_prior",
             "light_prior",
             "environmental_prior",
+            "wasp_in_box_prior",
         ]:
             value = getattr(self, attr_name)
             if not MIN_PROBABILITY <= value <= MAX_PROBABILITY:
@@ -370,6 +373,7 @@ class PriorState:
         window_prior: float | None = None,
         light_prior: float | None = None,
         environmental_prior: float | None = None,
+        wasp_in_box_prior: float | None = None,
         entity_priors: dict[str, PriorData] | None = None,
         type_priors: dict[str, PriorData] | None = None,
         analysis_period: int | None = None,
@@ -396,6 +400,10 @@ class PriorState:
         if environmental_prior is not None:
             self.environmental_prior = max(
                 MIN_PROBABILITY, min(environmental_prior, MAX_PROBABILITY)
+            )
+        if wasp_in_box_prior is not None:
+            self.wasp_in_box_prior = max(
+                MIN_PROBABILITY, min(wasp_in_box_prior, MAX_PROBABILITY)
             )
         if entity_priors is not None:
             self.entity_priors = entity_priors
@@ -461,6 +469,7 @@ class PriorState:
             EntityType.WINDOW.value: "window_prior",
             EntityType.LIGHT.value: "light_prior",
             EntityType.ENVIRONMENTAL.value: "environmental_prior",
+            EntityType.WASP_IN_BOX.value: "wasp_in_box_prior",
         }
         if sensor_type in prior_attr_map:
             attr_name = prior_attr_map[sensor_type]
@@ -560,6 +569,7 @@ class PriorState:
             "window_prior": self.window_prior,
             "light_prior": self.light_prior,
             "environmental_prior": self.environmental_prior,
+            "wasp_in_box_prior": self.wasp_in_box_prior,
             # Serialize PriorData objects
             "entity_priors": {
                 k: v.to_dict()
@@ -586,6 +596,7 @@ class PriorState:
             window_prior=float(data.get("window_prior", MIN_PROBABILITY)),
             light_prior=float(data.get("light_prior", MIN_PROBABILITY)),
             environmental_prior=float(data.get("environmental_prior", MIN_PROBABILITY)),
+            wasp_in_box_prior=float(data.get("wasp_in_box_prior", MIN_PROBABILITY)),
             # Deserialize PriorData objects
             entity_priors={
                 k: pd
@@ -663,6 +674,7 @@ class PriorsAttributes(TypedDict):
     window: NotRequired[str]
     light: NotRequired[str]
     environmental: NotRequired[str]
+    wasp_in_box: NotRequired[str]
     last_updated: NotRequired[str]
     total_period: NotRequired[str]
 
@@ -686,6 +698,7 @@ class SensorInputs:
         door_sensors: List of door sensor entity IDs
         window_sensors: List of window sensor entity IDs
         lights: List of light entity IDs
+        virtual_sensors: List of virtual sensor entity IDs (wasp in box, etc.)
 
     """
 
@@ -699,6 +712,7 @@ class SensorInputs:
     door_sensors: list[str]
     window_sensors: list[str]
     lights: list[str]
+    virtual_sensors: list[str] = field(default_factory=list)
 
     @staticmethod
     def is_valid_entity_id(entity_id: str) -> bool:
@@ -801,6 +815,7 @@ class SensorInputs:
             door_sensors=cls.validate_entity_list(CONF_DOOR_SENSORS, config, []),
             window_sensors=cls.validate_entity_list(CONF_WINDOW_SENSORS, config, []),
             lights=cls.validate_entity_list(CONF_LIGHTS, config, []),
+            virtual_sensors=[],  # Initialize with empty list, will be updated later
         )
 
     def get_all_sensors(self) -> list[str]:
@@ -821,6 +836,7 @@ class SensorInputs:
             self.door_sensors,
             self.window_sensors,
             self.lights,
+            self.virtual_sensors,
         ]:
             all_sensors.extend(sensor_list)
 
@@ -871,3 +887,29 @@ class LoadedInstanceData:
     name: str | None
     prior_state: PriorState | None
     last_updated: str | None
+
+
+########################################################
+# Virtual sensor types
+########################################################
+
+
+class WaspInBoxConfig(TypedDict, total=False):
+    """TypedDict for wasp in box sensor configuration."""
+
+    enabled: bool
+    motion_timeout: int
+    weight: float
+    max_duration: int
+
+
+class WaspInBoxAttributes(TypedDict, total=False):
+    """TypedDict for wasp in box attributes."""
+
+    door_state: str
+    last_door_time: str | None
+    motion_state: str
+    last_motion_time: str | None
+    motion_timeout: int
+    max_duration: int
+    last_occupied_time: str | None

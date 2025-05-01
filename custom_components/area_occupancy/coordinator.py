@@ -4,9 +4,9 @@ from __future__ import annotations
 
 # Standard Library
 import asyncio
-import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+import logging
 from typing import Any
 
 # Third Party
@@ -1108,8 +1108,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Stopping decay update timer")
             self._decay_unsub()
             self._decay_unsub = None
-        else:
-            _LOGGER.debug("Decay update timer was not running")
 
     # --- Data Saving ---
     async def _async_save_prior_state_data(self) -> None:
@@ -1142,7 +1140,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     @callback
     def async_set_updated_data(self, data: ProbabilityState) -> None:
         """Manually update data and notify listeners."""
-        _LOGGER.debug("Manually setting updated data")
         super().async_set_updated_data(data)
 
     @callback

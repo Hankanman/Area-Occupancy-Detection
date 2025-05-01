@@ -7,7 +7,9 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.area_occupancy.const import DOMAIN  # noqa: TID252
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator  # noqa: TID252
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,  # noqa: TID252
+)
 
 from .conftest import TEST_CONFIG  # noqa: TID251
 
