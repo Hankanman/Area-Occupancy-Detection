@@ -111,7 +111,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_device_info = coordinator.device_info
-        self._attr_available = False
+        self._attr_available = True  # Set initially available
         self._attr_is_on = False
 
         # Initialize state tracking
@@ -128,6 +128,12 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._remove_state_listener = None
         self._remove_timer = None
 
+        # Check if we have required entities configured
+        if not self._door_entities or not self._motion_entities:
+            _LOGGER.warning(
+                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly."
+            )
+
         _LOGGER.debug(
             "WaspInBoxSensor initialized with unique_id: %s", self._attr_unique_id
         )
@@ -143,16 +149,17 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             self._setup_entity_tracking()
             await self._register_with_coordinator()
 
-            # Mark sensor as available
-            self._attr_available = True
-            self.async_write_ha_state()
+            # Update coordinator with initial state
+            self._update_coordinator_state(self._state)
+
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
             _LOGGER.exception(
-                "Error during WaspInBoxSensor setup for %s", self.entity_id
+                "Error during WaspInBoxSensor setup for %s",
+                self.entity_id,
             )
-            self._attr_available = False
-            self.async_write_ha_state()
+            # Don't set unavailable here, as the sensor can still function
+            # Just log the error and continue
 
     async def _restore_previous_state(self) -> None:
         """Restore state from previous run if available."""
@@ -427,27 +434,24 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         _LOGGER.debug("State changed from %s to %s", old_state, new_state)
 
     def _update_coordinator_state(self, new_state: str) -> None:
-        """Update the coordinator with this entity's current state."""
-        if not self._coordinator or not self.entity_id:
+        """Update the coordinator with the current sensor state."""
+        if not self.entity_id:
             return
 
-        # Skip if coordinator doesn't have data structure
-        if not hasattr(self._coordinator, "data") or not self._coordinator.data:
-            return
-
-        # Ensure current_states dict exists
-        if not hasattr(self._coordinator.data, "current_states"):
-            self._coordinator.data.current_states = {}
-
-        # Update coordinator state
-        self._coordinator.data.current_states[self.entity_id] = {
-            "state": new_state,
-            "last_changed": dt_util.utcnow().isoformat(),
-            "availability": self._attr_available,
-        }
-
-        # Request refresh to recalculate probabilities
-        self.hass.async_create_task(self._coordinator.async_request_refresh())
+        try:
+            # Update coordinator data
+            self._coordinator.data.current_states[self.entity_id] = SensorInfo(
+                state=new_state,
+                availability=True,  # Always set availability to True for virtual sensors
+                last_changed=dt_util.utcnow().isoformat(),
+            )
+            # Request coordinator refresh
+            self.hass.async_create_task(self._coordinator.async_request_refresh())
+        except Exception:
+            _LOGGER.exception(
+                "Error updating coordinator state for %s",
+                self.entity_id,
+            )
 
     def _start_max_duration_timer(self) -> None:
         """Start a timer to reset occupancy after max duration."""
