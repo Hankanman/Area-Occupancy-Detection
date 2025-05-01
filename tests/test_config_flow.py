@@ -32,6 +32,10 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -50,6 +54,9 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
+    DEFAULT_WASP_MAX_DURATION,
+    DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
@@ -137,6 +144,12 @@ FULL_USER_INPUT_STRUCTURED = {
         CONF_HUMIDITY_SENSORS: [],
         CONF_TEMPERATURE_SENSORS: [],
         CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
+    },
+    "wasp_in_box": {
+        CONF_WASP_ENABLED: True,
+        CONF_WASP_MOTION_TIMEOUT: DEFAULT_WASP_MOTION_TIMEOUT,
+        CONF_WASP_WEIGHT: DEFAULT_WASP_WEIGHT,
+        CONF_WASP_MAX_DURATION: DEFAULT_WASP_MAX_DURATION,
     },
     "parameters": {
         CONF_THRESHOLD: MOCK_THRESHOLD,
@@ -323,6 +336,16 @@ async def test_options_flow_success(mock_ha: HomeAssistant, mock_recorder) -> No
             CONF_TEMPERATURE_SENSORS: entry.options.get(CONF_TEMPERATURE_SENSORS, []),
             CONF_WEIGHT_ENVIRONMENTAL: entry.options.get(
                 CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+            ),
+        },
+        "wasp_in_box": {
+            CONF_WASP_ENABLED: entry.options.get(CONF_WASP_ENABLED, False),
+            CONF_WASP_MOTION_TIMEOUT: entry.options.get(
+                CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+            ),
+            CONF_WASP_WEIGHT: entry.options.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+            CONF_WASP_MAX_DURATION: entry.options.get(
+                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
             ),
         },
         "parameters": {
