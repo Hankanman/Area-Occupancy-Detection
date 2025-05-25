@@ -1,7 +1,5 @@
 ---
-description: 
-globs: tests/*
-alwaysApply: false
+applyTo: 'tests/*'
 ---
 # Testing Requirements
 
