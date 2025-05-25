@@ -125,9 +125,8 @@ class EnvironmentalStorage:
             # Add to cache
             self._readings_cache.append(reading_data)
 
-            # Limit cache size - trim immediately when we exceed 1000
-            if len(self._readings_cache) > 1000:
-                # Keep only the most recent 500 entries
+            # Always trim to 500 most recent entries if over 500
+            if len(self._readings_cache) > 500:
                 self._readings_cache = self._readings_cache[-500:]
 
             # Save to file periodically

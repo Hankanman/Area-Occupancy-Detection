@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # Third Party
 from homeassistant.config_entries import ConfigEntry
@@ -50,10 +50,7 @@ from .const import (
     MIN_PROBABILITY,
 )
 from .decay_handler import DecayHandler
-from .environmental_analysis import EnvironmentalAnalyzer
-from .environmental_storage import EnvironmentalDataManager
 from .exceptions import CalculationError, StateError, StorageError
-from .ml_models import MLModelManager
 from .probabilities import Probabilities
 from .storage import AreaOccupancyStore
 from .types import (
@@ -68,6 +65,20 @@ from .types import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Optional environmental analysis imports
+try:
+    from .environmental_analysis import EnvironmentalAnalyzer
+    from .environmental_storage import EnvironmentalDataManager
+    from .ml_models import MLModelManager
+
+    ENVIRONMENTAL_AVAILABLE = True
+except ImportError as err:
+    _LOGGER.warning("Environmental analysis not available: %s", err)
+    ENVIRONMENTAL_AVAILABLE = False
+    EnvironmentalAnalyzer = None
+    EnvironmentalDataManager = None
+    MLModelManager = None
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
@@ -95,7 +106,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._entity_ids: set[str] = set()
         self._state_lock = asyncio.Lock()
         self._storage_lock = asyncio.Lock()
-        self._decay_unsub: CALLBACK_TYPE | None = None
+        self._decay_unsub: Optional[CALLBACK_TYPE] = None
 
         # Initialize sensor inputs with validation
         try:
@@ -162,12 +173,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         )
 
         # Initialize environmental analysis components (optional)
-        self.environmental_analyzer: EnvironmentalAnalyzer | None = None
-        self.environmental_data_manager: EnvironmentalDataManager | None = None
-        self.ml_model_manager: MLModelManager | None = None
+        self.environmental_analyzer = None
+        self.environmental_data_manager = None
+        self.ml_model_manager = None
 
-        # Initialize environmental analysis if configured
-        if self._has_environmental_sensors():
+        # Initialize environmental analysis if configured and available
+        if ENVIRONMENTAL_AVAILABLE and self._has_environmental_sensors():
             self._init_environmental_analysis()
 
     # --- Properties ---
@@ -796,21 +807,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
     def _has_environmental_sensors(self) -> bool:
         """Check if environmental sensors are configured."""
-        from .const import (
-            CONF_HUMIDITY_SENSORS,
-            CONF_ILLUMINANCE_SENSORS,
-            CONF_TEMPERATURE_SENSORS,
-        )
+        if not ENVIRONMENTAL_AVAILABLE:
+            return False
 
-        # Check if any environmental sensors are configured
-        humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
-        illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
-        temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
+        try:
+            from .const import (
+                CONF_HUMIDITY_SENSORS,
+                CONF_ILLUMINANCE_SENSORS,
+                CONF_TEMPERATURE_SENSORS,
+            )
 
-        return bool(humidity_sensors or illuminance_sensors or temperature_sensors)
+            # Check if any environmental sensors are configured
+            humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
+            illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
+            temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
+
+            return bool(humidity_sensors or illuminance_sensors or temperature_sensors)
+        except ImportError as err:
+            _LOGGER.debug("Environmental sensor constants not available: %s", err)
+            return False
 
     def _init_environmental_analysis(self) -> None:
         """Initialize environmental analysis components."""
+        if not ENVIRONMENTAL_AVAILABLE:
+            _LOGGER.info(
+                "Environmental analysis not available - skipping initialization"
+            )
+            return
+
         try:
             from .const import (
                 CONF_HUMIDITY_SENSORS,
@@ -873,8 +897,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
             storage_path.mkdir(parents=True, exist_ok=True)
 
-            # Initialize storage layer
-            from .environmental_storage import EnvironmentalStorage
+            # Initialize storage layer - ensure EnvironmentalStorage is available
+            if not ENVIRONMENTAL_AVAILABLE:
+                _LOGGER.warning("Environmental storage components not available")
+                return
+
+            from .environmental_storage import (
+                EnvironmentalDataManager,
+                EnvironmentalStorage,
+            )
 
             env_storage = EnvironmentalStorage(self.hass, storage_path)
 
@@ -885,11 +916,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # self.ml_model_manager = MLModelManager(self.hass, storage_path)
 
             # Initialize analyzer without ML for now
-            self.environmental_analyzer = EnvironmentalAnalyzer(
-                self.hass,
-                env_config,
-                None,  # No ML model manager for now
-            )
+            if EnvironmentalAnalyzer is not None:
+                self.environmental_analyzer = EnvironmentalAnalyzer(
+                    self.hass,
+                    env_config,
+                    None,  # No ML model manager for now
+                )
+            else:
+                _LOGGER.warning("EnvironmentalAnalyzer not available")
+                return
 
             _LOGGER.info(
                 "Environmental analysis initialized with %d sensors",
@@ -897,7 +932,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
 
         except Exception as err:
-            _LOGGER.error("Failed to initialize environmental analysis: %s", err)
+            _LOGGER.warning("Failed to initialize environmental analysis: %s", err)
             # Don't fail startup if environmental analysis fails
             self.environmental_analyzer = None
             self.environmental_data_manager = None

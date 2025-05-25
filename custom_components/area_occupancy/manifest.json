@@ -16,5 +16,5 @@
   "issue_tracker": "https://github.com/Hankanman/Area-Occupancy-Detection/issues",
   "quality_scale": "internal",
   "requirements": ["scikit-learn==1.6.1"],
-  "version": "2025.5.1"
+  "version": "2025.5.2"
 }

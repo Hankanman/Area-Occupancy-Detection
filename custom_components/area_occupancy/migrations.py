@@ -13,7 +13,6 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_AREA_ID,
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
@@ -200,10 +199,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             await async_migrate_unique_ids(hass, config_entry, platform)
     except HomeAssistantError as err:
         _LOGGER.error("Error during unique ID migration: %s", err)
-
-    # Remove deprecated fields
-    if CONF_AREA_ID in data:
-        data.pop(CONF_AREA_ID)
 
     # Ensure new state configuration values are present with defaults
     new_configs = {

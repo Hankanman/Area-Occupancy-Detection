@@ -53,7 +53,6 @@ class Config(TypedDict):
 
     Required fields:
         name: The display name for the area
-        area_id: The unique identifier for the area
         motion_sensors: List of motion sensor entity IDs to monitor
 
     Optional fields:
@@ -75,7 +74,6 @@ class Config(TypedDict):
 
     # Required fields
     name: str
-    area_id: str
     motion_sensors: list[str]
 
     # Optional fields
@@ -982,8 +980,8 @@ class EnvironmentalResult:
     confidence: float
     method: str  # ml, deterministic, hybrid, fallback, cached
     sensor_contributions: dict[str, float] = field(default_factory=dict)
-    model_version: str | None = None
     timestamp: datetime = field(default_factory=dt_util.utcnow)
+    model_version: str | None = None
 
     def __post_init__(self) -> None:
         """Validate environmental result."""
