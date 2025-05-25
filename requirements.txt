@@ -1,3 +1,4 @@
 # Production dependencies
 homeassistant==2025.5.3
+scikit-learn==1.6.1
 ruff==0.11.11
