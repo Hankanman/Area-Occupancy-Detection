@@ -8,8 +8,22 @@ similar to a wasp trapped in a box.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime, timedelta
+
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import (
+    async_track_point_in_time,
+    async_track_state_change_event,
+)
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from custom_components.area_occupancy.const import (
     ATTR_DOOR_STATE,
@@ -30,21 +44,11 @@ from custom_components.area_occupancy.types import (
     WaspInBoxConfig,
 )
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-)
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import (
-    async_track_point_in_time,
-    async_track_state_change_event,
-)
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import dt as dt_util
-
 _LOGGER = logging.getLogger(__name__)
+
+# Door state constants
+DOOR_OPEN = STATE_ON
+DOOR_CLOSED = STATE_OFF
 
 ATTR_LAST_OCCUPIED_TIME = "last_occupied_time"
 ATTR_MAX_DURATION = "max_duration"
@@ -116,7 +120,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
         # Initialize state tracking
         self._state = STATE_OFF
-        self._door_state = STATE_OFF
+        self._door_state = DOOR_CLOSED
         self._motion_state = STATE_OFF
         self._last_door_time = None
         self._last_motion_time = None
@@ -373,8 +377,8 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         )
 
         # Check if door has opened while room was occupied
-        door_is_open = new_state == STATE_ON
-        door_was_closed = previous_door_state == STATE_OFF
+        door_is_open = new_state == DOOR_OPEN
+        door_was_closed = previous_door_state == DOOR_CLOSED
 
         if door_is_open and door_was_closed and self._state == STATE_ON:
             # Door opened while room was occupied - set to unoccupied
@@ -403,7 +407,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         )
 
         # Door closed + motion = occupied
-        if new_state == STATE_ON and self._door_state == STATE_OFF:
+        if new_state == STATE_ON and self._door_state == DOOR_CLOSED:
             _LOGGER.debug("Motion detected with door closed - marking room as occupied")
             self._set_state(STATE_ON)
         elif new_state == STATE_OFF:
