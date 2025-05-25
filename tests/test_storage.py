@@ -7,10 +7,9 @@ These tests cover:
 - Exception handling for load/save operations
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant
 
 from custom_components.area_occupancy.exceptions import (  # noqa: TID252
     StorageLoadError,
@@ -23,26 +22,19 @@ from custom_components.area_occupancy.types import (  # noqa: TID252
     PriorState,
 )
 
-
-@pytest.fixture
-def mock_hass():
-    """Return a MagicMock HomeAssistant instance with minimal config for testing."""
-    mock = MagicMock(spec=HomeAssistant)
-    mock.data = {}
-    mock_config = MagicMock()
-    mock_config.config_dir = "/tmp"  # or any valid path  # noqa: S108
-    mock.config = mock_config
-    return mock
+# Note: Using fixtures from conftest.py:
+# - mock_hass
+# - mock_config_entry
 
 
 @pytest.fixture
-def store(mock_hass):  # pylint: disable=redefined-outer-name
+def store(mock_hass):
     """Return an AreaOccupancyStore instance using the mock HomeAssistant object."""
     return AreaOccupancyStore(mock_hass)
 
 
 @pytest.mark.asyncio
-async def test_create_empty_storage(store):  # pylint: disable=redefined-outer-name
+async def test_create_empty_storage(store):
     """Test that create_empty_storage returns a dict with an empty 'instances' key."""
     result = store.create_empty_storage()
     assert isinstance(result, dict)
@@ -51,7 +43,7 @@ async def test_create_empty_storage(store):  # pylint: disable=redefined-outer-n
 
 
 @pytest.mark.asyncio
-async def test_async_save_and_load_instance_prior_state(store):  # pylint: disable=redefined-outer-name
+async def test_async_save_and_load_instance_prior_state(store):
     """Test saving and loading of instance prior state using async methods."""
     entry_id = "test_entry"
     name = "Test Area"
@@ -89,7 +81,7 @@ async def test_async_save_and_load_instance_prior_state(store):  # pylint: disab
 
 
 @pytest.mark.asyncio
-async def test_async_remove_instance_removes_and_skips(store):  # pylint: disable=redefined-outer-name
+async def test_async_remove_instance_removes_and_skips(store):
     """Test that async_remove_instance removes present entry and skips if not present."""
     entry_id = "test_entry"
     # Case: present
@@ -117,7 +109,7 @@ async def test_async_remove_instance_removes_and_skips(store):  # pylint: disabl
 
 
 @pytest.mark.asyncio
-async def test_async_remove_instance_handles_exception(store):  # pylint: disable=redefined-outer-name
+async def test_async_remove_instance_handles_exception(store):
     """Test that async_remove_instance returns False if async_load raises an exception."""
     entry_id = "test_entry"
     with patch.object(
@@ -128,7 +120,7 @@ async def test_async_remove_instance_handles_exception(store):  # pylint: disabl
 
 
 @pytest.mark.asyncio
-async def test_async_load_instance_prior_state_error(store):  # pylint: disable=redefined-outer-name
+async def test_async_load_instance_prior_state_error(store):
     """Test that StorageLoadError is raised if async_load fails during load."""
     entry_id = "test_entry"
     with (
@@ -139,7 +131,7 @@ async def test_async_load_instance_prior_state_error(store):  # pylint: disable=
 
 
 @pytest.mark.asyncio
-async def test_async_save_instance_prior_state_error(store):  # pylint: disable=redefined-outer-name
+async def test_async_save_instance_prior_state_error(store):
     """Test that StorageSaveError is raised if async_save fails during save."""
     entry_id = "test_entry"
     name = "Test Area"
@@ -153,7 +145,7 @@ async def test_async_save_instance_prior_state_error(store):  # pylint: disable=
 
 
 @pytest.mark.asyncio
-async def test_async_cleanup_orphaned_instances_removes_orphans(store):  # pylint: disable=redefined-outer-name
+async def test_async_cleanup_orphaned_instances_removes_orphans(store):
     """Test that orphaned instances are removed and async_save is called."""
     active_ids = {"id1"}
     orphan_id = "id2"
@@ -172,7 +164,7 @@ async def test_async_cleanup_orphaned_instances_removes_orphans(store):  # pylin
 
 
 @pytest.mark.asyncio
-async def test_async_cleanup_orphaned_instances_no_orphans(store):  # pylint: disable=redefined-outer-name
+async def test_async_cleanup_orphaned_instances_no_orphans(store):
     """Test that no action is taken if there are no orphaned instances."""
     active_ids = {"id1"}
     stored = {"instances": {"id1": {}}}
@@ -186,7 +178,7 @@ async def test_async_cleanup_orphaned_instances_no_orphans(store):  # pylint: di
 
 
 @pytest.mark.asyncio
-async def test_async_cleanup_orphaned_instances_missing_data(store):  # pylint: disable=redefined-outer-name
+async def test_async_cleanup_orphaned_instances_missing_data(store):
     """Test that missing or malformed data is handled gracefully."""
     # No data at all
     with patch.object(store, "async_load", new=AsyncMock(return_value=None)):
@@ -203,7 +195,7 @@ async def test_async_cleanup_orphaned_instances_missing_data(store):  # pylint: 
 
 
 @pytest.mark.asyncio
-async def test_async_cleanup_orphaned_instances_handles_exception(store):  # pylint: disable=redefined-outer-name
+async def test_async_cleanup_orphaned_instances_handles_exception(store):
     """Test that exceptions during cleanup are handled and do not raise."""
     with patch.object(
         store, "async_load", new=AsyncMock(side_effect=Exception("fail"))

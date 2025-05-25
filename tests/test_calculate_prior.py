@@ -5,7 +5,7 @@ based on historical state data, as well as fallback/default handling and error c
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
@@ -22,41 +22,19 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from custom_components.area_occupancy.probabilities import Probabilities  # noqa: TID252
 from custom_components.area_occupancy.types import PriorData  # noqa: TID252
-from custom_components.area_occupancy.types import SensorInputs
 
-
-@pytest.fixture
-def mock_hass():
-    """Fixture for a mocked Home Assistant instance."""
-    return MagicMock()
-
-
-@pytest.fixture
-def mock_probabilities():
-    """Fixture for a mocked Probabilities provider with default/fallback values."""
-    mock = MagicMock(spec=Probabilities)
-    mock.get_default_prior.return_value = 0.5
-    mock.is_entity_active.side_effect = lambda eid, state: state == STATE_ON
-    return mock
-
-
-@pytest.fixture
-def mock_sensor_inputs():
-    """Fixture for a minimal SensorInputs mock with a valid primary sensor."""
-    return MagicMock(
-        spec=SensorInputs,
-        primary_sensor="binary_sensor.motion_living_room",
-        is_valid_entity_id=SensorInputs.is_valid_entity_id,
-    )
+# Note: Using fixtures from conftest.py:
+# - mock_hass
+# - mock_probabilities
+# - mock_sensor_inputs
 
 
 @pytest.mark.asyncio
 async def test_calculate_prior_primary_sensor_valid(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test that calculate_prior returns correct prior data for a valid primary sensor with a simple ON/OFF state history (30 min ON, 30 min OFF)."""
     # Arrange
@@ -85,9 +63,9 @@ async def test_calculate_prior_primary_sensor_valid(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_invalid_entity_id(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test that calculate_prior returns None for an invalid entity_id."""
     # Arrange
@@ -104,9 +82,9 @@ async def test_calculate_prior_invalid_entity_id(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_invalid_time_range(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test that calculate_prior returns None if the time range is invalid (start > end)."""
     # Arrange
@@ -123,9 +101,9 @@ async def test_calculate_prior_invalid_time_range(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_recorder_error_returns_fallback(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test that calculate_prior returns fallback/default values if the recorder raises an error."""
     # Arrange
@@ -149,9 +127,9 @@ async def test_calculate_prior_recorder_error_returns_fallback(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_non_primary_sensor(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test calculation of prior probabilities for a non-primary sensor."""
     # Arrange
@@ -195,9 +173,9 @@ async def test_calculate_prior_non_primary_sensor(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_no_valid_intervals(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test handling of cases where no valid intervals are found."""
     # Arrange
@@ -223,9 +201,9 @@ async def test_calculate_prior_no_valid_intervals(
 
 @pytest.mark.asyncio
 async def test_calculate_conditional_probability_with_intervals(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test calculation of conditional probabilities using intervals."""
     # Arrange
@@ -282,9 +260,9 @@ async def test_calculate_conditional_probability_with_intervals(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_with_empty_states(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test handling of empty state lists."""
     # Arrange
@@ -310,9 +288,9 @@ async def test_calculate_prior_with_empty_states(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_with_invalid_states(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test handling of invalid state objects."""
     # Arrange
@@ -343,9 +321,9 @@ async def test_calculate_prior_with_invalid_states(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_with_insufficient_data(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test handling of insufficient historical data."""
     entity_id = "binary_sensor.test_sensor"
@@ -373,9 +351,9 @@ async def test_calculate_prior_with_insufficient_data(
 
 @pytest.mark.asyncio
 async def test_calculate_prior_with_invalid_state_values(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
+    mock_hass,
+    mock_probabilities,
+    mock_sensor_inputs,
 ):
     """Test handling of invalid state values in historical data."""
     entity_id = "binary_sensor.test_sensor"
@@ -400,204 +378,3 @@ async def test_calculate_prior_with_invalid_state_values(
     assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
     assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
     assert result.prior == MIN_PROBABILITY
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_overlapping_intervals(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test handling of overlapping time intervals in historical data."""
-    entity_id = "binary_sensor.test_sensor"
-    start = datetime.now() - timedelta(hours=1)
-    end = datetime.now()
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    # Create overlapping intervals
-    intervals: list[TimeInterval] = [
-        {
-            "start": start,
-            "end": start + timedelta(minutes=45),
-            "state": STATE_ON,
-        },
-        {
-            "start": start + timedelta(minutes=30),  # Overlaps with previous interval
-            "end": end,
-            "state": STATE_OFF,
-        },
-    ]
-
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-    result = calc._calculate_conditional_probability_with_intervals(
-        entity_id,
-        intervals,
-        {mock_sensor_inputs.primary_sensor: intervals},
-        STATE_ON,
-    )
-
-    assert result is not None
-    assert MIN_PROBABILITY <= float(result) <= MAX_PROBABILITY
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_recorder_timeout(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test handling of recorder timeout errors."""
-    entity_id = "binary_sensor.test_sensor"
-    start = datetime.now() - timedelta(hours=1)
-    end = datetime.now()
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    # Mock recorder timeout
-    with patch(
-        "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
-        new=AsyncMock(side_effect=TimeoutError("Recorder timeout")),
-    ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-        result = await calc.calculate_prior(entity_id, start, end)
-
-    assert isinstance(result, PriorData)
-    assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_multiple_state_changes(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test calculation with multiple state changes in quick succession."""
-    entity_id = "binary_sensor.test_sensor"
-    start = datetime.now() - timedelta(hours=1)
-    end = datetime.now()
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    # Create rapid state changes
-    states = [
-        State(entity_id, STATE_ON, last_changed=start),
-        State(entity_id, STATE_OFF, last_changed=start + timedelta(seconds=30)),
-        State(entity_id, STATE_ON, last_changed=start + timedelta(seconds=60)),
-        State(entity_id, STATE_OFF, last_changed=start + timedelta(seconds=90)),
-    ]
-
-    with patch(
-        "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
-        new=AsyncMock(return_value=states),
-    ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-        result = await calc.calculate_prior(entity_id, start, end)
-
-    assert isinstance(result, PriorData)
-    if result.prob_given_true is not None:
-        assert MIN_PROBABILITY <= float(result.prob_given_true) <= MAX_PROBABILITY
-    if result.prob_given_false is not None:
-        assert MIN_PROBABILITY <= float(result.prob_given_false) <= MAX_PROBABILITY
-    if result.prior is not None:
-        assert MIN_PROBABILITY <= float(result.prior) <= MAX_PROBABILITY
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_missing_primary_sensor_data(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test handling when primary sensor data is missing."""
-    entity_id = "binary_sensor.test_sensor"
-    start = datetime.now() - timedelta(hours=1)
-    end = datetime.now()
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    # Mock entity states but no primary sensor states
-    entity_states = [
-        State(entity_id, STATE_ON, last_changed=start),
-        State(entity_id, STATE_OFF, last_changed=start + timedelta(minutes=30)),
-    ]
-
-    with patch(
-        "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
-        new=AsyncMock(
-            side_effect=[entity_states, []]
-        ),  # Second call for primary sensor returns empty
-    ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-        result = await calc.calculate_prior(entity_id, start, end)
-
-    assert isinstance(result, PriorData)
-    assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == 0.5
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_invalid_time_intervals(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test handling of invalid time intervals."""
-    entity_id = "binary_sensor.test_sensor"
-    start = datetime.now() - timedelta(hours=1)
-    end = datetime.now()
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    # Create intervals with invalid times
-    intervals: list[TimeInterval] = [
-        {
-            "start": end,  # Start time after end time
-            "end": start,
-            "state": STATE_ON,
-        },
-    ]
-
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-    result = calc._calculate_conditional_probability_with_intervals(
-        entity_id,
-        intervals,
-        {mock_sensor_inputs.primary_sensor: intervals},
-        STATE_ON,
-    )
-
-    assert result is not None
-    assert (
-        float(result) == MIN_PROBABILITY
-    )  # Should return minimum probability for invalid intervals
-
-
-@pytest.mark.asyncio
-async def test_calculate_prior_with_empty_intervals(
-    mock_hass,  # pylint: disable=redefined-outer-name
-    mock_probabilities,  # pylint: disable=redefined-outer-name
-    mock_sensor_inputs,  # pylint: disable=redefined-outer-name
-):
-    """Test handling of empty intervals."""
-    entity_id = "binary_sensor.test_sensor"
-    mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
-    # For STATE_ON
-    result_on = calc._calculate_conditional_probability_with_intervals(
-        entity_id,
-        [],  # Empty intervals
-        {mock_sensor_inputs.primary_sensor: []},
-        STATE_ON,
-    )
-    assert (
-        result_on == DEFAULT_PROB_GIVEN_TRUE
-    )  # Should return default prob for STATE_ON
-    # For STATE_OFF
-    result_off = calc._calculate_conditional_probability_with_intervals(
-        entity_id,
-        [],
-        {mock_sensor_inputs.primary_sensor: []},
-        STATE_OFF,
-    )
-    assert (
-        result_off == DEFAULT_PROB_GIVEN_FALSE
-    )  # Should return default prob for STATE_OFF

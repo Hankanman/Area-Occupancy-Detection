@@ -21,8 +21,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.4.3"
-CONF_VERSION: Final = 7
+DEVICE_SW_VERSION: Final = "2025.5.1"
+CONF_VERSION: Final = 8
 CONF_VERSION_MINOR: Final = 1
 
 # Configuration constants
@@ -141,8 +141,39 @@ ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
 ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
 ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
 
+# Wasp in Box defaults (High confidence when active)
+WASP_PROB_GIVEN_TRUE: Final[float] = 0.95
+WASP_PROB_GIVEN_FALSE: Final[float] = 0.05
+WASP_DEFAULT_PRIOR: Final[float] = 0.60
+
 # Helper constants
 ROUNDING_PRECISION: Final = 2
 
 # Storage constants
 STORAGE_KEY: Final = f"{DOMAIN}.storage"
+
+########################################################
+# Virtual sensor constants
+########################################################
+
+# Entity naming
+NAME_WASP_IN_BOX: Final = "Wasp in Box"
+
+# Configuration keys
+CONF_WASP_ENABLED: Final = "wasp_enabled"
+CONF_WASP_MOTION_TIMEOUT: Final = "wasp_motion_timeout"
+CONF_WASP_WEIGHT: Final = "wasp_weight"
+CONF_WASP_MAX_DURATION: Final = "wasp_max_duration"
+
+# Default values
+DEFAULT_WASP_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+DEFAULT_WASP_WEIGHT: Final = 0.8
+DEFAULT_WASP_MAX_DURATION: Final = 3600  # 1 hour in seconds
+
+# Attributes
+ATTR_DOOR_STATE: Final = "door_state"
+ATTR_MOTION_STATE: Final = "motion_state"
+ATTR_LAST_MOTION_TIME: Final = "last_motion_time"
+ATTR_LAST_DOOR_TIME: Final = "last_door_time"
+ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
+ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"

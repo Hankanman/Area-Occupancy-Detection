@@ -16,6 +16,9 @@ from .storage import AreaOccupancyStore
 
 _LOGGER = logging.getLogger(__name__)
 
+# # Define platforms
+# PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.NUMBER]
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Area Occupancy Detection integration."""
@@ -91,22 +94,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Load stored data and initialize states
         try:
             await coordinator.async_setup()
-
         except Exception as err:
             _LOGGER.error("Failed to load stored data: %s", err)
             raise ConfigEntryNotReady("Failed to load stored data") from err
 
-        # Trigger an initial refresh
-        await coordinator.async_refresh()
-
         # Store the coordinator for future use
         hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
+
+        # Set up services
+        await async_setup_services(hass)
 
         # Setup platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Add an update listener to handle configuration updates
-        entry.async_on_unload(entry.add_update_listener(async_update_options))
+        entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
     except Exception as err:
         _LOGGER.exception(
@@ -126,15 +128,23 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
+    _LOGGER.debug("Unloading Area Occupancy config entry")
+
+    # Unload all platforms
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        # Clean up
+        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+        await coordinator.async_shutdown()
         hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+
     return unload_ok
 
 
-async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options when config entry is updated."""
+async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle config entry update."""
+    _LOGGER.debug("Config entry updated, updating coordinator")
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     await coordinator.async_update_options()
-    # Trigger a refresh *after* options have been processed by the coordinator
     await coordinator.async_refresh()
