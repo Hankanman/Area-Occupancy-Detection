@@ -1,7 +1,5 @@
 ---
-description: 
-globs: custom_components/**/*.py,tests/**/*.py
-alwaysApply: false
+applyTo: '**'
 ---
 - **Code Style & Formatting**: Write Python code that strictly follows PEP8 and PEP 257 conventions, as enforced in Home Assistant’s core ([Style guidelines | Home Assistant Developer Docs](https://developers.home-assistant.io/docs/development_guidelines/#:~:text=Home%20Assistant%20enforces%20quite%20strict,compliance%20on%20all%20code%20submitted)). Use a formatter (e.g. Black with its default settings) to ensure consistent indentation, line length, and no trailing whitespace. All submitted code is auto-checked with linting (using Ruff in HA core) and must not diverge from standard style ([Style guidelines | Home Assistant Developer Docs](https://developers.home-assistant.io/docs/development_guidelines/#:~:text=We%20use%20Ruff%20for%20code,never%20merge%20submissions%20that%20diverge)). Order imports logically (standard libs, third-party, then Home Assistant) and alphabetize contents of lists, dictionaries, and constants for consistency ([Style guidelines | Home Assistant Developer Docs](https://developers.home-assistant.io/docs/development_guidelines/#:~:text=,should%20be%20in%20alphabetical%20order)). Comments should be full sentences ending with a period ([Style guidelines | Home Assistant Developer Docs](https://developers.home-assistant.io/docs/development_guidelines/#:~:text=,should%20be%20in%20alphabetical%20order)).
 

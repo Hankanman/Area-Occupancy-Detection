@@ -1,7 +1,5 @@
 ---
-description: 
-globs: 
-alwaysApply: true
+applyTo: '**'
 ---
 # Area Occupancy Detection Integration
 
@@ -78,4 +76,3 @@ The integration is organized in the `custom_components/area_occupancy` directory
 - Document Bayesian calculation methodology
 - Provide clear error messages and logging
 - Maintain README with setup and usage instructions
-

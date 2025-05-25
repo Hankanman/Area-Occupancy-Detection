@@ -1,7 +1,5 @@
 ---
-description: 
-globs: 
-alwaysApply: true
+applyTo: '**'
 ---
 # Bayesian Probability Calculations
 
