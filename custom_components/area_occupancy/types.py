@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-import logging
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util
@@ -242,15 +242,15 @@ class ProbabilityState:
             else None
         )
         return cls(
-            probability=float(data["probability"]),
-            previous_probability=float(data["previous_probability"]),
-            threshold=float(data["threshold"]),
-            prior_probability=float(data["prior_probability"]),
-            sensor_probabilities=data["sensor_probabilities"],
-            decay_status=float(data["decay_status"]),
+            probability=float(data.get("probability", 0.0)),
+            previous_probability=float(data.get("previous_probability", 0.0)),
+            threshold=float(data.get("threshold", 0.5)),
+            prior_probability=float(data.get("prior_probability", 0.0)),
+            sensor_probabilities=data.get("sensor_probabilities", {}),
+            decay_status=float(data.get("decay_status", 0.0)),
             current_states=data.get("current_states", {}),
             previous_states=data.get("previous_states", {}),
-            is_occupied=bool(data["is_occupied"]),
+            is_occupied=bool(data.get("is_occupied", False)),
             decaying=bool(data.get("decaying", False)),
             decay_start_time=decay_start_time,
             decay_start_probability=data.get("decay_start_probability"),
