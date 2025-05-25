@@ -913,3 +913,125 @@ class WaspInBoxAttributes(TypedDict, total=False):
     motion_timeout: int
     max_duration: int
     last_occupied_time: str | None
+
+
+########################################################
+# Environmental sensor types
+########################################################
+
+
+@dataclass
+class SensorReading:
+    """Represents a sensor reading with timestamp."""
+
+    value: float | None
+    timestamp: datetime
+    entity_id: str
+
+    def __post_init__(self) -> None:
+        """Validate sensor reading data."""
+        if self.timestamp is None:
+            self.timestamp = dt_util.utcnow()
+
+
+@dataclass
+class EnvironmentalSensorConfig:
+    """Configuration for an environmental sensor."""
+
+    entity_id: str
+    sensor_type: str  # co2, temperature, humidity, luminance, sound, pressure
+    analysis_method: str  # ml, deterministic, hybrid
+    baseline_value: float
+    sensitivity: float = 0.5
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate sensor configuration."""
+        if self.sensitivity < 0.0 or self.sensitivity > 1.0:
+            self.sensitivity = max(0.0, min(1.0, self.sensitivity))
+
+
+@dataclass
+class EnvironmentalConfig:
+    """Configuration for environmental analysis."""
+
+    sensors: dict[str, EnvironmentalSensorConfig] = field(default_factory=dict)
+    analysis_frequency: int = 60
+    minimum_data_points: int = 100
+    ml_confidence_threshold: float = 0.6
+    deterministic_fallback: bool = True
+    max_historical_days: int = 90
+    analysis_method: str = "hybrid"
+
+    def __post_init__(self) -> None:
+        """Validate environmental configuration."""
+        if self.analysis_frequency < 10:
+            self.analysis_frequency = 10
+        if self.minimum_data_points < 10:
+            self.minimum_data_points = 10
+        if self.ml_confidence_threshold < 0.1 or self.ml_confidence_threshold > 1.0:
+            self.ml_confidence_threshold = 0.6
+
+
+@dataclass
+@dataclass
+class EnvironmentalResult:
+    """Result from environmental analysis."""
+
+    probability: float
+    confidence: float
+    method: str  # ml, deterministic, hybrid, fallback, cached
+    sensor_contributions: dict[str, float] = field(default_factory=dict)
+    model_version: str | None = None
+    timestamp: datetime = field(default_factory=dt_util.utcnow)
+
+    def __post_init__(self) -> None:
+        """Validate environmental result."""
+        self.probability = max(0.0, min(1.0, self.probability))
+        self.confidence = max(0.0, min(1.0, self.confidence))
+
+
+@dataclass
+class MLPrediction:
+    """Machine learning prediction result."""
+
+    probability: float
+    confidence: float
+    model_version: str
+    feature_count: int
+
+    def __post_init__(self) -> None:
+        """Validate ML prediction."""
+        self.probability = max(0.0, min(1.0, self.probability))
+        self.confidence = max(0.0, min(1.0, self.confidence))
+
+
+@dataclass
+class ModelPerformanceMetrics:
+    """Performance metrics for ML models."""
+
+    accuracy: float
+    precision: float
+    recall: float
+    f1_score: float
+    model_type: str
+    training_samples: int
+    test_samples: int
+    created_at: datetime = field(default_factory=dt_util.utcnow)
+
+    def __post_init__(self) -> None:
+        """Validate performance metrics."""
+        for metric in [self.accuracy, self.precision, self.recall, self.f1_score]:
+            if metric < 0.0 or metric > 1.0:
+                _LOGGER.warning("Invalid metric value: %f", metric)
+
+
+class EnvironmentalSensorAttributes(TypedDict, total=False):
+    """TypedDict for environmental sensor attributes."""
+
+    probability: float
+    confidence: float
+    method: str
+    sensor_contributions: dict[str, float]
+    model_version: str | None
+    analysis_timestamp: str

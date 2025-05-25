@@ -7,6 +7,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 # Third Party
@@ -49,10 +50,22 @@ from .const import (
     MIN_PROBABILITY,
 )
 from .decay_handler import DecayHandler
+from .environmental_analysis import EnvironmentalAnalyzer
+from .environmental_storage import EnvironmentalDataManager
 from .exceptions import CalculationError, StateError, StorageError
+from .ml_models import MLModelManager
 from .probabilities import Probabilities
 from .storage import AreaOccupancyStore
-from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
+from .types import (
+    EnvironmentalConfig,
+    EnvironmentalSensorConfig,
+    PriorState,
+    ProbabilityState,
+    SensorInfo,
+    SensorInputs,
+    SensorReading,
+    TypeAggregate,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,6 +160,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             probabilities=self.probabilities,
             sensor_inputs=self.inputs,
         )
+
+        # Initialize environmental analysis components (optional)
+        self.environmental_analyzer: EnvironmentalAnalyzer | None = None
+        self.environmental_data_manager: EnvironmentalDataManager | None = None
+        self.ml_model_manager: MLModelManager | None = None
+
+        # Initialize environmental analysis if configured
+        if self._has_environmental_sensors():
+            self._init_environmental_analysis()
 
     # --- Properties ---
     @property
@@ -772,6 +794,203 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Get all configured sensors including the primary occupancy sensor."""
         return self.inputs.get_all_sensors()
 
+    def _has_environmental_sensors(self) -> bool:
+        """Check if environmental sensors are configured."""
+        from .const import (
+            CONF_HUMIDITY_SENSORS,
+            CONF_ILLUMINANCE_SENSORS,
+            CONF_TEMPERATURE_SENSORS,
+        )
+
+        # Check if any environmental sensors are configured
+        humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
+        illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
+        temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
+
+        return bool(humidity_sensors or illuminance_sensors or temperature_sensors)
+
+    def _init_environmental_analysis(self) -> None:
+        """Initialize environmental analysis components."""
+        try:
+            from .const import (
+                CONF_HUMIDITY_SENSORS,
+                CONF_ILLUMINANCE_SENSORS,
+                CONF_TEMPERATURE_SENSORS,
+            )
+
+            # Build environmental sensor configuration from existing config
+            env_sensors_dict = {}
+
+            # Add humidity sensors
+            humidity_sensors = self.config.get(CONF_HUMIDITY_SENSORS, [])
+            for sensor_id in humidity_sensors:
+                env_sensors_dict[sensor_id] = EnvironmentalSensorConfig(
+                    entity_id=sensor_id,
+                    sensor_type="humidity",
+                    analysis_method="deterministic",
+                    baseline_value=50.0,  # Default baseline for humidity
+                    sensitivity=0.5,
+                )
+
+            # Add temperature sensors
+            temperature_sensors = self.config.get(CONF_TEMPERATURE_SENSORS, [])
+            for sensor_id in temperature_sensors:
+                env_sensors_dict[sensor_id] = EnvironmentalSensorConfig(
+                    entity_id=sensor_id,
+                    sensor_type="temperature",
+                    analysis_method="deterministic",
+                    baseline_value=20.0,  # Default baseline for temperature
+                    sensitivity=0.5,
+                )
+
+            # Add illuminance sensors
+            illuminance_sensors = self.config.get(CONF_ILLUMINANCE_SENSORS, [])
+            for sensor_id in illuminance_sensors:
+                env_sensors_dict[sensor_id] = EnvironmentalSensorConfig(
+                    entity_id=sensor_id,
+                    sensor_type="luminance",
+                    analysis_method="deterministic",
+                    baseline_value=100.0,  # Default baseline for illuminance
+                    sensitivity=0.5,
+                )
+
+            if not env_sensors_dict:
+                return
+
+            # Create environmental configuration
+            env_config = EnvironmentalConfig(
+                sensors=env_sensors_dict,
+                analysis_method="deterministic",  # Start with deterministic for simplicity
+                analysis_frequency=300,  # 5 minutes
+            )
+
+            # Create storage path for environmental data
+            storage_path = (
+                Path(self.hass.config.config_dir)
+                / "custom_components"
+                / "area_occupancy"
+                / "environmental_data"
+            )
+            storage_path.mkdir(parents=True, exist_ok=True)
+
+            # Initialize storage layer
+            from .environmental_storage import EnvironmentalStorage
+
+            env_storage = EnvironmentalStorage(self.hass, storage_path)
+
+            # Initialize data manager
+            self.environmental_data_manager = EnvironmentalDataManager(env_storage)
+
+            # Initialize ML model manager if enabled (disabled for now)
+            # self.ml_model_manager = MLModelManager(self.hass, storage_path)
+
+            # Initialize analyzer without ML for now
+            self.environmental_analyzer = EnvironmentalAnalyzer(
+                self.hass,
+                env_config,
+                None,  # No ML model manager for now
+            )
+
+            _LOGGER.info(
+                "Environmental analysis initialized with %d sensors",
+                len(env_sensors_dict),
+            )
+
+        except Exception as err:
+            _LOGGER.error("Failed to initialize environmental analysis: %s", err)
+            # Don't fail startup if environmental analysis fails
+            self.environmental_analyzer = None
+            self.environmental_data_manager = None
+            self.ml_model_manager = None
+
+    async def _apply_environmental_analysis(
+        self, current_states: dict[str, Any], base_probability: float
+    ) -> float:
+        """Apply environmental analysis to adjust occupancy probability.
+
+        Returns the adjustment value to add to the base probability.
+        """
+        try:
+            if not self.environmental_analyzer:
+                return 0.0
+
+            # Convert current states to sensor readings for environmental analysis
+            sensor_readings = self._convert_states_to_readings(current_states)
+
+            if not sensor_readings:
+                return 0.0
+
+            # Get environmental analysis result
+            env_result = (
+                await self.environmental_analyzer.analyze_occupancy_probability(
+                    sensor_readings
+                )
+            )
+
+            # Calculate adjustment based on environmental analysis
+            # This is a weighted adjustment to avoid overriding the main calculation
+            env_contribution_weight = 0.2  # Environmental contributes up to 20%
+            environmental_probability = env_result.probability
+
+            # Calculate adjustment as difference weighted by confidence
+            adjustment = (
+                (environmental_probability - 0.5)
+                * env_contribution_weight
+                * env_result.confidence
+            )
+
+            _LOGGER.debug(
+                "Environmental analysis: prob=%.3f, confidence=%.3f, adjustment=%.3f",
+                environmental_probability,
+                env_result.confidence,
+                adjustment,
+            )
+
+            return adjustment
+
+        except Exception as err:
+            _LOGGER.error("Environmental analysis error: %s", err)
+            return 0.0
+
+    def _convert_states_to_readings(
+        self, states: dict[str, Any]
+    ) -> dict[str, SensorReading]:
+        """Convert sensor states to SensorReading objects for environmental analysis."""
+        readings = {}
+
+        try:
+            for entity_id, state_info in states.items():
+                if not state_info or not state_info.get("availability", False):
+                    continue
+
+                state_value = state_info.get("state")
+                if state_value is None:
+                    continue
+
+                # Try to convert to float for environmental sensors
+                try:
+                    numeric_value = float(state_value)
+                    timestamp_str = state_info.get(
+                        "last_changed", dt_util.utcnow().isoformat()
+                    )
+                    timestamp = (
+                        dt_util.parse_datetime(timestamp_str) or dt_util.utcnow()
+                    )
+
+                    readings[entity_id] = SensorReading(
+                        value=numeric_value,
+                        timestamp=timestamp,
+                        entity_id=entity_id,
+                    )
+                except (ValueError, TypeError):
+                    # Skip non-numeric values for environmental analysis
+                    continue
+
+        except Exception as err:
+            _LOGGER.error("Error converting states to readings: %s", err)
+
+        return readings
+
     # --- Internal Update and State Handling Methods ---
     async def _async_update_data(self) -> ProbabilityState:
         """Update data with improved error handling."""
@@ -841,6 +1060,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             final_probability = max(
                 MIN_PROBABILITY, min(decayed_probability, MAX_PROBABILITY)
             )
+
+            # --- Environmental Analysis Integration ---
+            environmental_adjustment = 0.0
+            if self.environmental_analyzer:
+                try:
+                    environmental_adjustment = await self._apply_environmental_analysis(
+                        current_states_snapshot, final_probability
+                    )
+                    final_probability = max(
+                        MIN_PROBABILITY,
+                        min(
+                            final_probability + environmental_adjustment,
+                            MAX_PROBABILITY,
+                        ),
+                    )
+                except Exception as env_err:
+                    _LOGGER.warning("Environmental analysis failed: %s", env_err)
+
             final_is_occupied = final_probability >= self.data.threshold
 
             # Update the main data object with final results

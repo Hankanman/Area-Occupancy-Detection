@@ -177,3 +177,62 @@ ATTR_LAST_MOTION_TIME: Final = "last_motion_time"
 ATTR_LAST_DOOR_TIME: Final = "last_door_time"
 ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
+
+########################################################
+# Environmental sensor constants
+########################################################
+
+# Environmental analysis configuration
+CONF_ENVIRONMENTAL_SENSORS: Final = "environmental_sensors"
+CONF_ENVIRONMENTAL_ANALYSIS_ENABLED: Final = "environmental_analysis_enabled"
+CONF_ENVIRONMENTAL_ANALYSIS_METHOD: Final = "environmental_analysis_method"
+CONF_ENVIRONMENTAL_ML_ENABLED: Final = "environmental_ml_enabled"
+
+# Environmental sensor types
+ENVIRONMENTAL_SENSOR_TYPES: Final = [
+    "co2",
+    "temperature",
+    "humidity",
+    "luminance",
+    "sound",
+    "pressure",
+]
+
+# Environmental analysis methods
+ENVIRONMENTAL_ANALYSIS_METHODS: Final = [
+    "ml",
+    "deterministic",
+    "hybrid",
+]
+
+# Environmental analysis defaults
+ENVIRONMENTAL_ANALYSIS_FREQUENCY: Final = 60  # seconds
+ENVIRONMENTAL_MINIMUM_DATA_POINTS: Final = 100
+ENVIRONMENTAL_ML_CONFIDENCE_THRESHOLD: Final = 0.6
+ENVIRONMENTAL_MAX_HISTORICAL_DAYS: Final = 90
+ENVIRONMENTAL_MODEL_RETRAIN_INTERVAL: Final = 86400  # 24 hours in seconds
+ENVIRONMENTAL_ML_MODEL_VERSION: Final = "1.0.0"
+ENVIRONMENTAL_STORAGE_VERSION: Final = "1.0.0"
+
+# Environmental sensor configuration keys
+CONF_ENVIRONMENTAL_SENSOR_TYPE: Final = "sensor_type"
+CONF_ENVIRONMENTAL_BASELINE_VALUE: Final = "baseline_value"
+CONF_ENVIRONMENTAL_SENSITIVITY: Final = "sensitivity"
+CONF_ENVIRONMENTAL_ENABLED: Final = "enabled"
+
+# Default baseline values for environmental sensors
+ENVIRONMENTAL_BASELINE_DEFAULTS: Final = {
+    "co2": 400.0,
+    "temperature": 20.0,
+    "humidity": 50.0,
+    "luminance": 100.0,
+    "sound": 30.0,
+    "pressure": 1013.25,
+}
+
+# Environmental analysis attributes
+ATTR_ENVIRONMENTAL_PROBABILITY: Final = "environmental_probability"
+ATTR_ENVIRONMENTAL_CONFIDENCE: Final = "environmental_confidence"
+ATTR_ENVIRONMENTAL_METHOD: Final = "environmental_method"
+ATTR_ENVIRONMENTAL_SENSOR_CONTRIBUTIONS: Final = "environmental_sensor_contributions"
+ATTR_ENVIRONMENTAL_MODEL_VERSION: Final = "environmental_model_version"

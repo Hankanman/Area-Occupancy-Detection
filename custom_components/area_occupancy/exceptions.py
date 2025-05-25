@@ -37,3 +37,19 @@ class StorageSaveError(StorageError):
 
 class StorageMigrationError(StorageError):
     """Error raised when storage migration fails."""
+
+
+class EnvironmentalAnalysisError(AreaOccupancyError):
+    """Raised when there is an error in environmental analysis."""
+
+
+class EnvironmentalStorageError(StorageError):
+    """Raised when there is an error with environmental data storage."""
+
+
+class MLModelError(AreaOccupancyError):
+    """Raised when there is an error with ML model operations."""
+
+
+class SensorDataError(AreaOccupancyError):
+    """Raised when there is an error with sensor data processing."""
