@@ -4,9 +4,9 @@ from __future__ import annotations
 
 # Standard Library
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
-import logging
 from typing import Any
 
 # Third Party
@@ -547,7 +547,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Update the analysis period in prior_state
             _LOGGER.debug("Updating prior_state analysis period to: %s", period)
-            self.prior_state.update(analysis_period=period)
+            self.prior_state.update(analysis_period=int(period))
 
             sensors = self.get_configured_sensors()
             if not sensors:
