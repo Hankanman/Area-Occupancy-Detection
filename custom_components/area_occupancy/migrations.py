@@ -61,10 +61,10 @@ async def async_migrate_unique_ids(
 
     for entity_id, entity_entry in entity_registry.entities.items():
         old_unique_id = entity_entry.unique_id
-        # Check if this is one of our entities that needs migration
-        if old_unique_id.startswith(old_prefix):
+        # Convert to string to avoid AttributeError
+        if old_unique_id is not None and str(old_unique_id).startswith(old_prefix):
             # Simply remove the domain prefix to get the new ID
-            new_unique_id = old_unique_id.replace(old_prefix, f"{entry_id}_")
+            new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_")
 
             # Update the unique ID in the registry
             _LOGGER.info(
