@@ -210,11 +210,6 @@ class ProbabilityCalculator:
 
         # Check if entity state is considered active based on its type configuration
         if not self.probabilities.is_entity_active(entity_id, state.get("state")):
-            _LOGGER.debug(
-                "Sensor %s state '%s' is not considered active",
-                entity_id,
-                state.get("state"),
-            )
             return SensorCalculation.empty()
 
         try:

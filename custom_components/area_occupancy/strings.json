@@ -38,6 +38,22 @@
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wasp_in_box": {
+                        "name": "Wasp in Box",
+                        "description": "Configure wasp-in-box behavior for single-entry rooms",
+                        "data": {
+                            "wasp_enabled": "Enable Wasp in Box",
+                            "wasp_motion_timeout": "Motion Timeout (seconds)",
+                            "wasp_weight": "Sensor Weight",
+                            "wasp_max_duration": "Max Duration (seconds)"
+                        },
+                        "data_description": {
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
+                            "wasp_motion_timeout": "How long motion remains valid after detection",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation",
+                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior"
+                        }
+                    },
                     "windows": {
                         "name": "Window Sensors",
                         "description": "Configure window sensors and their states",
@@ -158,6 +174,22 @@
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wasp_in_box": {
+                        "name": "Wasp in Box",
+                        "description": "Configure wasp-in-box behavior for single-entry rooms",
+                        "data": {
+                            "wasp_enabled": "Enable Wasp in Box",
+                            "wasp_motion_timeout": "Motion Timeout (seconds)",
+                            "wasp_weight": "Sensor Weight",
+                            "wasp_max_duration": "Max Duration (seconds)"
+                        },
+                        "data_description": {
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
+                            "wasp_motion_timeout": "How long motion remains valid after detection",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation",
+                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior"
+                        }
+                    },
                     "windows": {
                         "name": "Window Sensors",
                         "description": "Configure window sensors and their states",
@@ -249,6 +281,9 @@
         "binary_sensor": {
             "occupancy_status": {
                 "name": "Occupancy Status"
+            },
+            "wasp_in_box": {
+                "name": "Wasp in Box"
             }
         },
         "sensor": {
