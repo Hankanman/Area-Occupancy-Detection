@@ -11,15 +11,12 @@ The prior probabilities for each input entity are calculated in [custom_componen
    - Query historical states using recorder component
    - Compare with primary occupancy indicator states
    - Calculate:
-     - prob_given_true: P(Entity State | Area Occupied)
-     - prob_given_false: P(Entity State | Area Not Occupied)
-     - prior_probability: P(Entity State)
+   - If sufficient data is available, use machine learning models (see [machine_learning.instructions.md](./.github/instructions/machine_learning.instructions.md)) for prior estimation.
 
 2. For environmental sensors:
    - Analyze historical correlations with occupancy patterns
    - Calculate baseline values and occupancy-induced changes
-   - Determine sensor-specific thresholds and response patterns
-   - Generate prior probabilities for environmental conditions
+   - ML models may be used if sufficient data is available (see above)
 
 3. If insufficient history:
    - Fall back to defaults in [custom_components/area_occupancy/probabilities.py](mdc:custom_components/area_occupancy/probabilities.py)
@@ -29,16 +26,9 @@ The prior probabilities for each input entity are calculated in [custom_componen
 The real-time occupancy probability is calculated in [custom_components/area_occupancy/calculate_prob.py](mdc:custom_components/area_occupancy/calculate_prob.py):
 
 1. For each input entity:
-   - Get current state
-   - Use corresponding priors (calculated or default)
-   - Apply Bayes' theorem:
-     P(Occupied | Evidence) = P(Evidence | Occupied) * P(Occupied) / P(Evidence)
-
+   - Use ML model inference if enabled and sufficient data is available (see [machine_learning.instructions.md](./.github/instructions/machine_learning.instructions.md))
 2. For environmental sensors:
-   - Process environmental data through [environmental_analysis.py](mdc:custom_components/area_occupancy/environmental_analysis.py)
-   - Generate environmental occupancy probability using ML or deterministic methods
-   - Weight environmental probability by confidence score
-   - Integrate with traditional sensor probabilities
+   - As above, use ML or deterministic analysis as appropriate
 
 3. Combine probabilities using:
    - For independent evidence: P = P1 * P2 * ... * Pn
@@ -55,6 +45,7 @@ The real-time occupancy probability is calculated in [custom_components/area_occ
 - Handle missing or invalid data
 - Cache results to avoid recalculation
 - Update periodically (configurable interval)
+- Use ML models for prior estimation when enabled and sufficient data is available (see [machine_learning.instructions.md](./.github/instructions/machine_learning.instructions.md))
 
 ### Real-time Calculation
 - Update on any input entity state change
@@ -62,6 +53,7 @@ The real-time occupancy probability is calculated in [custom_components/area_occ
 - Apply confidence weighting
 - Consider temporal factors
 - Optimize for performance
+- Use ML models for real-time probability calculation when enabled and sufficient data is available (see [machine_learning.instructions.md](./.github/instructions/machine_learning.instructions.md))
 
 ### Data Flow
 1. [coordinator.py](mdc:custom_components/area_occupancy/coordinator.py) triggers updates

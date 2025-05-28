@@ -854,7 +854,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     entity_id=sensor_id,
                     sensor_type="humidity",
                     analysis_method="deterministic",
-                    baseline_value=50.0,  # Default baseline for humidity
+                    baseline_value=50.0,
                     sensitivity=0.5,
                 )
 
@@ -865,7 +865,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     entity_id=sensor_id,
                     sensor_type="temperature",
                     analysis_method="deterministic",
-                    baseline_value=20.0,  # Default baseline for temperature
+                    baseline_value=20.0,
                     sensitivity=0.5,
                 )
 
@@ -876,24 +876,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     entity_id=sensor_id,
                     sensor_type="luminance",
                     analysis_method="deterministic",
-                    baseline_value=100.0,  # Default baseline for illuminance
+                    baseline_value=100.0,
                     sensitivity=0.5,
                 )
 
             if not env_sensors_dict:
                 return
 
-            # Determine analysis method and ML enablement from config
-            analysis_method = self.config.get(
-                CONF_ENVIRONMENTAL_ANALYSIS_METHOD, "deterministic"
+            # Determine analysis method and ML enablement from config (robust)
+            analysis_method = (
+                self.config.get(CONF_ENVIRONMENTAL_ANALYSIS_METHOD)
+                or self.config.get(CONF_ENVIRONMENTAL_ANALYSIS_METHOD)
+                or "deterministic"
             )
-            ml_enabled = self.config.get(CONF_ENVIRONMENTAL_ML_ENABLED, False)
+            ml_enabled = (
+                self.config.get(CONF_ENVIRONMENTAL_ML_ENABLED)
+                or self.config.get(CONF_ENVIRONMENTAL_ML_ENABLED)
+                or analysis_method in ("ml", "hybrid")
+            )
 
             # Create environmental configuration
             env_config = EnvironmentalConfig(
                 sensors=env_sensors_dict,
                 analysis_method=analysis_method,
-                analysis_frequency=300,  # 5 minutes
+                analysis_frequency=300,
             )
 
             # Create storage path for environmental data
@@ -905,7 +911,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
             storage_path.mkdir(parents=True, exist_ok=True)
 
-            # Initialize storage layer - ensure EnvironmentalStorage is available
+            # Initialize storage layer
             if not ENVIRONMENTAL_AVAILABLE:
                 _LOGGER.warning("Environmental storage components not available")
                 return
@@ -916,8 +922,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
 
             env_storage = EnvironmentalStorage(self.hass, storage_path)
-
-            # Initialize data manager
             self.environmental_data_manager = EnvironmentalDataManager(env_storage)
 
             # Initialize ML model manager if enabled
@@ -933,8 +937,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     model_manager = None
             elif ml_enabled and MLModelManager is None:
                 _LOGGER.warning(
-                    "MLModelManager is not available, cannot enable ML features."
+                    "MLModelManager is not available, cannot enable ML features"
                 )
+                self.ml_model_manager = None
+                model_manager = None
 
             # Initialize analyzer with or without ML
             if EnvironmentalAnalyzer is not None:
@@ -955,8 +961,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
 
         except Exception as err:
-            _LOGGER.warning("Failed to initialize environmental analysis: %s", err)
-            # Don't fail startup if environmental analysis fails
+            _LOGGER.warning(
+                "Failed to initialize environmental analysis: %s", err, exc_info=True
+            )
             self.environmental_analyzer = None
             self.environmental_data_manager = None
             self.ml_model_manager = None

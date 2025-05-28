@@ -11,7 +11,6 @@ import logging
 from typing import Any, cast
 
 import voluptuous as vol
-
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
@@ -46,6 +45,8 @@ from .const import (
     CONF_DECAY_WINDOW,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_ENVIRONMENTAL_ANALYSIS_METHOD,
+    CONF_ENVIRONMENTAL_ML_ENABLED,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
@@ -116,6 +117,12 @@ DECAY_WINDOW_MAX = 3600
 DECAY_MIN_DELAY_STEP = 10
 DECAY_MIN_DELAY_MIN = 0
 DECAY_MIN_DELAY_MAX = 3600
+
+ENV_ANALYSIS_METHOD_OPTIONS = [
+    SelectOptionDict(value="deterministic", label="Deterministic (Rule-Based)"),
+    SelectOptionDict(value="ml", label="Machine Learning (ML)"),
+    SelectOptionDict(value="hybrid", label="Hybrid (ML + Deterministic)"),
+]
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -490,6 +497,18 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     multiple=True,
                 ),
             ),
+            vol.Optional(
+                CONF_ENVIRONMENTAL_ANALYSIS_METHOD, default="deterministic"
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=ENV_ANALYSIS_METHOD_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="environmental_analysis_method",
+                )
+            ),
+            vol.Optional(
+                CONF_ENVIRONMENTAL_ML_ENABLED, default=False
+            ): BooleanSelector(),
             vol.Optional(
                 CONF_WEIGHT_ENVIRONMENTAL,
                 default=defaults.get(

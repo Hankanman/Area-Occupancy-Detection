@@ -32,7 +32,6 @@ Environmental sensors provide valuable occupancy indicators by detecting environ
 ```
 - Environmental data collection and preprocessing
 - Pattern recognition for occupancy correlations
-- Machine learning model training and inference
 - Fallback deterministic analysis
 
 #### Environmental Data Storage
@@ -41,24 +40,17 @@ Environmental sensors provide valuable occupancy indicators by detecting environ
 ```
 - Historical environmental data management
 - Training data preparation and caching
-- Model persistence and versioning
 - Data cleanup and retention policies
 
 #### ML Model Manager
-```python
-# custom_components/area_occupancy/ml_models.py
-```
-- Model training and validation
-- Feature engineering for environmental data
-- Model selection and hyperparameter tuning
-- Performance monitoring and drift detection
+- See [machine_learning.instructions.md](./.github/instructions/machine_learning.instructions.md) for universal ML requirements and architecture.
 
 ### Configuration Integration
 
 #### Config Flow Extensions
 Update [config_flow.py](mdc:custom_components/area_occupancy/config_flow.py) to include:
 - Environmental sensor selection interface
-- Analysis method configuration (ML/Deterministic/Hybrid)
+- Analysis method configuration (ML/Deterministic/Hybrid, universally for all sensors)
 - Training data requirements and thresholds
 - Model performance settings
 
@@ -84,18 +76,9 @@ CONF_CONFIDENCE_THRESHOLD = "confidence_threshold"
 # Environmental data types
 @dataclass
 class EnvironmentalData:
-    sensor_id: str
-    sensor_type: str
-    value: float
-    timestamp: datetime
-    quality_score: float
 
 @dataclass
 class EnvironmentalAnalysisResult:
-    occupancy_probability: float
-    confidence: float
-    contributing_factors: dict[str, float]
-    analysis_method: str
     model_version: str | None
 ```
 
@@ -158,31 +141,6 @@ class EnvironmentalDataProcessor:
    - Random Forest for interpretability
    - Neural Networks for complex patterns
    - Time Series models for temporal dependencies
-
-### Training Pipeline
-```python
-class EnvironmentalMLModel:
-    """Machine learning model for environmental analysis."""
-    
-    async def train_model(
-        self, 
-        training_data: list[EnvironmentalData],
-        occupancy_labels: list[bool]
-    ) -> None:
-        """Train the ML model with historical data."""
-        
-    async def predict_occupancy(
-        self, 
-        current_data: dict[str, EnvironmentalData]
-    ) -> EnvironmentalAnalysisResult:
-        """Predict occupancy probability from current environmental data."""
-        
-    async def evaluate_model(self) -> dict[str, float]:
-        """Evaluate model performance metrics."""
-        
-    async def update_model(self, new_data: list[EnvironmentalData]) -> bool:
-        """Incrementally update model with new data."""
-```
 
 ### Feature Engineering
 1. **Temporal Features**:
