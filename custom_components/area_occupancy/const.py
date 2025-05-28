@@ -88,6 +88,8 @@ NAME_BINARY_SENSOR: Final = "Occupancy Status"
 NAME_PRIORS_SENSOR: Final = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
+NAME_ENVIRONMENTAL_SENSOR: Final = "Environmental Probability"
+NAME_ML_MODEL_STATUS_SENSOR: Final = "ML Model Status"
 
 # Decay lambda - A higher value results in faster decay.
 # Original value (0.866) resulted in ~65% remaining at half decay_window.

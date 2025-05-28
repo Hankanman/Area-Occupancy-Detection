@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, Optional, TypedDict
 
 from homeassistant.util import dt as dt_util
 
@@ -972,7 +972,6 @@ class EnvironmentalConfig:
 
 
 @dataclass
-@dataclass
 class EnvironmentalResult:
     """Result from environmental analysis."""
 
@@ -1016,6 +1015,7 @@ class ModelPerformanceMetrics:
     training_samples: int
     test_samples: int
     created_at: datetime = field(default_factory=dt_util.utcnow)
+    last_training: Optional[datetime] = None
 
     def __post_init__(self) -> None:
         """Validate performance metrics."""

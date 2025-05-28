@@ -252,7 +252,7 @@ class MLModelManager:
             if not X:
                 return None, None
 
-            return np.array(X), np.array(y)
+            return np.array(X, dtype=np.float64), np.array(y, dtype=np.int64)
 
         except Exception as err:
             _LOGGER.error("Failed to prepare training data: %s", err)

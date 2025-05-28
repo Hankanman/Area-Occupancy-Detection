@@ -87,9 +87,49 @@ async def async_setup_services(hass: HomeAssistant):
         }
     )
 
+    async def train_environmental_model(call):
+        """Service to train or retrain the environmental ML model."""
+        entry_id = call.data.get("entry_id")
+        force_retrain = call.data.get("force_retrain", False)
+        coordinator = hass.data[DOMAIN].get(entry_id)
+        if not coordinator or not hasattr(coordinator, "ml_model_manager"):
+            raise HomeAssistantError("ML model manager not available for this entry.")
+        model_manager = coordinator.ml_model_manager
+        training_data = await coordinator.get_environmental_training_data()
+        try:
+            await model_manager.train_model(training_data, force_retrain=force_retrain)
+        except Exception as err:
+            raise HomeAssistantError(f"Model training failed: {err}") from err
+
+    async def analyze_environmental_patterns(call):
+        """Service to analyze environmental sensor patterns for debugging."""
+        entry_id = call.data.get("entry_id")
+        sensor_types = call.data.get("sensor_types", [])
+        coordinator = hass.data[DOMAIN].get(entry_id)
+        if not coordinator or not hasattr(coordinator, "environmental_analyzer"):
+            raise HomeAssistantError(
+                "Environmental analyzer not available for this entry."
+            )
+        analyzer = coordinator.environmental_analyzer
+        try:
+            result = await analyzer.analyze_patterns(sensor_types)
+            return result
+        except Exception as err:
+            raise HomeAssistantError(f"Pattern analysis failed: {err}") from err
+
     hass.services.async_register(
         DOMAIN,
         "update_priors",
         update_priors,
         schema=service_schema_update_priors,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "train_environmental_model",
+        train_environmental_model,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "analyze_environmental_patterns",
+        analyze_environmental_patterns,
     )

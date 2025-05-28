@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -231,6 +232,97 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
             return 0.0
 
 
+class EnvironmentalAnalysisSensor(AreaOccupancySensorBase):
+    """Sensor for environmental analysis probability and confidence."""
+
+    _attr_device_class = SensorDeviceClass.POWER_FACTOR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize the environmental analysis sensor.
+
+        Args:
+            coordinator: The AreaOccupancyCoordinator instance.
+            area_name: The name of the area for this sensor.
+
+        """
+        super().__init__(coordinator, area_name)
+        self._attr_name = f"{area_name} Environmental Probability"
+        self._attr_unique_id = f"{area_name}_environmental_probability"
+        self._attr_native_unit_of_measurement = PERCENTAGE
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the environmental probability as a percentage, or None if unavailable."""
+        result = getattr(self.coordinator, "environmental_result", None)
+        if result is not None:
+            return round(result.probability * 100, 2)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes for environmental analysis."""
+        result = getattr(self.coordinator, "environmental_result", None)
+        if result is None:
+            return {}
+        return {
+            "confidence": round(result.confidence * 100, 2),
+            "method": result.method,
+            "sensor_contributions": result.sensor_contributions,
+            "model_version": getattr(result, "model_version", None),
+        }
+
+
+class MLModelStatusSensor(AreaOccupancySensorBase):
+    """Sensor for ML model status and performance metrics."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:robot"
+    _attr_device_class = None
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_suggested_display_precision = None
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize the ML model status sensor.
+
+        Args:
+            coordinator: The AreaOccupancyCoordinator instance.
+            area_name: The name of the area for this sensor.
+
+        """
+        super().__init__(coordinator, area_name)
+        self._attr_name = f"{area_name} ML Model Status"
+        self._attr_unique_id = f"{area_name}_ml_model_status"
+        # Explicitly unset numeric attributes
+        self._attr_device_class = None
+        self._attr_state_class = None
+        self._attr_native_unit_of_measurement = None
+        self._attr_suggested_display_precision = None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the ML model status as a string ('ready' or 'unavailable')."""
+        model_manager = getattr(self.coordinator, "ml_model_manager", None)
+        if model_manager is not None and model_manager.is_available:
+            return "ready"
+        return "unavailable"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes for ML model status and metrics."""
+        model_manager = getattr(self.coordinator, "ml_model_manager", None)
+        if model_manager is None:
+            return {}
+        metrics = model_manager.performance_metrics
+        return {
+            "model_version": getattr(model_manager, "_model_version", None),
+            "last_training": getattr(model_manager, "_last_training", None),
+            "performance_metrics": metrics.__dict__ if metrics else {},
+        }
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -251,7 +343,13 @@ async def async_setup_entry(
     if history_period > 0:
         sensors.append(PriorsSensor(coordinator, entry.entry_id))
 
-    async_add_entities(sensors, update_before_add=True)
+    # Add environmental and ML model status sensors
+    area_name = entry.title
+    entities = [
+        EnvironmentalAnalysisSensor(coordinator, area_name),
+        MLModelStatusSensor(coordinator, area_name),
+    ]
+    async_add_entities(sensors + entities, update_before_add=True)
 
 
 def format_float(value: float) -> float:

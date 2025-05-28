@@ -18,3 +18,38 @@ update_priors:
           min: 1
           max: 30
           step: 1
+
+train_environmental_model:
+  name: Train Environmental Model
+  description: "Train or retrain the environmental analysis model."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to train the model for."
+      required: true
+      selector:
+        config_entry:
+    force_retrain:
+      name: Force Retrain
+      description: "Force complete model retraining."
+      required: false
+      default: false
+      selector:
+        boolean:
+
+analyze_environmental_patterns:
+  name: Analyze Environmental Patterns
+  description: "Analyze environmental sensor patterns for debugging."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to analyze."
+      required: true
+      selector:
+        config_entry:
+    sensor_types:
+      name: Sensor Types
+      description: "List of sensor types to analyze (e.g., co2, temperature)."
+      required: false
+      selector:
+        object:

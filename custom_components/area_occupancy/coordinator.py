@@ -837,6 +837,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         try:
             from .const import (
+                CONF_ENVIRONMENTAL_ANALYSIS_METHOD,
+                CONF_ENVIRONMENTAL_ML_ENABLED,
                 CONF_HUMIDITY_SENSORS,
                 CONF_ILLUMINANCE_SENSORS,
                 CONF_TEMPERATURE_SENSORS,
@@ -881,10 +883,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             if not env_sensors_dict:
                 return
 
+            # Determine analysis method and ML enablement from config
+            analysis_method = self.config.get(
+                CONF_ENVIRONMENTAL_ANALYSIS_METHOD, "deterministic"
+            )
+            ml_enabled = self.config.get(CONF_ENVIRONMENTAL_ML_ENABLED, False)
+
             # Create environmental configuration
             env_config = EnvironmentalConfig(
                 sensors=env_sensors_dict,
-                analysis_method="deterministic",  # Start with deterministic for simplicity
+                analysis_method=analysis_method,
                 analysis_frequency=300,  # 5 minutes
             )
 
@@ -912,23 +920,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Initialize data manager
             self.environmental_data_manager = EnvironmentalDataManager(env_storage)
 
-            # Initialize ML model manager if enabled (disabled for now)
-            # self.ml_model_manager = MLModelManager(self.hass, storage_path)
+            # Initialize ML model manager if enabled
+            self.ml_model_manager = None
+            model_manager = None
+            if ml_enabled and MLModelManager is not None:
+                try:
+                    self.ml_model_manager = MLModelManager(self.hass, storage_path)
+                    model_manager = self.ml_model_manager
+                except Exception as err:
+                    _LOGGER.warning("Failed to initialize MLModelManager: %s", err)
+                    self.ml_model_manager = None
+                    model_manager = None
+            elif ml_enabled and MLModelManager is None:
+                _LOGGER.warning(
+                    "MLModelManager is not available, cannot enable ML features."
+                )
 
-            # Initialize analyzer without ML for now
+            # Initialize analyzer with or without ML
             if EnvironmentalAnalyzer is not None:
                 self.environmental_analyzer = EnvironmentalAnalyzer(
                     self.hass,
                     env_config,
-                    None,  # No ML model manager for now
+                    model_manager,
                 )
             else:
                 _LOGGER.warning("EnvironmentalAnalyzer not available")
                 return
 
             _LOGGER.info(
-                "Environmental analysis initialized with %d sensors",
+                "Environmental analysis initialized with %d sensors, ML enabled: %s, method: %s",
                 len(env_sensors_dict),
+                ml_enabled,
+                analysis_method,
             )
 
         except Exception as err:
