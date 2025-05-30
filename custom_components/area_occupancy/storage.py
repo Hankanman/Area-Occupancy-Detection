@@ -1,12 +1,13 @@
 """Storage handling for Area Occupancy Detection."""
 
 import logging
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, STORAGE_KEY
+from .const import CONF_VERSION, CONF_VERSION_MINOR, ML_STORAGE_KEY, STORAGE_KEY
 from .exceptions import StorageLoadError, StorageSaveError
 from .types import InstanceData, LoadedInstanceData, PriorState, StoredData
 
@@ -281,3 +282,106 @@ class AreaOccupancyStore(Store[StoredData]):
         except Exception as err:  # Catch broader exceptions during save
             _LOGGER.exception("Error saving prior state for %s", entry_id)
             raise StorageSaveError(f"Failed to save prior state: {err}") from err
+
+
+class AreaOccupancyStorage:
+    """Storage manager for Area Occupancy Detection with ML support."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the storage manager.
+
+        Args:
+            hass: Home Assistant instance
+
+        """
+        self.hass = hass
+        self._store = AreaOccupancyStore(hass)
+        self._ml_store = Store[dict[str, Any]](
+            hass,
+            CONF_VERSION,
+            ML_STORAGE_KEY,
+            atomic_writes=True,
+            private=True,
+        )
+
+    async def async_load_instance_prior_state(
+        self, entry_id: str
+    ) -> LoadedInstanceData:
+        """Load prior state data for a specific instance.
+
+        Args:
+            entry_id: The config entry ID of the instance to load
+
+        Returns:
+            LoadedInstanceData containing prior state information
+
+        """
+        return await self._store.async_load_instance_prior_state(entry_id)
+
+    async def async_save_instance_prior_state(
+        self, entry_id: str, name: str, prior_state: PriorState
+    ) -> None:
+        """Save prior state data for a specific instance.
+
+        Args:
+            entry_id: The config entry ID of the instance
+            name: Name of the instance
+            prior_state: Prior state data to save
+
+        """
+        await self._store.async_save_instance_prior_state(entry_id, name, prior_state)
+
+    async def async_remove_instance(self, entry_id: str) -> bool:
+        """Remove data for a specific instance.
+
+        Args:
+            entry_id: The config entry ID of the instance to remove
+
+        Returns:
+            True if data was removed, False otherwise
+
+        """
+        return await self._store.async_remove_instance(entry_id)
+
+    async def async_cleanup_orphaned_instances(self, valid_entry_ids: set[str]) -> bool:
+        """Clean up orphaned instances from storage.
+
+        Args:
+            valid_entry_ids: List of valid config entry IDs
+
+        Returns:
+            True if any instances were removed, False otherwise
+
+        """
+        return await self._store.async_cleanup_orphaned_instances(valid_entry_ids)
+
+    async def async_load_ml_model(self) -> dict[str, Any] | None:
+        """Load ML model data from storage.
+
+        Returns:
+            Dictionary containing model path and metadata, or None if not found
+
+        """
+        try:
+            data = await self._ml_store.async_load()
+            return data
+        except Exception as err:
+            _LOGGER.exception("Error loading ML model data: %s", err)
+            return None
+
+    async def async_save_ml_model(self, model_data: dict[str, Any]) -> None:
+        """Save ML model data to storage.
+
+        Args:
+            model_data: Dictionary containing model path and metadata
+
+        Raises:
+            StorageSaveError: If saving fails
+
+        """
+        try:
+            await self._ml_store.async_save(model_data)
+            _LOGGER.debug("Saved ML model data to storage")
+        except Exception as err:
+            _LOGGER.exception("Error saving ML model data: %s", err)
+            raise StorageSaveError(f"Failed to save ML model data: {err}") from err

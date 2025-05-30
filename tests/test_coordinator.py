@@ -76,7 +76,8 @@ async def test_coordinator_initialization(
     new_callable=AsyncMock,
 )
 @patch(
-    "custom_components.area_occupancy.coordinator.ProbabilityCalculator.calculate_occupancy_probability"
+    "custom_components.area_occupancy.coordinator.ProbabilityCalculator.calculate_occupancy_probability",
+    new_callable=AsyncMock,
 )
 async def test_coordinator_first_refresh_success(
     mock_calc_prob,
@@ -191,7 +192,8 @@ async def test_coordinator_update_failure_state_get(
     new_callable=AsyncMock,
 )
 @patch(
-    "custom_components.area_occupancy.coordinator.ProbabilityCalculator.calculate_occupancy_probability"
+    "custom_components.area_occupancy.coordinator.ProbabilityCalculator.calculate_occupancy_probability",
+    new_callable=AsyncMock,
 )
 async def test_coordinator_update_failure_prob_calc(
     mock_calc_prob,

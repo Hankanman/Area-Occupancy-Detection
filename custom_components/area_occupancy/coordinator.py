@@ -51,8 +51,24 @@ from .const import (
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
 from .probabilities import Probabilities
-from .storage import AreaOccupancyStore
-from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
+from .storage import AreaOccupancyStorage, AreaOccupancyStore
+from .types import (
+    MLHybridResult,
+    PriorState,
+    ProbabilityState,
+    SensorInfo,
+    SensorInputs,
+    TypeAggregate,
+)
+
+# Conditional imports for ML functionality
+try:
+    from .ml_models import ModelManager
+
+    ML_AVAILABLE = True
+except ImportError:
+    ModelManager = None
+    ML_AVAILABLE = False
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,9 +154,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         # Initialize remaining components
         self.storage = AreaOccupancyStore(self.hass)
+        self.ml_storage = AreaOccupancyStorage(self.hass)
         self.decay_handler = DecayHandler(self.config)
+
+        # Initialize ML components if available
+        self.model_manager = None
+        if ML_AVAILABLE and ModelManager is not None:
+            try:
+                self.model_manager = ModelManager(hass, self.ml_storage)
+            except Exception as err:
+                _LOGGER.warning("Failed to initialize ML components: %s", err)
+
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
+            model_manager=self.model_manager,
         )
         self._prior_calculator = PriorCalculator(
             hass=self.hass,
@@ -802,10 +829,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # --- Calculate Undecayed Probability ---
             try:
-                # Pass snapshot and prior state to the calculator
-                calc_result = self.calculator.calculate_occupancy_probability(
+                # Pass snapshot, prior state, and config to the calculator
+                calc_result = await self.calculator.calculate_occupancy_probability(
                     current_states_snapshot,  # Pass the snapshot
                     self.prior_state,
+                    self.config,  # Pass the config for ML settings
                 )
             except (CalculationError, ValueError, ZeroDivisionError) as calc_err:
                 # Log the specific calculation error and return existing data
@@ -814,11 +842,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.async_set_updated_data(self.data)
                 return self.data
 
+            # Extract values from result based on type (OccupancyCalculationResult or MLHybridResult)
+            if isinstance(calc_result, MLHybridResult):
+                calculated_probability = calc_result.final_probability
+                # For ML hybrid results, we need to get prior and sensor probabilities separately
+                # Since they're not included in MLHybridResult, use bayesian probability
+                prior_probability = (
+                    calc_result.bayesian_probability
+                )  # Use Bayesian as fallback
+                sensor_probabilities = {}  # Empty for ML results
+            else:  # OccupancyCalculationResult
+                calculated_probability = calc_result.calculated_probability
+                prior_probability = calc_result.prior_probability
+                sensor_probabilities = calc_result.sensor_probabilities
+
             # Update self.data with intermediate results *before* decay
             self.data.update(
-                probability=calc_result.calculated_probability,  # Store undecayed prob temporarily
-                prior_probability=calc_result.prior_probability,
-                sensor_probabilities=calc_result.sensor_probabilities,
+                probability=calculated_probability,  # Store undecayed prob temporarily
+                prior_probability=prior_probability,
+                sensor_probabilities=sensor_probabilities,
             )
 
             # --- Apply Decay ---
@@ -829,7 +871,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 new_decay_start_time,
                 new_decay_start_probability,
             ) = self.decay_handler.calculate_decay(
-                current_probability=calc_result.calculated_probability,  # Use the result from calculation
+                current_probability=calculated_probability,  # Use the extracted probability
                 previous_probability=initial_prob,  # Use the state before this update cycle
                 is_decaying=initial_decaying,
                 decay_start_time=initial_decay_start_time,

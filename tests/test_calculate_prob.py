@@ -187,7 +187,7 @@ def test_calculate_complementary_probability(calculator, mock_prior_state):
     )
 
 
-def test_calculate_occupancy_probability(calculator, mock_prior_state):
+async def test_calculate_occupancy_probability(calculator, mock_prior_state):
     """Test the main calculation logic."""
     current_states: dict[str, SensorInfo] = {
         "binary_sensor.test1": {
@@ -202,8 +202,8 @@ def test_calculate_occupancy_probability(calculator, mock_prior_state):
         },
     }
 
-    result = calculator.calculate_occupancy_probability(
-        current_states, mock_prior_state
+    result = await calculator.calculate_occupancy_probability(
+        current_states, mock_prior_state, config={}
     )
 
     assert MIN_PROBABILITY <= result.calculated_probability <= MAX_PROBABILITY
@@ -215,7 +215,7 @@ def test_calculate_occupancy_probability(calculator, mock_prior_state):
     assert result.prior_probability == pytest.approx(0.5)  # Updated expected value
 
 
-def test_probability_calculator_with_single_sensor(calculator, default_config):
+async def test_probability_calculator_with_single_sensor(calculator, default_config):
     """Test ProbabilityCalculator with a single sensor."""
     # Create test data
     current_states = {
@@ -236,7 +236,9 @@ def test_probability_calculator_with_single_sensor(calculator, default_config):
     )
 
     # Calculate probability using calculator fixture
-    result = calculator.calculate_occupancy_probability(current_states, prior_state)
+    result = await calculator.calculate_occupancy_probability(
+        current_states, prior_state, config={}
+    )
 
     # Verify results
     assert MIN_PROBABILITY <= result.calculated_probability <= MAX_PROBABILITY
@@ -244,7 +246,7 @@ def test_probability_calculator_with_single_sensor(calculator, default_config):
     assert "binary_sensor.motion" in result.sensor_probabilities
 
 
-def test_probability_calculator_with_multiple_sensors(calculator, default_config):
+async def test_probability_calculator_with_multiple_sensors(calculator, default_config):
     """Test ProbabilityCalculator with multiple sensors."""
     # Create test data
     current_states = {
@@ -277,7 +279,9 @@ def test_probability_calculator_with_multiple_sensors(calculator, default_config
     )
 
     # Calculate probability using calculator fixture
-    result = calculator.calculate_occupancy_probability(current_states, prior_state)
+    result = await calculator.calculate_occupancy_probability(
+        current_states, prior_state, config={}
+    )
 
     # Verify results
     assert MIN_PROBABILITY <= result.calculated_probability <= MAX_PROBABILITY
@@ -286,7 +290,9 @@ def test_probability_calculator_with_multiple_sensors(calculator, default_config
     assert "binary_sensor.door" in result.sensor_probabilities
 
 
-def test_probability_calculator_with_unavailable_sensor(calculator, default_config):
+async def test_probability_calculator_with_unavailable_sensor(
+    calculator, default_config
+):
     """Test ProbabilityCalculator with unavailable sensor."""
     # Create test data
     current_states = {
@@ -319,7 +325,9 @@ def test_probability_calculator_with_unavailable_sensor(calculator, default_conf
     )
 
     # Calculate probability using calculator fixture
-    result = calculator.calculate_occupancy_probability(current_states, prior_state)
+    result = await calculator.calculate_occupancy_probability(
+        current_states, prior_state, config={}
+    )
 
     # Verify results
     assert MIN_PROBABILITY <= result.calculated_probability <= MAX_PROBABILITY
@@ -328,7 +336,9 @@ def test_probability_calculator_with_unavailable_sensor(calculator, default_conf
     assert "binary_sensor.door" not in result.sensor_probabilities
 
 
-def test_probability_calculator_with_invalid_probabilities(calculator, default_config):
+async def test_probability_calculator_with_invalid_probabilities(
+    calculator, default_config
+):
     """Test ProbabilityCalculator with invalid probability values."""
     # Create test data with invalid probabilities
     current_states = {
@@ -349,7 +359,9 @@ def test_probability_calculator_with_invalid_probabilities(calculator, default_c
     )
 
     # Calculate probability using calculator fixture
-    result = calculator.calculate_occupancy_probability(current_states, prior_state)
+    result = await calculator.calculate_occupancy_probability(
+        current_states, prior_state, config={}
+    )
 
     # Verify results
     assert MIN_PROBABILITY <= result.calculated_probability <= MAX_PROBABILITY
@@ -357,7 +369,7 @@ def test_probability_calculator_with_invalid_probabilities(calculator, default_c
     assert "binary_sensor.motion" in result.sensor_probabilities
 
 
-def test_probability_calculator_with_all_sensors_unavailable(
+async def test_probability_calculator_with_all_sensors_unavailable(
     calculator, default_config
 ):
     """Test ProbabilityCalculator when all sensors are unavailable."""
@@ -392,7 +404,9 @@ def test_probability_calculator_with_all_sensors_unavailable(
     )
 
     # Calculate probability using calculator fixture
-    result = calculator.calculate_occupancy_probability(current_states, prior_state)
+    result = await calculator.calculate_occupancy_probability(
+        current_states, prior_state, config={}
+    )
 
     # Verify results
     assert result.calculated_probability == MIN_PROBABILITY
@@ -400,10 +414,12 @@ def test_probability_calculator_with_all_sensors_unavailable(
     assert not result.sensor_probabilities  # Should be empty
 
 
-def test_probability_calculator_with_empty_data(calculator, default_config):
+async def test_probability_calculator_with_empty_data(calculator, default_config):
     """Test ProbabilityCalculator with empty data."""
     # Calculate probability with empty data using calculator fixture
-    result = calculator.calculate_occupancy_probability({}, PriorState())
+    result = await calculator.calculate_occupancy_probability(
+        {}, PriorState(), config={}
+    )
 
     # Verify results
     assert result.calculated_probability == MIN_PROBABILITY

@@ -177,3 +177,54 @@ ATTR_LAST_MOTION_TIME: Final = "last_motion_time"
 ATTR_LAST_DOOR_TIME: Final = "last_door_time"
 ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
+
+########################################################
+# Machine Learning constants
+########################################################
+
+# ML Configuration keys
+CONF_ML_ENABLED: Final = "ml_enabled"
+CONF_ML_CONFIDENCE_THRESHOLD: Final = "ml_confidence_threshold"
+CONF_ML_RETRAIN_INTERVAL: Final = "ml_retrain_interval"
+CONF_ANALYSIS_METHOD: Final = "analysis_method"
+
+# ML Default values
+DEFAULT_ML_ENABLED: Final = False
+DEFAULT_ML_CONFIDENCE_THRESHOLD: Final = 0.7
+DEFAULT_ML_RETRAIN_INTERVAL: Final = 7  # days
+DEFAULT_ANALYSIS_METHOD: Final = "hybrid"
+
+# ML Analysis methods
+ANALYSIS_METHOD_DETERMINISTIC: Final = "deterministic"
+ANALYSIS_METHOD_ML: Final = "ml"
+ANALYSIS_METHOD_HYBRID: Final = "hybrid"
+
+# ML Model constants
+ML_FEATURE_WINDOW_SIZE: Final = 60  # minutes for feature aggregation
+ML_MIN_TRAINING_SAMPLES: Final = 100  # minimum samples required for training
+ML_MODEL_VERSION: Final = 1
+ML_STORAGE_KEY: Final = f"{DOMAIN}.ml_models"
+
+# ML Feature engineering constants
+ML_TEMPORAL_FEATURES: Final = [
+    "hour_of_day",
+    "day_of_week",
+    "is_weekend",
+    "is_workday",
+    "time_since_last_motion",
+    "time_since_last_media",
+    "motion_duration",
+    "media_duration",
+]
+
+ML_SENSOR_FEATURES: Final = [
+    "motion_count",
+    "media_active_duration",
+    "door_changes",
+    "light_changes",
+    "environmental_changes",
+]
+
+# Environmental ML constants
+ENVIRONMENTAL_FEATURE_WINDOW: Final = 30  # minutes
+ENVIRONMENTAL_THRESHOLD_MULTIPLIER: Final = 1.5  # for anomaly detection

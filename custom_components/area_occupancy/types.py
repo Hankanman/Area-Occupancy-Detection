@@ -913,3 +913,70 @@ class WaspInBoxAttributes(TypedDict, total=False):
     motion_timeout: int
     max_duration: int
     last_occupied_time: str | None
+
+
+########################################################
+# Machine Learning types
+########################################################
+
+
+class AnalysisMethod(StrEnum):
+    """Enum for analysis methods."""
+
+    DETERMINISTIC = "deterministic"
+    ML = "ml"
+    HYBRID = "hybrid"
+
+
+@dataclass
+class MLModelMeta:
+    """Metadata for ML models."""
+
+    model_version: int
+    feature_schema: dict[str, Any]
+    training_samples: int
+    performance_metrics: dict[str, float]
+    created_at: str
+    last_trained: str
+    confidence_threshold: float
+
+
+@dataclass
+class MLPrediction:
+    """ML model prediction result."""
+
+    probability: float
+    confidence: float
+    feature_importance: dict[str, float]
+    model_version: int
+
+
+@dataclass
+class MLTrainingData:
+    """Training data for ML models."""
+
+    features: dict[str, Any]
+    labels: list[bool]
+    timestamps: list[str]
+    entity_ids: list[str]
+
+
+@dataclass
+class MLHybridResult:
+    """Result of hybrid ML/Bayesian calculation."""
+
+    final_probability: float
+    ml_probability: float | None
+    ml_confidence: float | None
+    bayesian_probability: float
+    method_used: AnalysisMethod
+    feature_data: dict[str, Any] | None = None
+
+
+class MLConfig(TypedDict, total=False):
+    """ML configuration options."""
+
+    ml_enabled: bool
+    ml_confidence_threshold: float
+    ml_retrain_interval: int
+    analysis_method: str
