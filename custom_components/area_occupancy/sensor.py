@@ -76,11 +76,14 @@ class PriorsSensor(AreaOccupancySensorBase):
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
         try:
-            if not self.coordinator.prior_state:
+            if (
+                not self.coordinator.prior_manager
+                or not self.coordinator.prior_manager.prior_state
+            ):
                 return None
 
             # Return the overall prior directly from prior_state
-            return self.coordinator.prior_state.overall_prior * 100
+            return self.coordinator.prior_manager.prior_state.overall_prior * 100
 
         except (TypeError, ValueError, AttributeError, KeyError) as err:
             _LOGGER.error("Error calculating priors: %s", err)
@@ -90,10 +93,13 @@ class PriorsSensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> PriorsAttributes:
         """Return all prior probabilities as attributes."""
         try:
-            if not self.coordinator.prior_state:
+            if (
+                not self.coordinator.prior_manager
+                or not self.coordinator.prior_manager.prior_state
+            ):
                 return {}
 
-            prior_state = self.coordinator.prior_state
+            prior_state = self.coordinator.prior_manager.prior_state
 
             # Initialize PriorsAttributes with empty dict
             attributes: PriorsAttributes = {}

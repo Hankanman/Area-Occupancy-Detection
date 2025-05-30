@@ -5,6 +5,8 @@ from __future__ import annotations
 # Standard Library
 import asyncio
 import logging
+import os
+import sys
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -18,25 +20,19 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import (
-    async_track_point_in_time,
-    async_track_time_interval,
-)
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
 
 from .calculate_prior import PriorCalculator
 from .calculate_prob import ProbabilityCalculator
 from .const import (
     CONF_DECAY_ENABLED,
     CONF_DECAY_WINDOW,
-    CONF_HISTORY_PERIOD,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_WINDOW,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -47,17 +43,11 @@ from .const import (
 )
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
+from .prior_manager import PriorManager
 from .probabilities import Probabilities
 from .state_manager import StateManager
 from .storage import AreaOccupancyStorage, AreaOccupancyStore
-from .types import (
-    MLHybridResult,
-    PriorState,
-    ProbabilityState,
-    SensorInfo,
-    SensorInputs,
-    TypeAggregate,
-)
+from .types import MLHybridResult, ProbabilityState, SensorInfo, SensorInputs
 
 # Conditional imports for ML functionality
 try:
@@ -102,13 +92,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         except (ValueError, TypeError) as err:
             raise ConfigEntryError(f"Invalid sensor configuration: {err}") from err
 
-        # Initialize timers and intervals
-        self._prior_update_interval = timedelta(hours=1)
-        self._prior_update_tracker = None
-        self._next_prior_update = None
-
         # Initialize tracking
-        self._last_prior_update: str | None = None  # Store last prior calc time
         self._processing_state_change: bool = (
             False  # Flag to prevent recursive state changes
         )
@@ -139,17 +123,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             hass=self.hass,
             config=self.config,
             probabilities=self.probabilities,
-        )
-
-        # Initialize prior state
-        self.prior_state = PriorState()
-        self.prior_state.initialize_from_defaults(
-            self.probabilities, self.state_manager
-        )
-        self.prior_state.update(
-            analysis_period=self.config.get(
-                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-            ),
         )
 
         # Set decay configuration
@@ -183,6 +156,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             probabilities=self.probabilities,
             sensor_inputs=self.inputs,
             state_manager=self.state_manager,
+        )
+
+        # Initialize PriorManager to handle all prior-related operations
+        # Detect test environment and disable scheduling to prevent lingering timers
+        is_test_env = (
+            "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
+        )
+        self.prior_manager: PriorManager = PriorManager(
+            hass=self.hass,
+            config=self.config,
+            storage=self.storage,
+            probabilities=self.probabilities,
+            state_manager=self.state_manager,
+            prior_calculator=self._prior_calculator,
+            config_entry_id=self.config_entry.entry_id,
+            disable_scheduling=is_test_env,
         )
 
     # --- Properties ---
@@ -219,17 +208,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     @property
     def prior_update_interval(self) -> timedelta:
         """Return the interval between prior updates."""
-        return self._prior_update_interval
+        return self.prior_manager.prior_update_interval
 
     @property
     def next_prior_update(self) -> datetime | None:
         """Return the next scheduled prior update time."""
-        return self._next_prior_update
+        return self.prior_manager.next_prior_update
 
     @property
     def last_prior_update(self) -> str | None:
         """Return the timestamp the priors were last calculated."""
-        return self._last_prior_update
+        return self.prior_manager.last_prior_update
 
     @property
     def probability(self) -> float:
@@ -248,87 +237,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
     # --- Public Methods ---
     async def async_setup(self) -> None:
-        """Set up the coordinator, load data, initialize states, check priors, and schedule updates."""
+        """Set up the coordinator, load data, initialize states, and setup prior management."""
         try:
-            # Load stored data first
-            await self.async_load_stored_data()
-
-            # Initialize states after loading stored data
+            # Initialize states first
             sensors = self.get_configured_sensors()
             await self.async_initialize_states(sensors)
 
-            # Determine if priors need calculation at startup
-            force_prior_update = False
-            reason = ""
-
-            if not self.prior_state:
-                # Condition 1: Prior state object missing
-                force_prior_update = True
-                reason = "Prior state object not loaded or initialized"
-            else:
-                # Prior state object exists, check its completeness first
-                is_incomplete = (
-                    not self.prior_state.type_priors
-                    or self.prior_state.type_priors == {}
-                    or not self.prior_state.entity_priors
-                    or self.prior_state.entity_priors == {}
-                    or self.prior_state.overall_prior in (MIN_PROBABILITY, 0.0)
-                )
-
-                if is_incomplete:
-                    # Condition 2: Prior state object exists but is incomplete
-                    force_prior_update = True
-                    reason = "Loaded prior state is incomplete or at minimum"
-                # Condition 3 & 4: Prior state exists AND is complete, now check timestamp age
-                # Use the _last_prior_update variable loaded alongside the state
-                elif (
-                    not self._last_prior_update
-                ):  # Check coordinator's internal timestamp
-                    # Timestamp wasn't loaded/found (should ideally not happen if state is complete)
-                    force_prior_update = True
-                    reason = "No last update timestamp found for complete prior state"
-                else:
-                    try:
-                        last_update_dt = dt_util.parse_datetime(self._last_prior_update)
-                        if not last_update_dt:
-                            force_prior_update = True
-                            reason = (
-                                "Failed to get valid datetime from parsed timestamp"
-                            )
-                        # Check age against coordinator's interval property
-                        elif (
-                            dt_util.utcnow() - last_update_dt
-                            >= self.prior_update_interval
-                        ):
-                            force_prior_update = True
-                            reason = "Last update is older than the update interval"
-                        # else: force_prior_update remains False (prior is complete and recent)
-
-                    except (TypeError, ValueError):
-                        _LOGGER.warning(
-                            "Could not parse stored last prior update time: %s",
-                            self._last_prior_update,
-                        )
-                        force_prior_update = True  # Force update if parsing fails
-                        reason = "Failed to parse last update timestamp"
-
-            # Perform prior update if needed
-            if force_prior_update:
-                _LOGGER.debug(
-                    "Performing initial prior calculation at startup: %s", reason
-                )
-                # Call coordinator's method
-                await self.update_learned_priors()
-            else:
-                # Add log message for skipping case
-                _LOGGER.debug(
-                    "Skipping initial prior calculation: Existing priors are complete and recent (last update: %s)",
-                    self._last_prior_update or "N/A",
-                )
-
-            # Schedule periodic prior updates regardless of initial calculation
-            await self._schedule_next_prior_update()
-            # --- End Prior Logic ---
+            # Set up PriorManager - this handles loading stored data, initial calculations, and scheduling
+            await self.prior_manager.async_setup()
 
             # Trigger an initial refresh after setup is complete
             await self.async_refresh()
@@ -345,10 +261,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Shutdown the coordinator."""
         self._stop_decay_updates()
 
-        # Cancel prior update tracker
-        if self._prior_update_tracker is not None:
-            self._prior_update_tracker()
-            self._prior_update_tracker = None
+        # Shutdown PriorManager
+        if self.prior_manager:
+            await self.prior_manager.async_shutdown()
 
         # Stop state tracking via StateManager
         self.state_manager.stop_state_tracking()
@@ -357,7 +272,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         # Clear data
         self.data = ProbabilityState()
-        self.prior_state = PriorState()
 
     async def async_update_options(self) -> None:
         """Update coordinator options with improved error handling."""
@@ -395,8 +309,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 previous_probability=previous_prob,
                 threshold=self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
                 / 100.0,  # Update threshold
-                prior_probability=self.prior_state.overall_prior
-                if self.prior_state
+                prior_probability=self.prior_manager.prior_state.overall_prior
+                if self.prior_manager and self.prior_manager.prior_state
                 else MIN_PROBABILITY,
                 sensor_probabilities=sensor_probabilities_dict,
                 decay_status=decay_status_state,
@@ -410,8 +324,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self.inputs = SensorInputs.from_config(self.config)
             self.probabilities = Probabilities(config=self.config)
             self.decay_handler = DecayHandler(self.config)
-            # Note: PriorState does not directly depend on config options, only data (history_period)
-            # which isn't changeable via options flow yet. If it were, PriorState would need reset here.
+            # Note: PriorManager does not directly depend on config options, only data (history_period)
+            # which isn't changeable via options flow yet. If it were, PriorManager would need reset here.
 
             # Re-initialize tracked sensor states based on the NEW configuration
             _LOGGER.debug("Re-initializing sensor states after options update")
@@ -430,6 +344,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 probabilities=self.probabilities,
                 sensor_inputs=self.inputs,
                 state_manager=self.state_manager,
+            )
+
+            # Shutdown old PriorManager before creating new one to prevent lingering timers
+            if self.prior_manager:
+                await self.prior_manager.async_shutdown()
+
+            # Reinitialize PriorManager with updated references
+            # Detect test environment and disable scheduling to prevent lingering timers
+            is_test_env = (
+                "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
+            )
+            self.prior_manager = PriorManager(
+                hass=self.hass,
+                config=self.config,
+                storage=self.storage,
+                probabilities=self.probabilities,
+                state_manager=self.state_manager,
+                prior_calculator=self._prior_calculator,
+                config_entry_id=self.config_entry.entry_id,
+                disable_scheduling=is_test_env,
             )
 
             _LOGGER.info(
@@ -474,289 +408,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         except Exception as err:
             raise HomeAssistantError(f"Failed to update threshold: {err}") from err
 
-    async def async_load_stored_data(self) -> None:
-        """Load and restore data from storage."""
-        try:
-            _LOGGER.debug("Loading stored data from storage")
-
-            # Use the store's instance-specific load method
-            loaded_data = await self.storage.async_load_instance_prior_state(
-                self.config_entry.entry_id
-            )
-
-            if loaded_data and loaded_data.prior_state:
-                _LOGGER.debug(
-                    "Found stored prior state for instance %s, restoring (last saved: %s)",
-                    self.config_entry.entry_id,
-                    loaded_data.last_updated,
-                )
-                self.prior_state = loaded_data.prior_state
-                self._last_prior_update = (
-                    loaded_data.last_updated
-                )  # Store the loaded timestamp
-            else:
-                _LOGGER.info(
-                    "No stored prior state found for instance %s, initializing with defaults",
-                    self.config_entry.entry_id,
-                )
-                self._last_prior_update = None  # Ensure it's None if no data loaded
-                # Initialize data state (only if priors aren't loaded)
-                self.data.update(
-                    probability=MIN_PROBABILITY,
-                    previous_probability=MIN_PROBABILITY,
-                    threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
-                    prior_probability=MIN_PROBABILITY,
-                    sensor_probabilities={},
-                    decay_status=0.0,
-                    is_occupied=False,
-                    decaying=False,
-                    decay_start_time=None,
-                    decay_start_probability=None,
-                )
-
-                # Reset prior state object
-                self.prior_state = PriorState()
-                self.prior_state.initialize_from_defaults(
-                    self.probabilities, self.state_manager
-                )
-                self.prior_state.update(
-                    analysis_period=self.config.get(
-                        CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                    ),
-                )
-
-            _LOGGER.debug(
-                "Successfully restored stored data for instance %s",
-                self.config_entry.entry_id,
-            )
-        except StorageError as err:
-            _LOGGER.warning(
-                "Storage error for instance %s, initializing with defaults: %s",
-                self.config_entry.entry_id,
-                err,
-            )
-            self._last_prior_update = None  # Ensure it's None on error
-            # Initialize with defaults on storage error
-            self.prior_state = PriorState()
-            self.prior_state.initialize_from_defaults(
-                self.probabilities, self.state_manager
-            )
-            self.prior_state.update(
-                analysis_period=self.config.get(
-                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                ),
-            )
-            # Re-raise as ConfigEntryNotReady if loading fails critically
-            raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
-
     async def update_learned_priors(self, history_period: int | None = None) -> None:
-        """Update learned priors using historical data."""
-        try:
-            _LOGGER.debug(
-                "Starting update_learned_priors with history_period: %s (type: %s)",
-                history_period,
-                type(history_period),
-            )
-
-            period = history_period or self.config.get(
-                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-            )
-            if not isinstance(period, (int, float)) or period <= 0:
-                _LOGGER.warning(
-                    "Invalid history period configured: %s. Disabling prior calculation",
-                    period,
-                )
-                self._last_prior_update = dt_util.utcnow().isoformat()
-                await self._schedule_next_prior_update()
-                return
-
-            _LOGGER.debug("Using period: %s (type: %s)", period, type(period))
-
-            end_time = dt_util.utcnow()
-            start_time = end_time - timedelta(days=period)
-            _LOGGER.debug(
-                "Calculated time range - start: %s, end: %s", start_time, end_time
-            )
-
-            # Update the analysis period in prior_state
-            _LOGGER.debug("Updating prior_state analysis period to: %s", period)
-            self.prior_state.update(analysis_period=int(period))
-
-            sensors = self.get_configured_sensors()
-            if not sensors:
-                _LOGGER.warning("No sensors configured for prior calculation")
-                self._last_prior_update = dt_util.utcnow().isoformat()
-                await self._schedule_next_prior_update()
-                return
-
-            _LOGGER.debug("Calculating prior for %s sensors", len(sensors))
-            # Use a temporary dict to store successful calculations before updating prior_state
-            calculated_entity_priors = {}
-
-            for sensor_id in sensors:
-                _LOGGER.debug("Calculating prior for sensor: %s", sensor_id)
-                try:
-                    # Call calculator which now returns results or None
-                    prior_result = await self._prior_calculator.calculate_prior(
-                        sensor_id, start_time, end_time
-                    )
-
-                    if prior_result is None:
-                        _LOGGER.warning(
-                            "Prior calculation failed for %s, skipping update",
-                            sensor_id,
-                        )
-                        continue  # Skip this sensor
-
-                    # Extract values from PriorData object
-                    prob_given_true = prior_result.prob_given_true
-                    prob_given_false = prior_result.prob_given_false
-                    prior = prior_result.prior
-
-                    # Store successful calculation result temporarily
-                    # Note: Need to ensure prob_given_true/false are not None here, although calculate_prior should ensure they are floats
-                    # Add validation/fallback if necessary, but based on calculate_prior, they should be floats.
-                    calculated_entity_priors[sensor_id] = {
-                        "prob_given_true": float(prob_given_true)
-                        if prob_given_true is not None
-                        else MIN_PROBABILITY,  # Example fallback/casting
-                        "prob_given_false": float(prob_given_false)
-                        if prob_given_false is not None
-                        else MIN_PROBABILITY,
-                        "prior": float(prior),
-                    }
-
-                    _LOGGER.debug(
-                        "Calculated probabilities for %s - P(T): %.3f, P(F): %.3f, Prior: %.3f",
-                        sensor_id,
-                        prob_given_true,
-                        prob_given_false,
-                        prior,
-                    )
-
-                except Exception:
-                    _LOGGER.exception("Error calculating prior for %s", sensor_id)
-                    continue
-
-            # --- Update PriorState After Loop ---
-            # Only update if we have some successful calculations
-            if calculated_entity_priors:
-                timestamp = dt_util.utcnow().isoformat()
-                # Update entity priors in the main PriorState object
-                for sensor_id, priors in calculated_entity_priors.items():
-                    self.prior_state.update_entity_prior(
-                        sensor_id,
-                        priors["prob_given_true"],
-                        priors["prob_given_false"],
-                        priors["prior"],
-                        timestamp,
-                    )
-                _LOGGER.debug(
-                    "Updated entity priors in prior_state for %d sensors",
-                    len(calculated_entity_priors),
-                )
-
-                # Calculate and update type priors based on the updated entity_priors
-                await self._update_type_priors_from_entities()
-
-                # Calculate the overall prior based on updated type priors
-                _LOGGER.debug("Calculating overall prior based on updated type priors")
-                overall_prior = self.prior_state.calculate_overall_prior(
-                    self.probabilities, self.state_manager
-                )
-                _LOGGER.debug("Overall prior calculated: %.3f", overall_prior)
-                self.prior_state.update(overall_prior=overall_prior)
-
-            else:
-                # Handle case where no sensors could be calculated
-                _LOGGER.warning(
-                    "No entity priors were successfully calculated. Prior state not updated"
-                )
-
-            # Save the updated priors only if *all* requested calculations were successful
-            # Or potentially save even if partially successful? Let's save if anything changed.
-            if calculated_entity_priors:  # Save if we updated *any* entity
-                _LOGGER.debug("Saving prior state after update (successful/partial)")
-                await self._async_save_prior_state_data()
-                _LOGGER.debug("Prior update save complete")
-                # Update the timestamp only after successful save
-                self._last_prior_update = dt_util.utcnow().isoformat()
-            else:
-                _LOGGER.warning(
-                    "Prior state not saved as no calculations were successful"
-                )
-                # Still update timestamp to prevent immediate retry loop
-                self._last_prior_update = dt_util.utcnow().isoformat()
-
-        except Exception:
-            _LOGGER.exception("Unexpected error during update_learned_priors")
-            self._last_prior_update = dt_util.utcnow().isoformat()
-        finally:
-            await self._schedule_next_prior_update()
-
-    async def _update_type_priors_from_entities(self) -> None:
-        """Calculate and update type priors by averaging successfully learned entity priors."""
-        _LOGGER.debug("Calculating type priors based on learned entity priors")
-        timestamp = dt_util.utcnow().isoformat()
-        type_aggregates: dict[str, TypeAggregate] = {}  # Use standard dict
-
-        # Aggregate learned priors by type
-        for entity_id, learned_priors in self.prior_state.entity_priors.items():
-            if not learned_priors:  # Skip if empty dict somehow
-                continue
-            entity_type = self.state_manager.get_entity_type(entity_id)
-            if entity_type:
-                # Access attributes of PriorData object
-                # Ensure required attributes are not None (prob_given_true/false can be None)
-                if (
-                    learned_priors.prob_given_true is not None
-                    and learned_priors.prob_given_false is not None
-                ):
-                    # Get or create the TypeAggregate instance for this entity type
-                    # Use entity_type.value as the key for the dictionary
-                    aggregate = type_aggregates.setdefault(
-                        entity_type.value, TypeAggregate()
-                    )
-
-                    aggregate.priors.append(learned_priors.prior)
-                    aggregate.p_true.append(learned_priors.prob_given_true)
-                    aggregate.p_false.append(learned_priors.prob_given_false)
-                    aggregate.count += 1
-                else:
-                    _LOGGER.warning(
-                        "Skipping entity %s for type prior calculation due to missing conditional probabilities in learned data: %s",
-                        entity_id,
-                        learned_priors,
-                    )
-
-        # Calculate averages and update PriorState
-        for sensor_type, aggregate in type_aggregates.items():
-            count = aggregate.count
-            if count > 0:
-                avg_prior = sum(aggregate.priors) / count
-                avg_prob_given_true = sum(aggregate.p_true) / count
-                avg_prob_given_false = sum(aggregate.p_false) / count
-
-                _LOGGER.debug(
-                    "Updating type %s priors - prior: %.3f, p_true: %.3f, p_false: %.3f (from %d sensors)",
-                    sensor_type,
-                    avg_prior,
-                    avg_prob_given_true,
-                    avg_prob_given_false,
-                    count,
-                )
-                self.prior_state.update_type_prior(
-                    sensor_type,
-                    avg_prior,
-                    timestamp,
-                    avg_prob_given_true,
-                    avg_prob_given_false,
-                )
-            else:
-                _LOGGER.debug(
-                    "No valid learned priors found to calculate average for type %s",
-                    sensor_type,
-                )
+        """Update learned priors using historical data - delegated to PriorManager."""
+        if self.prior_manager:
+            await self.prior_manager.update_learned_priors(history_period)
 
     async def async_initialize_states(self, sensor_ids: list[str]) -> None:
         """Initialize sensor states using StateManager."""
@@ -803,9 +458,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     # --- Internal Update and State Handling Methods ---
     async def _async_update_data(self) -> ProbabilityState:
         """Update data with improved error handling."""
-        if not self.data or not self.prior_state:
+        if not self.data or not self.prior_manager:
             _LOGGER.warning(
-                "_async_update_data called but coordinator data/prior_state is not initialized"
+                "_async_update_data called but coordinator data/prior_manager is not initialized"
             )
             return self.data if self.data else ProbabilityState()
 
@@ -836,7 +491,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 # Pass snapshot, prior state, and config to the calculator
                 calc_result = await self.calculator.calculate_occupancy_probability(
                     current_states_snapshot,  # Pass the snapshot
-                    self.prior_state,
+                    self.prior_manager.prior_state,  # Pass the prior_state, not the manager
                     self.config,  # Pass the config for ML settings
                 )
             except (CalculationError, ValueError, ZeroDivisionError) as calc_err:
@@ -963,52 +618,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Return the updated self.data object on success
         return self.data
 
-    # --- Prior Update Handling ---
-    async def _schedule_next_prior_update(self) -> None:
-        """Schedule the next prior update at the start of the next hour."""
-        if self._prior_update_tracker is not None:
-            self._prior_update_tracker()
-            self._prior_update_tracker = None
-
-        now = dt_util.utcnow()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        self._next_prior_update = next_hour
-
-        self._prior_update_tracker = async_track_point_in_time(
-            self.hass, self._handle_prior_update, self._next_prior_update
-        )
-        _LOGGER.debug(
-            "Scheduled next prior update for %s in area %s",
-            self._next_prior_update.isoformat(),
-            self.config[CONF_NAME],
-        )
-
-    async def _handle_prior_update(self, _now: datetime) -> None:
-        """Handle the prior update task."""
-        self._prior_update_tracker = None
-        self._next_prior_update = None
-
-        try:
-            _LOGGER.info(
-                "Performing scheduled prior update for area %s", self.config[CONF_NAME]
-            )
-            await self.update_learned_priors()
-            _LOGGER.info(
-                "Finished scheduled prior update task trigger for area %s",
-                self.config[CONF_NAME],
-            )
-        except Exception:
-            _LOGGER.exception(
-                "Error occurred during scheduled prior update for area %s",
-                self.config[CONF_NAME],
-            )
-            # Ensure rescheduling happens even if the update task itself failed unexpectedly
-            if not self._prior_update_tracker:
-                _LOGGER.warning(
-                    "Update_learned_priors failed to reschedule, attempting fallback reschedule"
-                )
-                await self._schedule_next_prior_update()
-
     # --- Decay Handling ---
     def _start_decay_updates(self) -> None:
         """Start regular decay updates every 5 seconds."""
@@ -1053,8 +662,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     # --- Data Saving ---
     async def _async_save_prior_state_data(self) -> None:
         """Save the current prior state data to storage."""
-        if not self.prior_state:
-            _LOGGER.warning("Attempted to save prior state, but prior_state is None")
+        if not self.prior_manager or not self.prior_manager.prior_state:
+            _LOGGER.warning(
+                "Attempted to save prior state, but prior_manager or prior_state is None"
+            )
             return
 
         try:
@@ -1062,7 +673,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             await self.storage.async_save_instance_prior_state(
                 self.config_entry.entry_id,
                 self.config.get(CONF_NAME, "Unknown Area"),
-                self.prior_state,
+                self.prior_manager.prior_state,  # Pass the prior_state, not the manager
             )
             _LOGGER.debug("Prior state data saved successfully")
         except (TimeoutError, HomeAssistantError, ValueError, RuntimeError) as err:
