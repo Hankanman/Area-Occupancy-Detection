@@ -6,18 +6,17 @@ the likelihood of occupancy based on various sensor states.
 """
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-import logging
 from typing import Any
-
-from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
+from sqlalchemy.exc import SQLAlchemyError
 
 from .const import (
     DEFAULT_PROB_GIVEN_FALSE,
@@ -42,6 +41,7 @@ class PriorCalculator:
         hass: Home Assistant instance
         probabilities: Probability configuration object
         sensor_inputs: SensorInputs object containing configured sensors
+        state_manager: Unified state manager for active state determination
 
     """
 
@@ -50,6 +50,7 @@ class PriorCalculator:
         hass: HomeAssistant,
         probabilities: Probabilities,
         sensor_inputs: SensorInputs,
+        state_manager: Any = None,
     ) -> None:
         """Initialize the calculator.
 
@@ -57,11 +58,13 @@ class PriorCalculator:
             hass: Home Assistant instance
             probabilities: Probability configuration object
             sensor_inputs: SensorInputs object containing configured sensors
+            state_manager: Unified state manager for active state determination
 
         """
         self.hass = hass
         self.probabilities = probabilities
         self.inputs = sensor_inputs
+        self.state_manager = state_manager
         # Coordinator reference is removed
 
     async def _get_states_from_recorder(
@@ -157,7 +160,18 @@ class PriorCalculator:
         )
 
         # Use default priors as fallback values
-        default_prior = self.probabilities.get_default_prior(entity_id)
+        if not self.state_manager:
+            _LOGGER.error("StateManager is required for getting entity type")
+            return None
+
+        entity_type = self.state_manager.get_entity_type(entity_id)
+        if not entity_type:
+            _LOGGER.warning(
+                "No entity type found for %s, cannot get default prior", entity_id
+            )
+            return None
+
+        default_prior = self.probabilities.get_default_prior(entity_type)
         fallback_prior: PriorData = PriorData(
             prob_given_true=DEFAULT_PROB_GIVEN_TRUE,
             prob_given_false=DEFAULT_PROB_GIVEN_FALSE,
@@ -270,49 +284,42 @@ class PriorCalculator:
             )
             return fallback_prior
 
-        # Calculate prior based on this sensor's active time ratio
-        entity_durations = self._compute_state_durations_from_intervals(
-            {entity_id: entity_intervals}, entity_id
-        )
-        total_entity_active_time = entity_durations.get(STATE_ON, 0.0)
-        total_entity_inactive_time = entity_durations.get(STATE_OFF, 0.0)
-        total_entity_time = total_entity_active_time + total_entity_inactive_time
-
-        if total_entity_time > 0:
-            prior = max(
-                MIN_PROBABILITY,
-                min(total_entity_active_time / total_entity_time, MAX_PROBABILITY),
+        # Calculate state durations using StateManager if available
+        if self.state_manager:
+            active_duration, total_duration = self._calculate_state_durations(
+                entity_id, entity_intervals, is_primary
             )
         else:
-            prior = default_prior
-
-        # Calculate conditional probabilities using intervals
-        try:
-            prob_given_true = self._calculate_conditional_probability_with_intervals(
-                entity_id,
-                entity_intervals,
-                {self.inputs.primary_sensor: primary_intervals},
-                STATE_ON,
-            )
-            prob_given_false = self._calculate_conditional_probability_with_intervals(
-                entity_id,
-                entity_intervals,
-                {self.inputs.primary_sensor: primary_intervals},
-                STATE_OFF,
-            )
-        except ValueError as err:
-            _LOGGER.error(
-                "Error calculating conditional probability for %s: %s. Using defaults",
-                entity_id,
-                err,
-            )
+            _LOGGER.error("StateManager is required for state duration calculations")
             return fallback_prior
 
-        # Return calculated values
+        # Calculate conditional probabilities
+        if primary_intervals:
+            prob_given_true, prob_given_false = (
+                self._calculate_conditional_probabilities(
+                    entity_id, entity_intervals, primary_intervals
+                )
+            )
+        else:
+            if not self.state_manager:
+                _LOGGER.error(
+                    "StateManager is required for conditional probability calculations"
+                )
+                return fallback_prior
+
+            prob_given_true = DEFAULT_PROB_GIVEN_TRUE
+            prob_given_false = DEFAULT_PROB_GIVEN_FALSE
+
+        # Return calculated values with proper clamping
+        calculated_prior = (
+            active_duration / total_duration if total_duration > 0 else 0.0
+        )
+        clamped_prior = max(MIN_PROBABILITY, min(calculated_prior, MAX_PROBABILITY))
+
         return PriorData(
             prob_given_true=float(prob_given_true),
             prob_given_false=float(prob_given_false),
-            prior=float(prior),
+            prior=float(clamped_prior),
         )
 
     async def _states_to_intervals(
@@ -446,6 +453,11 @@ class PriorCalculator:
 
         """
         _LOGGER.debug("Computing durations")
+
+        if not self.state_manager:
+            _LOGGER.error("StateManager is required for state duration calculations")
+            return {STATE_ON: 0.0, STATE_OFF: 0.0}
+
         durations: dict[str, float] = {
             STATE_ON: 0.0,
             STATE_OFF: 0.0,
@@ -457,85 +469,93 @@ class PriorCalculator:
                 state = interval["state"]
 
                 # Determine if the state is considered active for this entity
-                is_active = self.probabilities.is_entity_active(
+                is_active = self.state_manager.is_entity_active(
                     entity_id_context, state
                 )
                 target_state = STATE_ON if is_active else STATE_OFF
                 durations[target_state] = durations.get(target_state, 0.0) + duration
         return durations
 
-    def _calculate_conditional_probability_with_intervals(
+    def _calculate_conditional_probabilities(
         self,
         entity_id: str,
         entity_intervals: list[TimeInterval],
-        motion_intervals_by_sensor: dict[str, list[TimeInterval]],
-        motion_state_filter: str,  # Should be STATE_ON or STATE_OFF
-    ) -> float:
-        """Calculate P(entity_active | primary_sensor_state) using precomputed intervals."""
-        _LOGGER.debug(
-            "Calculating conditional prob P( %s active | primary = %s )",
-            entity_id,
-            motion_state_filter,
-        )
+        primary_intervals: list[TimeInterval],
+    ) -> tuple[float, float]:
+        """Calculate conditional probabilities using precomputed intervals."""
+        _LOGGER.debug("Calculating conditional probabilities")
 
-        # Combine intervals for the primary sensor matching the filter state
-        primary_intervals_filtered = []
-        primary_sensor_id = self.inputs.primary_sensor
-        if primary_sensor_id in motion_intervals_by_sensor:
-            primary_intervals_filtered.extend(
-                {"start": interval["start"], "end": interval["end"]}
-                for interval in motion_intervals_by_sensor[primary_sensor_id]
-                if interval["state"] == motion_state_filter
+        if not self.state_manager:
+            _LOGGER.error(
+                "StateManager is required for conditional probability calculations"
             )
-
-        total_primary_duration_filtered = sum(
-            (interval["end"] - interval["start"]).total_seconds()
-            for interval in primary_intervals_filtered
-        )
-
-        if total_primary_duration_filtered == 0:
-            _LOGGER.debug(
-                "Primary sensor total duration for state '%s' is zero",
-                motion_state_filter,
-            )
-            # Return default based on the state we are conditioning on
             return (
-                DEFAULT_PROB_GIVEN_TRUE
-                if motion_state_filter == STATE_ON
-                else DEFAULT_PROB_GIVEN_FALSE
+                DEFAULT_PROB_GIVEN_TRUE,
+                DEFAULT_PROB_GIVEN_FALSE,
             )
-
-        # Get entity intervals considered 'active' based on probabilities config
-        entity_active_intervals = [
-            {"start": interval["start"], "end": interval["end"]}
-            for interval in entity_intervals
-            if self.probabilities.is_entity_active(
-                entity_id,
-                interval["state"],
-            )
-        ]
 
         # Calculate the total duration of overlap between entity_active and primary_filtered intervals
         overlap_duration = 0.0
-        for e_interval in entity_active_intervals:
-            for p_interval in primary_intervals_filtered:
+        for e_interval in entity_intervals:
+            for p_interval in primary_intervals:
                 overlap_start = max(e_interval["start"], p_interval["start"])
                 overlap_end = min(e_interval["end"], p_interval["end"])
                 if overlap_start < overlap_end:
                     overlap_duration += (overlap_end - overlap_start).total_seconds()
 
         # Calculate conditional probability P(Entity Active | Primary State)
-        result = overlap_duration / total_primary_duration_filtered
-        clamped_result = max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))
+        prob_given_true = overlap_duration / sum(
+            (interval["end"] - interval["start"]).total_seconds()
+            for interval in primary_intervals
+        )
+        prob_given_false = 1.0 - prob_given_true
 
-        _LOGGER.debug(
-            "Conditional prob result for %s (primary=%s): overlap=%.2fs / total=%.2fs = %.3f -> %.3f",
-            entity_id,
-            motion_state_filter,
-            overlap_duration,
-            total_primary_duration_filtered,
-            result,
-            clamped_result,
+        clamped_prob_given_true = max(
+            MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY)
+        )
+        clamped_prob_given_false = max(
+            MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY)
         )
 
-        return clamped_result
+        _LOGGER.debug(
+            "Conditional prob result for %s: true=%.3f, false=%.3f",
+            entity_id,
+            clamped_prob_given_true,
+            clamped_prob_given_false,
+        )
+
+        return (clamped_prob_given_true, clamped_prob_given_false)
+
+    def _calculate_state_durations(
+        self,
+        entity_id: str,
+        entity_intervals: list[TimeInterval],
+        is_primary: bool,
+    ) -> tuple[float, float]:
+        """Calculate active and total durations for a given entity."""
+        _LOGGER.debug("Calculating state durations for %s", entity_id)
+
+        if not self.state_manager:
+            _LOGGER.error("StateManager is required for state duration calculations")
+            return (0.0, 0.0)
+
+        # Calculate total duration
+        total_duration = sum(
+            (interval["end"] - interval["start"]).total_seconds()
+            for interval in entity_intervals
+        )
+
+        # Calculate active duration
+        active_duration = 0.0
+        for interval in entity_intervals:
+            if self.state_manager.is_entity_active(entity_id, interval["state"]):
+                active_duration += (interval["end"] - interval["start"]).total_seconds()
+
+        _LOGGER.debug(
+            "Calculated durations for %s: active=%.2fs, total=%.2fs",
+            entity_id,
+            active_duration,
+            total_duration,
+        )
+
+        return (active_duration, total_duration)

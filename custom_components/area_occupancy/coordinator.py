@@ -5,9 +5,8 @@ from __future__ import annotations
 # Standard Library
 import asyncio
 import logging
-from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 # Third Party
 from homeassistant.config_entries import ConfigEntry
@@ -21,13 +20,11 @@ from homeassistant.exceptions import (
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
-    async_track_state_change_event,
     async_track_time_interval,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-# Local
 from .calculate_prior import PriorCalculator
 from .calculate_prob import ProbabilityCalculator
 from .const import (
@@ -51,6 +48,7 @@ from .const import (
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
 from .probabilities import Probabilities
+from .state_manager import StateManager
 from .storage import AreaOccupancyStorage, AreaOccupancyStore
 from .types import (
     MLHybridResult,
@@ -95,8 +93,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.config_entry = config_entry
         # Merge data and options for the effective configuration
         self.config = {**config_entry.data, **config_entry.options}
-        self._entity_ids: set[str] = set()
-        self._state_lock = asyncio.Lock()
         self._storage_lock = asyncio.Lock()
         self._decay_unsub: CALLBACK_TYPE | None = None
 
@@ -112,8 +108,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._next_prior_update = None
 
         # Initialize tracking
-        self._remove_state_listener = None
         self._last_prior_update: str | None = None  # Store last prior calc time
+        self._processing_state_change: bool = (
+            False  # Flag to prevent recursive state changes
+        )
+        self._state_change_pending: bool = (
+            False  # Flag to indicate state changes need processing
+        )
 
         # Initialize data first
         self.data = ProbabilityState()
@@ -124,8 +125,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             prior_probability=MIN_PROBABILITY,
             sensor_probabilities={},
             decay_status=0.0,
-            current_states={},
-            previous_states={},
             is_occupied=False,
             decaying=False,
             decay_start_time=None,
@@ -135,9 +134,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Initialize probabilities first
         self.probabilities = Probabilities(config=self.config)
 
+        # Initialize unified state manager
+        self.state_manager = StateManager(
+            hass=self.hass,
+            config=self.config,
+            probabilities=self.probabilities,
+        )
+
         # Initialize prior state
         self.prior_state = PriorState()
-        self.prior_state.initialize_from_defaults(self.probabilities)
+        self.prior_state.initialize_from_defaults(
+            self.probabilities, self.state_manager
+        )
         self.prior_state.update(
             analysis_period=self.config.get(
                 CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
@@ -168,18 +176,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
             model_manager=self.model_manager,
+            state_manager=self.state_manager,
         )
         self._prior_calculator = PriorCalculator(
             hass=self.hass,
             probabilities=self.probabilities,
             sensor_inputs=self.inputs,
+            state_manager=self.state_manager,
         )
 
     # --- Properties ---
     @property
     def entity_ids(self) -> set[str]:
         """Return the set of entity IDs being tracked."""
-        return self._entity_ids
+        return set(self.state_manager.get_tracked_entities())
 
     @property
     def available(self) -> bool:
@@ -187,9 +197,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         if not primary_sensor or not self.data:
             return False
-        # Check availability directly from self.data.current_states
-        primary_state_info = self.data.current_states.get(primary_sensor, {})
-        return primary_state_info.get("availability", False)
+        # Check availability directly from StateManager
+        primary_state_info = self.state_manager.get_entity_state(primary_sensor)
+        return (
+            primary_state_info.get("availability", False)
+            if primary_state_info
+            else False
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -336,23 +350,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self._prior_update_tracker()
             self._prior_update_tracker = None
 
+        # Stop state tracking via StateManager
+        self.state_manager.stop_state_tracking()
+
         await super().async_shutdown()
-
-        # Additional cleanup specific to our use case
-        if callable(self._remove_state_listener):
-            self._remove_state_listener()
-        self._remove_state_listener = None
-
-        # Save final state directly on shutdown
-        # No need to save priors here, they are saved after calculation
-        # await self._async_save_prior_state_data()
 
         # Clear data
         self.data = ProbabilityState()
         self.prior_state = PriorState()
-        # self._all_sensor_states = {}
-        # self._active_sensors = {}
-        self._entity_ids = set()
 
     async def async_update_options(self) -> None:
         """Update coordinator options with improved error handling."""
@@ -377,8 +382,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             decay_status_state = self.data.decay_status if self.data else 0.0
             decaying_state = self.data.decaying if self.data else False
             decay_start_time_state = self.data.decay_start_time if self.data else None
-            current_states_dict = self.data.current_states if self.data else {}
-            previous_states_dict = self.data.previous_states if self.data else {}
             decay_start_probability_state = (
                 self.data.decay_start_probability if self.data else None
             )
@@ -397,8 +400,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 else MIN_PROBABILITY,
                 sensor_probabilities=sensor_probabilities_dict,
                 decay_status=decay_status_state,
-                current_states=current_states_dict,
-                previous_states=previous_states_dict,
                 is_occupied=is_occupied_state,  # Keep current occupancy state initially
                 decaying=decaying_state,
                 decay_start_time=decay_start_time_state,
@@ -421,11 +422,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Reinitialize the calculators with updated references
             self.calculator = ProbabilityCalculator(
                 probabilities=self.probabilities,
+                model_manager=self.model_manager,
+                state_manager=self.state_manager,
             )
             self._prior_calculator = PriorCalculator(
                 hass=self.hass,
                 probabilities=self.probabilities,
                 sensor_inputs=self.inputs,
+                state_manager=self.state_manager,
             )
 
             _LOGGER.info(
@@ -504,8 +508,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                     prior_probability=MIN_PROBABILITY,
                     sensor_probabilities={},
                     decay_status=0.0,
-                    current_states={},
-                    previous_states={},
                     is_occupied=False,
                     decaying=False,
                     decay_start_time=None,
@@ -514,7 +516,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
                 # Reset prior state object
                 self.prior_state = PriorState()
-                self.prior_state.initialize_from_defaults(self.probabilities)
+                self.prior_state.initialize_from_defaults(
+                    self.probabilities, self.state_manager
+                )
                 self.prior_state.update(
                     analysis_period=self.config.get(
                         CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
@@ -534,7 +538,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self._last_prior_update = None  # Ensure it's None on error
             # Initialize with defaults on storage error
             self.prior_state = PriorState()
-            self.prior_state.initialize_from_defaults(self.probabilities)
+            self.prior_state.initialize_from_defaults(
+                self.probabilities, self.state_manager
+            )
             self.prior_state.update(
                 analysis_period=self.config.get(
                     CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
@@ -656,7 +662,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 # Calculate the overall prior based on updated type priors
                 _LOGGER.debug("Calculating overall prior based on updated type priors")
                 overall_prior = self.prior_state.calculate_overall_prior(
-                    self.probabilities
+                    self.probabilities, self.state_manager
                 )
                 _LOGGER.debug("Overall prior calculated: %.3f", overall_prior)
                 self.prior_state.update(overall_prior=overall_prior)
@@ -698,7 +704,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         for entity_id, learned_priors in self.prior_state.entity_priors.items():
             if not learned_priors:  # Skip if empty dict somehow
                 continue
-            entity_type = self.probabilities.get_entity_type(entity_id)
+            entity_type = self.state_manager.get_entity_type(entity_id)
             if entity_type:
                 # Access attributes of PriorData object
                 # Ensure required attributes are not None (prob_given_true/false can be None)
@@ -753,44 +759,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 )
 
     async def async_initialize_states(self, sensor_ids: list[str]) -> None:
-        """Initialize sensor states directly in the coordinator's data object."""
+        """Initialize sensor states using StateManager."""
         try:
-            async with self._state_lock:
-                # Clear existing states in self.data
-                self.data.current_states.clear()
-                self.data.previous_states.clear()  # Also clear previous on full re-init
+            # Use StateManager for state initialization and tracking
+            await self.state_manager.async_initialize_states(sensor_ids)
 
-                for entity_id in sensor_ids:
-                    state_obj = self.hass.states.get(entity_id)
-                    is_available = bool(
-                        state_obj
-                        and state_obj.state not in ["unknown", "unavailable", None, ""]
-                    )
-                    # Use friendly name for logging if available
-                    friendly_name = state_obj.name if state_obj else entity_id
+            # Set up callback for state changes to trigger calculations
+            def state_change_callback(entity_id: str, sensor_info: SensorInfo) -> None:
+                """Handle state changes from StateManager."""
+                # Simple flag to prevent recursive calls
+                if self._processing_state_change:
                     _LOGGER.debug(
-                        "Initializing state for %s (%s): available=%s, state=%s",
-                        friendly_name,
-                        entity_id,
-                        is_available,
-                        state_obj.state if state_obj else "None",
+                        "State change already being processed, skipping %s", entity_id
                     )
-                    sensor_info: SensorInfo = {
-                        "state": state_obj.state
-                        if (state_obj and is_available)
-                        else None,
-                        "last_changed": (
-                            state_obj.last_changed.isoformat()
-                            if state_obj and state_obj.last_changed
-                            else dt_util.utcnow().isoformat()
-                        ),
-                        "availability": is_available,
-                    }
-                    # Store directly in self.data.current_states
-                    self.data.current_states[entity_id] = sensor_info
+                    return
 
-            # Setup tracking after initialization
-            self._setup_entity_tracking()
+                try:
+                    # Just set a flag - don't trigger immediate refresh
+                    # Let the normal update cycle handle it
+                    self._state_change_pending = True
+                    _LOGGER.debug(
+                        "State change detected for %s, will process on next update cycle",
+                        entity_id,
+                    )
+
+                except Exception as err:
+                    _LOGGER.exception(
+                        "Error in state change callback for %s: %s", entity_id, err
+                    )
+
+            # Setup state tracking with callback
+            self.state_manager.setup_state_tracking(sensor_ids, state_change_callback)
+
+            _LOGGER.debug("State management initialized via StateManager")
 
         except Exception as err:
             raise StateError(f"Failed to initialize states: {err}") from err
@@ -806,20 +807,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.warning(
                 "_async_update_data called but coordinator data/prior_state is not initialized"
             )
-            # Cannot proceed without state objects
-            # Return the potentially uninitialized self.data to avoid None propagation issues
-            return (
-                self.data if self.data else ProbabilityState()
-            )  # Return empty if self.data is None
+            return self.data if self.data else ProbabilityState()
+
+        # Check if we're already processing to prevent loops
+        if self._processing_state_change:
+            _LOGGER.debug("Already processing state change, skipping update")
+            return self.data
 
         try:
-            current_states_snapshot = {}
-            # --- Update self.data state dictionaries first (under lock) ---
-            async with self._state_lock:
-                # Update previous_states in self.data based on its *current* current_states
-                self.data.previous_states = self.data.current_states.copy()
-                # Capture a snapshot of current states for the calculation
-                current_states_snapshot = self.data.current_states.copy()
+            # Set processing flag
+            self._processing_state_change = True
+
+            # Get current states directly from StateManager when needed
+            # No need to store copies in coordinator data
+            current_states_snapshot = self.state_manager.get_current_states()
+
+            # Clear the pending flag since we're processing now
+            self._state_change_pending = False
 
             # --- Store initial probability state before calculation ---
             initial_prob = self.data.probability
@@ -919,7 +923,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Determine active sensors based on the *snapshot* used for calculation
             active_sensors_exist = any(
                 info.get("availability", False)
-                and self.probabilities.is_entity_active(entity_id, info.get("state"))
+                and self.state_manager.is_entity_active(entity_id, info.get("state"))
                 for entity_id, info in current_states_snapshot.items()  # Use snapshot
                 if info
             )
@@ -952,117 +956,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.exception("Error updating occupancy data: %s")
             # Return existing data on general errors
             return self.data
-        else:
-            # Return the updated self.data object on success
-            return self.data
+        finally:
+            # Always clear the processing flag
+            self._processing_state_change = False
 
-    def _setup_entity_tracking(self) -> None:
-        """Set up event listener to track entity state changes."""
-
-        if self._remove_state_listener is not None:
-            self._remove_state_listener()
-            self._remove_state_listener = None
-
-        entities_to_track = self.get_configured_sensors()
-        self._entity_ids = set(entities_to_track)
-
-        @callback
-        def async_state_changed_listener(event) -> None:
-            """Handle state changes for tracked entities."""
-            try:
-                entity_id = event.data.get("entity_id")
-                new_state = event.data.get("new_state")
-                old_state = event.data.get("old_state")
-
-                if entity_id not in self._entity_ids:
-                    _LOGGER.debug(
-                        "Ignoring state change for untracked entity: %s", entity_id
-                    )
-                    return
-
-                old_state_str = old_state.state if old_state else "None"
-                new_state_str = new_state.state if new_state else "None"
-
-                if (
-                    old_state_str != new_state_str or not new_state
-                ):  # Log if state changes or becomes unavailable
-                    _LOGGER.debug(
-                        "State change for %s: %s -> %s",
-                        entity_id,
-                        old_state_str,
-                        new_state_str,
-                    )
-
-                is_available = bool(
-                    new_state
-                    and new_state.state not in ["unknown", "unavailable", None, ""]
-                )
-                current_state_val = new_state.state if is_available else None
-                last_changed = (
-                    new_state.last_changed.isoformat()
-                    if new_state and new_state.last_changed
-                    else dt_util.utcnow().isoformat()
-                )
-
-                sensor_info = SensorInfo(
-                    state=current_state_val,
-                    last_changed=last_changed,
-                    availability=is_available,
-                )
-
-                async def update_state_and_calculate():
-                    """Update state under lock then trigger calculation."""
-                    if not self.data:
-                        _LOGGER.warning(
-                            "Coordinator data object is None, cannot update state for %s",
-                            entity_id,
-                        )
-                        return
-                    try:
-                        # Update state under lock first
-                        async with self._state_lock:
-                            self.data.current_states[entity_id] = sensor_info
-                            _LOGGER.debug(
-                                "Updated self.data.current_states for %s", entity_id
-                            )
-
-                        # Now trigger the calculation and refresh
-                        updated_data = await self._async_update_data()
-                        if updated_data:  # Check if update succeeded
-                            self.async_set_updated_data(updated_data)
-                        else:
-                            _LOGGER.warning(
-                                "Skipping notification as _async_update_data failed for %s",
-                                entity_id,
-                            )
-
-                    except Exception:
-                        _LOGGER.exception(
-                            "Error during state update and calculation for %s",
-                            entity_id,
-                        )
-
-                # Schedule the combined state update and calculation task
-                self.hass.async_create_task(update_state_and_calculate())
-
-            except (AttributeError, KeyError, TypeError, ValueError):
-                _LOGGER.exception(
-                    "Error processing state change for entity %s", entity_id
-                )
-            except Exception:
-                _LOGGER.exception(
-                    "Unexpected error in state change listener for %s", entity_id
-                )
-
-        self._remove_state_listener = async_track_state_change_event(
-            self.hass,
-            entities_to_track,
-            async_state_changed_listener,
-        )
-        _LOGGER.debug(
-            "State change listener set up for %d entities",
-            len(entities_to_track),
-        )
+        # Return the updated self.data object on success
+        return self.data
 
     # --- Prior Update Handling ---
     async def _schedule_next_prior_update(self) -> None:

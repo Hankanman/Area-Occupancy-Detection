@@ -8,6 +8,7 @@ configuration used by calculators, and maps entity IDs to their types.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Any, Final
 
 from homeassistant.const import STATE_OFF, STATE_ON
@@ -17,17 +18,8 @@ from .const import (
     APPLIANCE_PROB_GIVEN_FALSE,
     APPLIANCE_PROB_GIVEN_TRUE,
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_APPLIANCES,
     CONF_DOOR_ACTIVE_STATE,
-    CONF_DOOR_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
-    CONF_MEDIA_DEVICES,
-    CONF_MOTION_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_WASP_ENABLED,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
@@ -37,7 +29,6 @@ from .const import (
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
-    CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
@@ -107,11 +98,13 @@ APPLIANCE_STATE_PROBABILITIES: Final[dict[str, float]] = {
 
 
 class Probabilities:
-    """Manages sensor type configurations including probabilities, weights, and active states.
+    """Manages sensor type configurations including probabilities and weights.
 
     This class loads configuration values, applies defaults, validates inputs,
-    and provides access to the processed probability settings for each sensor type
-    and individual entity.
+    and provides access to the processed probability settings for each sensor type.
+
+    Entity management (registry, types, active states) is handled by EntityManager.
+    This class focuses purely on probability configuration and sensor type definitions.
     """
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -127,89 +120,13 @@ class Probabilities:
         """
         self.config = config
         self._sensor_weights = self._get_sensor_weights()
-        self.entity_types: dict[str, EntityType] = {}
-        self._map_entities_to_types()
-        # Build configs *after* mapping types
+        # Build configs *after* getting weights
         self._sensor_configs = self._build_sensor_configs()
 
         _LOGGER.debug(
-            "Probabilities initialized with %d entity types and %d sensor configs",
-            len(self.entity_types),
+            "Probabilities initialized with %d sensor configs",
             len(self._sensor_configs),
         )
-
-    def _map_entities_to_types(self) -> None:
-        """Create a mapping of entity IDs to their corresponding sensor types based on configuration.
-
-        Iterates through the configured sensor lists (motion, media, etc.) and populates
-        the `self.entity_types` dictionary.
-
-        Raises:
-            ConfigurationError: If mapping fails due to invalid configuration
-                (e.g., non-list value for a sensor type, invalid entity ID format).
-
-        """
-
-        def _validate_entity_id(entity_id: str, config_key: str) -> None:
-            """Validate a single entity ID format."""
-            if not entity_id or not isinstance(entity_id, str) or "." not in entity_id:
-                # Raise directly
-                raise ConfigurationError(
-                    f"Invalid entity ID '{entity_id}' found in {config_key}"
-                )
-
-        try:
-            mappings: list[tuple[str, EntityType]] = [
-                (CONF_MOTION_SENSORS, EntityType.MOTION),
-                (CONF_MEDIA_DEVICES, EntityType.MEDIA),
-                (CONF_APPLIANCES, EntityType.APPLIANCE),
-                (CONF_DOOR_SENSORS, EntityType.DOOR),
-                (CONF_WINDOW_SENSORS, EntityType.WINDOW),
-                (CONF_LIGHTS, EntityType.LIGHT),
-                (CONF_ILLUMINANCE_SENSORS, EntityType.ENVIRONMENTAL),
-                (CONF_HUMIDITY_SENSORS, EntityType.ENVIRONMENTAL),
-                (CONF_TEMPERATURE_SENSORS, EntityType.ENVIRONMENTAL),
-            ]
-
-            # Clear existing mappings first
-            self.entity_types.clear()
-
-            for config_key, sensor_type in mappings:
-                entities = self.config.get(config_key, [])
-                if not isinstance(entities, list):
-                    # Raise directly
-                    raise ConfigurationError(
-                        f"Configuration for {config_key} must be a list, got {type(entities)}"
-                    )
-                for entity_id in entities:
-                    _validate_entity_id(entity_id, config_key)
-                    self.entity_types[entity_id] = sensor_type
-
-            # --- Add Wasp in Box Mapping --- >
-            # Check if Wasp in Box is enabled in the main config/options
-            # Note: Config flow flattens options, so check directly in self.config
-            if self.config.get(CONF_WASP_ENABLED, False):
-                # Assume a single Wasp sensor per config entry for now
-                # Construct the expected Wasp entity ID
-                # We need the entry_id which is not directly available here.
-                # Let's assume the coordinator will add the entity ID later.
-                # For now, we prepare the probabilities, but mapping needs adjustment.
-                # --- This mapping part needs rethinking --- #
-                # We can't reliably predict the entry_id here.
-                # Alternative: Coordinator updates entity_types after Wasp sensor is created.
-                # For now, we will just prepare the config in _build_sensor_configs.
-                # The coordinator will need to ensure the Wasp sensor entity_id is added
-                # to self.entity_types map later.
-                pass  # Mapping will be handled elsewhere
-            # < --- End Wasp Mapping ---
-
-        except (TypeError, ValueError) as err:
-            # Catch potential unexpected type or value errors during entity processing
-            # Raise directly, chaining the original exception
-            raise ConfigurationError(
-                f"Unexpected error mapping entities to types: {err}"
-            ) from err
-        # Note: ConfigurationError raised by _validate_entity_id will propagate naturally.
 
     def _get_sensor_weights(self) -> dict[str, float]:
         """Retrieve and validate sensor weights from the configuration, using defaults if necessary.
@@ -518,31 +435,26 @@ class Probabilities:
         """Return the dictionary of final sensor configurations by type."""
         return self._sensor_configs
 
-    def get_default_prior(self, entity_id: str) -> float:
-        """Get the default prior probability defined for an entity's type.
+    def get_default_prior(self, sensor_type: str | EntityType) -> float:
+        """Get the default prior probability defined for a sensor type.
 
         Args:
-            entity_id: The entity ID to get the default prior for.
+            sensor_type: The sensor type (string or EntityType) to get the default prior for.
 
         Returns:
-            The default prior probability (0.0-1.0) for the entity's type.
+            The default prior probability (0.0-1.0) for the sensor type.
 
         Raises:
-            ValueError: If the entity_id is not mapped to a known sensor type
-                or if the sensor type configuration is missing.
+            ValueError: If the sensor type configuration is missing.
 
         """
-        if entity_id not in self.entity_types:
-            raise ValueError(f"Entity '{entity_id}' not found in entity types mapping.")
+        if isinstance(sensor_type, EntityType):
+            sensor_type = sensor_type.value
 
-        sensor_type = self.entity_types[entity_id]
         sensor_config = self._sensor_configs.get(sensor_type)
 
         if not sensor_config:
-            # This should ideally not happen if initialization is correct
-            raise ValueError(
-                f"Configuration missing for sensor type '{sensor_type}' derived from entity '{entity_id}'."
-            )
+            raise ValueError(f"Configuration missing for sensor type '{sensor_type}'.")
 
         # Ensure 'default_prior' key exists, though it should based on _build_sensor_configs logic
         if "default_prior" not in sensor_config:
@@ -567,10 +479,8 @@ class Probabilities:
         """
         try:
             self.config = config
-            # Re-calculate weights, map entities, and build configs based on new config
+            # Re-calculate weights and build configs based on new config
             self._sensor_weights = self._get_sensor_weights()
-            self.entity_types.clear()  # Clear before remapping
-            self._map_entities_to_types()
             self._sensor_configs = self._build_sensor_configs()
 
             _LOGGER.debug("Probabilities configuration updated successfully")
@@ -580,84 +490,28 @@ class Probabilities:
                 f"Failed to update probabilities configuration: {err}"
             ) from err
 
-    def get_sensor_config(self, entity_id: str) -> ProbabilityConfig | None:
-        """Get the final calculated configuration for a specific sensor entity.
+    def get_sensor_config_by_type(
+        self, sensor_type: str | EntityType
+    ) -> ProbabilityConfig | None:
+        """Get the final calculated configuration for a specific sensor type.
 
         Args:
-            entity_id: The entity ID to retrieve the configuration for.
+            sensor_type: The sensor type (string or EntityType) to retrieve the configuration for.
 
         Returns:
-            The `ProbabilityConfig` dictionary for the entity's type,
-            or None if the entity or its type configuration is not found.
-
-        Raises:
-            ValueError: If the entity ID is not mapped to a known sensor type
-                or if the type configuration is unexpectedly missing.
+            The `ProbabilityConfig` dictionary for the sensor type,
+            or None if the type configuration is not found.
 
         """
-        if entity_id not in self.entity_types:
-            # Log potentially useful info instead of raising immediately? Or keep ValueError?
-            _LOGGER.warning(
-                "Entity '%s' not found in entity types mapping during config lookup",
-                entity_id,
-            )
-            # Raise ValueError to signal a problem upstream that needs handling.
-            raise ValueError(f"Entity '{entity_id}' not found in entity types mapping.")
+        if isinstance(sensor_type, EntityType):
+            sensor_type = sensor_type.value
 
-        sensor_type = self.entity_types[entity_id]
-        sensor_config = self._sensor_configs.get(sensor_type)
+        return self._sensor_configs.get(sensor_type)
 
-        if not sensor_config:
-            # This indicates an internal inconsistency, likely during initialization or update.
-            _LOGGER.error(
-                "Internal Error: Configuration missing for sensor type '%s' derived from entity '%s'",
-                sensor_type,
-                entity_id,
-            )
-            raise ValueError(f"Configuration missing for sensor type '{sensor_type}'.")
-
-        return sensor_config
-
-    def is_entity_active(
-        self,
-        entity_id: str,
-        state: str | None,  # Allow None state
-    ) -> bool:
-        """Check if the given state corresponds to an 'active' state for the entity's type.
-
-        Args:
-            entity_id: The entity ID to check.
-            state: The current state value of the entity (can be None).
-
-        Returns:
-            True if the provided state is considered active for the entity's type,
-            False otherwise (including if state is None or entity/config not found).
-
-        Raises:
-            ValueError: If the entity_id is not mapped to a known sensor type
-                or if the sensor type configuration is missing.
-
-        """
-        if state is None:
-            return False  # None state is never active
-
-        sensor_config = self.get_sensor_config(entity_id)
-        if not sensor_config:
-            # get_sensor_config now raises ValueError if config missing
-            # This path should ideally not be reached if exceptions are handled.
-            _LOGGER.warning(
-                "Could not find sensor config for '%s' to check active state",
-                entity_id,
-            )
-            return False
-
-        active_states = sensor_config.get("active_states")
-        if not active_states:
-            _LOGGER.warning(
-                "No active states defined for sensor type of '%s'", entity_id
-            )
-            return False  # Treat as inactive if no active states defined
-        return state in active_states
+    @lru_cache(maxsize=256)
+    def _get_cached_sensor_config(self, entity_type: str) -> ProbabilityConfig | None:
+        """Get sensor config with LRU caching for better performance."""
+        return self._sensor_configs.get(entity_type)
 
     def get_initial_type_priors(self) -> dict[str, PriorData]:
         """Get the default 'prob_given_true', 'prob_given_false', and 'prior' for all sensor types.
@@ -699,16 +553,3 @@ class Probabilities:
             return {}
         else:
             return priors
-
-    def get_entity_type(self, entity_id: str) -> EntityType | None:
-        """Get the configured sensor type for a given entity ID.
-
-        Args:
-            entity_id: The entity ID to look up.
-
-        Returns:
-            The sensor type (e.g., 'motion', 'media') as a string,
-            or None if the entity ID is not found in the mapping.
-
-        """
-        return self.entity_types.get(entity_id)

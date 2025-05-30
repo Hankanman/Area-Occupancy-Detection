@@ -42,10 +42,12 @@ class ProbabilityCalculator:
         self,
         probabilities: Probabilities,
         model_manager: "ModelManager | None" = None,
+        state_manager: Any = None,
     ) -> None:
         """Initialize the calculator."""
         self.probabilities = probabilities
         self.model_manager = model_manager
+        self.state_manager = state_manager
         # self.prior_state is no longer stored here, passed during calculation
 
     async def calculate_occupancy_probability(
@@ -191,78 +193,15 @@ class ProbabilityCalculator:
         self, current_states: dict[str, SensorInfo]
     ) -> dict[str, Any]:
         """Prepare ML features directly from sensor states."""
-        from homeassistant.util import dt as dt_util
+        # Use optimized shared utilities instead of duplicating feature logic
+        from .ml_utils import build_optimized_ml_features
 
-        # Initialize feature dictionary
-        features = {}
-
-        # Organize sensors by type
-        sensor_groups = {
-            "motion": [],
-            "media": [],
-            "appliance": [],
-            "door": [],
-            "window": [],
-            "light": [],
-            "environmental": [],
-        }
-
-        # Group sensors by type
-        for entity_id, state_info in current_states.items():
-            entity_type = self.probabilities.get_entity_type(entity_id)
-            if entity_type and state_info.get("availability", False):
-                state_value = state_info.get("state")
-                active_states = {
-                    "motion": ["on", "detected"],
-                    "media": ["playing", "paused"],
-                    "appliance": ["on"],
-                    "door": ["open", "closed"],
-                    "window": ["open", "closed"],
-                    "light": ["on"],
-                    "environmental": ["on"],
-                }
-
-                is_active = state_value in active_states.get(entity_type.value, [])
-                sensor_groups[entity_type.value].append(
-                    {"entity_id": entity_id, "state": state_value, "active": is_active}
-                )
-
-        # Generate features for each sensor type
-        for sensor_type, sensors in sensor_groups.items():
-            features[f"{sensor_type}_count"] = len(sensors)
-            features[f"{sensor_type}_active_count"] = sum(
-                1 for s in sensors if s["active"]
-            )
-            features[f"{sensor_type}_active_duration"] = (
-                features[f"{sensor_type}_active_count"] / len(sensors)
-                if len(sensors) > 0
-                else 0.0
-            )
-            features[f"{sensor_type}_any_active"] = any(s["active"] for s in sensors)
-
-        # Add temporal features
-        now = dt_util.utcnow()
-        features["hour_of_day"] = now.hour
-        features["day_of_week"] = now.weekday()
-        features["is_weekend"] = now.weekday() >= 5
-        features["is_workday"] = (now.weekday() < 5) and (
-            now.hour >= 8 and now.hour <= 17
+        return build_optimized_ml_features(
+            current_states,
+            self.probabilities,
+            timestamp=None,
+            state_manager=self.state_manager,
         )
-        features["is_night"] = now.hour >= 22 or now.hour <= 6
-        features["is_morning"] = 6 <= now.hour < 12
-        features["is_afternoon"] = 12 <= now.hour < 18
-        features["is_evening"] = 18 <= now.hour < 22
-
-        # Add some basic cross-sensor features
-        features["motion_and_media"] = features.get(
-            "motion_any_active", False
-        ) and features.get("media_any_active", False)
-        features["total_activity"] = sum(
-            features.get(f"{sensor_type}_active_duration", 0.0)
-            for sensor_type in sensor_groups
-        )
-
-        return features
 
     def _combine_predictions(
         self,
@@ -337,7 +276,11 @@ class ProbabilityCalculator:
             if not state or not state.get("availability", False):  # Ensure state exists
                 continue
 
-            sensor_config = self.probabilities.get_sensor_config(entity_id)
+            entity_type = self.state_manager.get_entity_type(entity_id)
+            if not entity_type:
+                continue
+
+            sensor_config = self.probabilities.get_sensor_config_by_type(entity_type)
             if not sensor_config:
                 continue
 
@@ -381,10 +324,10 @@ class ProbabilityCalculator:
             return float(prob_true), float(prob_false), float(prior)
 
         # Fall back to learned type priors if no entity-specific ones found
-        sensor_type = self.probabilities.entity_types.get(entity_id)
-        if sensor_type:
+        entity_type = self.state_manager.get_entity_type(entity_id)
+        if entity_type:
             type_prior_data: PriorData | None = prior_state.type_priors.get(
-                sensor_type.value
+                entity_type.value
             )  # Use enum value as key
             if type_prior_data:
                 # Use learned type prior if available, falling back to defaults from config if attributes are None.
@@ -416,13 +359,24 @@ class ProbabilityCalculator:
             _LOGGER.debug("Sensor %s unavailable", entity_id)
             return SensorCalculation.empty()
 
-        sensor_config = self.probabilities.get_sensor_config(entity_id)
+        entity_type = self.state_manager.get_entity_type(entity_id)
+        if not entity_type:
+            _LOGGER.error("No entity type found for sensor %s", entity_id)
+            return SensorCalculation.empty()
+
+        sensor_config = self.probabilities.get_sensor_config_by_type(entity_type)
         if not sensor_config:
             _LOGGER.warning("No configuration found for sensor %s", entity_id)
             return SensorCalculation.empty()
 
         # Check if entity state is considered active based on its type configuration
-        if not self.probabilities.is_entity_active(entity_id, state.get("state")):
+        if not self.state_manager:
+            _LOGGER.error("EntityManager is required for active state determination")
+            return SensorCalculation.empty()
+
+        is_active = self.state_manager.is_entity_active(entity_id, state.get("state"))
+
+        if not is_active:
             return SensorCalculation.empty()
 
         try:
