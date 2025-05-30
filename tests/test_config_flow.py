@@ -229,147 +229,174 @@ async def test_options_flow_success(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    # 2. Initialize the options flow
-    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
-    _LOGGER.debug("Initial options flow result: %s", result)
+    try:
+        # 2. Initialize the options flow
+        result = await hass.config_entries.options.async_init(
+            mock_config_entry.entry_id
+        )
+        _LOGGER.debug("Initial options flow result: %s", result)
 
-    assert result is not None
-    assert result.get("type") == data_entry_flow.FlowResultType.FORM
-    assert result.get("step_id") == "init"  # Assuming default options step ID is 'init'
-    assert "flow_id" in result
+        assert result is not None
+        assert result.get("type") == data_entry_flow.FlowResultType.FORM
+        assert (
+            result.get("step_id") == "init"
+        )  # Assuming default options step ID is 'init'
+        assert "flow_id" in result
 
-    # 3. Provide updated options
-    new_threshold = 65
-    new_history = 30
-    # Options flow input needs to match the sections
-    updated_options_structured = {
-        "motion": {
-            # Include existing motion sensors if they shouldn't change
-            CONF_PRIMARY_OCCUPANCY_SENSOR: mock_config_entry.options.get(
-                CONF_PRIMARY_OCCUPANCY_SENSOR, MOCK_PRIMARY_INDICATOR
-            ),
-            CONF_MOTION_SENSORS: mock_config_entry.options.get(
-                CONF_MOTION_SENSORS, [MOCK_MOTION_SENSOR_1]
-            ),
-            CONF_WEIGHT_MOTION: mock_config_entry.options.get(
-                CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION
-            ),
-        },
-        "ml": {
-            CONF_ML_ENABLED: mock_config_entry.options.get(
-                CONF_ML_ENABLED, DEFAULT_ML_ENABLED
-            ),
-            CONF_ML_RETRAIN_INTERVAL: mock_config_entry.options.get(
-                CONF_ML_RETRAIN_INTERVAL, DEFAULT_ML_RETRAIN_INTERVAL
-            ),
-            CONF_ML_CONFIDENCE_THRESHOLD: mock_config_entry.options.get(
-                CONF_ML_CONFIDENCE_THRESHOLD, DEFAULT_ML_CONFIDENCE_THRESHOLD
-            ),
-        },
-        # Include other sections with their current or default values
-        "doors": {  # Example
-            CONF_DOOR_SENSORS: mock_config_entry.options.get(CONF_DOOR_SENSORS, []),
-            CONF_DOOR_ACTIVE_STATE: mock_config_entry.options.get(
-                CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
-            ),
-            CONF_WEIGHT_DOOR: mock_config_entry.options.get(
-                CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR
-            ),
-        },
-        "windows": {
-            CONF_WINDOW_SENSORS: mock_config_entry.options.get(CONF_WINDOW_SENSORS, []),
-            CONF_WINDOW_ACTIVE_STATE: mock_config_entry.options.get(
-                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
-            ),
-            CONF_WEIGHT_WINDOW: mock_config_entry.options.get(
-                CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW
-            ),
-        },
-        "lights": {
-            CONF_LIGHTS: mock_config_entry.options.get(CONF_LIGHTS, []),
-            CONF_WEIGHT_LIGHT: mock_config_entry.options.get(
-                CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT
-            ),
-        },
-        "media": {
-            CONF_MEDIA_DEVICES: mock_config_entry.options.get(CONF_MEDIA_DEVICES, []),
-            CONF_MEDIA_ACTIVE_STATES: mock_config_entry.options.get(
-                CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
-            ),
-            CONF_WEIGHT_MEDIA: mock_config_entry.options.get(
-                CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA
-            ),
-        },
-        "appliances": {
-            CONF_APPLIANCES: mock_config_entry.options.get(CONF_APPLIANCES, []),
-            CONF_APPLIANCE_ACTIVE_STATES: mock_config_entry.options.get(
-                CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
-            ),
-            CONF_WEIGHT_APPLIANCE: mock_config_entry.options.get(
-                CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
-            ),
-        },
-        "environmental": {
-            CONF_ILLUMINANCE_SENSORS: mock_config_entry.options.get(
-                CONF_ILLUMINANCE_SENSORS, []
-            ),
-            CONF_HUMIDITY_SENSORS: mock_config_entry.options.get(
-                CONF_HUMIDITY_SENSORS, []
-            ),
-            CONF_TEMPERATURE_SENSORS: mock_config_entry.options.get(
-                CONF_TEMPERATURE_SENSORS, []
-            ),
-            CONF_WEIGHT_ENVIRONMENTAL: mock_config_entry.options.get(
-                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
-            ),
-        },
-        "wasp_in_box": {
-            CONF_WASP_ENABLED: mock_config_entry.options.get(CONF_WASP_ENABLED, False),
-            CONF_WASP_MOTION_TIMEOUT: mock_config_entry.options.get(
-                CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
-            ),
-            CONF_WASP_WEIGHT: mock_config_entry.options.get(
-                CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
-            ),
-            CONF_WASP_MAX_DURATION: mock_config_entry.options.get(
-                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
-            ),
-        },
-        "parameters": {
-            CONF_THRESHOLD: new_threshold,  # Update the threshold
-            CONF_HISTORY_PERIOD: new_history,  # Update the history period
-            CONF_DECAY_ENABLED: mock_config_entry.options.get(
-                CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
-            ),
-            CONF_DECAY_WINDOW: mock_config_entry.options.get(
-                CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
-            ),
-            CONF_DECAY_MIN_DELAY: mock_config_entry.options.get(
-                CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
-            ),
-            CONF_HISTORICAL_ANALYSIS_ENABLED: mock_config_entry.options.get(
-                CONF_HISTORICAL_ANALYSIS_ENABLED, DEFAULT_HISTORICAL_ANALYSIS_ENABLED
-            ),
-        },
-    }
+        # 3. Provide updated options
+        new_threshold = 65
+        new_history = 30
+        # Options flow input needs to match the sections
+        updated_options_structured = {
+            "motion": {
+                # Include existing motion sensors if they shouldn't change
+                CONF_PRIMARY_OCCUPANCY_SENSOR: mock_config_entry.options.get(
+                    CONF_PRIMARY_OCCUPANCY_SENSOR, MOCK_PRIMARY_INDICATOR
+                ),
+                CONF_MOTION_SENSORS: mock_config_entry.options.get(
+                    CONF_MOTION_SENSORS, [MOCK_MOTION_SENSOR_1]
+                ),
+                CONF_WEIGHT_MOTION: mock_config_entry.options.get(
+                    CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION
+                ),
+            },
+            "ml": {
+                CONF_ML_ENABLED: mock_config_entry.options.get(
+                    CONF_ML_ENABLED, DEFAULT_ML_ENABLED
+                ),
+                CONF_ML_RETRAIN_INTERVAL: mock_config_entry.options.get(
+                    CONF_ML_RETRAIN_INTERVAL, DEFAULT_ML_RETRAIN_INTERVAL
+                ),
+                CONF_ML_CONFIDENCE_THRESHOLD: mock_config_entry.options.get(
+                    CONF_ML_CONFIDENCE_THRESHOLD, DEFAULT_ML_CONFIDENCE_THRESHOLD
+                ),
+            },
+            # Include other sections with their current or default values
+            "doors": {  # Example
+                CONF_DOOR_SENSORS: mock_config_entry.options.get(CONF_DOOR_SENSORS, []),
+                CONF_DOOR_ACTIVE_STATE: mock_config_entry.options.get(
+                    CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
+                ),
+                CONF_WEIGHT_DOOR: mock_config_entry.options.get(
+                    CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR
+                ),
+            },
+            "windows": {
+                CONF_WINDOW_SENSORS: mock_config_entry.options.get(
+                    CONF_WINDOW_SENSORS, []
+                ),
+                CONF_WINDOW_ACTIVE_STATE: mock_config_entry.options.get(
+                    CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+                ),
+                CONF_WEIGHT_WINDOW: mock_config_entry.options.get(
+                    CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW
+                ),
+            },
+            "lights": {
+                CONF_LIGHTS: mock_config_entry.options.get(CONF_LIGHTS, []),
+                CONF_WEIGHT_LIGHT: mock_config_entry.options.get(
+                    CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT
+                ),
+            },
+            "media": {
+                CONF_MEDIA_DEVICES: mock_config_entry.options.get(
+                    CONF_MEDIA_DEVICES, []
+                ),
+                CONF_MEDIA_ACTIVE_STATES: mock_config_entry.options.get(
+                    CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
+                ),
+                CONF_WEIGHT_MEDIA: mock_config_entry.options.get(
+                    CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA
+                ),
+            },
+            "appliances": {
+                CONF_APPLIANCES: mock_config_entry.options.get(CONF_APPLIANCES, []),
+                CONF_APPLIANCE_ACTIVE_STATES: mock_config_entry.options.get(
+                    CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
+                ),
+                CONF_WEIGHT_APPLIANCE: mock_config_entry.options.get(
+                    CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE
+                ),
+            },
+            "environmental": {
+                CONF_ILLUMINANCE_SENSORS: mock_config_entry.options.get(
+                    CONF_ILLUMINANCE_SENSORS, []
+                ),
+                CONF_HUMIDITY_SENSORS: mock_config_entry.options.get(
+                    CONF_HUMIDITY_SENSORS, []
+                ),
+                CONF_TEMPERATURE_SENSORS: mock_config_entry.options.get(
+                    CONF_TEMPERATURE_SENSORS, []
+                ),
+                CONF_WEIGHT_ENVIRONMENTAL: mock_config_entry.options.get(
+                    CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+                ),
+            },
+            "wasp_in_box": {
+                CONF_WASP_ENABLED: mock_config_entry.options.get(
+                    CONF_WASP_ENABLED, False
+                ),
+                CONF_WASP_MOTION_TIMEOUT: mock_config_entry.options.get(
+                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                ),
+                CONF_WASP_WEIGHT: mock_config_entry.options.get(
+                    CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
+                ),
+                CONF_WASP_MAX_DURATION: mock_config_entry.options.get(
+                    CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                ),
+            },
+            "parameters": {
+                CONF_THRESHOLD: new_threshold,  # Update the threshold
+                CONF_HISTORY_PERIOD: new_history,  # Update the history period
+                CONF_DECAY_ENABLED: mock_config_entry.options.get(
+                    CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
+                ),
+                CONF_DECAY_WINDOW: mock_config_entry.options.get(
+                    CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
+                ),
+                CONF_DECAY_MIN_DELAY: mock_config_entry.options.get(
+                    CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY
+                ),
+                CONF_HISTORICAL_ANALYSIS_ENABLED: mock_config_entry.options.get(
+                    CONF_HISTORICAL_ANALYSIS_ENABLED,
+                    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+                ),
+            },
+        }
 
-    result2 = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input=updated_options_structured,  # Use structured input
-    )
-    await hass.async_block_till_done()
-    _LOGGER.debug("Configure options flow result: %s", result2)
+        result2 = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input=updated_options_structured,  # Use structured input
+        )
+        await hass.async_block_till_done()
+        _LOGGER.debug("Configure options flow result: %s", result2)
 
-    # 4. Verify the options flow finished and updated the entry's options
-    assert result2 is not None
-    assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
-    # Options flow result['data'] contains the *updated* options dictionary (flattened)
-    assert result2.get("data", {}).get(CONF_THRESHOLD) == new_threshold
-    assert result2.get("data", {}).get(CONF_HISTORY_PERIOD) == new_history
+        # 4. Verify the options flow finished and updated the entry's options
+        assert result2 is not None
+        assert result2.get("type") == data_entry_flow.FlowResultType.CREATE_ENTRY
+        # Options flow result['data'] contains the *updated* options dictionary (flattened)
+        assert result2.get("data", {}).get(CONF_THRESHOLD) == new_threshold
+        assert result2.get("data", {}).get(CONF_HISTORY_PERIOD) == new_history
 
-    # Check the actual config entry options are updated
-    assert mock_config_entry.options is not None
-    _LOGGER.debug("Finished test_options_flow_success")
+        # Check the actual config entry options are updated
+        assert mock_config_entry.options is not None
+        _LOGGER.debug("Finished test_options_flow_success")
+
+    finally:
+        # Ensure proper cleanup to prevent lingering timers
+        try:
+            # Shutdown the coordinator and its PriorManager to cancel timers
+            coordinator_data = hass.data.get(DOMAIN, {}).get(
+                mock_config_entry.entry_id, {}
+            )
+            coordinator = coordinator_data.get("coordinator")
+            if coordinator and hasattr(coordinator, "prior_manager"):
+                await coordinator.prior_manager.async_shutdown()
+            # Unload the config entry to ensure complete cleanup
+            await hass.config_entries.async_unload(mock_config_entry.entry_id)
+        except Exception as cleanup_err:
+            _LOGGER.warning("Error during test cleanup: %s", cleanup_err)
 
 
 # Add new test for auto-adding primary sensor

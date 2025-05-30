@@ -6,7 +6,10 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import DOMAIN  # noqa: TID252
+from custom_components.area_occupancy.const import (  # noqa: TID252
+    DOMAIN,
+    MIN_PROBABILITY,
+)
 from custom_components.area_occupancy.coordinator import (
     AreaOccupancyCoordinator,  # noqa: TID252
 )
@@ -255,8 +258,12 @@ async def test_storage_integration(
     await new_coordinator.async_setup()
 
     # Verify data was loaded
-    assert new_coordinator.prior_state is not None
+    assert new_coordinator.prior_manager.prior_state is not None
     assert new_coordinator.last_prior_update is not None
+
+    # Verify priors were updated
+    assert coordinator.prior_manager.prior_state.entity_priors
+    assert coordinator.prior_manager.prior_state.overall_prior > MIN_PROBABILITY
 
 
 # Update test_migration_handling
@@ -307,7 +314,7 @@ async def test_service_integration(
 
     # Verify service effect
     assert coordinator.last_prior_update != initial_update_time
-    assert coordinator.prior_state is not None
+    assert coordinator.prior_manager.prior_state is not None
 
 
 # Add test for entity attribute updates
