@@ -14,10 +14,7 @@ import pandas as pd
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
 
-from .const import (
-    ML_FEATURE_WINDOW_SIZE,
-    ML_MIN_TRAINING_SAMPLES,
-)
+from .const import ML_FEATURE_WINDOW_SIZE, ML_MIN_TRAINING_SAMPLES
 from .types import EntityType, MLTrainingData
 
 _LOGGER = logging.getLogger(__name__)
@@ -292,13 +289,18 @@ class TrainingSetBuilder:
             return None
 
         try:
+            _LOGGER.debug("Starting prepare_ml_data with DataFrame shape %s", df.shape)
+
             # Extract features by entity type and timestamp
             features = {}
             labels = []
             timestamps = []
             entity_ids = []
 
-            for timestamp, group in df.groupby("timestamp"):
+            grouped = df.groupby("timestamp")
+            _LOGGER.debug("Found %d unique timestamps to process", len(grouped))
+
+            for timestamp, group in grouped:
                 timestamp_features = {}
 
                 # Aggregate features by entity type
@@ -339,19 +341,39 @@ class TrainingSetBuilder:
                     )
                     dt = datetime.now()
 
-                timestamp_features["hour_of_day"] = dt.hour
-                timestamp_features["day_of_week"] = dt.weekday()
-                timestamp_features["is_weekend"] = dt.weekday() >= 5
+                # Use shared temporal feature generation
+                from .ml_utils import TemporalFeatureGenerator
 
-                features[timestamp] = timestamp_features
+                temporal_features = {}
+                TemporalFeatureGenerator.add_temporal_features_to_dict(
+                    temporal_features, dt
+                )
+
+                # Add basic temporal features (subset for training data)
+                timestamp_features["hour_of_day"] = temporal_features["hour_of_day"]
+                timestamp_features["day_of_week"] = temporal_features["day_of_week"]
+                timestamp_features["is_weekend"] = temporal_features["is_weekend"]
+
+                # Store features with timestamp as key
+                timestamp_key = dt.isoformat()
+                features[timestamp_key] = timestamp_features
 
                 # Get label (use majority vote if multiple entities)
                 occupied = group["occupied"].any()
                 labels.append(occupied)
 
-                # Convert timestamp to ISO format string
-                timestamps.append(dt.isoformat())
+                # Convert timestamp to ISO format string for consistency
+                timestamps.append(timestamp_key)
                 entity_ids.append(",".join(group["entity_id"].unique()))
+
+            _LOGGER.debug(
+                "Prepared ML data: %d features, %d labels, %d timestamps",
+                len(features),
+                len(labels),
+                len(timestamps),
+            )
+            _LOGGER.debug("Sample feature keys: %s", list(features.keys())[:3])
+            _LOGGER.debug("Sample timestamp list: %s", timestamps[:3])
 
             return MLTrainingData(
                 features=features,

@@ -18,3 +18,25 @@ update_priors:
           min: 1
           max: 30
           step: 1
+
+train_model:
+  name: Train ML Model
+  description: "Manually trigger machine learning model training using historical data."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to train the ML model for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    history_period:
+      name: History Period
+      description: "Number of days of history to use for training (default: 30 days)"
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 7
+          max: 90
+          step: 1

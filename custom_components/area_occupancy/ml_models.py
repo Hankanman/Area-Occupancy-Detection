@@ -341,19 +341,48 @@ class ModelManager:
             Tuple of (X, y, feature_schema)
 
         """
+        _LOGGER.debug(
+            "Starting training data preparation with %d timestamps",
+            len(training_data.timestamps),
+        )
+
         # Convert features to DataFrame
         feature_rows = []
         for timestamp in training_data.timestamps:
             if timestamp in training_data.features:
                 feature_rows.append(training_data.features[timestamp])
+            else:
+                _LOGGER.debug("Timestamp %s not found in features dict", timestamp)
+
+        _LOGGER.debug(
+            "Found %d feature rows out of %d timestamps",
+            len(feature_rows),
+            len(training_data.timestamps),
+        )
 
         if not feature_rows:
+            _LOGGER.warning(
+                "No feature rows found - timestamps don't match features keys"
+            )
+            _LOGGER.debug(
+                "Available feature keys: %s", list(training_data.features.keys())[:5]
+            )
+            _LOGGER.debug("Sample timestamps: %s", training_data.timestamps[:5])
             return np.array([]), np.array([]), {}
 
         df = pd.DataFrame(feature_rows)
+        _LOGGER.debug(
+            "Created DataFrame with shape %s and columns %s", df.shape, list(df.columns)
+        )
 
         # Remove non-numeric columns and handle missing values
         numeric_df = df.select_dtypes(include=[np.number])
+        _LOGGER.debug(
+            "After selecting numeric columns: shape %s, columns %s",
+            numeric_df.shape,
+            list(numeric_df.columns),
+        )
+
         numeric_df = numeric_df.fillna(0)
 
         # Create feature schema
@@ -363,6 +392,9 @@ class ModelManager:
         X = numeric_df.values
         y = np.array(training_data.labels)
 
+        _LOGGER.debug(
+            "Final training arrays - X shape: %s, y shape: %s", X.shape, y.shape
+        )
         return X, y, feature_schema
 
     async def _train_model(

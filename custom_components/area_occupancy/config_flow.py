@@ -691,6 +691,10 @@ def create_schema(
         _create_motion_section_schema(defaults),
         {"collapsed": True},
     )
+    schema_dict[vol.Required("ml")] = section(
+        _create_ml_section_schema(defaults),
+        {"collapsed": True},
+    )
     schema_dict[vol.Required("doors")] = section(
         _create_doors_section_schema(
             defaults,

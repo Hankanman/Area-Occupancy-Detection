@@ -491,48 +491,97 @@ class PriorState:
 
         # Caller is responsible for recalculating overall_prior after all updates
 
-    def calculate_overall_prior(self, probabilities: Probabilities) -> float:
-        """Calculate the overall prior from sensor type priors that have configured sensors.
+    def calculate_overall_prior(
+        self, probabilities: "Probabilities", state_manager=None
+    ) -> float:
+        """Calculate overall prior based on type priors and sensor weights.
 
         Args:
-            probabilities: Probabilities instance from coordinator
+            probabilities: Probabilities instance for accessing default priors and weights
+            state_manager: StateManager instance for entity type lookups
 
         Returns:
-            Average prior probability from configured sensor types
+            Calculated overall prior (float)
 
         """
-        # Get all configured entity types from the probabilities instance
-        configured_types = set()
-        for entity_id in probabilities.entity_types:
-            if entity_type := probabilities.get_entity_type(entity_id):
-                configured_types.add(entity_type.value)  # Use .value for comparison
+        weighted_sum = 0.0
+        total_weight = 0.0
 
-        # Only include priors for configured types from self.type_priors
-        valid_priors = []
-        for sensor_type, prior_data in self.type_priors.items():
-            # Check if the sensor_type string is in the set of configured type values
-            if sensor_type in configured_types and prior_data.prior > MIN_PROBABILITY:
-                valid_priors.append(prior_data.prior)
+        # Use StateManager to get all entities and their types
+        if state_manager:
+            all_entities = state_manager.get_all_entities()
+            entity_types_mapping = state_manager.get_entity_types_mapping()
+        else:
+            _LOGGER.warning(
+                "StateManager not available, cannot determine configured types for overall prior calculation"
+            )
+            all_entities = []
+            entity_types_mapping = {}
 
-        if not valid_priors:
-            return MIN_PROBABILITY  # Return min instead of 0.0
+        # Go through all configured entity types
+        available_types = (
+            set(entity_types_mapping.values()) if entity_types_mapping else set()
+        )
 
-        return sum(valid_priors) / len(valid_priors)
+        for entity_type in available_types:
+            sensor_type_str = entity_type.value
 
-    def initialize_from_defaults(self, probabilities: Probabilities) -> None:
-        """Initialize the state from default type priors.
+            # Try to get learned type prior first
+            type_prior_data = self.type_priors.get(sensor_type_str)
+            if type_prior_data:
+                prior_value = type_prior_data.prior
+            else:
+                # Fall back to default from probabilities
+                try:
+                    prior_value = probabilities.get_default_prior(sensor_type_str)
+                except ValueError:
+                    _LOGGER.warning(
+                        "No default prior available for type %s, skipping",
+                        sensor_type_str,
+                    )
+                    continue
+
+            # Get weight from probabilities
+            sensor_config = probabilities.get_sensor_config_by_type(entity_type)
+            if sensor_config:
+                weight = sensor_config.get("weight", 0.0)
+                weighted_sum += prior_value * weight
+                total_weight += weight
+
+        if total_weight == 0:
+            _LOGGER.warning("No valid types found for overall prior calculation")
+            return MIN_PROBABILITY
+
+        overall_prior = weighted_sum / total_weight
+        return max(MIN_PROBABILITY, min(overall_prior, MAX_PROBABILITY))
+
+    def initialize_from_defaults(
+        self, probabilities: "Probabilities", state_manager=None
+    ) -> None:
+        """Initialize type and entity priors from default probability configurations.
 
         Args:
-            probabilities: The probabilities configuration instance
+            probabilities: Probabilities instance for accessing defaults
+            state_manager: StateManager instance for entity type lookups
 
         """
+        # Use StateManager to get all entities and their types
+        if state_manager:
+            all_entities = state_manager.get_all_entities()
+            entity_types_mapping = state_manager.get_entity_types_mapping()
+        else:
+            _LOGGER.warning(
+                "StateManager not available, cannot determine configured types for initialization"
+            )
+            all_entities = []
+            entity_types_mapping = {}
+
         timestamp = dt_util.utcnow().isoformat()
 
-        # Get configured sensor types
-        configured_types = set()
-        for entity_id in probabilities.entity_types:
-            if entity_type := probabilities.get_entity_type(entity_id):
-                configured_types.add(entity_type.value)  # Use .value
+        # Get configured sensor types from StateManager
+        configured_types = set(
+            entity_type.value for entity_type in entity_types_mapping.values()
+        )
 
         # Get initial default data (now returns dict[str, PriorData])
         initial_type_data = probabilities.get_initial_type_priors()
@@ -554,7 +603,7 @@ class PriorState:
                 )
 
         # Calculate and set the overall prior *after* all types are processed
-        overall_prior = self.calculate_overall_prior(probabilities)
+        overall_prior = self.calculate_overall_prior(probabilities, state_manager)
         # Use update method to set only overall_prior safely
         self.update(overall_prior=overall_prior)
 
