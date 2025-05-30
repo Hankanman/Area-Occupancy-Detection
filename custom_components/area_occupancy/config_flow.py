@@ -11,7 +11,6 @@ import logging
 from typing import Any, cast
 
 import voluptuous as vol
-
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
@@ -53,6 +52,9 @@ from .const import (
     CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_ML_CONFIDENCE_THRESHOLD,
+    CONF_ML_ENABLED,
+    CONF_ML_RETRAIN_INTERVAL,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_TEMPERATURE_SENSORS,
@@ -78,6 +80,8 @@ from .const import (
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_ML_CONFIDENCE_THRESHOLD,
+    DEFAULT_ML_RETRAIN_INTERVAL,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -615,6 +619,44 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=300,  # 5-minute increments
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
+                ),
+            ),
+        }
+    )
+
+
+def _create_ml_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the machine learning section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_ML_ENABLED, default=defaults.get(CONF_ML_ENABLED, False)
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_ML_RETRAIN_INTERVAL,
+                default=defaults.get(
+                    CONF_ML_RETRAIN_INTERVAL, DEFAULT_ML_RETRAIN_INTERVAL
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=1,
+                    max=365,  # 1 year in days
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="days",
+                ),
+            ),
+            vol.Optional(
+                CONF_ML_CONFIDENCE_THRESHOLD,
+                default=defaults.get(
+                    CONF_ML_CONFIDENCE_THRESHOLD, DEFAULT_ML_CONFIDENCE_THRESHOLD
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    mode=NumberSelectorMode.SLIDER,
                 ),
             ),
         }
