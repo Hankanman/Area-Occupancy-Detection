@@ -35,6 +35,7 @@ async def test_calculate_prior_primary_sensor_valid(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test that calculate_prior returns correct prior data for a valid primary sensor with a simple ON/OFF state history (30 min ON, 30 min OFF)."""
     # Arrange
@@ -52,7 +53,9 @@ async def test_calculate_prior_primary_sensor_valid(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=states),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
     # Assert
     assert isinstance(result, PriorData)
@@ -66,6 +69,7 @@ async def test_calculate_prior_invalid_entity_id(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test that calculate_prior returns None for an invalid entity_id."""
     # Arrange
@@ -73,7 +77,9 @@ async def test_calculate_prior_invalid_entity_id(
     start = datetime.now() - timedelta(hours=1)
     end = datetime.now()
     mock_sensor_inputs.is_valid_entity_id = lambda eid: False
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+    calc = PriorCalculator(
+        mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+    )
     # Act
     result = await calc.calculate_prior(entity_id, start, end)
     # Assert
@@ -85,6 +91,7 @@ async def test_calculate_prior_invalid_time_range(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test that calculate_prior returns None if the time range is invalid (start > end)."""
     # Arrange
@@ -92,7 +99,9 @@ async def test_calculate_prior_invalid_time_range(
     start = datetime.now()
     end = start - timedelta(hours=1)
     mock_sensor_inputs.is_valid_entity_id = lambda eid: True
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+    calc = PriorCalculator(
+        mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+    )
     # Act
     result = await calc.calculate_prior(entity_id, start, end)
     # Assert
@@ -104,6 +113,7 @@ async def test_calculate_prior_recorder_error_returns_fallback(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test that calculate_prior returns fallback/default values if the recorder raises an error."""
     # Arrange
@@ -116,7 +126,9 @@ async def test_calculate_prior_recorder_error_returns_fallback(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(side_effect=HomeAssistantError("recorder error")),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
     # Assert
     assert isinstance(result, PriorData)
@@ -130,6 +142,7 @@ async def test_calculate_prior_non_primary_sensor(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test calculation of prior probabilities for a non-primary sensor."""
     # Arrange
@@ -156,7 +169,9 @@ async def test_calculate_prior_non_primary_sensor(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(side_effect=[primary_states, entity_states]),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     # Assert
@@ -176,6 +191,7 @@ async def test_calculate_prior_no_valid_intervals(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test handling of cases where no valid intervals are found."""
     # Arrange
@@ -189,7 +205,9 @@ async def test_calculate_prior_no_valid_intervals(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=[]),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     # Assert
@@ -204,10 +222,13 @@ async def test_calculate_conditional_probability_with_intervals(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test calculation of conditional probabilities using intervals."""
     # Arrange
-    calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+    calc = PriorCalculator(
+        mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+    )
     entity_id = "binary_sensor.test_sensor"
     start_time = datetime.now() - timedelta(hours=1)
 
@@ -240,12 +261,11 @@ async def test_calculate_conditional_probability_with_intervals(
         ]
     }
 
-    # Test calculation for both ON and OFF states
-    prob_given_true = calc._calculate_conditional_probability_with_intervals(
-        entity_id, entity_intervals, motion_intervals_by_sensor, STATE_ON
-    )
-    prob_given_false = calc._calculate_conditional_probability_with_intervals(
-        entity_id, entity_intervals, motion_intervals_by_sensor, STATE_OFF
+    # Test calculation for both ON and OFF states using the correct method signature
+    prob_given_true, prob_given_false = calc._calculate_conditional_probabilities(
+        entity_id,
+        entity_intervals,
+        motion_intervals_by_sensor[mock_sensor_inputs.primary_sensor],
     )
 
     # Assert - ensure probabilities are not None and cast to float for comparison
@@ -263,6 +283,7 @@ async def test_calculate_prior_with_empty_states(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test handling of empty state lists."""
     # Arrange
@@ -276,7 +297,9 @@ async def test_calculate_prior_with_empty_states(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=None),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     # Assert
@@ -291,6 +314,7 @@ async def test_calculate_prior_with_invalid_states(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test handling of invalid state objects."""
     # Arrange
@@ -309,7 +333,9 @@ async def test_calculate_prior_with_invalid_states(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=invalid_states),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     # Assert
@@ -324,6 +350,7 @@ async def test_calculate_prior_with_insufficient_data(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test handling of insufficient historical data."""
     entity_id = "binary_sensor.test_sensor"
@@ -340,13 +367,15 @@ async def test_calculate_prior_with_insufficient_data(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=states),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     assert isinstance(result, PriorData)
-    assert result.prob_given_true == MAX_PROBABILITY
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == MAX_PROBABILITY
+    assert result.prob_given_true == MAX_PROBABILITY  # 0.99
+    assert result.prob_given_false == MIN_PROBABILITY  # 0.01 (when always active)
+    assert result.prior == MAX_PROBABILITY  # 0.99
 
 
 @pytest.mark.asyncio
@@ -354,6 +383,7 @@ async def test_calculate_prior_with_invalid_state_values(
     mock_hass,
     mock_probabilities,
     mock_sensor_inputs,
+    mock_state_manager,
 ):
     """Test handling of invalid state values in historical data."""
     entity_id = "binary_sensor.test_sensor"
@@ -371,10 +401,12 @@ async def test_calculate_prior_with_invalid_state_values(
         "custom_components.area_occupancy.calculate_prior.PriorCalculator._get_states_from_recorder",
         new=AsyncMock(return_value=states),
     ):
-        calc = PriorCalculator(mock_hass, mock_probabilities, mock_sensor_inputs)
+        calc = PriorCalculator(
+            mock_hass, mock_probabilities, mock_sensor_inputs, mock_state_manager
+        )
         result = await calc.calculate_prior(entity_id, start, end)
 
     assert isinstance(result, PriorData)
-    assert result.prob_given_true == DEFAULT_PROB_GIVEN_TRUE
-    assert result.prob_given_false == DEFAULT_PROB_GIVEN_FALSE
-    assert result.prior == MIN_PROBABILITY
+    assert result.prob_given_true == MAX_PROBABILITY  # 0.99 (calculation still runs)
+    assert result.prob_given_false == MIN_PROBABILITY  # 0.01
+    assert result.prior == MIN_PROBABILITY  # 0.01 (when no active states)

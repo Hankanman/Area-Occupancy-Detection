@@ -35,30 +35,13 @@ def test_probabilities_init_valid():
     """Test that the Probabilities class initializes correctly with valid configuration."""
     p = Probabilities(VALID_CONFIG)
     assert p.sensor_weights["motion"] == 0.8
-    assert p.entity_types["binary_sensor.motion1"] == EntityType.MOTION
     assert p.sensor_configs["motion"]["weight"] == 0.8
-
-
-def test_probabilities_init_invalid_entity_id():
-    """Test that the Probabilities class raises a ConfigurationError when an invalid entity ID is provided."""
-    bad_config = dict(VALID_CONFIG)
-    bad_config["motion_sensors"] = ["badid"]
-    with pytest.raises(ConfigurationError):
-        Probabilities(bad_config)
 
 
 def test_probabilities_init_invalid_weight():
     """Test that the Probabilities class raises a ConfigurationError when an invalid weight is provided."""
     bad_config = dict(VALID_CONFIG)
     bad_config["weight_motion"] = 2.0
-    with pytest.raises(ConfigurationError):
-        Probabilities(bad_config)
-
-
-def test_probabilities_init_nonlist_entities():
-    """Test that the Probabilities class raises a ConfigurationError when a non-list entity is provided."""
-    bad_config = dict(VALID_CONFIG)
-    bad_config["motion_sensors"] = "notalist"
     with pytest.raises(ConfigurationError):
         Probabilities(bad_config)
 
@@ -81,18 +64,17 @@ def test_probabilities_build_sensor_configs_missing_key():
 
 
 def test_probabilities_get_default_prior_valid():
-    """Test that the Probabilities class returns a default prior for a valid entity ID."""
+    """Test that the Probabilities class returns a default prior for a valid entity type."""
     p = Probabilities(VALID_CONFIG)
-    eid = "binary_sensor.motion1"
-    val = p.get_default_prior(eid)
+    val = p.get_default_prior(EntityType.MOTION)
     assert 0 < val < 1
 
 
 def test_probabilities_get_default_prior_missing_entity():
-    """Test that the Probabilities class raises a ValueError when an invalid entity ID is provided."""
+    """Test that the Probabilities class raises a ValueError when an invalid entity type is provided."""
     p = Probabilities(VALID_CONFIG)
     with pytest.raises(ValueError):
-        p.get_default_prior("binary_sensor.unknown")
+        p.get_default_prior("invalid_sensor_type")
 
 
 def test_probabilities_update_config_valid():
@@ -114,36 +96,18 @@ def test_probabilities_update_config_invalid():
 
 
 def test_probabilities_get_sensor_config_valid():
-    """Test that the Probabilities class returns a sensor configuration for a valid entity ID."""
+    """Test that the Probabilities class returns a sensor configuration for a valid entity type."""
     p = Probabilities(VALID_CONFIG)
-    eid = "binary_sensor.motion1"
-    cfg = p.get_sensor_config(eid)
+    cfg = p.get_sensor_config_by_type(EntityType.MOTION)
     assert isinstance(cfg, dict)
     assert "weight" in cfg
 
 
 def test_probabilities_get_sensor_config_missing_entity():
-    """Test that the Probabilities class raises a ValueError when an invalid entity ID is provided."""
+    """Test that the Probabilities class returns None when an invalid entity type is provided."""
     p = Probabilities(VALID_CONFIG)
-    with pytest.raises(ValueError):
-        p.get_sensor_config("binary_sensor.unknown")
-
-
-def test_probabilities_is_entity_active_true_false():
-    """Test that the Probabilities class returns True for active states and False for inactive states."""
-    p = Probabilities(VALID_CONFIG)
-    eid = "binary_sensor.motion1"
-    # Should be active for 'on', inactive for 'off', False for None
-    assert p.is_entity_active(eid, "on") is True
-    assert p.is_entity_active(eid, "off") is False
-    assert p.is_entity_active(eid, None) is False
-
-
-def test_probabilities_is_entity_active_missing_config():
-    """Test that the Probabilities class raises a ValueError when an invalid entity ID is provided."""
-    p = Probabilities(VALID_CONFIG)
-    with pytest.raises(ValueError):
-        p.is_entity_active("binary_sensor.unknown", "on")
+    cfg = p.get_sensor_config_by_type("invalid_type")
+    assert cfg is None
 
 
 def test_probabilities_get_initial_type_priors():
@@ -153,11 +117,3 @@ def test_probabilities_get_initial_type_priors():
     assert isinstance(priors, dict)
     for v in priors.values():
         assert isinstance(v, PriorData)
-
-
-def test_probabilities_get_entity_type():
-    """Test that the Probabilities class returns the correct entity type for a valid entity ID."""
-    p = Probabilities(VALID_CONFIG)
-    eid = "binary_sensor.motion1"
-    assert p.get_entity_type(eid) == EntityType.MOTION
-    assert p.get_entity_type("binary_sensor.unknown") is None

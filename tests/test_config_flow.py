@@ -25,6 +25,9 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_ML_CONFIDENCE_THRESHOLD,
+    CONF_ML_ENABLED,
+    CONF_ML_RETRAIN_INTERVAL,
     CONF_MOTION_SENSORS,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
@@ -51,6 +54,9 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_ML_CONFIDENCE_THRESHOLD,
+    DEFAULT_ML_ENABLED,
+    DEFAULT_ML_RETRAIN_INTERVAL,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -109,6 +115,11 @@ FULL_USER_INPUT_STRUCTURED = {
         CONF_PRIMARY_OCCUPANCY_SENSOR: MOCK_PRIMARY_INDICATOR,
         CONF_MOTION_SENSORS: [MOCK_MOTION_SENSOR_1],
         CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
+    },
+    "ml": {
+        CONF_ML_ENABLED: DEFAULT_ML_ENABLED,
+        CONF_ML_RETRAIN_INTERVAL: DEFAULT_ML_RETRAIN_INTERVAL,
+        CONF_ML_CONFIDENCE_THRESHOLD: DEFAULT_ML_CONFIDENCE_THRESHOLD,
     },
     "doors": {
         CONF_DOOR_SENSORS: [MOCK_DOOR_SENSOR_1],
@@ -242,6 +253,17 @@ async def test_options_flow_success(
             ),
             CONF_WEIGHT_MOTION: mock_config_entry.options.get(
                 CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION
+            ),
+        },
+        "ml": {
+            CONF_ML_ENABLED: mock_config_entry.options.get(
+                CONF_ML_ENABLED, DEFAULT_ML_ENABLED
+            ),
+            CONF_ML_RETRAIN_INTERVAL: mock_config_entry.options.get(
+                CONF_ML_RETRAIN_INTERVAL, DEFAULT_ML_RETRAIN_INTERVAL
+            ),
+            CONF_ML_CONFIDENCE_THRESHOLD: mock_config_entry.options.get(
+                CONF_ML_CONFIDENCE_THRESHOLD, DEFAULT_ML_CONFIDENCE_THRESHOLD
             ),
         },
         # Include other sections with their current or default values

@@ -28,9 +28,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def calculator(mock_probabilities):
+def calculator(mock_probabilities, mock_state_manager):
     """Create a ProbabilityCalculator instance."""
-    return ProbabilityCalculator(probabilities=mock_probabilities)
+    return ProbabilityCalculator(
+        probabilities=mock_probabilities, state_manager=mock_state_manager
+    )
 
 
 # --- Tests for bayesian_update ---
@@ -128,7 +130,7 @@ def test_calculate_sensor_probability(calculator, mock_prior_state):
     assert calc_result_unavail.weighted_probability == 0.0
 
     # Test with missing sensor config
-    calculator.probabilities.get_sensor_config.return_value = None
+    calculator.probabilities.get_sensor_config_by_type.return_value = None
     calc_result_no_config = calculator._calculate_sensor_probability(  # noqa: SLF001
         "binary_sensor.missing", state_on, mock_prior_state
     )

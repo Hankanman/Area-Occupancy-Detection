@@ -675,26 +675,20 @@ async def test_coordinator_property_getters(
     assert coordinator.last_prior_update == coordinator._last_prior_update
 
     # Test availability when primary sensor is missing
-    coordinator.data = ProbabilityState()
-    coordinator.data.current_states = {
-        "sensor.test": {
-            "state": None,
-            "last_changed": dt_util.utcnow().isoformat(),
-            "availability": False,
-        }
-    }
-    assert coordinator.available is False
+    with patch.object(coordinator.state_manager, "get_entity_state", return_value=None):
+        assert coordinator.available is False
 
     # Test availability with invalid primary sensor state
-    primary_sensor = coordinator.inputs.primary_sensor
-    coordinator.data.current_states = {
-        primary_sensor: {
+    with patch.object(
+        coordinator.state_manager,
+        "get_entity_state",
+        return_value={
             "state": "unknown",
             "last_changed": dt_util.utcnow().isoformat(),
             "availability": False,
-        }
-    }
-    assert coordinator.available is False
+        },
+    ):
+        assert coordinator.available is False
 
 
 async def test_coordinator_setup_error_handling(
@@ -779,7 +773,7 @@ async def test_coordinator_state_tracking_error_paths(
 
     # Get the actual listener function - need to wait for setup to complete
     await hass.async_block_till_done()
-    assert coordinator._remove_state_listener is not None
+    assert coordinator.state_manager._remove_state_listener is not None
 
     # Create a mock state change event
     event = MagicMock()
@@ -823,7 +817,7 @@ async def test_coordinator_state_tracking_error_paths(
 
     # Test cleanup
     # Store the unsubscribe function
-    unsub = coordinator._remove_state_listener
+    unsub = coordinator.state_manager._remove_state_listener
     assert callable(unsub)  # Verify it's a callable
     # Call the unsubscribe function
     unsub()
@@ -852,22 +846,12 @@ async def test_coordinator_cleanup(
     # Verify cleanup
     assert coordinator._decay_unsub is None
     assert coordinator._prior_update_tracker is None
-    assert coordinator._remove_state_listener is None
+    assert coordinator.state_manager._remove_state_listener is None
     assert coordinator.data is not None  # Should be empty ProbabilityState
     assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
+    assert not coordinator.entity_ids
     assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
-    assert coordinator.prior_state is not None  # Should be empty PriorState
-    assert not coordinator._entity_ids
+    assert not coordinator.entity_ids
 
 
 @pytest.mark.asyncio
@@ -877,14 +861,14 @@ async def test_update_type_priors_from_entities_direct(
     """Directly test _update_type_priors_from_entities for correct type prior aggregation and edge cases."""
     coordinator = hass.data[DOMAIN][init_integration.entry_id]["coordinator"]
 
-    # Patch probabilities.get_entity_type to return types based on entity_id
+    # Patch state_manager.get_entity_type to return types based on entity_id
     entity_type_map = {
         "sensor.motion1": EntityType.MOTION,
         "sensor.media1": EntityType.MEDIA,
         "sensor.bad": EntityType.MOTION,
     }
     monkeypatch.setattr(
-        coordinator.probabilities,
+        coordinator.state_manager,
         "get_entity_type",
         lambda eid: entity_type_map.get(eid),  # pylint: disable=unnecessary-lambda
     )

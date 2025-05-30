@@ -199,25 +199,37 @@ def mock_config_entry() -> MockConfigEntry:
 
 
 @pytest.fixture
+def mock_state_manager() -> MagicMock:
+    """Create a mock StateManager with default test configuration."""
+    mock = MagicMock()
+    mock.get_entity_type.return_value = EntityType.MOTION
+    mock.is_entity_active.side_effect = (
+        lambda entity_id, state=None: state == STATE_ON if state else True
+    )
+    mock.get_entity_state.return_value = {
+        "state": STATE_ON,
+        "availability": True,
+        "last_changed": "",
+    }
+    mock.get_current_states.return_value = {}
+    mock.get_previous_states.return_value = {}
+    mock.get_tracked_entities.return_value = set()
+    return mock
+
+
+@pytest.fixture
 def mock_probabilities() -> MagicMock:
     """Create a mock probabilities provider with default/fallback values."""
     mock = MagicMock(spec=Probabilities)
     mock.get_default_prior.return_value = 0.5
-    mock.is_entity_active.side_effect = lambda eid, state: state == STATE_ON
-    mock.get_sensor_config.return_value = {
+    mock.get_sensor_config_by_type.return_value = {
         "prob_given_true": DEFAULT_PROB_GIVEN_TRUE,
         "prob_given_false": DEFAULT_PROB_GIVEN_FALSE,
         "default_prior": 0.5,
         "weight": 1.0,
         "active_states": {STATE_ON},
     }
-    mock.get_entity_type.return_value = EntityType.MOTION
-    mock.entity_types = {
-        "binary_sensor.test": EntityType.MOTION,
-        "binary_sensor.test1": EntityType.MOTION,
-        "binary_sensor.test2": EntityType.MOTION,
-        "binary_sensor.test3": EntityType.LIGHT,
-    }
+    # Note: entity_types and get_entity_type are no longer part of Probabilities
     return mock
 
 
@@ -373,3 +385,11 @@ def cleanup_debouncer():
             handle
         ):
             handle.cancel()
+
+
+@pytest.fixture
+def mock_prior_calculator() -> MagicMock:
+    """Create a mock PriorCalculator with state_manager."""
+    mock = MagicMock()
+    mock.calculate_prior = AsyncMock(return_value=None)
+    return mock
