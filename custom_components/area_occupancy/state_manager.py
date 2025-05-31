@@ -6,6 +6,7 @@ maintaining a reliable list of entities and handling all state-related operation
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable
@@ -501,7 +502,7 @@ class StateManager:
     def _get_active_states_for_entity_internal(
         self, entity_id: str, entity_type: EntityType
     ) -> set[str]:
-        """Internal method to get active states for a specific entity.
+        """Get active states for a specific entity.
 
         Args:
             entity_id: Entity ID
@@ -967,7 +968,8 @@ class StateManager:
     def stop_state_tracking(self) -> None:
         """Stop state tracking and cleanup resources."""
         if self._remove_state_listener is not None:
-            self._remove_state_listener()
+            with contextlib.suppress(ValueError):
+                self._remove_state_listener()
             self._remove_state_listener = None
 
         self._tracked_entities.clear()

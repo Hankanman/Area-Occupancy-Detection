@@ -5,8 +5,6 @@ from __future__ import annotations
 # Standard Library
 import asyncio
 import logging
-import os
-import sys
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -159,10 +157,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         )
 
         # Initialize PriorManager to handle all prior-related operations
-        # Detect test environment and disable scheduling to prevent lingering timers
-        is_test_env = (
-            "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
-        )
         self.prior_manager: PriorManager = PriorManager(
             hass=self.hass,
             config=self.config,
@@ -171,7 +165,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             state_manager=self.state_manager,
             prior_calculator=self._prior_calculator,
             config_entry_id=self.config_entry.entry_id,
-            disable_scheduling=is_test_env,
         )
 
     # --- Properties ---
@@ -280,6 +273,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 "Coordinator async_update_options starting with config: %s", self.config
             )
 
+            # Shutdown the old PriorManager to clean up timers
+            if self.prior_manager:
+                await self.prior_manager.async_shutdown()
+
             # Update configuration first
             self.config = {**self.config_entry.data, **self.config_entry.options}
             _LOGGER.debug("Updated config: %s", self.config)
@@ -346,15 +343,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 state_manager=self.state_manager,
             )
 
-            # Shutdown old PriorManager before creating new one to prevent lingering timers
-            if self.prior_manager:
-                await self.prior_manager.async_shutdown()
-
             # Reinitialize PriorManager with updated references
-            # Detect test environment and disable scheduling to prevent lingering timers
-            is_test_env = (
-                "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
-            )
             self.prior_manager = PriorManager(
                 hass=self.hass,
                 config=self.config,
@@ -363,7 +352,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 state_manager=self.state_manager,
                 prior_calculator=self._prior_calculator,
                 config_entry_id=self.config_entry.entry_id,
-                disable_scheduling=is_test_env,
             )
 
             _LOGGER.info(

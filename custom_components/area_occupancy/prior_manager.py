@@ -53,7 +53,6 @@ class PriorManager:
         state_manager: "StateManager",
         prior_calculator: "PriorCalculator",
         config_entry_id: str,
-        disable_scheduling: bool = False,
     ) -> None:
         """Initialize the prior manager.
 
@@ -65,7 +64,6 @@ class PriorManager:
             state_manager: State manager for entity operations
             prior_calculator: Calculator for prior computations
             config_entry_id: Config entry ID for storage operations
-            disable_scheduling: Flag to disable scheduling (for tests)
 
         """
         self.hass = hass
@@ -75,16 +73,18 @@ class PriorManager:
         self.state_manager = state_manager
         self.prior_calculator = prior_calculator
         self.config_entry_id = config_entry_id
-        self.disable_scheduling = disable_scheduling
 
         # Prior state management
         self.prior_state = PriorState()
         self._last_prior_update: str | None = None
+        self._next_prior_update: datetime | None = None
+        self._prior_update_tracker: CALLBACK_TYPE | None = None
+        self._shutting_down: bool = False  # Track shutdown state
 
         # Scheduling management
         self._prior_update_interval = timedelta(hours=1)
-        self._prior_update_tracker: CALLBACK_TYPE | None = None
-        self._next_prior_update: datetime | None = None
+
+        # Import here to avoid circular imports
 
     # --- Properties ---
 
@@ -186,15 +186,13 @@ class PriorManager:
 
     async def async_shutdown(self) -> None:
         """Shutdown the prior manager and cleanup resources."""
+        # Set shutdown flag first to prevent any new timers from being scheduled
+        self._shutting_down = True
+
         # Cancel prior update tracker
         if self._prior_update_tracker is not None:
-            try:
-                self._prior_update_tracker()
-                _LOGGER.debug("Cancelled prior update tracker")
-            except Exception as err:
-                _LOGGER.warning("Error cancelling prior update tracker: %s", err)
-            finally:
-                self._prior_update_tracker = None
+            self._prior_update_tracker()
+            self._prior_update_tracker = None
 
         # Clear state
         self.prior_state = PriorState()
@@ -427,13 +425,15 @@ class PriorManager:
             _LOGGER.exception("Unexpected error during update_learned_priors")
             self._last_prior_update = dt_util.utcnow().isoformat()
         finally:
-            await self.schedule_next_update()
+            # Only reschedule if we're not shutting down
+            if not self._shutting_down:
+                await self.schedule_next_update()
 
     async def schedule_next_update(self) -> None:
         """Schedule the next prior update at the start of the next hour."""
-        # Skip scheduling if disabled (e.g., in tests)
-        if self.disable_scheduling:
-            _LOGGER.debug("Scheduling disabled, skipping prior update scheduling")
+        # Don't schedule new timers if we're shutting down
+        if self._shutting_down:
+            _LOGGER.debug("Skipping timer scheduling during shutdown")
             return
 
         if self._prior_update_tracker is not None:

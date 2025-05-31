@@ -3,7 +3,7 @@
 import asyncio
 import os
 import sys
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.recorder import DATA_INSTANCE
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.area_occupancy import DOMAIN
 from custom_components.area_occupancy.const import (  # noqa: TID252
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -62,7 +63,6 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
-    DOMAIN,
 )
 from custom_components.area_occupancy.probabilities import Probabilities
 from custom_components.area_occupancy.types import (
@@ -360,7 +360,7 @@ async def init_integration(
     mock_config_entry: MockConfigEntry,
     mock_recorder: MagicMock,
     setup_test_entities,
-) -> MockConfigEntry:
+) -> AsyncGenerator[MockConfigEntry, None]:
     """Set up the area occupancy integration for testing."""
     # Set up recorder component first
     await hass.async_add_executor_job(lambda: None)  # Ensure executor is running
@@ -370,7 +370,27 @@ async def init_integration(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    return mock_config_entry
+    yield mock_config_entry
+
+    # Cleanup: Ensure proper shutdown of coordinator and timers
+    try:
+        if DOMAIN in hass.data and mock_config_entry.entry_id in hass.data[DOMAIN]:
+            coordinator = hass.data[DOMAIN][mock_config_entry.entry_id].get(
+                "coordinator"
+            )
+            if coordinator and hasattr(coordinator, "async_shutdown"):
+                await coordinator.async_shutdown()
+                await hass.async_block_till_done()
+                # Give a small delay to ensure timer cancellation takes effect
+                await asyncio.sleep(0.1)
+    except (KeyError, AttributeError):
+        # Coordinator might not exist if setup failed
+        pass
+
+    # Unload the config entry
+    if mock_config_entry.entry_id in hass.config_entries._entries:
+        await hass.config_entries.async_unload(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
 
 
 @pytest.fixture(autouse=True)

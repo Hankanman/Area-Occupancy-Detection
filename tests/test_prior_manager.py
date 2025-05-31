@@ -37,7 +37,6 @@ def prior_manager(hass, mock_storage, mock_probabilities, mock_state_manager):
         state_manager=mock_state_manager,
         prior_calculator=mock_calculator,
         config_entry_id="test_entry_id",
-        disable_scheduling=True,  # Disable scheduling to prevent timer issues in tests
     )
 
 
@@ -57,8 +56,11 @@ async def test_prior_manager_setup(prior_manager):
 
     # Should have initialized prior state
     assert prior_manager.prior_state is not None
-    # Scheduling is disabled in tests, so next_prior_update will be None
-    assert prior_manager._next_prior_update is None
+    # Should have scheduled next update
+    assert prior_manager._next_prior_update is not None
+
+    # Clean up to avoid lingering timers
+    await prior_manager.async_shutdown()
 
 
 @pytest.mark.asyncio
@@ -90,6 +92,9 @@ async def test_prior_manager_update_learned_priors(prior_manager):
 
     # Should have attempted to get configured sensors and calculate priors
     assert prior_manager._last_prior_update is not None
+
+    # Clean up to avoid lingering timers
+    await prior_manager.async_shutdown()
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -350,42 +355,94 @@ async def test_coordinator_async_update_options(
         init_integration.entry_id
     ]["coordinator"]
 
-    try:
-        # Test options update
+    # Store initial values
+    initial_threshold = coordinator.data.threshold
+    initial_config = coordinator.config.copy()
+
+    # Update options
+    new_options = {CONF_THRESHOLD: 75}  # Different threshold
+
+    # Update config entry options
+    hass.config_entries.async_update_entry(
+        init_integration,
+        options=new_options,
+    )
+    await hass.async_block_till_done()
+
+    # Call update_options directly to ensure coverage
+    await coordinator.async_update_options()
+    await hass.async_block_till_done()
+
+    # Verify the coordinator was updated with new options
+    assert coordinator.config[CONF_THRESHOLD] == 75
+    assert coordinator.data.threshold == 75 / 100.0
+    assert coordinator.config != initial_config
+    assert coordinator.data.threshold != initial_threshold
+
+    # Test error handling
+    with (
+        patch(
+            "custom_components.area_occupancy.types.SensorInputs.from_config",
+            side_effect=ValueError("Invalid config"),
+        ),
+        pytest.raises(ConfigEntryError),
+    ):
         await coordinator.async_update_options()
 
-        # Verify coordinator is still working
-        assert coordinator.data is not None
-        assert coordinator.probabilities is not None
-        assert coordinator.prior_manager is not None
+    # Test HomeAssistantError handling
+    with (
+        patch(
+            "custom_components.area_occupancy.types.SensorInputs.from_config",
+            side_effect=HomeAssistantError("HA Error"),
+        ),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await coordinator.async_update_options()
 
-    finally:
-        # Ensure proper cleanup
-        if coordinator.prior_manager:
-            await coordinator.prior_manager.async_shutdown()
+    # Ensure cleanup
+    await coordinator.async_shutdown()
+    await hass.async_block_till_done()
 
 
 async def test_coordinator_async_update_threshold(
     hass: HomeAssistant,
     init_integration: MockConfigEntry,
 ):
-    """Test threshold update functionality."""
+    """Test threshold update method."""
     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][
         init_integration.entry_id
     ]["coordinator"]
 
-    try:
-        # Test threshold update
-        await coordinator.async_update_threshold(75.0)
-        await hass.async_block_till_done()
+    # Test successful threshold update
+    await coordinator.async_update_threshold(75.0)
+    await hass.async_block_till_done()
 
-        # Verify threshold was updated
-        assert init_integration.options.get(CONF_THRESHOLD) == 75.0
+    # Check if the config entry was updated
+    assert init_integration.options[CONF_THRESHOLD] == 75.0
 
-    finally:
-        # Ensure proper cleanup
-        if coordinator.prior_manager:
-            await coordinator.prior_manager.async_shutdown()
+    # Test error handling
+    with (
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_update_entry",
+            side_effect=ValueError("Invalid threshold"),
+        ),
+        pytest.raises(ServiceValidationError),
+    ):
+        await coordinator.async_update_threshold(150.0)  # Invalid value
+
+    # Test generic exception handling
+    with (
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_update_entry",
+            side_effect=Exception("Unknown error"),
+        ),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.async_update_threshold(60.0)
+
+    # Ensure cleanup
+    await coordinator.async_shutdown()
+    await hass.async_block_till_done()
 
 
 @patch(
