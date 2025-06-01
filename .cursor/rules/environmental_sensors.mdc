@@ -1,0 +1,188 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Environmental Sensor Analysis
+
+## Overview
+
+Environmental sensors provide valuable occupancy indicators by detecting environmental changes caused by human presence. This feature extends the Bayesian probability calculations to include environmental factors that correlate with occupancy patterns.
+
+## Supported Environmental Sensors
+
+### Primary Environmental Sensors
+- **Carbon Dioxide (CO2)**: Levels increase with human respiration
+- **Temperature**: Changes from body heat and device usage
+- **Humidity**: Affected by breathing and human activity
+- **Luminance/Light**: Changes from lighting controls and natural light management
+- **Sound Level (Decibels)**: Noise from human activity
+- **Atmospheric Pressure**: Subtle changes from HVAC and human presence
+
+### Secondary Environmental Indicators
+- **Air Quality Index**: General air quality changes
+- **VOC (Volatile Organic Compounds)**: Chemical signatures of human presence
+- **Motion-triggered Temperature**: Temperature spikes from motion-activated devices
+
+## Implementation Architecture
+
+### Core Components
+
+#### Environmental Analysis Module
+- Environmental data collection and preprocessing
+- Pattern recognition for occupancy correlations
+
+#### Environmental Data Storage
+- Historical environmental data management
+- Training data preparation and caching
+- Data cleanup and retention policies
+
+#### Configuration Integration
+
+#### Config Flow Extensions
+Update [config_flow.py](mdc:custom_components/area_occupancy/config_flow.py) to include:
+- Environmental sensor selection interface
+
+#### Constants and Types
+Extend [const.py](mdc:custom_components/area_occupancy/const.py) and [types.py](mdc:custom_components/area_occupancy/types.py):
+
+```python
+# Environmental sensor types
+CONF_ENVIRONMENTAL_SENSORS = "environmental_sensors"
+CONF_CO2_SENSORS = "co2_sensors"
+CONF_TEMPERATURE_SENSORS = "temperature_sensors"
+CONF_HUMIDITY_SENSORS = "humidity_sensors"
+CONF_LUMINANCE_SENSORS = "luminance_sensors"
+CONF_SOUND_SENSORS = "sound_sensors"
+CONF_PRESSURE_SENSORS = "pressure_sensors"
+```
+
+## Data Collection and Preprocessing
+
+### Historical Data Analysis
+1. **Data Collection**:
+   - Query historical environmental sensor data using Home Assistant's recorder
+   - Correlate with primary occupancy sensor states
+   - Extract features for training and analysis
+
+2. **Feature Engineering**:
+   - Time-based features (hour of day, day of week, season)
+   - Rate of change calculations (temperature delta, CO2 rise rate)
+   - Moving averages and trend analysis
+   - Cross-sensor correlations
+
+3. **Data Quality Validation**:
+   - Sensor availability and reliability checks
+   - Outlier detection and handling
+   - Missing data imputation strategies
+   - Temporal consistency validation
+
+### Threshold-Based Rules
+1. **CO2 Analysis**:
+   - Baseline establishment (400-450 ppm typically)
+   - Occupancy detection threshold (600+ ppm)
+   - Rate of change analysis (rapid vs. gradual increases)
+
+2. **Temperature Analysis**:
+   - Human heat signature detection (1-3°C increase)
+   - Device usage correlation (appliance heat generation)
+   - Thermal lag compensation
+
+3. **Humidity Analysis**:
+   - Breathing signature (gradual increase)
+   - Activity correlation (showering, cooking)
+   - Seasonal baseline adjustment
+
+## Integration with Bayesian Calculations
+
+### Probability Integration
+- The environmental probability must be integrated into the Bayesian calculation in [calculate_prob.py].
+- Weight the environmental probability by its confidence score.
+- Combine the weighted environmental probability with sensor-based probabilities using Bayesian inference.
+
+### Prior Calculation Updates
+- Extend [calculate_prior.py] to support environmental sensors.
+- Calculate prior probabilities for each environmental sensor based on historical correlations with occupancy.
+- Generate sensor-specific priors and handle seasonal/temporal variations.
+
+## Performance and Optimization
+
+### Computational Efficiency
+- Optimize for reduced memory usage (e.g., quantization, feature selection).
+- Cache intermediate results to avoid redundant computation.
+- Use asynchronous processing for all data pipelines.
+
+### Data Management
+- Store and retrieve environmental data efficiently.
+- Compress historical data where possible.
+- Apply intelligent data retention policies.
+- Support streaming data processing for real-time analysis.
+
+### Memory Management
+- Provide a data manager to control memory usage for environmental data.
+- Allow configuration of memory limits.
+- Implement cache cleanup and efficient retrieval of historical data.
+
+## Testing Requirements
+
+### Unit Tests
+- Test environmental data processing accuracy.
+- Test deterministic rule logic for environmental analysis.
+- Validate data quality assessment and feature engineering.
+
+### Integration Tests
+- Test end-to-end environmental analysis pipeline.
+- Validate Bayesian integration accuracy.
+- Test performance under various data conditions.
+- Ensure correct switching between deterministic and hybrid methods.
+
+### Performance Tests
+- Measure memory usage under load.
+- Benchmark inference and data processing times.
+- Test throughput and concurrent analysis handling.
+
+## Configuration and User Interface
+
+### Config Flow Updates
+- Allow users to select environmental sensors and types via the UI.
+- Provide options for analysis method (Deterministic/Hybrid).
+- Expose advanced settings: feature parameters, update intervals, memory limits, and data retention.
+
+## Monitoring and Diagnostics
+
+### Performance Metrics
+- Track prediction accuracy, false positive/negative rates, and confidence scores.
+- Monitor inference latency, memory usage, and data throughput.
+- Log error rates and recovery events.
+
+### Diagnostic Tools
+- Provide tools to generate performance reports.
+- Analyze correlations between environmental sensors.
+- Validate the performance of the environmental analysis logic.
+
+## Migration and Backwards Compatibility
+
+### Configuration Migration
+- Update [migrations.py] to add environmental sensor defaults and migrate existing sensor configurations.
+- Set up initial analysis method preferences for environmental sensors.
+
+### Data Migration
+- Update historical data formats as needed.
+- Ensure compatibility with previous data and configuration versions.
+- Support schema evolution and graceful degradation for missing sensors.
+
+## Documentation Requirements
+
+### Technical Documentation
+- Document environmental sensor correlation analysis methodology.
+- Describe deterministic and hybrid analysis approaches.
+- Provide details on feature engineering and performance optimization.
+
+### User Documentation
+- Write a setup guide for environmental sensors.
+- Provide troubleshooting and performance tuning recommendations.
+- Explain privacy and data handling considerations.
+
+### API Documentation
+- Document the environmental analysis API and configuration options.
+- Provide service call examples and integration patterns.

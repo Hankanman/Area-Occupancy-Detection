@@ -3,23 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from .const import (
-    CONF_ANALYSIS_METHOD,
-    CONF_ML_CONFIDENCE_THRESHOLD,
-    CONF_ML_ENABLED,
-    DEFAULT_ANALYSIS_METHOD,
-    DEFAULT_ML_CONFIDENCE_THRESHOLD,
-    DEFAULT_ML_ENABLED,
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
-)
+from .const import MAX_PROBABILITY, MIN_PROBABILITY
 from .probabilities import Probabilities
 from .types import (
-    AnalysisMethod,
-    MLHybridResult,
-    MLPrediction,
     OccupancyCalculationResult,
     PriorData,
     PriorState,
@@ -28,9 +16,6 @@ from .types import (
     SensorInfo,
     SensorProbability,
 )
-
-if TYPE_CHECKING:
-    from .ml_models import ModelManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,58 +26,36 @@ class ProbabilityCalculator:
     def __init__(
         self,
         probabilities: Probabilities,
-        model_manager: "ModelManager | None" = None,
         state_manager: Any = None,
     ) -> None:
         """Initialize the calculator."""
         self.probabilities = probabilities
-        self.model_manager = model_manager
         self.state_manager = state_manager
-        # self.prior_state is no longer stored here, passed during calculation
 
     async def calculate_occupancy_probability(
         self,
         current_states: dict[str, SensorInfo],
         prior_state: PriorState,
         config: dict | None = None,
-    ) -> OccupancyCalculationResult | MLHybridResult:
-        """Calculate the current occupancy probability using Bayesian inference and optionally ML.
+    ) -> OccupancyCalculationResult:
+        """Calculate the current occupancy probability using Bayesian inference.
 
         Args:
             current_states: Dictionary of current sensor states.
             prior_state: The current prior state object containing learned/default priors.
-            config: Configuration dictionary containing ML settings.
+            config: Configuration dictionary (unused in this version).
 
         Returns:
-            An OccupancyCalculationResult or MLHybridResult containing:
-                - calculated_probability/final_probability: The calculated probability (0.0-1.0).
+            An OccupancyCalculationResult containing:
+                - calculated_probability: The calculated probability (0.0-1.0).
                 - prior_probability: The average prior based on active sensors (0.0-1.0).
                 - sensor_probabilities: Dictionary mapping entity IDs to their calculation details.
-                - (MLHybridResult only) ML prediction data and method used.
 
         Raises:
             ValueError: If calculation encounters invalid inputs.
             ZeroDivisionError: If a division by zero occurs during calculation.
 
         """
-        config = config or {}
-
-        # Get ML configuration
-        ml_enabled = config.get(CONF_ML_ENABLED, DEFAULT_ML_ENABLED)
-        analysis_method_str = config.get(CONF_ANALYSIS_METHOD, DEFAULT_ANALYSIS_METHOD)
-        ml_confidence_threshold = config.get(
-            CONF_ML_CONFIDENCE_THRESHOLD, DEFAULT_ML_CONFIDENCE_THRESHOLD
-        )
-
-        # Convert string to AnalysisMethod enum
-        try:
-            analysis_method = AnalysisMethod(analysis_method_str)
-        except ValueError:
-            _LOGGER.warning(
-                "Invalid analysis method '%s', using deterministic", analysis_method_str
-            )
-            analysis_method = AnalysisMethod.DETERMINISTIC
-
         sensor_probs: dict[str, SensorProbability] = {}
         active_sensor_states = {
             entity_id: info
@@ -114,126 +77,16 @@ class ProbabilityCalculator:
                 MIN_PROBABILITY, min(calculated_probability, MAX_PROBABILITY)
             )
 
-            # If ML is not enabled or not available, return traditional result
-            if not ml_enabled or not self._is_ml_available():
-                return OccupancyCalculationResult(
-                    calculated_probability=final_calculated_probability,
-                    prior_probability=prior_probability,
-                    sensor_probabilities=sensor_probs,
-                )
-
-            # Get ML prediction if available and enabled
-            ml_prediction = await self._get_ml_prediction(current_states, config)
-
-            # Combine Bayesian and ML predictions
-            hybrid_result = self._combine_predictions(
-                bayesian_prob=final_calculated_probability,
-                ml_prediction=ml_prediction,
-                analysis_method=analysis_method,
-                ml_confidence_threshold=ml_confidence_threshold,
+            return OccupancyCalculationResult(
+                calculated_probability=final_calculated_probability,
                 prior_probability=prior_probability,
                 sensor_probabilities=sensor_probs,
-                feature_data=await self._get_feature_data(current_states)
-                if ml_prediction
-                else None,
             )
-
-            return hybrid_result
 
         except (ValueError, ZeroDivisionError):
             _LOGGER.exception("Error in probability calculation")
             # Re-raise to be handled by the coordinator
             raise
-
-    def _is_ml_available(self) -> bool:
-        """Check if ML components are available and ready."""
-        return self.model_manager is not None and self.model_manager.has_model
-
-    async def _get_ml_prediction(
-        self, current_states: dict[str, SensorInfo], config: dict
-    ) -> MLPrediction | None:
-        """Get ML prediction for current states."""
-        if not self._is_ml_available() or self.model_manager is None:
-            return None
-
-        try:
-            # Prepare features directly from current_states
-            features = self._prepare_ml_features(current_states)
-
-            if not features:
-                _LOGGER.debug("No features available for ML prediction")
-                return None
-
-            # Get ML prediction - we know model_manager is not None due to check above
-            prediction = await self.model_manager.async_predict(features)
-            if prediction:
-                _LOGGER.debug(
-                    "ML prediction: prob=%.3f, confidence=%.3f",
-                    prediction.probability,
-                    prediction.confidence,
-                )
-
-            return prediction
-
-        except Exception as err:
-            _LOGGER.warning("Error getting ML prediction: %s", err)
-            return None
-
-    async def _get_feature_data(
-        self, current_states: dict[str, SensorInfo]
-    ) -> dict | None:
-        """Get feature data for debugging/analysis purposes."""
-        try:
-            return self._prepare_ml_features(current_states)
-        except Exception as err:
-            _LOGGER.debug("Error getting feature data: %s", err)
-            return None
-
-    def _prepare_ml_features(
-        self, current_states: dict[str, SensorInfo]
-    ) -> dict[str, Any]:
-        """Prepare ML features directly from sensor states."""
-        # Use optimized shared utilities instead of duplicating feature logic
-        from .ml_utils import build_optimized_ml_features
-
-        return build_optimized_ml_features(
-            current_states,
-            self.probabilities,
-            timestamp=None,
-            state_manager=self.state_manager,
-        )
-
-    def _combine_predictions(
-        self,
-        bayesian_prob: float,
-        ml_prediction: MLPrediction | None,
-        analysis_method: AnalysisMethod,
-        ml_confidence_threshold: float,
-        prior_probability: float,
-        sensor_probabilities: dict[str, SensorProbability],
-        feature_data: dict | None = None,
-    ) -> MLHybridResult:
-        """Combine Bayesian and ML predictions using the specified analysis method."""
-        # Import here to avoid circular imports
-        from .ml_hybrid import combine_probabilities
-
-        # Combine the probabilities
-        hybrid_result = combine_probabilities(
-            bayesian_prob=bayesian_prob,
-            ml_prediction=ml_prediction,
-            analysis_method=analysis_method,
-            ml_confidence_threshold=ml_confidence_threshold,
-        )
-
-        # Add additional data not handled by ml_hybrid
-        if feature_data is None:
-            feature_data = {}
-
-        feature_data["sensor_probabilities"] = sensor_probabilities
-        feature_data["prior_probability"] = prior_probability
-        hybrid_result.feature_data = feature_data
-
-        return hybrid_result
 
     def _calculate_complementary_probability(
         self,
@@ -254,13 +107,7 @@ class ProbabilityCalculator:
 
                 # Convert to complementary probability and apply weight
                 sensor_complementary = 1.0 - calc_result.weighted_probability
-                # Complementary probability should already be weighted
-                # weight = calc_result.details["weight"]
-                # weighted_complementary = 1.0 - (weight * (1.0 - sensor_complementary))
-                # complementary_prob *= weighted_complementary
-                complementary_prob *= (
-                    sensor_complementary  # Use the weighted complementary prob directly
-                )
+                complementary_prob *= sensor_complementary
 
         calculated_probability = 1.0 - complementary_prob
         return max(MIN_PROBABILITY, min(calculated_probability, MAX_PROBABILITY))

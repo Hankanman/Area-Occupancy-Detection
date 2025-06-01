@@ -49,6 +49,7 @@ CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
+CONF_DEBOUNCE_TIME: Final = "debounce_time"
 
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
@@ -73,6 +74,7 @@ DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
+DEFAULT_DEBOUNCE_TIME: Final = 0.5  # seconds
 
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 0.85

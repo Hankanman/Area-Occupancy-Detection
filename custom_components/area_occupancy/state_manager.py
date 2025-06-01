@@ -6,35 +6,34 @@ maintaining a reliable list of entities and handling all state-related operation
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import logging
+import time
+from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Dict, TypedDict
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.typing import EventType
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_APPLIANCES,
     CONF_DOOR_ACTIVE_STATE,
-    CONF_DOOR_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
-    CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_WINDOW_ACTIVE_STATE,
-    CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DEBOUNCE_TIME,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_WINDOW_ACTIVE_STATE,
 )
+from .exceptions import StateError
+from .probabilities import Probabilities
 from .types import EntityType, SensorInfo
 
 if TYPE_CHECKING:
@@ -64,6 +63,13 @@ class EntityValidationResult:
         self.error_message = error_message
 
 
+class StateSnapshot(TypedDict):
+    """Type for state snapshot."""
+
+    states: Dict[str, State]
+    timestamp: datetime
+
+
 class StateManager:
     """Centralized state manager for Area Occupancy Detection.
 
@@ -90,68 +96,53 @@ class StateManager:
         self.config = config or {}
         self.probabilities = probabilities
 
-        # Entity tracking
-        self._entity_registry: dict[str, EntityType] = {}
-        self._entity_states_cache: dict[str, SensorInfo] = {}
-        self._active_states_cache: dict[str, set[str]] = {}
-
-        # State tracking (new functionality from coordinator)
+        # State storage
         self._current_states: dict[str, SensorInfo] = {}
         self._previous_states: dict[str, SensorInfo] = {}
+        self._state_snapshots: dict[str, dict[str, SensorInfo]] = {}
         self._tracked_entities: set[str] = set()
-        self._remove_state_listener: CALLBACK_TYPE | None = None
-        self._state_change_callback: Callable[[str, SensorInfo], None] | None = None
-        self._last_callback_time: dict[
-            str, float
-        ] = {}  # Track last callback time per entity
+        self._state_change_callbacks: list[Callable[[str, SensorInfo], None]] = []
+        self._state_lock = asyncio.Lock()
+        self._last_state_change = 0.0
+        self._debounce_time = self.config.get("debounce_time", DEFAULT_DEBOUNCE_TIME)
 
-        # Initialize entity registry
-        self._populate_entity_registry()
-        self._populate_caches()
+        # Entity tracking
+        self._entity_types: dict[str, EntityType] = {}
+        self._entity_registry: dict[str, dict[str, Any]] = {}
+        self._active_states_cache: dict[str, set[str]] = {}
+
+        # Initialize if config is provided
+        if config:
+            self._populate_entity_registry()
+            self._populate_caches()
 
     def _populate_entity_registry(self) -> None:
         """Populate the entity registry from configuration."""
+        self._entity_types.clear()
         self._entity_registry.clear()
 
-        # Define entity type mappings from configuration
-        entity_type_mappings = [
-            (self.config.get(CONF_MOTION_SENSORS, []), EntityType.MOTION),
-            (self.config.get(CONF_MEDIA_DEVICES, []), EntityType.MEDIA),
-            (self.config.get(CONF_APPLIANCES, []), EntityType.APPLIANCE),
-            (self.config.get(CONF_DOOR_SENSORS, []), EntityType.DOOR),
-            (self.config.get(CONF_WINDOW_SENSORS, []), EntityType.WINDOW),
-            (self.config.get(CONF_LIGHTS, []), EntityType.LIGHT),
-            (self.config.get(CONF_ILLUMINANCE_SENSORS, []), EntityType.ENVIRONMENTAL),
-            (self.config.get(CONF_HUMIDITY_SENSORS, []), EntityType.ENVIRONMENTAL),
-            (self.config.get(CONF_TEMPERATURE_SENSORS, []), EntityType.ENVIRONMENTAL),
-        ]
+        # Map configuration keys to entity types
+        type_mapping = {
+            CONF_MOTION_SENSORS: EntityType.MOTION,
+            CONF_PRIMARY_OCCUPANCY_SENSOR: EntityType.MOTION,
+            # Add other mappings as needed
+        }
 
-        for entity_list, entity_type in entity_type_mappings:
-            if isinstance(entity_list, list):
-                for entity_id in entity_list:
-                    if isinstance(entity_id, str) and entity_id:
-                        self._entity_registry[entity_id] = entity_type
-
-        _LOGGER.debug(
-            "Populated entity registry with %d entities", len(self._entity_registry)
-        )
+        # Populate entity types
+        for conf_key, entity_type in type_mapping.items():
+            if conf_key in self.config:
+                entities = self.config[conf_key]
+                if isinstance(entities, list):
+                    for entity_id in entities:
+                        self._entity_types[entity_id] = entity_type
+                else:
+                    self._entity_types[entities] = entity_type
 
     def _populate_caches(self) -> None:
         """Populate internal caches for fast lookups."""
         self._active_states_cache.clear()
-        self._entity_states_cache.clear()
-
-        # Populate active states cache
-        for entity_id, entity_type in self._entity_registry.items():
-            try:
-                active_states = self._get_active_states_for_entity_internal(
-                    entity_id, entity_type
-                )
-                self._active_states_cache[entity_id] = active_states
-            except Exception as err:
-                _LOGGER.warning(
-                    "Failed to cache active states for entity %s: %s", entity_id, err
-                )
+        for entity_type in EntityType:
+            self.get_active_states_for_type(entity_type)
 
     # --- Entity Registry Management ---
 
@@ -176,7 +167,7 @@ class StateManager:
         """
         return [
             entity_id
-            for entity_id, etype in self._entity_registry.items()
+            for entity_id, etype in self._entity_types.items()
             if etype == entity_type
         ]
 
@@ -190,7 +181,7 @@ class StateManager:
             EntityType if found, None otherwise
 
         """
-        return self._entity_registry.get(entity_id)
+        return self._entity_types.get(entity_id)
 
     def get_entity_types_mapping(self) -> dict[str, EntityType]:
         """Get the complete entity type mapping.
@@ -199,7 +190,7 @@ class StateManager:
             Dictionary mapping entity IDs to their types
 
         """
-        return self._entity_registry.copy()
+        return self._entity_types.copy()
 
     def add_entity(self, entity_id: str, entity_type: EntityType) -> None:
         """Add an entity to the registry.
@@ -209,12 +200,10 @@ class StateManager:
             entity_type: Type of the entity
 
         """
-        self._entity_registry[entity_id] = entity_type
+        self._entity_types[entity_id] = entity_type
         # Update caches for the new entity
         try:
-            active_states = self._get_active_states_for_entity_internal(
-                entity_id, entity_type
-            )
+            active_states = self.get_active_states_for_type(entity_type)
             self._active_states_cache[entity_id] = active_states
         except Exception as err:
             _LOGGER.warning(
@@ -228,9 +217,8 @@ class StateManager:
             entity_id: Entity ID to remove
 
         """
-        self._entity_registry.pop(entity_id, None)
+        self._entity_types.pop(entity_id, None)
         self._active_states_cache.pop(entity_id, None)
-        self._entity_states_cache.pop(entity_id, None)
 
     def update_entity_configuration(self, new_config: dict[str, Any]) -> None:
         """Update entity configuration and refresh registry.
@@ -287,7 +275,7 @@ class StateManager:
 
         """
         results = {}
-        for entity_id in self._entity_registry:
+        for entity_id in self._entity_types:
             results[entity_id] = self.validate_entity(entity_id)
         return results
 
@@ -299,7 +287,7 @@ class StateManager:
 
         """
         invalid_entities = []
-        for entity_id in self._entity_registry:
+        for entity_id in self._entity_types:
             result = self.validate_entity(entity_id)
             if not result.is_valid:
                 invalid_entities.append(entity_id)
@@ -313,7 +301,7 @@ class StateManager:
 
         """
         available_entities = []
-        for entity_id in self._entity_registry:
+        for entity_id in self._entity_types:
             result = self.validate_entity(entity_id)
             if result.is_valid:
                 available_entities.append(entity_id)
@@ -332,12 +320,14 @@ class StateManager:
 
         """
         # Check cache first
-        if entity_id in self._entity_states_cache:
-            cached_info = self._entity_states_cache[entity_id]
+        if entity_id in self._active_states_cache:
+            cached_info = self._active_states_cache[entity_id]
             # Check if cache is still fresh (within last 30 seconds)
-            if cached_info.get("last_changed"):
+            if cached_info:
                 try:
-                    last_changed = dt_util.parse_datetime(cached_info["last_changed"])
+                    last_changed = dt_util.parse_datetime(
+                        cached_info.get("last_changed")
+                    )
                     if (
                         last_changed
                         and (dt_util.utcnow() - last_changed).total_seconds() < 30
@@ -366,7 +356,7 @@ class StateManager:
         )
 
         # Cache the result
-        self._entity_states_cache[entity_id] = sensor_info
+        self._active_states_cache[entity_id] = sensor_info
         return sensor_info
 
     def get_entity_states_batch(
@@ -382,7 +372,7 @@ class StateManager:
 
         """
         if entity_ids is None:
-            entity_ids = list(self._entity_registry.keys())
+            entity_ids = list(self._entity_types.keys())
 
         results = {}
         for entity_id in entity_ids:
@@ -394,8 +384,8 @@ class StateManager:
 
     def refresh_entity_states(self) -> None:
         """Refresh all entity states in cache."""
-        self._entity_states_cache.clear()
-        for entity_id in self._entity_registry:
+        self._active_states_cache.clear()
+        for entity_id in self._entity_types:
             self.get_entity_state(entity_id)
 
     # --- Active State Management (Existing Functionality) ---
@@ -499,125 +489,6 @@ class StateManager:
             STATE_ON if configured_state_lower in on_state_display_values else STATE_OFF
         )
 
-    def _get_active_states_for_entity_internal(
-        self, entity_id: str, entity_type: EntityType
-    ) -> set[str]:
-        """Get active states for a specific entity.
-
-        Args:
-            entity_id: Entity ID
-            entity_type: EntityType enum value
-
-        Returns:
-            Set of active states for this entity
-
-        """
-        # First, try to get from probabilities configuration if available
-        if self.probabilities:
-            try:
-                sensor_config = self.probabilities.get_sensor_config_by_type(
-                    entity_type
-                )
-                if sensor_config and "active_states" in sensor_config:
-                    return sensor_config["active_states"]
-            except (ValueError, KeyError):
-                pass
-
-        # Fall back to configuration-based lookup
-        return self._get_configured_active_states_for_type(entity_type)
-
-    def is_entity_active(self, entity_id: str, state: str | None = None) -> bool:
-        """Check if an entity is in an active state.
-
-        Args:
-            entity_id: The entity ID to check
-            state: The current state of the entity (if None, will fetch current state)
-
-        Returns:
-            True if the entity is in an active state, False otherwise
-
-        """
-        if state is None:
-            state_info = self.get_entity_state(entity_id)
-            if not state_info or not state_info.get("availability", False):
-                return False
-            state = state_info.get("state")
-
-        if state is None:
-            return False
-
-        # Try cached lookup first
-        if entity_id in self._active_states_cache:
-            active_states = self._active_states_cache[entity_id]
-            return state in active_states
-
-        # Get entity type and determine active states
-        entity_type = self.get_entity_type(entity_id)
-        if entity_type:
-            active_states = self._get_active_states_for_entity_internal(
-                entity_id, entity_type
-            )
-            # Cache for future lookups
-            self._active_states_cache[entity_id] = active_states
-            return state in active_states
-
-        # Fallback: assume 'on' states are active
-        _LOGGER.warning(
-            "No entity type mapping found for %s, using fallback", entity_id
-        )
-        return state in {"on", "detected", "playing", "open"}
-
-    def is_entity_type_active(
-        self, entity_type: EntityType | str, state: str | None
-    ) -> bool:
-        """Check if a state is active for a given entity type.
-
-        Args:
-            entity_type: EntityType enum or string value
-            state: The state to check
-
-        Returns:
-            True if the state is active for this entity type
-
-        """
-        if state is None:
-            return False
-
-        if isinstance(entity_type, str):
-            try:
-                entity_type = EntityType(entity_type)
-            except ValueError:
-                return state in self._get_default_active_states_for_type(entity_type)
-
-        active_states = self._get_configured_active_states_for_type(entity_type)
-        return state in active_states
-
-    def check_multiple_entities_active(
-        self, entity_states: dict[str, str | None] | None = None
-    ) -> dict[str, bool]:
-        """Check if multiple entities are active in a single batch operation.
-
-        Args:
-            entity_states: Dictionary mapping entity IDs to their current states,
-                          or None to use current states from Home Assistant
-
-        Returns:
-            Dictionary mapping entity IDs to their active status (True/False)
-
-        """
-        if entity_states is None:
-            # Get current states for all entities
-            state_infos = self.get_entity_states_batch()
-            entity_states = {
-                entity_id: info.get("state") for entity_id, info in state_infos.items()
-            }
-
-        results = {}
-        for entity_id, state in entity_states.items():
-            results[entity_id] = self.is_entity_active(entity_id, state)
-
-        return results
-
     def get_active_states_for_entity(self, entity_id: str) -> set[str]:
         """Get the set of active states for a specific entity.
 
@@ -633,9 +504,7 @@ class StateManager:
 
         entity_type = self.get_entity_type(entity_id)
         if entity_type:
-            active_states = self._get_active_states_for_entity_internal(
-                entity_id, entity_type
-            )
+            active_states = self._get_configured_active_states_for_type(entity_type)
             # Cache for future lookups
             self._active_states_cache[entity_id] = active_states
             return active_states.copy()
@@ -670,7 +539,7 @@ class StateManager:
             Dictionary with entity statistics
 
         """
-        total_entities = len(self._entity_registry)
+        total_entities = len(self._entity_types)
         entities_by_type = {}
         available_count = 0
         active_count = 0
@@ -681,7 +550,7 @@ class StateManager:
             )
 
         # Check availability and active status
-        for entity_id in self._entity_registry:
+        for entity_id in self._entity_types:
             validation = self.validate_entity(entity_id)
             if validation.is_valid:
                 available_count += 1
@@ -715,7 +584,7 @@ class StateManager:
             "issues": [],
         }
 
-        for entity_id in self._entity_registry:
+        for entity_id in self._entity_types:
             entity_type = self.get_entity_type(entity_id)
             validation = self.validate_entity(entity_id)
             state_info = self.get_entity_state(entity_id)
@@ -745,12 +614,14 @@ class StateManager:
 
     def clear_caches(self) -> None:
         """Clear all internal caches."""
-        self._entity_states_cache.clear()
         self._active_states_cache.clear()
+        self._entity_registry.clear()
+        self._entity_types.clear()
 
     def refresh_all(self) -> None:
         """Refresh all entity data and caches."""
         self.clear_caches()
+        self._populate_entity_registry()
         self._populate_caches()
         self.refresh_entity_states()
 
@@ -762,6 +633,7 @@ class StateManager:
 
         """
         self.probabilities = probabilities
+        self.clear_caches()
         self._populate_caches()
 
     # --- State Tracking Methods (moved from coordinator) ---
@@ -774,43 +646,20 @@ class StateManager:
 
         """
         try:
-            # Clear existing states
-            self._current_states.clear()
-            self._previous_states.clear()
+            # Get current states for all sensors
+            current_states = self.get_entity_states_batch(sensor_ids)
 
-            for entity_id in sensor_ids:
-                state_obj = self.hass.states.get(entity_id)
-                is_available = bool(
-                    state_obj
-                    and state_obj.state not in ["unknown", "unavailable", None, ""]
-                )
-                # Use friendly name for logging if available
-                friendly_name = state_obj.name if state_obj else entity_id
-                _LOGGER.debug(
-                    "Initializing state for %s (%s): available=%s, state=%s",
-                    friendly_name,
-                    entity_id,
-                    is_available,
-                    state_obj.state if state_obj else "None",
-                )
-                sensor_info: SensorInfo = {
-                    "state": state_obj.state if (state_obj and is_available) else None,
-                    "last_changed": (
-                        state_obj.last_changed.isoformat()
-                        if state_obj and state_obj.last_changed
-                        else dt_util.utcnow().isoformat()
-                    ),
-                    "availability": is_available,
-                }
-                # Store in state tracking
-                self._current_states[entity_id] = sensor_info
+            # Update current states
+            async with self._state_lock:
+                self._current_states = current_states
+                self._previous_states = {}
+                self._tracked_entities = set(sensor_ids)
 
-            # Setup tracking after initialization
-            self.setup_state_tracking(sensor_ids, None)
+            _LOGGER.debug("Initialized states for %d sensors", len(sensor_ids))
 
         except Exception as err:
-            _LOGGER.error("Failed to initialize states: %s", err)
-            raise
+            _LOGGER.error("Error initializing states: %s", err)
+            raise StateError(f"Failed to initialize states: {err}") from err
 
     def setup_state_tracking(
         self,
@@ -824,157 +673,154 @@ class StateManager:
             callback: Optional callback function to call when states change
 
         """
-        if self._remove_state_listener is not None:
-            self._remove_state_listener()
-            self._remove_state_listener = None
+        if callback:
+            self._state_change_callbacks.append(callback)
 
-        self._tracked_entities = set(sensor_ids)
-        self._state_change_callback = callback
+        # Track state changes for all sensors
+        self.hass.async_create_task(self._setup_state_tracking_internal(sensor_ids))
 
-        def async_state_changed_listener(event) -> None:
-            """Handle state changes for tracked entities."""
-            try:
-                entity_id = event.data.get("entity_id")
-                new_state = event.data.get("new_state")
-                old_state = event.data.get("old_state")
+    async def _setup_state_tracking_internal(self, sensor_ids: list[str]) -> None:
+        """Internal method to set up state tracking."""
+        try:
+            # Remove any existing listeners
+            self.stop_state_tracking()
 
-                if entity_id not in self._tracked_entities:
-                    return  # Skip silently for untracked entities
-
-                old_state_str = old_state.state if old_state else "None"
-                new_state_str = new_state.state if new_state else "None"
-
-                # Skip if state hasn't actually changed
-                if old_state_str == new_state_str:
-                    return
-
-                _LOGGER.debug(
-                    "State change for %s: %s -> %s",
-                    entity_id,
-                    old_state_str,
-                    new_state_str,
-                )
-
-                is_available = bool(
-                    new_state
-                    and new_state.state not in ["unknown", "unavailable", None, ""]
-                )
-                current_state_val = new_state.state if is_available else None
-                last_changed = (
-                    new_state.last_changed.isoformat()
-                    if new_state and new_state.last_changed
-                    else dt_util.utcnow().isoformat()
-                )
-
-                sensor_info = SensorInfo(
-                    state=current_state_val,
-                    last_changed=last_changed,
-                    availability=is_available,
-                )
-
-                # Update states synchronously to avoid async complexity
-                try:
-                    # Simple synchronous update - no async_add_job needed
-                    self._previous_states = self._current_states.copy()
-                    self._current_states[entity_id] = sensor_info
-                    _LOGGER.debug("Updated state tracking for %s", entity_id)
-
-                    # Debounced callback - only call if enough time has passed
-                    if self._state_change_callback is not None:
-                        import time
-
-                        current_time = time.time()
-                        last_time = self._last_callback_time.get(entity_id, 0)
-
-                        # Only call callback if at least 0.5 seconds have passed
-                        if current_time - last_time >= 0.5:
-                            self._last_callback_time[entity_id] = current_time
-                            try:
-                                self._state_change_callback(entity_id, sensor_info)
-                            except Exception as cb_err:
-                                _LOGGER.exception(
-                                    "Error in state change callback for %s: %s",
-                                    entity_id,
-                                    cb_err,
-                                )
-                        else:
-                            _LOGGER.debug(
-                                "Debouncing state change callback for %s", entity_id
-                            )
-
-                except Exception as update_err:
-                    _LOGGER.exception(
-                        "Error updating state for %s: %s", entity_id, update_err
+            # Add new listeners
+            for entity_id in sensor_ids:
+                self.hass.async_create_task(
+                    async_track_state_change_event(
+                        self.hass,
+                        [entity_id],
+                        self._async_state_changed_listener,
                     )
-
-            except Exception:
-                _LOGGER.exception(
-                    "Unexpected error in state change listener for %s",
-                    entity_id if "entity_id" in locals() else "unknown",
                 )
 
-        self._remove_state_listener = async_track_state_change_event(
-            self.hass,
-            list(self._tracked_entities),
-            async_state_changed_listener,
-        )
-        _LOGGER.debug(
-            "State change listener set up for %d entities",
-            len(self._tracked_entities),
-        )
+            _LOGGER.debug("Set up state tracking for %d sensors", len(sensor_ids))
 
-    def get_current_states(self) -> dict[str, SensorInfo]:
-        """Get copy of current tracked states.
+        except Exception as err:
+            _LOGGER.error("Error setting up state tracking: %s", err)
+            raise StateError(f"Failed to set up state tracking: {err}") from err
 
-        Returns:
-            Dictionary mapping entity IDs to their current SensorInfo
+    @callback
+    def _async_state_changed_listener(self, event: EventType) -> None:
+        """Handle state changes."""
+        try:
+            # Get entity ID and new state
+            entity_id = event.data["entity_id"]
+            new_state = event.data["new_state"]
 
-        """
-        return self._current_states.copy()
+            # Create sensor info
+            sensor_info = self._create_sensor_info(new_state)
 
-    def get_previous_states(self) -> dict[str, SensorInfo]:
-        """Get copy of previous tracked states.
+            # Update state with debouncing
+            current_time = time.time()
+            if current_time - self._last_state_change < self._debounce_time:
+                return
 
-        Returns:
-            Dictionary mapping entity IDs to their previous SensorInfo
+            self._last_state_change = current_time
 
-        """
-        return self._previous_states.copy()
+            # Update state under lock
+            self.hass.async_create_task(
+                self._update_state_internal(entity_id, sensor_info)
+            )
 
-    def get_tracked_entities(self) -> set[str]:
-        """Get set of currently tracked entity IDs.
+        except Exception as err:
+            _LOGGER.error("Error handling state change: %s", err)
 
-        Returns:
-            Set of entity IDs being tracked
-
-        """
-        return self._tracked_entities.copy()
-
-    async def update_entity_state(
+    async def _update_state_internal(
         self, entity_id: str, sensor_info: SensorInfo
     ) -> None:
-        """Manually update state for a specific entity.
+        """Update state under lock."""
+        async with self._state_lock:
+            # Store previous state
+            self._previous_states[entity_id] = self._current_states.get(entity_id, {})
 
-        Args:
-            entity_id: Entity ID to update
-            sensor_info: New sensor information
+            # Update current state
+            self._current_states[entity_id] = sensor_info
 
-        """
-        # Update previous states before changing current
-        self._previous_states = self._current_states.copy()
-        self._current_states[entity_id] = sensor_info
-        _LOGGER.debug("Manually updated state for %s", entity_id)
+            # Create snapshot
+            self._state_snapshots[entity_id] = {
+                "current": dict(self._current_states),
+                "previous": dict(self._previous_states),
+            }
+
+            # Notify callbacks
+            for callback in self._state_change_callbacks:
+                try:
+                    callback(entity_id, sensor_info)
+                except Exception as err:
+                    _LOGGER.error("Error in state change callback: %s", err)
+
+    def _create_sensor_info(self, state: State | None) -> SensorInfo:
+        """Create sensor info from state."""
+        if not state:
+            return {
+                "state": None,
+                "last_changed": datetime.now().isoformat(),
+                "availability": False,
+            }
+
+        return {
+            "state": state.state,
+            "last_changed": state.last_changed.isoformat(),
+            "availability": state.state != "unavailable",
+        }
+
+    def get_current_states(self) -> dict[str, SensorInfo]:
+        """Get current states for all tracked entities."""
+        return dict(self._current_states)
+
+    def get_previous_states(self) -> dict[str, SensorInfo]:
+        """Get previous states for all tracked entities."""
+        return dict(self._previous_states)
+
+    def get_state_snapshot(
+        self, entity_id: str
+    ) -> dict[str, dict[str, SensorInfo]] | None:
+        """Get state snapshot for an entity."""
+        return self._state_snapshots.get(entity_id)
+
+    def get_tracked_entities(self) -> set[str]:
+        """Get set of tracked entity IDs."""
+        return set(self._tracked_entities)
 
     def stop_state_tracking(self) -> None:
         """Stop state tracking and cleanup resources."""
-        if self._remove_state_listener is not None:
-            with contextlib.suppress(ValueError):
-                self._remove_state_listener()
-            self._remove_state_listener = None
-
+        self._state_change_callbacks.clear()
         self._tracked_entities.clear()
-        self._state_change_callback = None
-        _LOGGER.debug("Stopped state tracking")
+        self._current_states.clear()
+        self._previous_states.clear()
+        self._state_snapshots.clear()
+
+    def is_entity_active(self, entity_id: str, state: str | None = None) -> bool:
+        """Check if an entity is in an active state.
+
+        Args:
+            entity_id: The entity ID to check
+            state: The current state of the entity (if None, will fetch current state)
+
+        Returns:
+            True if the entity is in an active state, False otherwise
+
+        """
+        if not self._tracked_entities or entity_id not in self._tracked_entities:
+            return False
+
+        entity_type = self.get_entity_type(entity_id)
+        if not entity_type:
+            return False
+
+        if state is None:
+            current_state = self.get_entity_state(entity_id)
+            if not current_state:
+                return False
+            state = current_state.get("state")
+
+        if state is None:
+            return False
+
+        active_states = self.get_active_states_for_entity(entity_id)
+        return state in active_states
 
 
 # Convenience function for backward compatibility

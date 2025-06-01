@@ -35,17 +35,8 @@ from .exceptions import CalculationError, StateError, StorageError
 from .prior_manager import PriorManager
 from .probabilities import Probabilities
 from .state_manager import StateManager
-from .storage import AreaOccupancyStorage, AreaOccupancyStore
-from .types import MLHybridResult, ProbabilityState, SensorInfo, SensorInputs
-
-# Conditional imports for ML functionality
-try:
-    from .ml_models import ModelManager
-
-    ML_AVAILABLE = True
-except ImportError:
-    ModelManager = None
-    ML_AVAILABLE = False
+from .storage import AreaOccupancyStore
+from .types import ProbabilityState, SensorInfo, SensorInputs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,19 +109,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         # Initialize remaining components
         self.storage = AreaOccupancyStore(self.hass)
-        self.ml_storage = AreaOccupancyStorage(self.hass)
-
-        # Initialize ML components if available
-        self.model_manager = None
-        if ML_AVAILABLE and ModelManager is not None:
-            try:
-                self.model_manager = ModelManager(hass, self.ml_storage)
-            except Exception as err:
-                _LOGGER.warning("Failed to initialize ML components: %s", err)
 
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
-            model_manager=self.model_manager,
             state_manager=self.state_manager,
         )
         self._prior_calculator = PriorCalculator(
@@ -333,11 +314,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         calculation_result = await self.calculator.calculate_occupancy_probability(
             current_states, self.prior_manager.prior_state
         )
-        return (
-            calculation_result.final_probability
-            if isinstance(calculation_result, MLHybridResult)
-            else calculation_result.calculated_probability
-        )
+        return calculation_result.calculated_probability
 
     def _apply_decay(
         self, calculated_probability: float

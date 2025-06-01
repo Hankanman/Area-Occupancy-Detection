@@ -150,11 +150,101 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
 **Result:** PriorManager now handles all prior probability management, removing substantial complexity from the coordinator. The coordinator went from ~1200 lines to ~687 lines while maintaining all functionality and passing all tests.
 
-### **Phase 3**: Enhance DecayManager (move timer logic from coordinator) - PENDING
+### ✅ **Phase 3: Enhance DecayManager (COMPLETED)**
 
-### **Phase 4**: Extract ConfigurationManager (config update logic) - PENDING
+**Completed Actions:**
+- ✅ Created comprehensive `DecayManager` class to handle all decay-related functionality:
+  - `calculate_decay()` - Core decay calculation with exponential decay algorithm
+  - `start_decay_updates()` - Timer management for decay updates
+  - `stop_decay_updates()` - Cleanup of decay timers
+  - `shutdown()` - Complete cleanup of decay resources
+- ✅ Moved all decay logic from coordinator to DecayManager:
+  - Decay state tracking and initialization
+  - Timer management and scheduling
+  - Decay calculations and factor application
+  - Error handling and recovery
+- ✅ Updated coordinator to delegate to DecayManager:
+  - Removed decay calculation code from coordinator
+  - Added DecayManager initialization in coordinator constructor
+  - Updated `_async_update_data` to use DecayManager
+  - Updated `async_shutdown` to properly cleanup decay resources
+- ✅ Added comprehensive test coverage:
+  - Unit tests for DecayManager in `test_decay_manager.py`
+  - Integration tests in `test_coordinator.py`
+  - Edge case handling and error recovery tests
+- ✅ Added detailed documentation:
+  - User-facing documentation in `docs/docs/features/decay.md`
+  - Technical implementation details in `docs/docs/technical/deep-dive.md`
+  - Implementation requirements in `.github/instructions/advanced_features.instructions.md`
 
-### **Phase 5**: Simplify Coordinator (remove extracted logic) - PENDING
+**Result:** DecayManager now handles all decay-related functionality, providing a clean separation of concerns and improving code maintainability. The implementation includes proper error handling, comprehensive testing, and detailed documentation.
+
+### ✅ **Phase 4: Extract ConfigurationManager (COMPLETED)**
+
+**Completed Actions:**
+- ✅ Created new `ConfigurationManager` class to handle all configuration-related functionality:
+  - `_validate_config()` - Configuration validation
+  - `update_options()` - Options update and component reinitialization
+  - `update_threshold()` - Threshold value updates
+  - `_reinitialize_components()` - Component reinitialization
+- ✅ Moved all configuration logic from coordinator to ConfigurationManager:
+  - Configuration initialization and validation
+  - Options updates and validation
+  - Threshold updates
+  - Component reinitialization
+  - Error handling for configuration operations
+- ✅ Updated coordinator to delegate to ConfigurationManager:
+  - Removed configuration management code from coordinator
+  - Added ConfigurationManager initialization in coordinator constructor
+  - Updated `async_update_options` to use ConfigurationManager
+  - Updated `async_update_threshold` to use ConfigurationManager
+- ✅ Fixed type handling for configuration:
+  - Properly handle MappingProxyType from config_entry.options
+  - Added proper type conversion to dict where needed
+  - Fixed configuration access patterns
+- ✅ Improved error handling:
+  - Better error messages for configuration issues
+  - Proper exception hierarchy
+  - Consistent error handling patterns
+
+**Result:** ConfigurationManager now handles all configuration-related functionality, providing a clean separation of concerns and improving code maintainability. The implementation includes proper type handling, error handling, and component lifecycle management.
+
+### **Phase 5**: Simplify Coordinator (remove extracted logic) - IN PROGRESS
+
+**Planned Actions:**
+- ✅ Remove duplicate state management code:
+  - Remove `_setup_entity_tracking()` method
+  - Remove `async_initialize_states()` method
+  - Remove `get_configured_sensors()` method
+- ✅ Remove decay handling code:
+  - Remove `_start_decay_updates()` method
+  - Remove `_stop_decay_updates()` method
+  - Remove decay timer management
+- ✅ Remove configuration management code:
+  - Remove `async_update_options()` method
+  - Remove `async_update_threshold()` method
+  - Remove configuration validation
+- ✅ Remove prior management code:
+  - Remove `update_learned_priors()` method
+  - Remove `_async_save_prior_state_data()` method
+  - Remove prior state management
+- ✅ Simplify `_async_update_data()`:
+  - Remove direct state management
+  - Remove direct decay calculations
+  - Remove direct prior management
+  - Focus on orchestrating managers
+- ✅ Clean up properties:
+  - Remove redundant properties
+  - Update property implementations to use managers
+  - Add proper type hints
+
+**Expected Result:** A streamlined coordinator that focuses solely on:
+1. Orchestrating the managers
+2. Coordinating data updates
+3. Providing a clean public API
+4. Managing the overall lifecycle
+
+The coordinator should be reduced from ~1200 lines to ~300-400 lines while maintaining all functionality through proper delegation to the specialized managers.
 
 ## Implementation Notes
 
