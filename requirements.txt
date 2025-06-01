@@ -1,5 +1,5 @@
 # Production dependencies
-homeassistant==2025.5.3
-ruff==0.11.11
+homeassistant
+ruff
 pandas
 lightgbm

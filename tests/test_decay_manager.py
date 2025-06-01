@@ -1,16 +1,16 @@
-"""Unit tests for the DecayHandler class."""
+"""Unit tests for the DecayManager class."""
 
 from datetime import datetime, timedelta
 
 import pytest
 
 from custom_components.area_occupancy.const import DEFAULT_DECAY_WINDOW
-from custom_components.area_occupancy.decay_handler import DecayHandler
+from custom_components.area_occupancy.decay_manager import DecayManager
 
 
 def test_decay_disabled_returns_current_probability():
-    """Test that the decay handler returns the current probability when decay is disabled."""
-    handler = DecayHandler(
+    """Test that the decay manager returns the current probability when decay is disabled."""
+    handler = DecayManager(
         {"decay_enabled": False, "decay_window": DEFAULT_DECAY_WINDOW}
     )
     result = handler.calculate_decay(0.5, 0.4, False, None, None)
@@ -19,14 +19,14 @@ def test_decay_disabled_returns_current_probability():
 
 
 def test_decay_window_validation():
-    """Test that the decay handler raises an exception if the decay window is 0."""
+    """Test that the decay manager raises an exception if the decay window is 0."""
     with pytest.raises(Exception):
-        DecayHandler({"decay_enabled": True, "decay_window": 0})
+        DecayManager({"decay_enabled": True, "decay_window": 0})
 
 
 def test_decay_start_and_stop():
-    """Test that the decay handler starts and stops decay correctly."""
-    handler = DecayHandler(
+    """Test that the decay manager starts and stops decay correctly."""
+    handler = DecayManager(
         {"decay_enabled": True, "decay_window": DEFAULT_DECAY_WINDOW}
     )
     # Start decay
@@ -39,8 +39,8 @@ def test_decay_start_and_stop():
 
 
 def test_decay_inconsistent_state():
-    """Test that the decay handler returns True when is_decaying is True but no start time/probability."""
-    handler = DecayHandler(
+    """Test that the decay manager returns True when is_decaying is True but no start time/probability."""
+    handler = DecayManager(
         {"decay_enabled": True, "decay_window": DEFAULT_DECAY_WINDOW}
     )
     # is_decaying True but no start time/probability
@@ -49,11 +49,10 @@ def test_decay_inconsistent_state():
 
 
 def test_decay_error_handling():
-    """Test that the decay handler raises a ValueError when the probabilities are invalid."""
-    handler = DecayHandler(
+    """Test that the decay manager raises a ValueError when the probabilities are invalid."""
+    handler = DecayManager(
         {"decay_enabled": True, "decay_window": DEFAULT_DECAY_WINDOW}
     )
     # Invalid probabilities
     with pytest.raises(ValueError):
-        handler.calculate_decay(-1, 0.5, False, None, None)
         handler.calculate_decay(-1, 0.5, False, None, None)

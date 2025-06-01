@@ -254,8 +254,8 @@ async def test_coordinator_prior_state_management(
     assert coordinator.prior_manager.prior_state.type_priors["motion"].prior == 0.75
 
 
-# Add test for decay handler integration
-async def test_coordinator_decay_handler(
+# Add test for decay manager integration
+async def test_coordinator_decay_manager(
     hass: HomeAssistant,
     init_integration: MockConfigEntry,
 ):
@@ -266,8 +266,8 @@ async def test_coordinator_decay_handler(
 
     # Test decay disabled by config
     coordinator.config[CONF_DECAY_ENABLED] = False
-    coordinator._start_decay_updates()
-    assert coordinator._decay_unsub is None
+    coordinator.decay_manager.start_decay_updates(True)
+    assert coordinator.decay_manager._decay_unsub is None
 
     # Test decay update with error
     coordinator.config[CONF_DECAY_ENABLED] = True
@@ -275,21 +275,21 @@ async def test_coordinator_decay_handler(
 
     # Mock the async_track_time_interval to capture the callback
     with patch(
-        "custom_components.area_occupancy.coordinator.async_track_time_interval"
+        "custom_components.area_occupancy.decay_manager.async_track_time_interval"
     ) as mock_track:
-        # Set up a mock callback that will be called by the decay handler
+        # Set up a mock callback that will be called by the decay manager
         async def mock_callback(*_):
             raise Exception("Error")
 
         mock_track.return_value = lambda: None  # Simple cleanup function
 
         # Start decay updates and wait for setup
-        coordinator._start_decay_updates()
+        coordinator.decay_manager.start_decay_updates(True)
         await hass.async_block_till_done()
 
         # Verify that async_track_time_interval was called
         assert mock_track.called
-        assert coordinator._decay_unsub is not None
+        assert coordinator.decay_manager._decay_unsub is not None
 
         # Get the callback that was registered and test error handling
         callback = mock_track.call_args[0][1]
@@ -299,8 +299,8 @@ async def test_coordinator_decay_handler(
         assert coordinator.data.decaying is True
 
         # Test cleanup
-        coordinator._stop_decay_updates()
-        assert coordinator._decay_unsub is None
+        coordinator.decay_manager.stop_decay_updates()
+        assert coordinator.decay_manager._decay_unsub is None
 
 
 # Add test for historical analysis
