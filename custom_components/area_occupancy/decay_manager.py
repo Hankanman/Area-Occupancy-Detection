@@ -1,11 +1,14 @@
-"""Handle decay calculations for Area Occupancy Detection."""
+"""Manage decay calculations and timer for Area Occupancy Detection."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import math
-from typing import Final
+from typing import Any, Callable, Final
+
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     CONF_DECAY_ENABLED,
@@ -25,8 +28,8 @@ MIN_DECAY_WINDOW: Final[int] = 1  # Minimum decay window in seconds
 MAX_DECAY_WINDOW: Final[int] = 3600  # Maximum decay window in seconds
 
 
-class DecayHandler:
-    """Handle decay calculations for probability values.
+class DecayManager:
+    """Manage decay calculations and timer for probability values.
 
     This class manages the exponential decay of probability values over time.
     It implements a decay model where the probability decreases exponentially
@@ -36,20 +39,34 @@ class DecayHandler:
         decay_enabled: Whether decay is enabled
         decay_window: Time window in seconds over which decay occurs
         config: Configuration dictionary containing decay settings
+        hass: Home Assistant instance
+        _decay_unsub: Callback to unsubscribe from decay timer
+        _update_callback: Callback to trigger updates
 
     """
 
-    def __init__(self, config: dict) -> None:
-        """Initialize the decay handler.
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config: dict,
+        update_callback: Callable[[], None],
+    ) -> None:
+        """Initialize the decay manager.
 
         Args:
+            hass: Home Assistant instance
             config: Configuration dictionary containing decay settings
+            update_callback: Callback to trigger updates
 
         Raises:
             ConfigurationError: If decay window is invalid
 
         """
+        self.hass = hass
         self.config = config
+        self._update_callback = update_callback
+        self._decay_unsub: CALLBACK_TYPE | None = None
+
         self.decay_enabled = self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         self.decay_window = self.config.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
 
@@ -282,3 +299,50 @@ class DecayHandler:
             MIN_PROBABILITY,
             min(probability * decay_factor, MAX_PROBABILITY),
         )
+
+    def start_decay_updates(self, is_decaying: bool) -> None:
+        """Start regular decay updates if decay is active.
+
+        Args:
+            is_decaying: Whether decay is currently active
+
+        """
+        if not self.decay_enabled:
+            _LOGGER.debug("Decay updates disabled by configuration")
+            return
+
+        if not is_decaying:
+            self.stop_decay_updates()
+            return
+
+        if self._decay_unsub is not None:
+            _LOGGER.debug("Decay timer already running")
+            return
+
+        _LOGGER.debug("Starting decay update timer")
+        interval = timedelta(seconds=5)
+
+        @callback
+        def _async_do_decay_update(*_: Any) -> None:
+            """Execute decay update."""
+            try:
+                _LOGGER.debug("Decay timer fired. Triggering refresh")
+                self._update_callback()
+            except Exception:
+                _LOGGER.exception("Error in decay update task")
+                self.stop_decay_updates()
+
+        self._decay_unsub = async_track_time_interval(
+            self.hass, _async_do_decay_update, interval
+        )
+
+    def stop_decay_updates(self) -> None:
+        """Stop decay updates."""
+        if self._decay_unsub is not None:
+            _LOGGER.debug("Stopping decay update timer")
+            self._decay_unsub()
+            self._decay_unsub = None
+
+    def shutdown(self) -> None:
+        """Shutdown the decay manager."""
+        self.stop_decay_updates() 

@@ -39,7 +39,7 @@ from .const import (
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from .decay_handler import DecayHandler
+from .decay_manager import DecayManager
 from .exceptions import CalculationError, StateError, StorageError
 from .prior_manager import PriorManager
 from .probabilities import Probabilities
@@ -134,7 +134,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Initialize remaining components
         self.storage = AreaOccupancyStore(self.hass)
         self.ml_storage = AreaOccupancyStorage(self.hass)
-        self.decay_handler = DecayHandler(self.config)
+        self.decay_manager = DecayManager(self.config)
 
         # Initialize ML components if available
         self.model_manager = None
@@ -252,7 +252,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
-        self._stop_decay_updates()
+        # Shutdown DecayManager
+        if self.decay_manager:
+            self.decay_manager.shutdown()
 
         # Shutdown PriorManager
         if self.prior_manager:
@@ -320,7 +322,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Reset components that depend on config
             self.inputs = SensorInputs.from_config(self.config)
             self.probabilities = Probabilities(config=self.config)
-            self.decay_handler = DecayHandler(self.config)
+            self.decay_manager = DecayManager(self.config)
             # Note: PriorManager does not directly depend on config options, only data (history_period)
             # which isn't changeable via options flow yet. If it were, PriorManager would need reset here.
 
@@ -475,39 +477,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             initial_decay_start_prob = self.data.decay_start_probability
 
             # --- Calculate Undecayed Probability ---
-            try:
-                # Pass snapshot, prior state, and config to the calculator
-                calc_result = await self.calculator.calculate_occupancy_probability(
-                    current_states_snapshot,  # Pass the snapshot
-                    self.prior_manager.prior_state,  # Pass the prior_state, not the manager
-                    self.config,  # Pass the config for ML settings
-                )
-            except (CalculationError, ValueError, ZeroDivisionError) as calc_err:
-                # Log the specific calculation error and return existing data
-                _LOGGER.error("Error during probability calculation: %s", calc_err)
-                # Keep existing data, but notify listeners
-                self.async_set_updated_data(self.data)
-                return self.data
-
-            # Extract values from result based on type (OccupancyCalculationResult or MLHybridResult)
-            if isinstance(calc_result, MLHybridResult):
-                calculated_probability = calc_result.final_probability
-                # For ML hybrid results, we need to get prior and sensor probabilities separately
-                # Since they're not included in MLHybridResult, use bayesian probability
-                prior_probability = (
-                    calc_result.bayesian_probability
-                )  # Use Bayesian as fallback
-                sensor_probabilities = {}  # Empty for ML results
-            else:  # OccupancyCalculationResult
-                calculated_probability = calc_result.calculated_probability
-                prior_probability = calc_result.prior_probability
-                sensor_probabilities = calc_result.sensor_probabilities
-
-            # Update self.data with intermediate results *before* decay
-            self.data.update(
-                probability=calculated_probability,  # Store undecayed prob temporarily
-                prior_probability=prior_probability,
-                sensor_probabilities=sensor_probabilities,
+            calculated_probability = self.calculator.calculate_occupancy_probability(
+                current_states_snapshot
             )
 
             # --- Apply Decay ---
@@ -517,7 +488,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 new_is_decaying,
                 new_decay_start_time,
                 new_decay_start_probability,
-            ) = self.decay_handler.calculate_decay(
+            ) = self.decay_manager.calculate_decay(
                 current_probability=calculated_probability,  # Use the extracted probability
                 previous_probability=initial_prob,  # Use the state before this update cycle
                 is_decaying=initial_decaying,
@@ -553,14 +524,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.is_occupied,
             )
 
-            # Manage decay timer
-            if self.data.decaying:
-                if not self._decay_unsub:
-                    _LOGGER.debug("Starting decay timer (decaying is True)")
-                    self._start_decay_updates()
-            elif self._decay_unsub:
-                _LOGGER.debug("Stopping decay timer (decaying is False)")
-                self._stop_decay_updates()
+            # Manage decay timer via DecayManager
+            self.decay_manager.start_decay_updates(self.data.decaying)
 
             # --- Reset Logic ---
             # Determine active sensors based on the *snapshot* used for calculation
@@ -581,7 +546,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.decaying = False
                 self.data.decay_start_time = None
                 self.data.decay_status = 0.0  # Reset decay status to 0
-                self._stop_decay_updates()
+                self.decay_manager.stop_decay_updates()
 
         except CalculationError as err:
             _LOGGER.error("Calculation Error caught in _async_update_data: %s", err)
