@@ -3,9 +3,9 @@ applyTo: '**'
 ---
 # Advanced Features and Components
 
-## Decay Handler
+## Decay Manager
 
-The decay handler in [custom_components/area_occupancy/decay_handler.py](mdc:custom_components/area_occupancy/decay_handler.py) provides sophisticated probability decay functionality:
+The decay manager in [custom_components/area_occupancy/decay_manager.py](mdc:custom_components/area_occupancy/decay_manager.py) provides sophisticated probability decay functionality:
 
 ### Implementation Requirements
 - Exponential decay algorithm with configurable rate

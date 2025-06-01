@@ -67,13 +67,13 @@ The real-time occupancy probability is calculated in [custom_components/area_occ
 1. [coordinator.py](mdc:custom_components/area_occupancy/coordinator.py) triggers updates
 2. [calculate_prior.py](mdc:custom_components/area_occupancy/calculate_prior.py) computes priors
 3. [calculate_prob.py](mdc:custom_components/area_occupancy/calculate_prob.py) computes final probability
-4. [decay_handler.py](mdc:custom_components/area_occupancy/decay_handler.py) applies probability decay
+4. [decay_manager.py](mdc:custom_components/area_occupancy/decay_manager.py) applies probability decay
 5. [storage.py](mdc:custom_components/area_occupancy/storage.py) persists state data
 6. Results update sensors in [sensor.py](mdc:custom_components/area_occupancy/sensor.py) and [binary_sensor.py](mdc:custom_components/area_occupancy/binary_sensor.py)
 
 ## Probability Decay
 
-The probability decay functionality is implemented in [custom_components/area_occupancy/decay_handler.py](mdc:custom_components/area_occupancy/decay_handler.py):
+The probability decay functionality is implemented in [custom_components/area_occupancy/decay_manager.py](mdc:custom_components/area_occupancy/decay_manager.py):
 
 1. **Decay Triggers**:
    - Starts when occupancy probability drops below threshold

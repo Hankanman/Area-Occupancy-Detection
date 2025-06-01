@@ -31,7 +31,7 @@ This document details the process used by the `area_occupancy` custom component 
     *   Notifies HA of updates.
 *   **Probability Calculator (`calculate_prob.py`):** Calculates the *current, undecayed* probability based on current sensor states and learned priors (`PriorState`).
 *   **Prior Calculator (`calculate_prior.py`):** Calculates the *learned* priors (`PriorState`) based on historical data analysis.
-*   **Decay Handler (`decay_handler.py`):** Applies the exponential decay logic to the calculated probability.
+*   **Decay Manager (`decay_manager.py`):** Applies the exponential decay logic to the calculated probability.
 *   **Probabilities (`probabilities.py`):** Holds configuration data (weights, active states) and provides methods to access learned/default prior values from the `PriorState`.
 *   **Storage (`storage.py`):** Handles saving and loading the learned `PriorState` object to/from the `.storage/area_occupancy.storage` file.
 *   **Service (`service.py`):** Provides the `area_occupancy.update_priors` service to manually trigger prior recalculation.

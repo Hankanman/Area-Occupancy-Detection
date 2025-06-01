@@ -12,7 +12,7 @@ Tests are organized in the `tests` directory following Home Assistant convention
 - [tests/test_coordinator.py](mdc:tests/test_coordinator.py): Data coordinator tests
 - [tests/test_calculate_prior.py](mdc:tests/test_calculate_prior.py): Prior calculation tests
 - [tests/test_calculate_prob.py](mdc:tests/test_calculate_prob.py): Probability calculation tests
-- [tests/test_decay_handler.py](mdc:tests/test_decay_handler.py): Decay functionality tests
+- [tests/test_decay_manager.py](mdc:tests/test_decay_manager.py): Decay functionality tests
 - [tests/test_storage.py](mdc:tests/test_storage.py): Data persistence tests
 - [tests/test_service.py](mdc:tests/test_service.py): Service implementation tests
 - [tests/test_probabilities.py](mdc:tests/test_probabilities.py): Default probability tests

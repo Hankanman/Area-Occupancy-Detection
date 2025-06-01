@@ -24,7 +24,7 @@ The integration is organized in the `custom_components/area_occupancy` directory
 - [custom_components/area_occupancy/types.py](mdc:custom_components/area_occupancy/types.py): Type definitions
 
 ### Additional Components
-- [custom_components/area_occupancy/decay_handler.py](mdc:custom_components/area_occupancy/decay_handler.py): Probability decay functionality
+- [custom_components/area_occupancy/decay_manager.py](mdc:custom_components/area_occupancy/decay_manager.py): Probability decay functionality
 - [custom_components/area_occupancy/exceptions.py](mdc:custom_components/area_occupancy/exceptions.py): Custom exception definitions
 - [custom_components/area_occupancy/migrations.py](mdc:custom_components/area_occupancy/migrations.py): Configuration migration handling
 - [custom_components/area_occupancy/state_mapping.py](mdc:custom_components/area_occupancy/state_mapping.py): Entity state mapping utilities
@@ -54,17 +54,12 @@ The integration is organized in the `custom_components/area_occupancy` directory
 - Prior probability calculation logic must be in `calculate_prior.py`
 - Default probability values must be defined in `probabilities.py`
 - Coordinator logic must be in `coordinator.py`
-- Probability decay handling must be in `decay_handler.py`
+- Probability decay handling must be in `decay_manager.py`
 - Data persistence logic must be in `storage.py`
 - Entity state mapping utilities must be in `state_mapping.py`
 - Environmental sensor analysis must be in `environmental_analysis.py`
 - Environmental data storage must be in `environmental_storage.py`
 - Machine learning models must be in `ml_models.py`
-- Virtual sensor implementations must be in `virtual_sensor/` directory
-- UI strings and translations must be in `strings.json` and `translations/` directory
-- Probability decay handling must be in `decay_handler.py`
-- Data persistence logic must be in `storage.py`
-- Entity state mapping utilities must be in `state_mapping.py`
 - Virtual sensor implementations must be in `virtual_sensor/` directory
 - UI strings and translations must be in `strings.json` and `translations/` directory
 
