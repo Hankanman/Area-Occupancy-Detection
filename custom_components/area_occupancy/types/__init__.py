@@ -4,9 +4,12 @@ from datetime import datetime
 from typing import TypedDict
 
 
-class SensorInfo(TypedDict):
+class Input(TypedDict):
     """Type for sensor state information."""
 
+    entity_id: str | None
+    type: str
+    weight: float
     state: str | None
     last_changed: str
     availability: bool
@@ -21,10 +24,17 @@ class SensorProbability(TypedDict):
         weighted_probability: Probability after applying weight
     """
 
+    is_active: bool
     probability: float
-    weight: float
     weighted_probability: float
+    input: Input
 
+class OverallProbability(TypedDict):
+    """Holds the results of the occupancy probability calculation."""
+
+    calculated_probability: float
+    prior_probability: float
+    sensor_probabilities: dict[str, SensorProbability]
 
 class TimeInterval(TypedDict):
     """Time interval with state information."""

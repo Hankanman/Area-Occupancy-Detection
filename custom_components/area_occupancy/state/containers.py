@@ -11,33 +11,6 @@ from ..types import SensorInfo, SensorProbability
 
 
 @dataclass
-class SensorCalculation:
-    """Data class to hold sensor calculation results."""
-
-    weighted_probability: float
-    is_active: bool
-    details: SensorProbability
-
-    @classmethod
-    def empty(cls) -> "SensorCalculation":
-        """Create an empty sensor calculation with zero values.
-
-        Returns:
-            A SensorCalculation instance with zero values
-
-        """
-        return cls(
-            weighted_probability=0.0,
-            is_active=False,
-            details={
-                "probability": 0.0,
-                "weight": 0.0,
-                "weighted_probability": 0.0,
-            },
-        )
-
-
-@dataclass
 class PriorData:
     """Holds prior probability data for an entity or type."""
 
@@ -96,15 +69,6 @@ class PriorData:
             prob_given_false=float(p_false) if p_false is not None else None,
             last_updated=str(last_updated) if last_updated is not None else None,
         )
-
-
-@dataclass
-class OccupancyCalculationResult:
-    """Holds the results of the occupancy probability calculation."""
-
-    calculated_probability: float
-    prior_probability: float
-    sensor_probabilities: dict[str, SensorProbability]
 
 
 @dataclass
