@@ -6,69 +6,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
-from ..models import SensorInfo, SensorProbability
-
-
-@dataclass
-class PriorData:
-    """Holds prior probability data for an entity or type."""
-
-    prior: float = field(default=MIN_PROBABILITY)
-    prob_given_true: float | None = field(default=None)
-    prob_given_false: float | None = field(default=None)
-    last_updated: str | None = field(default=None)
-
-    def __post_init__(self):
-        """Validate probabilities."""
-        if not MIN_PRIOR <= self.prior <= MAX_PRIOR:
-            raise ValueError(
-                f"Prior must be between {MIN_PRIOR} and {MAX_PRIOR} got: {self.prior}"
-            )
-        if (
-            self.prob_given_true is not None
-            and not MIN_PROBABILITY <= self.prob_given_true <= MAX_PROBABILITY
-        ):
-            raise ValueError(
-                f"prob_given_true must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_true}"
-            )
-        if (
-            self.prob_given_false is not None
-            and not MIN_PROBABILITY <= self.prob_given_false <= MAX_PROBABILITY
-        ):
-            raise ValueError(
-                f"prob_given_false must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_false}"
-            )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert PriorData to a dictionary."""
-        data = {
-            "prior": self.prior,
-            "last_updated": self.last_updated,
-        }
-        if self.prob_given_true is not None:
-            data["prob_given_true"] = self.prob_given_true
-        if self.prob_given_false is not None:
-            data["prob_given_false"] = self.prob_given_false
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PriorData | None":
-        """Create PriorData from a dictionary."""
-        prior = data.get("prior")
-        if prior is None or float(prior) < MIN_PRIOR:
-            return None  # Skip invalid/zero priors
-        # Handle potential None values during deserialization
-        p_true = data.get("prob_given_true")
-        p_false = data.get("prob_given_false")
-        last_updated = data.get("last_updated")
-
-        return cls(
-            prior=float(prior) if prior is not None else MIN_PROBABILITY,
-            prob_given_true=float(p_true) if p_true is not None else None,
-            prob_given_false=float(p_false) if p_false is not None else None,
-            last_updated=str(last_updated) if last_updated is not None else None,
-        )
+from ..const import MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
+from ..models.feature import Feature
+from ..models.prior import Prior
 
 
 @dataclass
@@ -79,10 +19,10 @@ class ProbabilityState:
     previous_probability: float = field(default=0.0)
     threshold: float = field(default=0.5)
     prior_probability: float = field(default=0.0)
-    sensor_probabilities: dict[str, SensorProbability] = field(default_factory=dict)
+    sensor_probabilities: dict[str, Feature] = field(default_factory=dict)
     decay_status: float = field(default=0.0)
-    current_states: dict[str, SensorInfo] = field(default_factory=dict)
-    previous_states: dict[str, SensorInfo] = field(default_factory=dict)
+    current_states: dict[str, Feature] = field(default_factory=dict)
+    previous_states: dict[str, Feature] = field(default_factory=dict)
     is_occupied: bool = field(default=False)
     decaying: bool = field(default=False)
     decay_start_time: datetime | None = field(default=None)
@@ -113,10 +53,10 @@ class ProbabilityState:
         previous_probability: float | None = None,
         threshold: float | None = None,
         prior_probability: float | None = None,
-        sensor_probabilities: dict[str, SensorProbability] | None = None,
+        sensor_probabilities: dict[str, Feature] | None = None,
         decay_status: float | None = None,
-        current_states: dict[str, SensorInfo] | None = None,
-        previous_states: dict[str, SensorInfo] | None = None,
+        current_states: dict[str, Feature] | None = None,
+        previous_states: dict[str, Feature] | None = None,
         is_occupied: bool | None = None,
         decaying: bool | None = None,
         decay_start_time: datetime | None = None,
@@ -210,10 +150,10 @@ class PriorState:
     wasp_in_box_prior: float = field(default=MIN_PROBABILITY)
 
     # Individual entity priors using PriorData
-    entity_priors: dict[str, PriorData] = field(default_factory=dict)
+    entity_priors: dict[str, Prior] = field(default_factory=dict)
 
     # Type-level priors with full probability data using PriorData
-    type_priors: dict[str, PriorData] = field(default_factory=dict)
+    type_priors: dict[str, Prior] = field(default_factory=dict)
 
     # Analysis period in days
     analysis_period: int = field(default=7)
@@ -248,8 +188,8 @@ class PriorState:
         light_prior: float | None = None,
         environmental_prior: float | None = None,
         wasp_in_box_prior: float | None = None,
-        entity_priors: dict[str, PriorData] | None = None,
-        type_priors: dict[str, PriorData] | None = None,
+        entity_priors: dict[str, Prior] | None = None,
+        type_priors: dict[str, Prior] | None = None,
         analysis_period: int | None = None,
     ) -> None:
         """Update the state with new values while maintaining the same instance."""
@@ -329,12 +269,12 @@ class PriorState:
             entity_priors={
                 k: pd
                 for k, v in data.get("entity_priors", {}).items()
-                if isinstance(v, dict) and (pd := PriorData.from_dict(v)) is not None
+                if isinstance(v, dict) and (pd := Prior.from_dict(v)) is not None
             },
             type_priors={
                 k: pd
                 for k, v in data.get("type_priors", {}).items()
-                if isinstance(v, dict) and (pd := PriorData.from_dict(v)) is not None
+                if isinstance(v, dict) and (pd := Prior.from_dict(v)) is not None
             },
             analysis_period=int(data.get("analysis_period", 7)),
         )

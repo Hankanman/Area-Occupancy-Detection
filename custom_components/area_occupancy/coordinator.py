@@ -50,6 +50,7 @@ from .const import (
 )
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
+from .models.feature import FeatureManager
 from .probabilities import Probabilities
 from .storage import AreaOccupancyStore
 from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
@@ -142,6 +143,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
         )
+        self.features = FeatureManager(self.config, self.hass)
         self._prior_calculator = PriorCalculator(
             hass=self.hass,
             probabilities=self.probabilities,
@@ -288,7 +290,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Schedule periodic prior updates regardless of initial calculation
             await self._schedule_next_prior_update()
             # --- End Prior Logic ---
-
+            await self.features.async_initialize()
             # Trigger an initial refresh after setup is complete
             await self.async_refresh()
 
@@ -296,6 +298,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 "Successfully set up AreaOccupancyCoordinator for %s",
                 self.config[CONF_NAME],
             )
+
         except (StorageError, StateError, CalculationError) as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
