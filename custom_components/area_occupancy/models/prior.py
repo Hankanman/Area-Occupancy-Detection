@@ -2,12 +2,8 @@
 
 import asyncio
 import logging
-
-_LOGGER = logging.getLogger(__name__)
-_LOGGER.debug("Starting imports for prior.py")
-
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, TypedDict
 
@@ -21,13 +17,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..const import (
     DEFAULT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
-    MAX_PRIOR,
     MAX_PROBABILITY,
-    MIN_PRIOR,
     MIN_PROBABILITY,
 )
+from ..utils import validate_datetime, validate_prior, validate_prob
+from .feature_type import FeatureType
 
-_LOGGER.debug("Imported area_occupancy constants")
+_LOGGER = logging.getLogger(__name__)
 
 
 class TimeInterval(TypedDict):
@@ -42,70 +38,30 @@ class TimeInterval(TypedDict):
 class Prior:
     """Holds prior probability data for an entity or type, and calculates it."""
 
-    prior: float = field(default=MIN_PROBABILITY)
-    prob_given_true: float | None = field(default=None)
-    prob_given_false: float | None = field(default=None)
-    last_updated: str | None = field(default=None)
+    prior: float
+    prob_given_true: float
+    prob_given_false: float
+    last_updated: datetime
 
     def __post_init__(self):
-        """Validate probabilities."""
-        if not MIN_PRIOR <= self.prior <= MAX_PRIOR:
-            raise ValueError(
-                f"Prior must be between {MIN_PRIOR} and {MAX_PRIOR} got: {self.prior}"
-            )
-        if (
-            self.prob_given_true is not None
-            and not MIN_PROBABILITY <= self.prob_given_true <= MAX_PROBABILITY
-        ):
-            raise ValueError(
-                f"prob_given_true must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_true}"
-            )
-        if (
-            self.prob_given_false is not None
-            and not MIN_PROBABILITY <= self.prob_given_false <= MAX_PROBABILITY
-        ):
-            raise ValueError(
-                f"prob_given_false must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {self.prob_given_false}"
-            )
+        """Validate properties after initialization."""
+        self.prior = validate_prior(self.prior)
+        self.prob_given_true = validate_prob(self.prob_given_true)
+        self.prob_given_false = validate_prob(self.prob_given_false)
+        self.last_updated = validate_datetime(self.last_updated)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert PriorData to a dictionary."""
-        data = {
-            "prior": self.prior,
-            "last_updated": self.last_updated,
-        }
-        if self.prob_given_true is not None:
-            data["prob_given_true"] = self.prob_given_true
-        if self.prob_given_false is not None:
-            data["prob_given_false"] = self.prob_given_false
-        return data
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Prior | None":
-        """Create PriorData from a dictionary."""
-        prior = data.get("prior")
-        if prior is None or float(prior) < MIN_PRIOR:
-            return None  # Skip invalid/zero priors
-        # Handle potential None values during deserialization
-        p_true = data.get("prob_given_true")
-        p_false = data.get("prob_given_false")
-        last_updated = data.get("last_updated")
+class PriorManager:
+    """Manages prior probability calculations."""
 
-        return cls(
-            prior=float(prior) if prior is not None else MIN_PROBABILITY,
-            prob_given_true=float(p_true) if p_true is not None else None,
-            prob_given_false=float(p_false) if p_false is not None else None,
-            last_updated=str(last_updated) if last_updated is not None else None,
-        )
+    def __init__(self, hass: HomeAssistant):
+        """Initialize the prior manager."""
+        self.hass = hass
 
-    @classmethod
     async def calculate(
-        cls,
+        self,
         hass: HomeAssistant,
-        default_prior: float,
-        default_prob_given_true: float,
-        default_prob_given_false: float,
-        entity_active_states: set,
+        feature_type: FeatureType,
         primary_sensor: str,
         entity_id: str,
         start_time: datetime,
@@ -122,27 +78,28 @@ class Prior:
         )
 
         # Use default priors as fallback values
-        fallback_prior: Prior = Prior(
-            prob_given_true=default_prob_given_true,
-            prob_given_false=default_prob_given_false,
-            prior=default_prior,
+        fallback_prior = Prior(
+            prob_given_true=feature_type["prob_true"],
+            prob_given_false=feature_type["prob_false"],
+            prior=feature_type["prior"],
+            last_updated=validate_datetime(None),
         )
 
         is_primary = entity_id == primary_sensor
 
         try:
             if is_primary:
-                primary_states = await cls._get_states_from_recorder(
+                primary_states = await self._get_states_from_recorder(
                     hass, entity_id, start_time, end_time
                 )
                 entity_states = primary_states
             else:
                 try:
                     primary_states, entity_states = await asyncio.gather(
-                        cls._get_states_from_recorder(
+                        self._get_states_from_recorder(
                             hass, primary_sensor, start_time, end_time
                         ),
-                        cls._get_states_from_recorder(
+                        self._get_states_from_recorder(
                             hass, entity_id, start_time, end_time
                         ),
                     )
@@ -182,29 +139,29 @@ class Prior:
             )
             return fallback_prior
 
-        primary_intervals = await cls._states_to_intervals(
+        primary_intervals = await self._states_to_intervals(
             primary_state_objects, start_time, end_time
         )
-        entity_intervals = await cls._states_to_intervals(
+        entity_intervals = await self._states_to_intervals(
             entity_state_objects, start_time, end_time
         )
 
-        prob_given_true = cls._calculate_conditional_probability_with_intervals(
+        prob_given_true = self._calculate_conditional_probability_with_intervals(
             entity_id,
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_ON,
-            entity_active_states,
+            feature_type["active_states"],
         )
-        prob_given_false = cls._calculate_conditional_probability_with_intervals(
+        prob_given_false = self._calculate_conditional_probability_with_intervals(
             entity_id,
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_OFF,
-            entity_active_states,
+            feature_type["active_states"],
         )
 
-        prior = cls._calculate_prior_probability(
+        prior = self._calculate_prior_probability(
             prob_given_true, prob_given_false, primary_intervals
         )
 
@@ -212,11 +169,11 @@ class Prior:
             prior=prior,
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
-            last_updated=datetime.utcnow().isoformat(),
+            last_updated=validate_datetime(None),
         )
 
-    @staticmethod
     async def _get_states_from_recorder(
+        self,
         hass: HomeAssistant,
         entity_id: str,
         start_time: datetime,
@@ -322,7 +279,7 @@ class Prior:
         entity_intervals: List[TimeInterval],
         motion_intervals_by_sensor: Dict[str, List[TimeInterval]],
         motion_state_filter: str,  # Should be STATE_ON or STATE_OFF
-        entity_active_states: set,
+        entity_active_states: list[str],
     ) -> float:
         """Calculate conditional probability using time intervals.
 
@@ -376,7 +333,7 @@ class Prior:
                 overlap_end = min(motion_interval["end"], entity_interval["end"])
                 if overlap_end > overlap_start:
                     # Check if entity state is considered active
-                    if entity_interval["state"] in entity_active_states:
+                    if entity_interval["state"] in set(entity_active_states):
                         entity_active_duration += (
                             overlap_end - overlap_start
                         ).total_seconds()

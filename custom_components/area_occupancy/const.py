@@ -101,6 +101,8 @@ MIN_PROBABILITY: Final[float] = 0.01
 MAX_PROBABILITY: Final[float] = 0.99
 MIN_PRIOR: Final[float] = 0.0001
 MAX_PRIOR: Final[float] = 0.9999
+MIN_WEIGHT: Final[float] = 0.01
+MAX_WEIGHT: Final[float] = 0.99
 
 # Default prior probabilities
 DEFAULT_PRIOR: Final[float] = 0.1713
