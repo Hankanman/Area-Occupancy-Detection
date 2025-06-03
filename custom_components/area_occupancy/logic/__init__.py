@@ -5,7 +5,6 @@ including probability calculations, prior calculations, and decay handling.
 """
 
 from .decay import Decay
-from .prior import Prior
 from .probability import Probability
 
-__all__ = ["Decay", "Prior", "Probability"]
+__all__ = ["Decay", "Probability"]

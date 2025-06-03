@@ -1,23 +1,9 @@
 """Feature model."""
 
-import logging
-
-_LOGGER = logging.getLogger(__name__)
-_LOGGER.debug("Starting imports for feature.py")
-
 from datetime import timedelta
-
-from homeassistant.util import dt as dt_util
-
-_LOGGER.debug("Imported datetime")
-
 from typing import Any, TypedDict
 
-_LOGGER.debug("Imported typing modules")
-
-from homeassistant.core import HomeAssistant
-
-_LOGGER.debug("Imported HomeAssistant")
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_APPLIANCES,
@@ -32,18 +18,9 @@ from ..const import (
     CONF_TEMPERATURE_SENSORS,
     CONF_WINDOW_SENSORS,
 )
-
-_LOGGER.debug("Imported area_occupancy constants")
-
-from ..models.prior import Prior
-
-_LOGGER.debug("Imported Prior, get_prior_data")
-
+from ..coordinator import AreaOccupancyCoordinator
+from ..models.prior import Prior, PriorManager
 from .feature_type import FeatureType, FeatureTypeManager, InputTypeEnum
-
-_LOGGER.debug("Imported feature_type modules")
-
-_LOGGER.debug("Completed all imports for feature.py")
 
 
 class Feature(TypedDict):
@@ -62,10 +39,15 @@ class Feature(TypedDict):
 class FeatureManager:
     """Manages features."""
 
-    def __init__(self, config: dict[str, Any], hass: HomeAssistant) -> None:
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
         """Initialize the features."""
-        self.config = config
-        self.hass = hass
+        self.coordinator = coordinator
+        self.config = coordinator.config
+        self.hass = coordinator.hass
+        self.storage = coordinator.storage
         self._features = {}
         self._feature_types = FeatureTypeManager(self.config).feature_types
 
@@ -110,28 +92,20 @@ class FeatureManager:
         }
         features: dict[str, Feature] = {}
         for input_type, inputs in type_mappings.items():
+            feature_type = self.get_feature_type(input_type)
             for input in inputs:
                 features[input] = Feature(
-                    type=self._feature_types[input_type],
+                    type=feature_type,
                     state=None,
                     is_active=False,
                     probability=0.0,
                     weighted_probability=0.0,
                     last_changed=None,
                     available=True,
-                    prior=await Prior.calculate(
+                    prior=await PriorManager(self.hass).calculate(
                         entity_id=input,
                         hass=self.hass,
-                        default_prior=self._feature_types[input_type]["prior"],
-                        default_prob_given_true=self._feature_types[input_type][
-                            "prob_true"
-                        ],
-                        default_prob_given_false=self._feature_types[input_type][
-                            "prob_false"
-                        ],
-                        entity_active_states=set(
-                            self._feature_types[input_type]["active_states"]
-                        ),
+                        feature_type=feature_type,
                         primary_sensor=primary_sensor,
                         start_time=start_time,
                         end_time=end_time,
@@ -145,11 +119,12 @@ class FeatureManager:
 
     def get_entity_weight(self, entity_id: str) -> float:
         """Get the weight of a sensor."""
-        return self._features[entity_id]["type"]["weight"]
+        return self.get_feature_type(entity_id).weight
 
     def get_entity_active_states(self, entity_id: str) -> set[str]:
         """Get the active states of an entity."""
-        return set(self._features[entity_id]["type"]["active_states"])
+        active_states = self.get_feature_type(entity_id).active_states
+        return set(active_states) if active_states is not None else set()
 
     def get_feature(self, entity_id: str) -> Feature:
         """Get the feature from an entity ID."""

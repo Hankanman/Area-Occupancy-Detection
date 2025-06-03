@@ -143,7 +143,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
         )
-        self.features = FeatureManager(self.config, self.hass)
+        self.features = FeatureManager(self)
         self._prior_calculator = PriorCalculator(
             hass=self.hass,
             probabilities=self.probabilities,
