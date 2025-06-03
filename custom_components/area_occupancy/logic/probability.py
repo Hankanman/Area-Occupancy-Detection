@@ -11,9 +11,9 @@ from ..const import (
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from ..state import SensorConfiguration
+from ..models import Feature
+from ..state import PriorData, SensorConfiguration
 from ..state.containers import ProbabilityState
-from ..types import PriorData, SensorProbability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class Probability:
 
     def calculate_combined_probability(
         self,
-        sensor_probabilities: Dict[str, SensorProbability],
+        sensor_probabilities: Dict[str, Feature],
         current_probability: float,
     ) -> float:
         """Calculate combined probability from all sensor probabilities.
@@ -165,7 +165,7 @@ class Probability:
         state: State,
         prior_data: PriorData,
         current_probability: float,
-    ) -> Optional[SensorProbability]:
+    ) -> Optional[Feature]:
         """Calculate probability for a single sensor.
 
         This method calculates the probability contribution of a single sensor
@@ -200,11 +200,15 @@ class Probability:
         # Get weight from configuration
         weight = prob_config.get("weight", 1.0)
 
-        return {
-            "probability": probability,
-            "weight": weight,
-            "weighted_probability": probability * weight,
-        }
+        return Feature(
+            type=entity_type,
+            state=state.state,
+            is_active=self.config.is_active_state(entity_type.value, state.state),
+            probability=probability,
+            weighted_probability=probability * weight,
+            last_changed=state.last_changed.isoformat(),
+            available=True,
+        )
 
     def update_probability_state(
         self,

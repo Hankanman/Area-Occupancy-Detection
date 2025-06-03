@@ -58,6 +58,7 @@ CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
 CONF_WEIGHT_LIGHT: Final = "weight_light"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
+CONF_WEIGHT_WASP: Final = "weight_wasp"
 
 # File paths and configuration
 CACHE_DURATION: Final = timedelta(hours=6)

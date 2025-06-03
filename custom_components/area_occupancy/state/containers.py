@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
-from ..types import SensorInfo, SensorProbability
+from ..models import SensorInfo, SensorProbability
 
 
 @dataclass
