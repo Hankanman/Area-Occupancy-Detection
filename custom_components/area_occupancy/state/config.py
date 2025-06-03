@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional, cast
 
-from ..types import EntityType, ProbabilityConfig
+from ..models import FeatureType
 
 
 class SensorConfiguration:
@@ -11,7 +11,7 @@ class SensorConfiguration:
     def __init__(self, config: Dict[str, Any]):
         """Initialize configuration from raw config."""
         self._config = config
-        self._entity_types: Dict[str, EntityType] = {}
+        self._entity_types: Dict[str, FeatureType] = {}
         self._sensor_weights: Dict[str, float] = {}
         self._probability_configs: Dict[str, ProbabilityConfig] = {}
         self._initialize()
@@ -25,13 +25,13 @@ class SensorConfiguration:
     def _map_entity_types(self) -> None:
         """Map entity IDs to their types based on configuration."""
         type_mappings = {
-            EntityType.MOTION: self._config.get("motion_sensors", []),
-            EntityType.MEDIA: self._config.get("media_devices", []),
-            EntityType.APPLIANCE: self._config.get("appliances", []),
-            EntityType.DOOR: self._config.get("door_sensors", []),
-            EntityType.WINDOW: self._config.get("window_sensors", []),
-            EntityType.LIGHT: self._config.get("lights", []),
-            EntityType.ENVIRONMENTAL: self._config.get("environmental_sensors", []),
+            FeatureType.MOTION: self._config.get("motion_sensors", []),
+            FeatureType.MEDIA: self._config.get("media_devices", []),
+            FeatureType.APPLIANCE: self._config.get("appliances", []),
+            FeatureType.DOOR: self._config.get("door_sensors", []),
+            FeatureType.WINDOW: self._config.get("window_sensors", []),
+            FeatureType.LIGHT: self._config.get("lights", []),
+            FeatureType.ENVIRONMENTAL: self._config.get("environmental_sensors", []),
         }
 
         for entity_type, entity_ids in type_mappings.items():
@@ -66,7 +66,7 @@ class SensorConfiguration:
         custom_configs = self._config.get("probability_configs", {})
 
         # Set up configs for each entity type
-        for entity_type in EntityType:
+        for entity_type in FeatureType:
             type_config = custom_configs.get(entity_type.value, {})
             self._probability_configs[entity_type.value] = cast(
                 ProbabilityConfig,
@@ -89,7 +89,7 @@ class SensorConfiguration:
                 },
             )
 
-    def get_entity_type(self, entity_id: str) -> Optional[EntityType]:
+    def get_entity_type(self, entity_id: str) -> Optional[FeatureType]:
         """Get the type of an entity."""
         return self._entity_types.get(entity_id)
 
@@ -117,7 +117,7 @@ class SensorConfiguration:
         """Get all configured entity IDs."""
         return list(self._entity_types.keys())
 
-    def get_entity_ids_by_type(self, entity_type: EntityType) -> list[str]:
+    def get_entity_ids_by_type(self, entity_type: FeatureType) -> list[str]:
         """Get all entity IDs of a specific type."""
         return [
             entity_id
