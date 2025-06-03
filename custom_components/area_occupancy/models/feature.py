@@ -1,9 +1,23 @@
 """Feature model."""
 
-from datetime import datetime
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+_LOGGER.debug("Starting imports for feature.py")
+
+from datetime import timedelta
+
+from homeassistant.util import dt as dt_util
+
+_LOGGER.debug("Imported datetime")
+
 from typing import Any, TypedDict
 
+_LOGGER.debug("Imported typing modules")
+
 from homeassistant.core import HomeAssistant
+
+_LOGGER.debug("Imported HomeAssistant")
 
 from ..const import (
     CONF_APPLIANCES,
@@ -18,9 +32,18 @@ from ..const import (
     CONF_TEMPERATURE_SENSORS,
     CONF_WINDOW_SENSORS,
 )
-from ..logic.prior import get_prior_data
-from ..state.containers import PriorData
+
+_LOGGER.debug("Imported area_occupancy constants")
+
+from ..models.prior import Prior
+
+_LOGGER.debug("Imported Prior, get_prior_data")
+
 from .feature_type import FeatureType, FeatureTypeManager, InputTypeEnum
+
+_LOGGER.debug("Imported feature_type modules")
+
+_LOGGER.debug("Completed all imports for feature.py")
 
 
 class Feature(TypedDict):
@@ -33,18 +56,22 @@ class Feature(TypedDict):
     weighted_probability: float
     last_changed: str | None
     available: bool
-    prior: PriorData
+    prior: Prior
 
 
 class FeatureManager:
     """Manages features."""
 
-    async def __init__(self, config: dict[str, Any], hass: HomeAssistant) -> None:
+    def __init__(self, config: dict[str, Any], hass: HomeAssistant) -> None:
         """Initialize the features."""
         self.config = config
         self.hass = hass
-        self._features = await self.map_inputs_to_features()
+        self._features = {}
         self._feature_types = FeatureTypeManager(self.config).feature_types
+
+    async def async_initialize(self) -> None:
+        """Initialize the features."""
+        self._features = await self.map_inputs_to_features()
 
     @property
     def features(self) -> dict[str, Feature]:
@@ -64,8 +91,9 @@ class FeatureManager:
 
     async def map_inputs_to_features(self) -> dict[str, Feature]:
         """Map inputs to features."""
-        start_time = self.config.get(CONF_HISTORY_PERIOD, 7)
-        end_time = datetime.now()
+        history_days = self.config.get(CONF_HISTORY_PERIOD, 7)
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=history_days)
         primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         if not primary_sensor:
             raise ValueError("Primary occupancy sensor must be configured")
@@ -91,13 +119,22 @@ class FeatureManager:
                     weighted_probability=0.0,
                     last_changed=None,
                     available=True,
-                    prior=await get_prior_data(
-                        self.hass,
-                        self,
-                        primary_sensor,
-                        input,
-                        start_time,
-                        end_time,
+                    prior=await Prior.calculate(
+                        entity_id=input,
+                        hass=self.hass,
+                        default_prior=self._feature_types[input_type]["prior"],
+                        default_prob_given_true=self._feature_types[input_type][
+                            "prob_true"
+                        ],
+                        default_prob_given_false=self._feature_types[input_type][
+                            "prob_false"
+                        ],
+                        entity_active_states=set(
+                            self._feature_types[input_type]["active_states"]
+                        ),
+                        primary_sensor=primary_sensor,
+                        start_time=start_time,
+                        end_time=end_time,
                     ),
                 )
         return features
