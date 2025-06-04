@@ -59,6 +59,7 @@ from ..const import (
     DEFAULT_WASP_MOTION_TIMEOUT,
     DEFAULT_WASP_MAX_DURATION,
 )
+from ..coordinator import AreaOccupancyCoordinator
 
 
 @dataclass
@@ -216,10 +217,22 @@ class Config:
 class ConfigManager:
     """Manages configuration for Area Occupancy Detection."""
 
-    def __init__(self, config_entry: ConfigEntry):
+    def __init__(self, coordinator: AreaOccupancyCoordinator):
         """Initialize the config manager."""
-        self.config_entry = config_entry
-        self._config = Config.from_dict(self._merge_entry(config_entry))
+        self.config_entry = coordinator.config_entry
+        self._config = Config.from_dict(self._merge_entry(coordinator.config_entry))
+        self._hass = coordinator.hass
+
+    @property
+    def hass(self):
+        """Get the Home Assistant instance."""
+        if self._hass is None:
+            raise RuntimeError("Home Assistant instance not set")
+        return self._hass
+
+    def set_hass(self, hass):
+        """Set the Home Assistant instance."""
+        self._hass = hass
 
     @staticmethod
     def _merge_entry(config_entry: ConfigEntry) -> dict[str, Any]:

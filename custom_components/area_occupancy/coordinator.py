@@ -32,13 +32,11 @@ from .calculate_prior import PriorCalculator
 from .calculate_prob import ProbabilityCalculator
 from .const import (
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
     CONF_HISTORY_PERIOD,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_THRESHOLD,
     DEVICE_MANUFACTURER,
@@ -56,6 +54,7 @@ from .models.prior import PriorManager
 from .probabilities import Probabilities
 from .storage import StorageManager
 from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
+from .models.config import ConfigManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,18 +79,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         # Initialize basic attributes
         self.hass = hass
         self.config_entry = config_entry
-        # Merge data and options for the effective configuration
-        self.config = {**config_entry.data, **config_entry.options}
-        self._entity_ids: set[str] = set()
+        self.config_manager = ConfigManager(self)
+        self.config = self.config_manager.config
         self._state_lock = asyncio.Lock()
         self._storage_lock = asyncio.Lock()
         self._decay_unsub: CALLBACK_TYPE | None = None
-
-        # Initialize sensor inputs with validation
-        try:
-            self.inputs = SensorInputs.from_config(self.config)
-        except (ValueError, TypeError) as err:
-            raise ConfigEntryError(f"Invalid sensor configuration: {err}") from err
 
         # Initialize timers and intervals
         self._prior_update_interval = timedelta(hours=1)
@@ -102,71 +94,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self._remove_state_listener = None
         self._last_prior_update: str | None = None  # Store last prior calc time
 
-        # Initialize data first
-        self.data = ProbabilityState()
-        self.data.update(
-            probability=MIN_PROBABILITY,
-            previous_probability=MIN_PROBABILITY,
-            threshold=self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD) / 100.0,
-            prior_probability=MIN_PROBABILITY,
-            sensor_probabilities={},
-            decay_status=0.0,
-            current_states={},
-            previous_states={},
-            is_occupied=False,
-            decaying=False,
-            decay_start_time=None,
-            decay_start_probability=None,
-        )
-
-        # Initialize probabilities first
-        self.probabilities = Probabilities(config=self.config)
-
-        # Initialize prior state
-        self.prior_state = PriorState()
-        self.prior_state.initialize_from_defaults(self.probabilities)
-        self.prior_state.update(
-            analysis_period=self.config.get(
-                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-            ),
-        )
-
-        # Set decay configuration
-        self.config[CONF_DECAY_ENABLED] = self.config.get(
-            CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED
-        )
-        self.config[CONF_DECAY_WINDOW] = self.config.get(
-            CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW
-        )
-
-        # Initialize remaining components
-        self.storage = StorageManager(self.hass)
-        self.decay_handler = DecayHandler(self.config)
-        self.calculator = ProbabilityCalculator(
-            probabilities=self.probabilities,
-        )
-        
         # Initialize managers
+        self.storage = StorageManager(self.hass)
         self.priors = PriorManager(self)
         self.entity_types = EntityTypeManager(self)
         self.entities = EntityManager(self)
+        self.decay_handler = DecayHandler(self)
         
-        self._prior_calculator = PriorCalculator(
-            hass=self.hass,
-            probabilities=self.probabilities,
-            sensor_inputs=self.inputs,
-        )
 
     # --- Properties ---
     @property
-    def entity_ids(self) -> set[str]:
-        """Return the set of entity IDs being tracked."""
-        return self._entity_ids
-
-    @property
     def available(self) -> bool:
         """Check if the coordinator is available."""
-        primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        primary_sensor = self.config.sensors.primary_occupancy
         if not primary_sensor or not self.data:
             return False
         # Check availability directly from self.data.current_states
@@ -178,7 +118,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         """Return device info for the coordinator."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.config_entry.entry_id)},
-            name=self.config[CONF_NAME],
+            name=self.config.name,
             manufacturer=DEVICE_MANUFACTURER,
             model=DEVICE_MODEL,
             sw_version=DEVICE_SW_VERSION,
@@ -212,7 +152,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     @property
     def threshold(self) -> float:
         """Return the current occupancy threshold (0.0-1.0)."""
-        return self.data.threshold if self.data else 0.0
+        return self.config.threshold if self.config else 0.5
 
     # --- Public Methods ---
     async def async_setup(self) -> None:
@@ -297,13 +237,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # Schedule periodic prior updates regardless of initial calculation
             await self._schedule_next_prior_update()
             # --- End Prior Logic ---
-            await self.features.async_initialize()
             # Trigger an initial refresh after setup is complete
             await self.async_refresh()
 
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s",
-                self.config[CONF_NAME],
+                self.config.name,
             )
 
         except (StorageError, StateError, CalculationError) as err:
@@ -345,7 +284,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
 
             # Update configuration first
-            self.config = {**self.config_entry.data, **self.config_entry.options}
+            self.config_manager.update_from_entry(self.config_entry)
             _LOGGER.debug("Updated config: %s", self.config)
 
             # Reinitialize all components with new configuration
@@ -373,8 +312,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self.data.update(
                 probability=current_prob,  # Keep current probability
                 previous_probability=previous_prob,
-                threshold=self.config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-                / 100.0,  # Update threshold
+                threshold=self.config.threshold / 100.0,  # Update threshold
                 prior_probability=self.prior_state.overall_prior
                 if self.prior_state
                 else MIN_PROBABILITY,
@@ -389,9 +327,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             )
 
             # Reset components that depend on config
-            self.inputs = SensorInputs.from_config(self.config)
-            self.probabilities = Probabilities(config=self.config)
-            self.decay_handler = DecayHandler(self.config)
+            self.inputs = SensorInputs.from_config(self.config_manager.config.as_dict())
+            self.probabilities = Probabilities(config=self.config_manager.config.as_dict())
+            self.decay_handler = DecayHandler(self.config_manager.config.as_dict())
             # Note: PriorState does not directly depend on config options, only data (history_period)
             # which isn't changeable via options flow yet. If it were, PriorState would need reset here.
 
@@ -483,7 +421,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.data.update(
                     probability=MIN_PROBABILITY,
                     previous_probability=MIN_PROBABILITY,
-                    threshold=self.config.get("threshold", DEFAULT_THRESHOLD) / 100.0,
+                    threshold=self.config.threshold / 100.0,
                     prior_probability=MIN_PROBABILITY,
                     sensor_probabilities={},
                     decay_status=0.0,
@@ -499,9 +437,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 self.prior_state = PriorState()
                 self.prior_state.initialize_from_defaults(self.probabilities)
                 self.prior_state.update(
-                    analysis_period=self.config.get(
-                        CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                    ),
+                    analysis_period=self.config.decay.history_period,
                 )
 
             _LOGGER.debug(
@@ -519,9 +455,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             self.prior_state = PriorState()
             self.prior_state.initialize_from_defaults(self.probabilities)
             self.prior_state.update(
-                analysis_period=self.config.get(
-                    CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-                ),
+                analysis_period=self.config.decay.history_period,
             )
             # Re-raise as ConfigEntryNotReady if loading fails critically
             raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
@@ -535,9 +469,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
                 type(history_period),
             )
 
-            period = history_period or self.config.get(
-                CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD
-            )
+            period = history_period or self.config.decay.history_period
             if not isinstance(period, (int, float)) or period <= 0:
                 _LOGGER.warning(
                     "Invalid history period configured: %s. Disabling prior calculation",
@@ -1049,7 +981,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         _LOGGER.debug(
             "Scheduled next prior update for %s in area %s",
             self._next_prior_update.isoformat(),
-            self.config[CONF_NAME],
+            self.config.name,
         )
 
     async def _handle_prior_update(self, _now: datetime) -> None:
@@ -1059,17 +991,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
         try:
             _LOGGER.info(
-                "Performing scheduled prior update for area %s", self.config[CONF_NAME]
+                "Performing scheduled prior update for area %s", self.config.name
             )
             await self.update_learned_priors()
             _LOGGER.info(
                 "Finished scheduled prior update task trigger for area %s",
-                self.config[CONF_NAME],
+                self.config.name,
             )
         except Exception:
             _LOGGER.exception(
                 "Error occurred during scheduled prior update for area %s",
-                self.config[CONF_NAME],
+                self.config.name,
             )
             # Ensure rescheduling happens even if the update task itself failed unexpectedly
             if not self._prior_update_tracker:
@@ -1081,7 +1013,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
     # --- Decay Handling ---
     def _start_decay_updates(self) -> None:
         """Start regular decay updates every 5 seconds."""
-        if not self.config.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED):
+        if not self.config.decay.enabled:
             _LOGGER.debug("Decay updates disabled by configuration")
             return
 
@@ -1130,7 +1062,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             _LOGGER.debug("Attempting to save prior state data")
             await self.storage.async_save_instance_prior_state(
                 self.config_entry.entry_id,
-                self.config.get(CONF_NAME, "Unknown Area"),
+                self.config.name,
                 self.prior_state,
             )
             _LOGGER.debug("Prior state data saved successfully")

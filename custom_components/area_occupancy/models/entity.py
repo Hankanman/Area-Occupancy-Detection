@@ -1,27 +1,13 @@
 """Entity model."""
 
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 
 from homeassistant.util import dt as dt_util
-
-from ..const import (
-    CONF_APPLIANCES,
-    CONF_DOOR_SENSORS,
-    CONF_HISTORY_PERIOD,
-    CONF_HUMIDITY_SENSORS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
-    CONF_MEDIA_DEVICES,
-    CONF_MOTION_SENSORS,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_WINDOW_SENSORS,
-)
 from ..coordinator import AreaOccupancyCoordinator
-from .prior import Prior
-from .entity_type import EntityType, InputTypeEnum
-from ..utils import bayesian_update
+from .prior import Prior, PriorType
+from .entity_type import EntityType, InputType
+from ..utils import bayesian_update, validate_prob, validate_datetime
 
 
 @dataclass
@@ -33,9 +19,15 @@ class Entity:
     is_active: bool = False
     probability: float = 0.0
     weighted_probability: float = 0.0
-    last_changed: str | None = None
+    last_changed: datetime | None = None
     available: bool = True
     prior: Prior | None = None
+
+    def __post_init__(self):
+        """Post init."""
+        self.probability = validate_prob(self.probability)
+        self.weighted_probability = validate_prob(self.weighted_probability)
+        self.last_changed = validate_datetime(self.last_changed)
 
 
 class EntityManager:
@@ -47,7 +39,7 @@ class EntityManager:
     ) -> None:
         """Initialize the entities."""
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.config = coordinator.config_manager.config
         self.hass = coordinator.hass
         self.storage = coordinator.storage
         self._entities: dict[str, Entity] = {}
@@ -65,49 +57,104 @@ class EntityManager:
         """Update the entities."""
         self._entities = await self.map_inputs_to_entities()
 
-    def update_feature_state(
+    def create_entity(
+        self,
+        entity_id: str,
+        entity_type: EntityType,
+        state: str | float | bool | None = None,
+        is_active: bool = False,
+        probability: float = 0.0,
+        weighted_probability: float = 0.0,
+        last_changed: datetime | None = None,
+        available: bool = True,
+        prior: Prior | None = None,
+    ) -> Entity:
+        """Create a new entity and add it to the manager.
+        
+        Args:
+            entity_id: The unique identifier for the entity
+            entity_type: The type of entity
+            state: The current state of the entity
+            is_active: Whether the entity is active
+            probability: The probability value
+            weighted_probability: The weighted probability value
+            last_changed: When the entity last changed state
+            available: Whether the entity is available
+            prior: The prior probability information
+            
+        Returns:
+            The created Entity instance
+            
+        Raises:
+            ValueError: If an entity with the given ID already exists
+        """
+        if entity_id in self._entities:
+            raise ValueError(f"Entity already exists: {entity_id}")
+            
+        entity = Entity(
+            type=entity_type,
+            state=state,
+            is_active=is_active,
+            probability=validate_prob(probability),
+            weighted_probability=validate_prob(weighted_probability),
+            last_changed=validate_datetime(last_changed),
+            available=available,
+            prior=prior,
+        )
+        
+        self._entities[entity_id] = entity
+        return entity
+
+    def update_entity_state(
         self,
         entity_id: str,
         state: str | float | bool | None = None,
         is_active: bool | None = None,
         probability: float | None = None,
         weighted_probability: float | None = None,
-        last_changed: str | None = None,
+        last_changed: datetime | None = None,
         available: bool | None = None,
-    ) -> None:
-        """Update a feature's state."""
+    ) -> Entity:
+        """Update an entity's state.
+        
+        Args:
+            entity_id: The ID of the entity to update
+            state: New state value
+            is_active: New active status
+            probability: New probability value
+            weighted_probability: New weighted probability value
+            last_changed: New last changed timestamp
+            available: New availability status
+            
+        Returns:
+            The updated Entity instance
+            
+        Raises:
+            ValueError: If the entity is not found
+        """
         if entity_id not in self._entities:
-            raise ValueError(f"Feature not found for entity: {entity_id}")
+            raise ValueError(f"Entity not found: {entity_id}")
 
         entity = self._entities[entity_id]
+        
+        # Create a new Entity instance with updated values
+        updated_entity = replace(
+            entity,
+            state=state if state is not None else entity.state,
+            is_active=is_active if is_active is not None else entity.is_active,
+            probability=validate_prob(probability) if probability is not None else entity.probability,
+            weighted_probability=validate_prob(weighted_probability) if weighted_probability is not None else entity.weighted_probability,
+            last_changed=validate_datetime(last_changed) if last_changed is not None else entity.last_changed,
+            available=available if available is not None else entity.available,
+        )
+        
+        self._entities[entity_id] = updated_entity
+        return updated_entity
 
-        # Update only provided values
-        if state is not None:
-            entity.state = state
-        if is_active is not None:
-            entity.is_active = is_active
-        if probability is not None:
-            if not isinstance(probability, (int, float)) or not 0 <= probability <= 1:
-                raise ValueError(f"Invalid probability value: {probability}")
-            entity.probability = probability
-        if weighted_probability is not None:
-            if (
-                not isinstance(weighted_probability, (int, float))
-                or not 0 <= weighted_probability <= 1
-            ):
-                raise ValueError(
-                    f"Invalid weighted probability value: {weighted_probability}"
-                )
-            entity.weighted_probability = weighted_probability
-        if last_changed is not None:
-            entity.last_changed = last_changed
-        if available is not None:
-            entity.available = available
-
-    def reset_feature_state(self, entity_id: str) -> None:
-        """Reset a feature's state to defaults."""
+    def reset_entity_state(self, entity_id: str) -> None:
+        """Reset a entity's state to defaults."""
         if entity_id not in self._entities:
-            raise ValueError(f"Feature not found for entity: {entity_id}")
+            raise ValueError(f"Entity not found: {entity_id}")
 
         entity = self._entities[entity_id]
         entity.state = None
@@ -117,64 +164,59 @@ class EntityManager:
         entity.last_changed = None
         entity.available = True
 
-    def reset_all_feature_states(self) -> None:
-        """Reset all feature states to defaults."""
+    def reset_all_entity_states(self) -> None:
+        """Reset all entity states to defaults."""
         for entity_id in self._entities:
-            self.reset_feature_state(entity_id)
+            self.reset_entity_state(entity_id)
 
     async def map_inputs_to_entities(self) -> dict[str, Entity]:
         """Map inputs to entities."""
-        history_days = self.config.get(CONF_HISTORY_PERIOD, 7)
+        history_days = self.config.decay.history_period
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=history_days)
-        primary_sensor = self.config.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+        primary_sensor = self.config.sensors.primary_occupancy
         if not primary_sensor:
             raise ValueError("Primary occupancy sensor must be configured")
         type_mappings = {
-            InputTypeEnum.MOTION: self.config.get(CONF_MOTION_SENSORS, []),
-            InputTypeEnum.MEDIA: self.config.get(CONF_MEDIA_DEVICES, []),
-            InputTypeEnum.APPLIANCE: self.config.get(CONF_APPLIANCES, []),
-            InputTypeEnum.DOOR: self.config.get(CONF_DOOR_SENSORS, []),
-            InputTypeEnum.WINDOW: self.config.get(CONF_WINDOW_SENSORS, []),
-            InputTypeEnum.LIGHT: self.config.get(CONF_LIGHTS, []),
-            InputTypeEnum.ENVIRONMENTAL: self.config.get(CONF_ILLUMINANCE_SENSORS, [])
-            + self.config.get(CONF_HUMIDITY_SENSORS, [])
-            + self.config.get(CONF_TEMPERATURE_SENSORS, []),
+            InputType.MOTION: self.config.sensors.motion,
+            InputType.MEDIA: self.config.sensors.media,
+            InputType.APPLIANCE: self.config.sensors.appliances,
+            InputType.DOOR: self.config.sensors.doors,
+            InputType.WINDOW: self.config.sensors.windows,
+            InputType.LIGHT: self.config.sensors.lights,
+            InputType.ENVIRONMENTAL: self.config.sensors.illuminance
+            + self.config.sensors.humidity
+            + self.config.sensors.temperature,
         }
         entities: dict[str, Entity] = {}
         for input_type, inputs in type_mappings.items():
-            feature_type = self.coordinator.feature_type_manager.get_feature_type(
+            entity_type = self.coordinator.entity_types.get_entity_type(
                 input_type
             )
             for input in inputs:
-                entities[input] = Entity(
-                    type=feature_type,
-                    state=None,
-                    is_active=False,
-                    probability=0.0,
-                    weighted_probability=0.0,
-                    last_changed=None,
-                    available=True,
-                    prior=await self.coordinator.prior_manager.calculate(
-                        entity_id=input,
-                        hass=self.hass,
-                        feature_type=feature_type,
-                        primary_sensor=primary_sensor,
-                        start_time=start_time,
-                        end_time=end_time,
-                    ),
+                prior = await self.coordinator.priors.calculate(
+                    entity_id=input,
+                    entity_type=entity_type,
+                    hass=self.hass,
+                    primary_sensor=primary_sensor,
+                    start_time=start_time,
+                    end_time=end_time,
+                    prior_type=PriorType.ENTITY,
+                )
+                entities[input] = self.create_entity(
+                    entity_id=input,
+                    entity_type=entity_type,
+                    prior=prior,
                 )
         return entities
 
     def get_entity_weight(self, entity_id: str) -> float:
         """Get the weight of a sensor."""
-        return self.coordinator.feature_type_manager.get_feature_type(entity_id).weight
+        return self.coordinator.entities.get_entity(entity_id).type.weight
 
     def get_entity_active_states(self, entity_id: str) -> set[str]:
         """Get the active states of an entity."""
-        active_states = self.coordinator.feature_type_manager.get_feature_type(
-            entity_id
-        ).active_states
+        active_states = self.coordinator.entities.get_entity(entity_id).type.active_states
         return set(active_states) if active_states is not None else set()
 
     def get_entity(self, entity_id: str) -> Entity:
@@ -189,7 +231,7 @@ class EntityManager:
             return entity
 
         unweighted_prob = bayesian_update(
-            entity.prior,
+            entity.type.prior,
             entity.type.prob_true,
             entity.type.prob_false,
             entity.is_active,
@@ -197,7 +239,8 @@ class EntityManager:
         weight = float(entity.type.weight)
         weighted_prob = unweighted_prob * weight
 
-        return entity.copy(
+        return replace(
+            entity,
             probability=unweighted_prob,
             weighted_probability=weighted_prob,
             is_active=True,
