@@ -112,9 +112,9 @@ class PriorManager:
 
         # Use default priors as fallback values
         fallback_prior = Prior(
-            prob_given_true=entity_type["prob_true"],
-            prob_given_false=entity_type["prob_false"],
-            prior=entity_type["prior"],
+            prob_given_true=entity_type.prob_true,
+            prob_given_false=entity_type.prob_false,
+            prior=entity_type.prior,
             last_updated=validate_datetime(None),
             type=prior_type,
         )
@@ -191,14 +191,14 @@ class PriorManager:
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_ON,
-            entity_type["active_states"],
+            entity_type.active_states or [],
         )
         prob_given_false = self._calculate_conditional_probability_with_intervals(
             entity_id,
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_OFF,
-            entity_type["active_states"],
+            entity_type.active_states or [],
         )
 
         prior = self._calculate_prior_probability(

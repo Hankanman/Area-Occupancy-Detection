@@ -131,7 +131,7 @@ class EntityTypeManager:
     ) -> None:
         """Initialize the entity type manager."""
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.config = coordinator.config_manager.config
         self._entity_types = self._build_entity_types()
 
     @property
@@ -184,30 +184,33 @@ class EntityTypeManager:
             p = params.copy()
             # Allow config to override weight/active_states
             if self.config:
-                # Validate config overrides
-                weight_key = f"{input_type.value}_weight"
-                states_key = f"{input_type.value}_active_states"
-                range_key = f"{input_type.value}_active_range"
-                
-                if weight_key in self.config:
-                    weight = self.config[weight_key]
-                    if not isinstance(weight, (int, float)) or not 0 <= weight <= 1:
-                        raise ValueError(f"Invalid weight for {input_type}: {weight}")
-                    p["weight"] = weight
-                
-                if states_key in self.config:
-                    states = self.config[states_key]
-                    if not isinstance(states, list) or not all(isinstance(s, str) for s in states):
-                        raise ValueError(f"Invalid active states for {input_type}: {states}")
-                    p["active_states"] = states
-                    p["active_range"] = None
-                
-                if range_key in self.config:
-                    range_val = self.config[range_key]
-                    if not isinstance(range_val, tuple) or len(range_val) != 2:
-                        raise ValueError(f"Invalid active range for {input_type}: {range_val}")
-                    p["active_range"] = range_val
-                    p["active_states"] = None
+                # Get the weights from the config's weights attribute
+                weights = getattr(self.config, "weights", None)
+                if weights:
+                    weight_attr = getattr(weights, input_type.value, None)
+                    if weight_attr is not None:
+                        if not isinstance(weight_attr, (int, float)) or not 0 <= weight_attr <= 1:
+                            raise ValueError(f"Invalid weight for {input_type}: {weight_attr}")
+                        p["weight"] = weight_attr
+
+                # Get the sensor states from the config's sensor_states attribute
+                sensor_states = getattr(self.config, "sensor_states", None)
+                if sensor_states:
+                    states_attr = getattr(sensor_states, input_type.value, None)
+                    if states_attr is not None:
+                        if not isinstance(states_attr, list) or not all(isinstance(s, str) for s in states_attr):
+                            raise ValueError(f"Invalid active states for {input_type}: {states_attr}")
+                        p["active_states"] = states_attr
+                        p["active_range"] = None
+
+                # For environmental sensors, check for active_range in config
+                if input_type == InputType.ENVIRONMENTAL:
+                    range_attr = getattr(self.config, "environmental_active_range", None)
+                    if range_attr is not None:
+                        if not isinstance(range_attr, tuple) or len(range_attr) != 2:
+                            raise ValueError(f"Invalid active range for {input_type}: {range_attr}")
+                        p["active_range"] = range_attr
+                        p["active_states"] = None
             
             try:
                 types[input_type] = EntityType(**p)
