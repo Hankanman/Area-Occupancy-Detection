@@ -1,6 +1,6 @@
 """Type definitions for Area Occupancy Detection."""
 
-from .feature import Feature
-from .feature_type import FeatureType, FeatureTypeManager, InputTypeEnum
+from .entity import Entity
+from .entity_type import EntityType, EntityTypeManager, InputTypeEnum
 
-__all__ = ["Feature", "FeatureType", "FeatureTypeManager", "InputTypeEnum"]
+__all__ = ["Entity", "EntityType", "EntityTypeManager", "InputTypeEnum"]
