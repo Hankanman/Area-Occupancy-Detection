@@ -1,6 +1,7 @@
 """Utility functions for the area occupancy component."""
 
 from datetime import datetime
+import logging
 
 from homeassistant.util import dt as dt_util
 
@@ -12,6 +13,8 @@ from .const import (
     MIN_PROBABILITY,
     MIN_WEIGHT,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 #################################
 # Validation Methods
@@ -50,3 +53,45 @@ def validate_weight(value: float) -> float:
             f"Weight must be between {MIN_WEIGHT} and {MAX_WEIGHT} got: {value}"
         )
     return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
+
+
+def bayesian_update(
+    prior: float,
+    prob_given_true: float,
+    prob_given_false: float,
+    is_active: bool,
+) -> float:
+    """Perform a Bayesian update using Bayes' theorem.
+
+    Args:
+        prior: The prior probability (0.0-1.0)
+        prob_given_true: Probability of evidence given true state (0.0-1.0)
+        prob_given_false: Probability of evidence given false state (0.0-1.0)
+        is_active: Whether the sensor is in an active state (default: True)
+
+    Returns:
+        The updated probability (0.0-1.0)
+
+    """
+    # Validate input probabilities
+    prior = validate_prob(prior)
+    prob_given_true = validate_prob(prob_given_true)
+    prob_given_false = validate_prob(prob_given_false)
+
+    # Calculate using Bayes' theorem: P(H|E) = P(E|H)P(H) / P(E)
+    # where P(E) = P(E|H)P(H) + P(E|¬H)P(¬H)
+    # Use prob_given_true if active, prob_given_false if inactive
+    evidence_prob = prob_given_true if is_active else prob_given_false
+    numerator = evidence_prob * prior
+    denominator = numerator + (prob_given_false if is_active else prob_given_true) * (
+        1 - prior
+    )
+
+    if denominator == 0:
+        _LOGGER.warning(
+            "Denominator is zero in Bayesian update, returning MIN_PROBABILITY"
+        )
+        return MIN_PROBABILITY
+
+    result = numerator / denominator
+    return validate_prob(result)

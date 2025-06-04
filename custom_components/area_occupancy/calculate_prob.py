@@ -15,6 +15,7 @@ from .types import (
     SensorInfo,
     SensorProbability,
 )
+from .utils import bayesian_update
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -217,7 +218,7 @@ class ProbabilityCalculator:
             p_true, p_false, prior = self._get_sensor_priors(
                 entity_id, sensor_config, prior_state
             )
-            unweighted_prob = bayesian_update(prior, p_true, p_false)
+            unweighted_prob = bayesian_update(prior, p_true, p_false, is_active=True)
             # Apply weight directly here
             weight = float(sensor_config["weight"])  # Cache weight
             weighted_prob = unweighted_prob * weight
@@ -249,37 +250,3 @@ class ProbabilityCalculator:
             )
             # Re-raise to be handled by the coordinator
             raise
-
-
-def bayesian_update(
-    prior: float,
-    prob_given_true: float,
-    prob_given_false: float,
-) -> float:
-    """Perform a Bayesian update using Bayes' theorem."""
-    # Validate input probabilities
-    if not all(0 <= p <= 1 for p in (prior, prob_given_true, prob_given_false)):
-        raise ValueError("All probabilities must be between 0 and 1")
-
-    # Clamp input probabilities
-    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
-    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
-    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
-
-    # Calculate using Bayes' theorem: P(H|E) = P(E|H)P(H) / P(E)
-    # where P(E) = P(E|H)P(H) + P(E|¬H)P(¬H)
-    numerator = prob_given_true * prior
-    denominator = numerator + prob_given_false * (1 - prior)
-
-    if denominator == 0:
-        # Instead of raising, return a boundary value? Let's return MIN_PROBABILITY
-        # to avoid stopping the entire process for one sensor.
-        _LOGGER.warning(
-            "Denominator is zero in Bayesian update, returning MIN_PROBABILITY"
-        )
-        return MIN_PROBABILITY
-        # raise ZeroDivisionError("Denominator would be zero in Bayesian update")
-
-    # Calculate and clamp result
-    result = numerator / denominator
-    return max(MIN_PROBABILITY, min(result, MAX_PROBABILITY))

@@ -1,4 +1,4 @@
-"""Unit tests for AreaOccupancyStore and related storage exception handling in the Area Occupancy Detection integration.
+"""Unit tests for StorageManager and related storage exception handling in the Area Occupancy Detection integration.
 
 These tests cover:
 - Creation of empty storage structure
@@ -15,7 +15,7 @@ from custom_components.area_occupancy.exceptions import (  # noqa: TID252
     StorageLoadError,
     StorageSaveError,
 )
-from custom_components.area_occupancy.storage import AreaOccupancyStore  # noqa: TID252
+from custom_components.area_occupancy.storage import StorageManager  # noqa: TID252
 from custom_components.area_occupancy.types import (  # noqa: TID252
     InstanceData,
     LoadedInstanceData,
@@ -29,8 +29,8 @@ from custom_components.area_occupancy.types import (  # noqa: TID252
 
 @pytest.fixture
 def store(mock_hass):
-    """Return an AreaOccupancyStore instance using the mock HomeAssistant object."""
-    return AreaOccupancyStore(mock_hass)
+    """Return an StorageManager instance using the mock HomeAssistant object."""
+    return StorageManager(mock_hass)
 
 
 @pytest.mark.asyncio
