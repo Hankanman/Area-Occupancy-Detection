@@ -5,6 +5,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Dict, List, TypedDict
 
 from homeassistant.components.recorder.history import get_significant_states
@@ -21,7 +22,8 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..utils import validate_datetime, validate_prior, validate_prob
-from .feature_type import FeatureType
+from .entity_type import EntityType
+from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +35,12 @@ class TimeInterval(TypedDict):
     end: datetime
     state: str
 
+class PriorType(StrEnum):
+    """Prior type."""
+
+    ENTITY = "entity"
+    ENTITY_TYPE = "entity_type"
+
 
 @dataclass
 class Prior:
@@ -42,6 +50,7 @@ class Prior:
     prob_given_true: float
     prob_given_false: float
     last_updated: datetime
+    type: PriorType
 
     def __post_init__(self):
         """Validate properties after initialization."""
@@ -54,14 +63,38 @@ class Prior:
 class PriorManager:
     """Manages prior probability calculations."""
 
-    def __init__(self, hass: HomeAssistant):
+    def __init__(self, coordinator: AreaOccupancyCoordinator):
         """Initialize the prior manager."""
-        self.hass = hass
+        self.coordinator = coordinator
+        self.config = coordinator.config
+        self._priors: dict[str, Prior] = {}
+
+    @property
+    def priors(self) -> dict[str, Prior]:
+        """Get all stored priors."""
+        return self._priors
+
+    def get_prior(self, entity_id: str) -> Prior | None:
+        """Get the prior for an entity."""
+        return self._priors.get(entity_id)
+
+    def update_prior(self, entity_id: str, prior: Prior) -> None:
+        """Update the prior for an entity."""
+        self._priors[entity_id] = prior
+
+    def remove_prior(self, entity_id: str) -> None:
+        """Remove the prior for an entity."""
+        self._priors.pop(entity_id, None)
+
+    def clear_priors(self) -> None:
+        """Clear all stored priors."""
+        self._priors.clear()
 
     async def calculate(
         self,
         hass: HomeAssistant,
-        feature_type: FeatureType,
+        entity_type: EntityType,
+        prior_type: PriorType,
         primary_sensor: str,
         entity_id: str,
         start_time: datetime,
@@ -79,11 +112,18 @@ class PriorManager:
 
         # Use default priors as fallback values
         fallback_prior = Prior(
-            prob_given_true=feature_type["prob_true"],
-            prob_given_false=feature_type["prob_false"],
-            prior=feature_type["prior"],
+            prob_given_true=entity_type["prob_true"],
+            prob_given_false=entity_type["prob_false"],
+            prior=entity_type["prior"],
             last_updated=validate_datetime(None),
+            type=prior_type,
         )
+
+        # Check if we have a cached prior that's still valid
+        cached_prior = self.get_prior(entity_id)
+        if cached_prior and cached_prior.last_updated > start_time:
+            _LOGGER.debug("Using cached prior for %s", entity_id)
+            return cached_prior
 
         is_primary = entity_id == primary_sensor
 
@@ -151,26 +191,32 @@ class PriorManager:
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_ON,
-            feature_type["active_states"],
+            entity_type["active_states"],
         )
         prob_given_false = self._calculate_conditional_probability_with_intervals(
             entity_id,
             entity_intervals,
             {primary_sensor: primary_intervals},
             STATE_OFF,
-            feature_type["active_states"],
+            entity_type["active_states"],
         )
 
         prior = self._calculate_prior_probability(
             prob_given_true, prob_given_false, primary_intervals
         )
 
-        return Prior(
+        calculated_prior = Prior(
             prior=prior,
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             last_updated=validate_datetime(None),
+            type=prior_type,
         )
+
+        # Store the calculated prior
+        self.update_prior(entity_id, calculated_prior)
+
+        return calculated_prior
 
     async def _get_states_from_recorder(
         self,
