@@ -442,7 +442,7 @@ async def test_coordinator_async_update_threshold(
 
 
 @patch(
-    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+    "custom_components.area_occupancy.storage.StorageManager.async_load_instance_prior_state"
 )
 async def test_coordinator_async_load_stored_data_success(
     mock_load_instance,
@@ -474,7 +474,7 @@ async def test_coordinator_async_load_stored_data_success(
 
 
 @patch(
-    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+    "custom_components.area_occupancy.storage.StorageManager.async_load_instance_prior_state"
 )
 async def test_coordinator_async_load_stored_data_no_data(
     mock_load_instance,
@@ -500,7 +500,7 @@ async def test_coordinator_async_load_stored_data_no_data(
 
 
 @patch(
-    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state"
+    "custom_components.area_occupancy.storage.StorageManager.async_load_instance_prior_state"
 )
 async def test_coordinator_async_load_stored_data_error(
     mock_load_instance,
@@ -585,7 +585,7 @@ async def test_coordinator_update_learned_priors_with_error(
 
 
 @patch(
-    "custom_components.area_occupancy.storage.AreaOccupancyStore.async_save_instance_prior_state"
+    "custom_components.area_occupancy.storage.StorageManager.async_save_instance_prior_state"
 )
 async def test_coordinator_save_prior_state_data(
     mock_save_state,
@@ -707,7 +707,7 @@ async def test_coordinator_setup_error_handling(
     # Test storage error handling
     with (
         patch(
-            "custom_components.area_occupancy.storage.AreaOccupancyStore.async_load_instance_prior_state",
+            "custom_components.area_occupancy.storage.StorageManager.async_load_instance_prior_state",
             side_effect=StorageError("Storage error"),
         ),
         pytest.raises(ConfigEntryNotReady),

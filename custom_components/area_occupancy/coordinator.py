@@ -50,9 +50,11 @@ from .const import (
 )
 from .decay_handler import DecayHandler
 from .exceptions import CalculationError, StateError, StorageError
-from .models.feature import FeatureManager
+from .models.entity import EntityManager
+from .models.entity_type import EntityTypeManager
+from .models.prior import PriorManager
 from .probabilities import Probabilities
-from .storage import AreaOccupancyStore
+from .storage import StorageManager
 from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,12 +140,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         )
 
         # Initialize remaining components
-        self.storage = AreaOccupancyStore(self.hass)
+        self.storage = StorageManager(self.hass)
         self.decay_handler = DecayHandler(self.config)
         self.calculator = ProbabilityCalculator(
             probabilities=self.probabilities,
         )
-        self.features = FeatureManager(self)
+        
+        # Initialize managers
+        self.priors = PriorManager(self)
+        self.entity_types = EntityTypeManager(self)
+        self.entities = EntityManager(self)
+        
         self._prior_calculator = PriorCalculator(
             hass=self.hass,
             probabilities=self.probabilities,

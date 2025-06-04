@@ -13,7 +13,7 @@ from .types import InstanceData, LoadedInstanceData, PriorState, StoredData
 _LOGGER = logging.getLogger(__name__)
 
 
-class AreaOccupancyStore(Store[StoredData]):
+class StorageManager(Store[StoredData]):
     """Store class for area occupancy data."""
 
     def __init__(
