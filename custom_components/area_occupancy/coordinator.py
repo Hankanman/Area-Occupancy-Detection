@@ -22,7 +22,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
-    async_track_time_interval,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -31,31 +30,30 @@ from homeassistant.util import dt as dt_util
 from .calculate_prior import PriorCalculator
 from .calculate_prob import ProbabilityCalculator
 from .const import (
-    CONF_DECAY_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_NAME,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_THRESHOLD,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
-    MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from .models.decay import DecayManager
 from .exceptions import CalculationError, StateError, StorageError
+from .models.config import ConfigManager
 from .models.entity import EntityManager
 from .models.entity_type import EntityTypeManager
 from .models.prior import PriorManager
-from .models.probability import ProbabilityManager
 from .probabilities import Probabilities
 from .storage import StorageManager
-from .types import PriorState, ProbabilityState, SensorInfo, SensorInputs, TypeAggregate, SensorProbability
-from .models.config import ConfigManager
+from .types import (
+    PriorState,
+    ProbabilityState,
+    SensorInfo,
+    SensorInputs,
+    SensorProbability,
+    TypeAggregate,
+)
+from .utils import validate_prob
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,9 +96,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
         self.storage = StorageManager(self.hass)
         self.priors = PriorManager(self)
         self.entity_types = EntityTypeManager(self)
-        self.entities = EntityManager(self)
-        self.decay = DecayManager(self)
-        self._probability_manager = ProbabilityManager(self)
+        self.entity_manager = EntityManager(self)
+        self.entities = self.entity_manager.entities
 
     # --- Properties ---
     @property
@@ -123,6 +120,37 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             model=DEVICE_MODEL,
             sw_version=DEVICE_SW_VERSION,
         )
+
+    @property
+    def complementary_probability(self) -> float:
+        """Calculate the complementary probability across all entities.
+
+        This represents the overall probability that the area is occupied,
+        taking into account all entity probabilities and their weights.
+
+        Returns:
+            float: The complementary probability (0.0-1.0)
+
+        """
+        if not self.entities:
+            return MIN_PROBABILITY
+
+        # Calculate weighted sum of all entity probabilities
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        for entity in self.entities.values():
+            if entity.is_active:  # Only consider active entities
+                weight = entity.type.weight
+                total_weight += weight
+                weighted_sum += entity.probability.decayed_probability * weight
+
+        if total_weight == 0:
+            return MIN_PROBABILITY
+
+        # Calculate final probability
+        final_probability = weighted_sum / total_weight
+        return validate_prob(final_probability)
 
     @property
     def prior_update_interval(self) -> timedelta:
@@ -310,7 +338,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
 
             # Reset components that depend on config
             self.inputs = SensorInputs.from_config(self.config_manager.config.as_dict())
-            self.probabilities = Probabilities(config=self.config_manager.config.as_dict())
+            self.probabilities = Probabilities(
+                config=self.config_manager.config.as_dict()
+            )
             self.decay = DecayManager(self)
             # Note: PriorState does not directly depend on config options, only data (history_period)
             # which isn't changeable via options flow yet. If it were, PriorState would need reset here.
@@ -721,15 +751,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             # --- Calculate Probabilities for Each Entity ---
             for entity_id, entity in self.entities.entities.items():
                 # Calculate probability for this entity
-                probability = self._probability_manager.calculate_entity_probability(entity)
-                
+                probability = self._probability_manager.calculate_entity_probability(
+                    entity
+                )
+
                 # Create SensorProbability object
                 sensor_probability = SensorProbability(
                     probability=probability.probability,
                     weight=entity.type.weight,
                     weighted_probability=probability.weighted_probability,
                 )
-                
+
                 # Update sensor probabilities in data
                 self.data.sensor_probabilities[entity_id] = sensor_probability
 
@@ -762,9 +794,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[ProbabilityState]):
             should_reset = not active_sensors_exist
 
             if should_reset:
-                _LOGGER.debug(
-                    "Resetting state: no active sensors"
-                )
+                _LOGGER.debug("Resetting state: no active sensors")
                 self.data.probability = MIN_PROBABILITY
                 self.data.is_occupied = False
                 # Clear all probabilities
