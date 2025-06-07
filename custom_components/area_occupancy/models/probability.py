@@ -1,21 +1,23 @@
 """Probability model for Area Occupancy Detection."""
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+import logging
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import MIN_PROBABILITY
+from ..const import MAX_PROBABILITY, MIN_PROBABILITY
+from ..exceptions import StateError
 from ..utils import validate_datetime, validate_prob
+from .decay import Decay
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class Probability:
-    """Represents the probability state for an entity."""
+    """Probability model for Area Occupancy Detection."""
 
     probability: float
     decayed_probability: float
@@ -23,19 +25,18 @@ class Probability:
     last_updated: datetime
     is_active: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate properties after initialization."""
         self.probability = validate_prob(self.probability)
         self.decayed_probability = validate_prob(self.decayed_probability)
-        self.decay_factor = validate_prob(self.decay_factor)
         self.last_updated = validate_datetime(self.last_updated)
 
     def update(
         self,
-        probability: Optional[float] = None,
-        decayed_probability: Optional[float] = None,
-        decay_factor: Optional[float] = None,
-        is_active: Optional[bool] = None,
+        probability: float | None = None,
+        decayed_probability: float | None = None,
+        decay_factor: float | None = None,
+        is_active: bool | None = None,
     ) -> None:
         """Update probability values.
 
@@ -50,8 +51,6 @@ class Probability:
             self.probability = validate_prob(probability)
         if decayed_probability is not None:
             self.decayed_probability = validate_prob(decayed_probability)
-        if decay_factor is not None:
-            self.decay_factor = validate_prob(decay_factor)
         if is_active is not None:
             self.is_active = is_active
         self.last_updated = dt_util.utcnow()
@@ -126,3 +125,72 @@ class Probability:
 
         probability = numerator / denominator
         return validate_prob(probability)
+
+    def apply_decay(self, decay: Decay) -> None:
+        """Apply decay to the probability.
+
+        Args:
+            decay: The decay configuration to apply
+
+        Raises:
+            StateError: If there's an error applying the decay
+
+        """
+        try:
+            if not decay.decay_enabled:
+                return
+
+            # Calculate time difference
+            now = dt_util.utcnow()
+            if decay.decay_start_time is None:
+                decay.decay_start_time = now
+                decay.decay_start_probability = self.probability
+                return
+
+            time_diff = (now - decay.decay_start_time).total_seconds()
+            if time_diff < decay.decay_window:
+                return
+
+            # Calculate decay factor
+            decay_factor = max(
+                MIN_PROBABILITY,
+                min(
+                    MAX_PROBABILITY,
+                    1.0 - (time_diff / decay.decay_window) * decay.decay_factor,
+                ),
+            )
+
+            # Apply decay
+            self.decay_factor = decay_factor
+            self.decayed_probability = max(
+                MIN_PROBABILITY,
+                min(MAX_PROBABILITY, self.probability * decay_factor),
+            )
+
+        except Exception as err:
+            raise StateError(f"Error applying decay: {err}") from err
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert probability to dictionary for storage."""
+        return {
+            "probability": self.probability,
+            "decayed_probability": self.decayed_probability,
+            "decay_factor": self.decay_factor,
+            "last_updated": self.last_updated.isoformat(),
+            "is_active": self.is_active,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Probability":
+        """Create probability from dictionary."""
+        last_updated = dt_util.parse_datetime(data["last_updated"])
+        if last_updated is None:
+            last_updated = dt_util.utcnow()
+
+        return cls(
+            probability=data["probability"],
+            decayed_probability=data["decayed_probability"],
+            decay_factor=data["decay_factor"],
+            last_updated=last_updated,
+            is_active=data["is_active"],
+        )

@@ -1,15 +1,14 @@
 """Decay model for Area Occupancy Detection."""
 
-import logging
-import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final
+import logging
+import math
+from typing import Any, Final
 
 from homeassistant.util import dt as dt_util
 
 from ..const import DECAY_LAMBDA, MAX_PROBABILITY, MIN_PROBABILITY
-from ..utils import validate_datetime, validate_prob
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,31 +19,51 @@ MAX_DECAY_WINDOW: Final[int] = 3600  # Maximum decay window in seconds
 
 @dataclass
 class Decay:
-    """Represents decay state for an entity."""
+    """Decay model for Area Occupancy Detection."""
 
-    is_decaying: bool = False
-    decay_start_time: datetime | None = None
-    decay_start_probability: float | None = None
-    decay_window: int = 300  # Default 5 minutes
-    decay_enabled: bool = True
-    decay_factor: float = 1.0
+    is_decaying: bool
+    decay_start_time: datetime | None
+    decay_start_probability: float
+    decay_window: int  # in seconds
+    decay_enabled: bool
+    decay_factor: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate properties after initialization."""
-        if self.decay_start_probability is not None:
-            self.decay_start_probability = validate_prob(self.decay_start_probability)
-        self.decay_start_time = validate_datetime(self.decay_start_time)
-        self.decay_factor = validate_prob(self.decay_factor)
+        self.decay_start_probability = max(
+            MIN_PROBABILITY, min(MAX_PROBABILITY, self.decay_start_probability)
+        )
+        self.decay_factor = max(
+            MIN_PROBABILITY, min(MAX_PROBABILITY, self.decay_factor)
+        )
+        self.decay_window = max(1, self.decay_window)
 
-        # Validate decay window
-        if not isinstance(self.decay_window, (int, float)):
-            raise TypeError(
-                f"Decay window must be a number, got {type(self.decay_window)}"
-            )
-        if not MIN_DECAY_WINDOW <= self.decay_window <= MAX_DECAY_WINDOW:
-            raise ValueError(
-                f"Decay window must be between {MIN_DECAY_WINDOW} and {MAX_DECAY_WINDOW} seconds"
-            )
+    def to_dict(self) -> dict[str, Any]:
+        """Convert decay to dictionary for storage."""
+        return {
+            "is_decaying": self.is_decaying,
+            "decay_start_time": self.decay_start_time.isoformat()
+            if self.decay_start_time
+            else None,
+            "decay_start_probability": self.decay_start_probability,
+            "decay_window": self.decay_window,
+            "decay_enabled": self.decay_enabled,
+            "decay_factor": self.decay_factor,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Decay":
+        """Create decay from dictionary."""
+        return cls(
+            is_decaying=data["is_decaying"],
+            decay_start_time=dt_util.parse_datetime(data["decay_start_time"])
+            if data["decay_start_time"]
+            else None,
+            decay_start_probability=data["decay_start_probability"],
+            decay_window=data["decay_window"],
+            decay_enabled=data["decay_enabled"],
+            decay_factor=data["decay_factor"],
+        )
 
     def update_decay(
         self,
@@ -84,7 +103,7 @@ class Decay:
                 )
             self.decay_start_time = None
             self.is_decaying = False
-            self.decay_start_probability = None
+            self.decay_start_probability = MIN_PROBABILITY
             self.decay_factor = 1.0
             return current_probability, self.decay_factor
 
@@ -132,7 +151,7 @@ class Decay:
                 _LOGGER.debug("Decay complete: reached minimum probability")
                 self.decay_start_time = None
                 self.is_decaying = False
-                self.decay_start_probability = None
+                self.decay_start_probability = MIN_PROBABILITY
                 return MIN_PROBABILITY, self.decay_factor
 
             # Decay continues
@@ -149,7 +168,7 @@ class Decay:
             _LOGGER.error("Error in decay calculation: %s", err)
             self.is_decaying = False
             self.decay_start_time = None
-            self.decay_start_probability = None
+            self.decay_start_probability = MIN_PROBABILITY
             self.decay_factor = 1.0
             return current_probability, self.decay_factor
         else:
@@ -159,7 +178,7 @@ class Decay:
         """Reset decay state to defaults."""
         self.is_decaying = False
         self.decay_start_time = None
-        self.decay_start_probability = None
+        self.decay_start_probability = MIN_PROBABILITY
         self.decay_window = 300  # Default 5 minutes
         self.decay_enabled = True
         self.decay_factor = 1.0

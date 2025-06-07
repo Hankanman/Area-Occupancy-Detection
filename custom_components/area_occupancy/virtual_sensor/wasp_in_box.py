@@ -8,8 +8,9 @@ similar to a wasp trapped in a box.
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
+import logging
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -25,10 +26,12 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from custom_components.area_occupancy.const import (
+from ..const import (
     ATTR_DOOR_STATE,
     ATTR_LAST_DOOR_TIME,
     ATTR_LAST_MOTION_TIME,
+    ATTR_LAST_OCCUPIED_TIME,
+    ATTR_MAX_DURATION,
     ATTR_MOTION_STATE,
     ATTR_MOTION_TIMEOUT,
     DEFAULT_WASP_MAX_DURATION,
@@ -36,22 +39,16 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WASP_WEIGHT,
     NAME_WASP_IN_BOX,
 )
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.types import (
-    EntityType,
-    SensorInfo,
-    WaspInBoxAttributes,
-    WaspInBoxConfig,
-)
+from ..coordinator import AreaOccupancyCoordinator
+from ..models.entity import Entity
+from ..models.entity_type import InputType
+from ..types import WaspInBoxAttributes, WaspInBoxConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 # Door state constants
 DOOR_OPEN = STATE_ON
 DOOR_CLOSED = STATE_OFF
-
-ATTR_LAST_OCCUPIED_TIME = "last_occupied_time"
-ATTR_MAX_DURATION = "max_duration"
 
 
 async def async_setup_entry(
@@ -75,7 +72,7 @@ async def async_setup_entry(
         hass,
         config,
         coordinator,
-        coordinator.config_entry.entry_id,
+        coordinator.entry_id,
         coordinator.inputs.door_sensors,
         coordinator.inputs.motion_sensors,
     )
@@ -122,15 +119,22 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._state = STATE_OFF
         self._door_state = DOOR_CLOSED
         self._motion_state = STATE_OFF
-        self._last_door_time = None
-        self._last_motion_time = None
-        self._last_occupied_time = None
+        self._last_door_time: datetime | None = None
+        self._last_motion_time: datetime | None = None
+        self._last_occupied_time: datetime | None = None
 
         # Initialize tracking resources
         self._door_entities = door_entities or []
         self._motion_entities = motion_entities or []
-        self._remove_state_listener = None
-        self._remove_timer = None
+        self._remove_state_listener: Callable[[], None] | None = None
+        self._remove_timer: Callable[[], None] | None = None
+
+        # Create Entity instance for this sensor
+        self._entity = Entity(
+            entity_id=self._attr_unique_id,
+            type=coordinator.entity_types.get_entity_type(InputType.WASP_IN_BOX),
+            coordinator=coordinator,
+        )
 
         # Check if we have required entities configured
         if not self._door_entities or not self._motion_entities:
@@ -152,9 +156,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             await self._restore_previous_state()
             self._setup_entity_tracking()
             await self._register_with_coordinator()
-
-            # Update coordinator with initial state
-            self._update_coordinator_state(self._state)
 
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
@@ -198,44 +199,26 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if not self.entity_id:
             return
 
-        # Add to virtual sensors list
-        if self.entity_id not in self._coordinator.inputs.virtual_sensors:
-            self._coordinator.inputs.virtual_sensors.append(self.entity_id)
+        # Wait for coordinator to be fully initialized before registering
+        if not hasattr(self._coordinator, "entities") or not self._coordinator.entities:
             _LOGGER.debug(
-                "Added virtual sensor %s to coordinator inputs", self.entity_id
-            )
-
-        # Map the virtual sensor to its type in probabilities
-        if self.entity_id not in self._coordinator.probabilities.entity_types:
-            self._coordinator.probabilities.entity_types[self.entity_id] = (
-                EntityType.WASP_IN_BOX
-            )
-            _LOGGER.debug(
-                "Mapped virtual sensor %s to type %s in probabilities",
+                "Coordinator not ready, deferring virtual sensor registration for %s",
                 self.entity_id,
-                EntityType.WASP_IN_BOX.value,
             )
+            return
 
-        # Initialize coordinator state
-        current_state: SensorInfo = {
-            "state": self._state,
-            "last_changed": dt_util.utcnow().isoformat(),
-            "availability": True,
-        }
+        # Add entity to coordinator's entity manager
+        self._coordinator.entities.add_entity(self._entity)
+        _LOGGER.debug("Added virtual sensor %s to coordinator entities", self.entity_id)
 
-        # Update the coordinator's current_states
-        if hasattr(self._coordinator, "data") and self._coordinator.data:
-            if not hasattr(self._coordinator.data, "current_states"):
-                self._coordinator.data.current_states = {}
-            self._coordinator.data.current_states[self.entity_id] = current_state
-            _LOGGER.debug(
-                "Initialized state in coordinator: %s = %s",
-                self.entity_id,
-                current_state,
-            )
-
-            # Request refresh to apply the changes
+        # Only request refresh if coordinator is fully set up to avoid race conditions
+        if self._coordinator.last_update_success is not None:
             await self._coordinator.async_request_refresh()
+        else:
+            _LOGGER.debug(
+                "Coordinator not ready for refresh, skipping initial refresh for %s",
+                self.entity_id,
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is removed."""
@@ -243,6 +226,10 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
+
+        # Remove entity from coordinator
+        if self._entity:
+            self._coordinator.entities.remove_entity(self._entity.entity_id)
 
         self._cancel_max_duration_timer()
 
@@ -432,30 +419,17 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Update Home Assistant state
         self.async_write_ha_state()
 
-        # Update coordinator state
-        self._update_coordinator_state(new_state)
+        # Update entity state
+        if self._entity:
+            self._entity.state = new_state
+            self._entity.last_updated = dt_util.utcnow()
+            self._entity.last_changed = dt_util.utcnow()
+            self._entity.is_active = new_state == STATE_ON
+
+        # Request coordinator refresh
+        self.hass.async_create_task(self._coordinator.async_request_refresh())
 
         _LOGGER.debug("State changed from %s to %s", old_state, new_state)
-
-    def _update_coordinator_state(self, new_state: str) -> None:
-        """Update the coordinator with the current sensor state."""
-        if not self.entity_id:
-            return
-
-        try:
-            # Update coordinator data
-            self._coordinator.data.current_states[self.entity_id] = SensorInfo(
-                state=new_state,
-                availability=True,  # Always set availability to True for virtual sensors
-                last_changed=dt_util.utcnow().isoformat(),
-            )
-            # Request coordinator refresh
-            self.hass.async_create_task(self._coordinator.async_request_refresh())
-        except Exception:
-            _LOGGER.exception(
-                "Error updating coordinator state for %s",
-                self.entity_id,
-            )
 
     def _start_max_duration_timer(self) -> None:
         """Start a timer to reset occupancy after max duration."""

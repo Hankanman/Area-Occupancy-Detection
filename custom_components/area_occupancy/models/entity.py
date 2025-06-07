@@ -1,19 +1,22 @@
 """Entity model."""
 
-import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import logging
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
-from ..coordinator import AreaOccupancyCoordinator
 from ..utils import validate_datetime, validate_prob
 from .decay import Decay
 from .entity_type import EntityType, InputType
 from .prior import Prior, PriorType
 from .probability import Probability
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,11 +34,69 @@ class Entity:
     is_active: bool = False
     last_changed: datetime | None = None
     available: bool = True
+    last_updated: datetime = field(default_factory=dt_util.utcnow)
 
     def __post_init__(self):
         """Post init."""
         # Validate last_changed
         self.last_changed = validate_datetime(self.last_changed)
+        self.last_updated = validate_datetime(self.last_updated)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert entity to dictionary for storage."""
+        return {
+            "entity_id": self.entity_id,
+            "type": self.type.to_dict(),
+            "probability": self.probability.to_dict(),
+            "prior": self.prior.to_dict(),
+            "decay": self.decay.to_dict(),
+            "state": self.state,
+            "is_active": self.is_active,
+            "last_changed": self.last_changed,
+            "available": self.available,
+            "last_updated": self.last_updated,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Entity":
+        """Create entity from dictionary."""
+        return cls(
+            entity_id=data["entity_id"],
+            type=EntityType.from_dict(data["type"]),
+            probability=Probability.from_dict(data["probability"]),
+            prior=Prior.from_dict(data["prior"]),
+            decay=Decay.from_dict(data["decay"]),
+            state=data["state"],
+            is_active=data["is_active"],
+            last_changed=data["last_changed"],
+            available=data["available"],
+            last_updated=data["last_updated"],
+        )
+
+    async def async_update(self) -> None:
+        """Update entity state and probabilities."""
+        # Update last_updated timestamp
+        self.last_updated = dt_util.utcnow()
+
+        # Update probability based on current state
+        self.probability.calculate_probability(
+            prior=self.type.prior,
+            prob_true=self.type.prob_true,
+            prob_false=self.type.prob_false,
+        )
+
+        # Apply decay
+        decayed_probability, decay_factor = self.decay.update_decay(
+            current_probability=self.probability.probability,
+            previous_probability=self.probability.decayed_probability,
+        )
+
+        # Update probability with decayed values
+        self.probability.update(
+            decayed_probability=decayed_probability,
+            decay_factor=decay_factor,
+            is_active=self.is_active,
+        )
 
 
 class EntityManager:
@@ -43,7 +104,7 @@ class EntityManager:
 
     def __init__(
         self,
-        coordinator: AreaOccupancyCoordinator,
+        coordinator: "AreaOccupancyCoordinator",
     ) -> None:
         """Initialize the entities."""
         self.coordinator = coordinator
@@ -53,10 +114,32 @@ class EntityManager:
         self._entities: dict[str, Entity] = {}
         self._remove_state_listener: CALLBACK_TYPE | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert entity manager to dictionary for storage."""
+        return {
+            "entities": {
+                entity_id: entity.to_dict()
+                for entity_id, entity in self._entities.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
+    ) -> "EntityManager":
+        """Create entity manager from dictionary."""
+        manager = cls(coordinator=coordinator)
+        manager._entities = {
+            entity_id: Entity.from_dict(entity)
+            for entity_id, entity in data["entities"].items()
+        }
+        return manager
+
     async def async_initialize(self) -> None:
         """Initialize the entities."""
         self._entities = await self.map_inputs_to_entities()
         self._setup_entity_tracking()
+        _LOGGER.debug("EntityManager initialized with entities: %s", self._entities)
 
     @property
     def entities(self) -> dict[str, Entity]:
@@ -100,7 +183,7 @@ class EntityManager:
 
         """
         if entity_id in self._entities:
-            raise ValueError(f"Entity already exists: {entity_id}")
+            return self._entities[entity_id]
 
         # Create probability instance first
         prob = Probability(
@@ -113,8 +196,12 @@ class EntityManager:
 
         # Create decay instance
         decay = Decay(
-            decay_enabled=True,
-            decay_window=300,  # Default 5 minutes
+            is_decaying=True,
+            decay_start_time=dt_util.utcnow(),
+            decay_start_probability=validate_prob(0.0),
+            decay_factor=validate_prob(1.0),
+            decay_window=self.config.decay.window,
+            decay_enabled=self.config.decay.enabled,
         )
 
         # Create prior instance if not provided
@@ -275,3 +362,9 @@ class EntityManager:
         if entity_id not in self._entities:
             raise ValueError(f"Entity not found for entity: {entity_id}")
         return self._entities[entity_id]
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        if self._remove_state_listener is not None:
+            self._remove_state_listener()
+            self._remove_state_listener = None

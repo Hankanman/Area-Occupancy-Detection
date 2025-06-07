@@ -23,19 +23,11 @@ _LOGGER = logging.getLogger(__name__)
 
 def validate_prob(value: float) -> float:
     """Validate a probability value."""
-    if not MIN_PROBABILITY <= value <= MAX_PROBABILITY:
-        raise ValueError(
-            f"Probability must be between {MIN_PROBABILITY} and {MAX_PROBABILITY} got: {value}"
-        )
     return max(MIN_PROBABILITY, min(value, MAX_PROBABILITY))
 
 
 def validate_prior(value: float) -> float:
     """Validate a prior value."""
-    if not MIN_PRIOR <= value <= MAX_PRIOR:
-        raise ValueError(
-            f"Prior must be between {MIN_PRIOR} and {MAX_PRIOR} got: {value}"
-        )
     return max(MIN_PRIOR, min(value, MAX_PRIOR))
 
 
@@ -48,10 +40,6 @@ def validate_datetime(value: datetime | None) -> datetime:
 
 def validate_weight(value: float) -> float:
     """Validate a weight value."""
-    if not MIN_WEIGHT <= value <= MAX_WEIGHT:
-        raise ValueError(
-            f"Weight must be between {MIN_WEIGHT} and {MAX_WEIGHT} got: {value}"
-        )
     return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
 
 

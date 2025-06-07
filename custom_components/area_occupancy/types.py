@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+import logging
+from typing import Any, NotRequired, TypedDict
 
 from homeassistant.util import dt as dt_util
 
@@ -26,10 +26,6 @@ from .const import (
     MIN_PRIOR,
     MIN_PROBABILITY,
 )
-
-if TYPE_CHECKING:
-    from .probabilities import Probabilities
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -490,73 +486,6 @@ class PriorState:
         )
 
         # Caller is responsible for recalculating overall_prior after all updates
-
-    def calculate_overall_prior(self, probabilities: Probabilities) -> float:
-        """Calculate the overall prior from sensor type priors that have configured sensors.
-
-        Args:
-            probabilities: Probabilities instance from coordinator
-
-        Returns:
-            Average prior probability from configured sensor types
-
-        """
-        # Get all configured entity types from the probabilities instance
-        configured_types = set()
-        for entity_id in probabilities.entity_types:
-            if entity_type := probabilities.get_entity_type(entity_id):
-                configured_types.add(entity_type.value)  # Use .value for comparison
-
-        # Only include priors for configured types from self.type_priors
-        valid_priors = []
-        for sensor_type, prior_data in self.type_priors.items():
-            # Check if the sensor_type string is in the set of configured type values
-            if sensor_type in configured_types and prior_data.prior > MIN_PROBABILITY:
-                valid_priors.append(prior_data.prior)
-
-        if not valid_priors:
-            return MIN_PROBABILITY  # Return min instead of 0.0
-
-        return sum(valid_priors) / len(valid_priors)
-
-    def initialize_from_defaults(self, probabilities: Probabilities) -> None:
-        """Initialize the state from default type priors.
-
-        Args:
-            probabilities: The probabilities configuration instance
-
-        """
-        timestamp = dt_util.utcnow().isoformat()
-
-        # Get configured sensor types
-        configured_types = set()
-        for entity_id in probabilities.entity_types:
-            if entity_type := probabilities.get_entity_type(entity_id):
-                configured_types.add(entity_type.value)  # Use .value
-
-        # Get initial default data (now returns dict[str, PriorData])
-        initial_type_data = probabilities.get_initial_type_priors()
-
-        # Initialize only configured type priors using PriorData
-        for sensor_type_str, default_prior_data in initial_type_data.items():
-            if sensor_type_str in configured_types:
-                prior_value = default_prior_data.prior
-                prob_true = default_prior_data.prob_given_true
-                prob_false = default_prior_data.prob_given_false
-
-                # update_type_prior now updates self.type_priors with PriorData
-                self.update_type_prior(
-                    sensor_type_str,
-                    prior_value,
-                    timestamp,
-                    prob_true,
-                    prob_false,
-                )
-
-        # Calculate and set the overall prior *after* all types are processed
-        overall_prior = self.calculate_overall_prior(probabilities)
-        # Use update method to set only overall_prior safely
-        self.update(overall_prior=overall_prior)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the PriorState dataclass to a dictionary for storage."""
