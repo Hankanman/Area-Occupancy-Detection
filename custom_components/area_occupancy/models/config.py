@@ -148,11 +148,35 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
-        """Create a config from a dictionary."""
+        """Create a config from a dictionary with validation."""
+        # Validate threshold range
+        threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD))
+        if not 0 <= threshold <= 100:
+            _LOGGER.warning("Invalid threshold %s, using default %s", threshold, DEFAULT_THRESHOLD)
+            threshold = DEFAULT_THRESHOLD
+            
+        # Validate weights are positive
+        weights_data = {}
+        for weight_key, default_val in [
+            (CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            (CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            (CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
+            (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
+            (CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+        ]:
+            weight_val = float(data.get(weight_key, default_val))
+            if weight_val < 0:
+                _LOGGER.warning("Invalid weight %s=%s, using default %s", weight_key, weight_val, default_val)
+                weight_val = default_val
+            weights_data[weight_key] = weight_val
+            
         return cls(
             name=data.get(CONF_NAME, "Area Occupancy"),
             area_id=data.get(CONF_AREA_ID),
-            threshold=float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)),
+            threshold=threshold,
             sensors=Sensors(
                 motion=data.get(CONF_MOTION_SENSORS, []),
                 primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
@@ -178,18 +202,14 @@ class Config:
                 ),
             ),
             weights=Weights(
-                motion=float(data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
-                media=float(data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA)),
-                appliance=float(
-                    data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE)
-                ),
-                door=float(data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
-                window=float(data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
-                light=float(data.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT)),
-                environmental=float(
-                    data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL)
-                ),
-                wasp=float(data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT)),
+                motion=weights_data[CONF_WEIGHT_MOTION],
+                media=weights_data[CONF_WEIGHT_MEDIA],
+                appliance=weights_data[CONF_WEIGHT_APPLIANCE],
+                door=weights_data[CONF_WEIGHT_DOOR],
+                window=weights_data[CONF_WEIGHT_WINDOW],
+                light=weights_data[CONF_WEIGHT_LIGHT],
+                environmental=weights_data[CONF_WEIGHT_ENVIRONMENTAL],
+                wasp=weights_data[CONF_WASP_WEIGHT],
             ),
             decay=Decay(
                 enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
@@ -268,39 +288,34 @@ class ConfigManager:
         """Get a config value by key."""
         return getattr(self._config, key, default)
 
-    async def update_threshold(self, value: float) -> None:
-        """Update the threshold value and sync with Home Assistant config entry.
-
+    async def update_config(self, options: dict[str, Any]) -> None:
+        """Update configuration and persist to Home Assistant config entry.
+        
         Args:
-            value: New threshold value (0-100)
-
+            options: Dictionary of configuration options to update
+            
         Raises:
-            ValueError: If the value is invalid
+            ValueError: If any option values are invalid
             HomeAssistantError: If updating the config entry fails
-
         """
-        if not isinstance(value, (int, float)) or not 0 <= value <= 100:
-            raise ValueError("Threshold must be a number between 0 and 100")
-
+        
         try:
-            # Create a new options dict with the updated threshold
+            # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)
-            new_options[CONF_THRESHOLD] = value
+            new_options.update(options)
 
-            # Update the config entry
+            # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 options=new_options,
             )
 
-            # Update the Config object
-            self._config.threshold = value
-            self._config._raw[CONF_THRESHOLD] = value
-
+            # Merge existing config entry with new options for internal state
+            merged_data = self._merge_entry(self.config_entry)
+            merged_data.update(options)
+            
+            # Create new config object with validation
+            self._config = Config.from_dict(merged_data)
+            
         except Exception as err:
-            raise HomeAssistantError(f"Failed to update threshold: {err}") from err
-
-    def update_config(self, options: dict[str, Any]) -> None:
-        """Update configuration from options."""
-        self._config = Config.from_dict(self._merge_entry(self.config_entry))
-        self._config._raw.update(options)
+            raise HomeAssistantError(f"Failed to update configuration: {err}") from err

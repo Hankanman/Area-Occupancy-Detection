@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -53,7 +52,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry_id = config_entry.entry_id
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
-        self.storage = StorageManager(hass)
+        self.storage = StorageManager(self)
         self.entity_types = EntityTypeManager(self)
         self.priors = PriorManager(self)
         self.entities = EntityManager(self)
@@ -61,9 +60,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._next_prior_update: datetime | None = None
         self._last_prior_update: datetime | None = None
         self._prior_update_tracker: CALLBACK_TYPE | None = None
-        self._storage_lock = (
-            asyncio.Lock()
-        )  # Add storage lock to prevent race conditions
         self._last_saved_data: dict[str, Any] | None = None  # Cache for smart saving
         self._cached_probability: float | None = (
             None  # Cache for probability calculation
@@ -196,7 +192,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options."""
         # Update config
-        self.config_manager.update_config(options)
+        await self.config_manager.update_config(options)
         self.config = self.config_manager.config
 
         # Clear cached data since configuration changed
@@ -225,7 +221,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         _LOGGER.debug("Updating threshold: %.2f", value)
 
-        self.config_manager.update_config(
+        await self.config_manager.update_config(
             {
                 CONF_THRESHOLD: value,
             }
@@ -347,25 +343,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("Data unchanged, skipping save")
                 return
 
-        async with self._storage_lock:
-            try:
-                _LOGGER.debug("Attempting to save data")
-                await self.storage.async_save_instance_data(
-                    self.entry_id,
-                    self.entities,
-                )
+        try:
+            _LOGGER.debug("Attempting to save data")
+            await self.storage.async_save_instance_data(
+                self.entry_id,
+                self.entities,
+            )
 
-                # Update saved data cache
-                self._last_saved_data = {
-                    "probability": round(self.probability, 3),
-                    "is_occupied": self.is_occupied,
-                    "threshold": self.threshold,
-                }
+            # Update saved data cache
+            self._last_saved_data = {
+                "probability": round(self.probability, 3),
+                "is_occupied": self.is_occupied,
+                "threshold": self.threshold,
+            }
 
-                _LOGGER.debug("Data saved successfully")
-            except (StorageError, HomeAssistantError) as err:
-                _LOGGER.error("Failed to save data: %s", err)
-                raise StorageError(f"Failed to save data: {err}") from err
+            _LOGGER.debug("Data saved successfully")
+        except StorageError as err:
+            _LOGGER.error("Failed to save data: %s", err)
+            raise
 
     # --- Listener Handling ---
     @callback
