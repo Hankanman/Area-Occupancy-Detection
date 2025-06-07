@@ -270,10 +270,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
 
     async def update_learned_priors(self, history_period: int | None = None) -> None:
-        """Update learned priors using historical data."""
-        # TODO: Implement prior update
+        """Update learned priors using historical data.
 
-        await self._schedule_next_prior_update()
+        Args:
+            history_period: Number of days of history to analyze (defaults to config value)
+
+        """
+        try:
+            _LOGGER.info("Starting learned priors update for area %s", self.config.name)
+
+            # Delegate the actual prior updating to the PriorManager
+            updated_count = await self.priors.update_all_entity_priors(history_period)
+
+            _LOGGER.info(
+                "Completed learned priors update for area %s: updated %d entities",
+                self.config.name,
+                updated_count,
+            )
+
+        except ValueError as err:
+            _LOGGER.warning("Cannot update priors: %s", err)
+        finally:
+            # Always reschedule the next update
+            await self._schedule_next_prior_update()
 
     # --- Prior Update Handling ---
     async def _schedule_next_prior_update(self) -> None:

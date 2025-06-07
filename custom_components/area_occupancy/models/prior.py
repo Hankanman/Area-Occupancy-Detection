@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -49,6 +49,18 @@ class PriorType(StrEnum):
     ENTITY_TYPE = "entity_type"
     TYPE = "type"
     OVERALL = "overall"
+
+
+@dataclass
+class PriorCalculationConfig:
+    """Configuration for prior probability calculation."""
+    
+    entity_type: EntityType
+    prior_type: PriorType
+    primary_sensor: str
+    entity_id: str
+    start_time: datetime
+    end_time: datetime
 
 
 @dataclass
@@ -150,6 +162,92 @@ class PriorManager:
     def clear_priors(self) -> None:
         """Clear all stored priors."""
         self._priors.clear()
+
+    async def calculate_with_config(self, hass: HomeAssistant, config: PriorCalculationConfig) -> "Prior":
+        """Calculate learned priors using a configuration object.
+        
+        Args:
+            hass: Home Assistant instance
+            config: Prior calculation configuration
+            
+        Returns:
+            Calculated Prior object
+        """
+        return await self.calculate(
+            hass=hass,
+            entity_type=config.entity_type,
+            prior_type=config.prior_type,
+            primary_sensor=config.primary_sensor,
+            entity_id=config.entity_id,
+            start_time=config.start_time,
+            end_time=config.end_time,
+        )
+
+    async def update_all_entity_priors(self, history_period: int | None = None) -> int:
+        """Update learned priors for all entities in the coordinator.
+        
+        Args:
+            history_period: Number of days of history to analyze (defaults to config value)
+            
+        Returns:
+            Number of entities successfully updated
+            
+        Raises:
+            ValueError: If no primary occupancy sensor is configured
+        """
+        # Use configured history period if not provided
+        if history_period is None:
+            history_period = self.coordinator.config.decay.history_period
+        
+        # Calculate time window for analysis
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=history_period)
+        
+        # Get primary occupancy sensor
+        primary_sensor = self.coordinator.config.sensors.primary_occupancy
+        if not primary_sensor:
+            raise ValueError("No primary occupancy sensor configured")
+            
+        _LOGGER.info(
+            "Updating learned priors for area %s: analyzing %d days of history",
+            self.coordinator.config.name, history_period
+        )
+            
+        # Update priors for all entities
+        updated_count = 0
+        for entity in self.coordinator.entities.entities.values():
+            try:
+                prior = await self.calculate(
+                    self.coordinator.hass,
+                    entity.type,
+                    PriorType.ENTITY,
+                    primary_sensor,
+                    entity.entity_id,
+                    start_time,
+                    end_time,
+                )
+                
+                # Update the entity's prior
+                entity.prior = prior
+                updated_count += 1
+                
+                _LOGGER.debug(
+                    "Updated prior for %s: prior=%.3f, prob_true=%.3f, prob_false=%.3f",
+                    entity.entity_id, prior.prior, prior.prob_given_true, prior.prob_given_false
+                )
+                
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to update prior for %s: %s", entity.entity_id, err
+                )
+                continue
+        
+        _LOGGER.info(
+            "Completed learned priors update for area %s: updated %d/%d entities",
+            self.coordinator.config.name, updated_count, len(self.coordinator.entities.entities)
+        )
+        
+        return updated_count
 
     async def calculate(
         self,
