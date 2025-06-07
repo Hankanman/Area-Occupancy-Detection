@@ -1,22 +1,16 @@
 """Fixtures for Area Occupancy Detection integration tests."""
 
 import asyncio
-import os
-import sys
 from collections.abc import Generator
 from datetime import datetime
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.recorder.const import DOMAIN as RECORDER_DOMAIN
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.recorder import DATA_INSTANCE
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import (  # noqa: TID252
+from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
@@ -71,6 +65,12 @@ from custom_components.area_occupancy.types import (
     ProbabilityConfig,
     SensorInputs,
 )
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.recorder.const import DOMAIN as RECORDER_DOMAIN
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.recorder import DATA_INSTANCE
 
 # Make parent directory available to tests
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

@@ -4,10 +4,6 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 import pytest
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant, State
-from homeassistant.util import dt as dt_util
 
 from custom_components.area_occupancy.const import (
     ATTR_DOOR_STATE,
@@ -26,6 +22,10 @@ from custom_components.area_occupancy.virtual_sensor.wasp_in_box import (
     WaspInBoxSensor,
     async_setup_entry,
 )
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant, State
+from homeassistant.util import dt as dt_util
 
 # Note: Using fixtures from conftest.py:
 # - mock_coordinator
