@@ -237,53 +237,66 @@ class EntityTypeManager:
         """Reset all entity types to their default values."""
         self._entity_types = self._build_entity_types()
 
+    @staticmethod
+    def detect_input_type(entity_id: str, domain: str, device_class: str | None = None) -> InputType | None:
+        """Detect the input type based on entity characteristics.
+        
+        Args:
+            entity_id: The entity ID
+            domain: The Home Assistant domain (e.g., 'binary_sensor', 'sensor')
+            device_class: The device class if available
+            
+        Returns:
+            The detected InputType or None if unable to determine
+        """
+        # Domain-based detection
+        if domain == "binary_sensor":
+            if device_class == "motion":
+                return InputType.MOTION
+            elif device_class == "door":
+                return InputType.DOOR
+            elif device_class == "window":
+                return InputType.WINDOW
+        
+        elif domain == "media_player":
+            return InputType.MEDIA
+            
+        elif domain == "light":
+            return InputType.LIGHT
+            
+        elif domain == "sensor":
+            if device_class in ("humidity", "temperature"):
+                return InputType.ENVIRONMENTAL
+        
+        # Entity ID pattern-based detection (fallback)
+        entity_lower = entity_id.lower()
+        if any(keyword in entity_lower for keyword in ["motion", "movement", "pir"]):
+            return InputType.MOTION
+        elif any(keyword in entity_lower for keyword in ["door", "entrance"]):
+            return InputType.DOOR
+        elif any(keyword in entity_lower for keyword in ["window"]):
+            return InputType.WINDOW
+        elif any(keyword in entity_lower for keyword in ["tv", "media", "player"]):
+            return InputType.MEDIA
+        elif any(keyword in entity_lower for keyword in ["light", "lamp"]):
+            return InputType.LIGHT
+        elif any(keyword in entity_lower for keyword in ["appliance", "washing", "dryer", "oven"]):
+            return InputType.APPLIANCE
+        elif any(keyword in entity_lower for keyword in ["humidity", "temperature", "pressure"]):
+            return InputType.ENVIRONMENTAL
+            
+        return None
+
     def _build_entity_types(self) -> dict[InputType, EntityType]:
-        """Build the entity types."""
+        """Build the entity types with configuration overrides."""
         types: dict[InputType, EntityType] = {}
+        
         for input_type, params in _ENTITY_TYPE_DATA.items():
             p = params.copy()
-            # Allow config to override weight/active_states
+            
+            # Apply configuration overrides if available
             if self.config:
-                # Get the weights from the config's weights attribute
-                weights = getattr(self.config, "weights", None)
-                if weights:
-                    weight_attr = getattr(weights, input_type.value, None)
-                    if weight_attr is not None:
-                        if (
-                            not isinstance(weight_attr, (int, float))
-                            or not 0 <= weight_attr <= 1
-                        ):
-                            raise ValueError(
-                                f"Invalid weight for {input_type}: {weight_attr}"
-                            )
-                        p["weight"] = weight_attr
-
-                # Get the sensor states from the config's sensor_states attribute
-                sensor_states = getattr(self.config, "sensor_states", None)
-                if sensor_states:
-                    states_attr = getattr(sensor_states, input_type.value, None)
-                    if states_attr is not None:
-                        if not isinstance(states_attr, list) or not all(
-                            isinstance(s, str) for s in states_attr
-                        ):
-                            raise ValueError(
-                                f"Invalid active states for {input_type}: {states_attr}"
-                            )
-                        p["active_states"] = states_attr
-                        p["active_range"] = None
-
-                # For environmental sensors, check for active_range in config
-                if input_type == InputType.ENVIRONMENTAL:
-                    range_attr = getattr(
-                        self.config, "environmental_active_range", None
-                    )
-                    if range_attr is not None:
-                        if not isinstance(range_attr, tuple) or len(range_attr) != 2:
-                            raise ValueError(
-                                f"Invalid active range for {input_type}: {range_attr}"
-                            )
-                        p["active_range"] = range_attr
-                        p["active_states"] = None
+                self._apply_config_overrides(input_type, p)
 
             try:
                 types[input_type] = EntityType(**p)
@@ -293,3 +306,63 @@ class EntityTypeManager:
                 ) from err
 
         return types
+
+    def _apply_config_overrides(self, input_type: InputType, params: dict[str, Any]) -> None:
+        """Apply configuration overrides to entity type parameters.
+        
+        Args:
+            input_type: The input type to configure
+            params: The parameters dictionary to modify
+        """
+        # Override weight from config
+        self._apply_weight_override(input_type, params)
+        
+        # Override active states from config
+        self._apply_states_override(input_type, params)
+        
+        # Override active range from config (for range-based sensors)
+        self._apply_range_override(input_type, params)
+
+    def _apply_weight_override(self, input_type: InputType, params: dict[str, Any]) -> None:
+        """Apply weight override from configuration."""
+        weights = getattr(self.config, "weights", None)
+        if not weights:
+            return
+            
+        weight_attr = getattr(weights, input_type.value, None)
+        if weight_attr is None:
+            return
+            
+        if not isinstance(weight_attr, (int, float)) or not 0 <= weight_attr <= 1:
+            raise ValueError(f"Invalid weight for {input_type}: {weight_attr}")
+            
+        params["weight"] = weight_attr
+
+    def _apply_states_override(self, input_type: InputType, params: dict[str, Any]) -> None:
+        """Apply active states override from configuration."""
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if not sensor_states:
+            return
+            
+        states_attr = getattr(sensor_states, input_type.value, None)
+        if states_attr is None:
+            return
+            
+        if not isinstance(states_attr, list) or not all(isinstance(s, str) for s in states_attr):
+            raise ValueError(f"Invalid active states for {input_type}: {states_attr}")
+            
+        params["active_states"] = states_attr
+        params["active_range"] = None  # Clear range when states are set
+
+    def _apply_range_override(self, input_type: InputType, params: dict[str, Any]) -> None:
+        """Apply active range override from configuration."""
+        # Check for generic range override (extensible to other sensor types)
+        range_config_attr = f"{input_type.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        
+        if range_attr is not None:
+            if not isinstance(range_attr, tuple) or len(range_attr) != 2:
+                raise ValueError(f"Invalid active range for {input_type}: {range_attr}")
+                
+            params["active_range"] = range_attr
+            params["active_states"] = None  # Clear states when range is set
