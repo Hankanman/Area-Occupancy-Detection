@@ -3,25 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
-
-from custom_components.area_occupancy.const import (
-    CONF_WASP_ENABLED,
-    CONF_WASP_MAX_DURATION,
-    CONF_WASP_MOTION_TIMEOUT,
-    CONF_WASP_WEIGHT,
-    DEFAULT_WASP_MAX_DURATION,
-    DEFAULT_WASP_MOTION_TIMEOUT,
-    DEFAULT_WASP_WEIGHT,
-)
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.types import WaspInBoxConfig
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from ..coordinator import AreaOccupancyCoordinator
+from ..types import WaspInBoxConfig
 from .wasp_in_box import async_setup_entry as setup_wasp_in_box
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,16 +30,14 @@ async def async_setup_virtual_sensors(
     """
     _LOGGER.debug(
         "Setting up virtual sensors for area %s",
-        coordinator.config.get("name", "Unknown"),
+        coordinator.config.name,
     )
 
     created_sensors: list[BinarySensorEntity] = []
 
     # Check for flattened wasp settings - the config flow flattens section dictionaries
     config = coordinator.config
-    wasp_enabled = config.get(CONF_WASP_ENABLED, False)
-
-    _LOGGER.debug("Checking for wasp settings in coordinator config: %s", config)
+    wasp_enabled = config.wasp_in_box.enabled
 
     # Set up the Wasp in Box sensor if enabled
     if wasp_enabled:
@@ -59,13 +46,9 @@ async def async_setup_virtual_sensors(
             # Construct the dict
             wasp_config_dict: WaspInBoxConfig = {
                 "enabled": True,
-                "motion_timeout": config.get(
-                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
-                ),
-                "weight": config.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
-                "max_duration": config_entry.data.get(
-                    CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
-                ),
+                "motion_timeout": config.wasp_in_box.motion_timeout,
+                "weight": config.wasp_in_box.weight,
+                "max_duration": config.wasp_in_box.max_duration,
             }
 
             _LOGGER.debug("Created wasp config dict: %s", wasp_config_dict)
@@ -73,7 +56,7 @@ async def async_setup_virtual_sensors(
             # Get the sensor instance and pass the coordinator
             wasp_sensor = await setup_wasp_in_box(
                 hass,
-                cast(WaspInBoxConfig, wasp_config_dict),
+                wasp_config_dict,
                 async_add_entities,  # Keep this for compatibility with function signature
                 coordinator,
             )

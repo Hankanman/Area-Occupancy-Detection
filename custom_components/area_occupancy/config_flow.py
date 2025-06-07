@@ -653,7 +653,7 @@ def create_schema(
         _create_doors_section_schema(
             defaults,
             include_entities["door"],
-            cast(list[SelectOptionDict], door_state_options),
+            cast("list[SelectOptionDict]", door_state_options),
         ),
         {"collapsed": True},
     )
@@ -661,7 +661,7 @@ def create_schema(
         _create_windows_section_schema(
             defaults,
             include_entities["window"],
-            cast(list[SelectOptionDict], window_state_options),
+            cast("list[SelectOptionDict]", window_state_options),
         ),
         {"collapsed": True},
     )
@@ -670,7 +670,7 @@ def create_schema(
     )
     schema_dict[vol.Required("media")] = section(
         _create_media_section_schema(
-            defaults, cast(list[SelectOptionDict], media_state_options)
+            defaults, cast("list[SelectOptionDict]", media_state_options)
         ),
         {"collapsed": True},
     )
@@ -678,7 +678,7 @@ def create_schema(
         _create_appliances_section_schema(
             defaults,
             include_entities["appliance"],
-            cast(list[SelectOptionDict], appliance_state_options),
+            cast("list[SelectOptionDict]", appliance_state_options),
         ),
         {"collapsed": True},
     )

@@ -49,6 +49,8 @@ CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
+CONF_SENSORS: Final = "sensors"
+CONF_ENTITY_ID: Final = "entity_id"
 
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
@@ -64,7 +66,7 @@ CONF_WEIGHT_WASP: Final = "weight_wasp"
 CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
-DEFAULT_THRESHOLD: Final = 50.0
+DEFAULT_THRESHOLD: Final = 0.5
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
@@ -74,6 +76,8 @@ DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
+DEFAULT_NAME: Final = "Area Occupancy"
+DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 0.85
@@ -97,8 +101,8 @@ NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
 DECAY_LAMBDA = 1.732867952
 
 # Safety bounds
-MIN_PROBABILITY: Final[float] = 0.01
-MAX_PROBABILITY: Final[float] = 0.99
+MIN_PROBABILITY: Final = 0.0
+MAX_PROBABILITY: Final = 1.0
 MIN_PRIOR: Final[float] = 0.0001
 MAX_PRIOR: Final[float] = 0.9999
 MIN_WEIGHT: Final[float] = 0.01
@@ -180,3 +184,5 @@ ATTR_LAST_MOTION_TIME: Final = "last_motion_time"
 ATTR_LAST_DOOR_TIME: Final = "last_door_time"
 ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
+ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
+ATTR_MAX_DURATION: Final = "max_duration"

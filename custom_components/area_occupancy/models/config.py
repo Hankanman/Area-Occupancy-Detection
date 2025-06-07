@@ -1,93 +1,100 @@
 """Configuration model and manager for Area Occupancy Detection."""
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, List
+import logging
+from typing import TYPE_CHECKING, Any
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
+
 from ..const import (
-    CONF_NAME,
-    CONF_AREA_ID,
-    CONF_THRESHOLD,
-    CONF_MOTION_SENSORS,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
-    CONF_MEDIA_DEVICES,
-    CONF_APPLIANCES,
-    CONF_LIGHTS,
-    CONF_ILLUMINANCE_SENSORS,
-    CONF_HUMIDITY_SENSORS,
-    CONF_TEMPERATURE_SENSORS,
-    CONF_DOOR_SENSORS,
-    CONF_WINDOW_SENSORS,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_WINDOW_ACTIVE_STATE,
     CONF_APPLIANCE_ACTIVE_STATES,
+    CONF_APPLIANCES,
+    CONF_AREA_ID,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_MIN_DELAY,
+    CONF_DECAY_WINDOW,
+    CONF_DOOR_ACTIVE_STATE,
+    CONF_DOOR_SENSORS,
+    CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_HISTORY_PERIOD,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
-    CONF_WEIGHT_MOTION,
-    CONF_WEIGHT_MEDIA,
+    CONF_MEDIA_DEVICES,
+    CONF_MOTION_SENSORS,
+    CONF_NAME,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_WINDOW,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WASP_WEIGHT,
-    CONF_WASP_ENABLED,
-    CONF_WASP_MOTION_TIMEOUT,
-    CONF_WASP_MAX_DURATION,
-    CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
-    CONF_DECAY_MIN_DELAY,
-    CONF_HISTORY_PERIOD,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
+    CONF_WEIGHT_LIGHT,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WINDOW,
+    CONF_WINDOW_ACTIVE_STATE,
+    CONF_WINDOW_SENSORS,
+    DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DECAY_ENABLED,
+    DEFAULT_DECAY_MIN_DELAY,
+    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+    DEFAULT_HISTORY_PERIOD,
+    DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WASP_MAX_DURATION,
+    DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_WINDOW,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WASP_WEIGHT,
-    DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
-    DEFAULT_DECAY_MIN_DELAY,
-    DEFAULT_HISTORY_PERIOD,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WEIGHT_LIGHT,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_WASP_MOTION_TIMEOUT,
-    DEFAULT_WASP_MAX_DURATION,
 )
-from ..coordinator import AreaOccupancyCoordinator
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class Sensors:
     """Sensors configuration."""
 
-    motion: List[str] = field(default_factory=list)
-    primary_occupancy: Optional[str] = None
-    media: List[str] = field(default_factory=list)
-    appliances: List[str] = field(default_factory=list)
-    lights: List[str] = field(default_factory=list)
-    illuminance: List[str] = field(default_factory=list)
-    humidity: List[str] = field(default_factory=list)
-    temperature: List[str] = field(default_factory=list)
-    doors: List[str] = field(default_factory=list)
-    windows: List[str] = field(default_factory=list)
+    motion: list[str] = field(default_factory=list)
+    primary_occupancy: str | None = None
+    media: list[str] = field(default_factory=list)
+    appliances: list[str] = field(default_factory=list)
+    lights: list[str] = field(default_factory=list)
+    illuminance: list[str] = field(default_factory=list)
+    humidity: list[str] = field(default_factory=list)
+    temperature: list[str] = field(default_factory=list)
+    doors: list[str] = field(default_factory=list)
+    windows: list[str] = field(default_factory=list)
 
 
 @dataclass
 class SensorStates:
     """Sensor states configuration."""
 
-    door: str = DEFAULT_DOOR_ACTIVE_STATE
-    window: str = DEFAULT_WINDOW_ACTIVE_STATE
-    appliance: List[str] = field(
+    door: list[str] = field(default_factory=lambda: [DEFAULT_DOOR_ACTIVE_STATE])
+    window: list[str] = field(default_factory=lambda: [DEFAULT_WINDOW_ACTIVE_STATE])
+    appliance: list[str] = field(
         default_factory=lambda: list(DEFAULT_APPLIANCE_ACTIVE_STATES)
     )
-    media: List[str] = field(default_factory=lambda: list(DEFAULT_MEDIA_ACTIVE_STATES))
+    media: list[str] = field(default_factory=lambda: list(DEFAULT_MEDIA_ACTIVE_STATES))
 
 
 @dataclass
@@ -130,7 +137,7 @@ class Config:
     """Configuration for Area Occupancy Detection."""
 
     name: str = "Area Occupancy"
-    area_id: Optional[str] = None
+    area_id: str | None = None
     threshold: float = DEFAULT_THRESHOLD
     sensors: Sensors = field(default_factory=Sensors)
     sensor_states: SensorStates = field(default_factory=SensorStates)
@@ -159,8 +166,10 @@ class Config:
                 windows=data.get(CONF_WINDOW_SENSORS, []),
             ),
             sensor_states=SensorStates(
-                door=data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE),
-                window=data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE),
+                door=[data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
+                window=[
+                    data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
+                ],
                 appliance=data.get(
                     CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
                 ),
@@ -217,11 +226,15 @@ class Config:
 class ConfigManager:
     """Manages configuration for Area Occupancy Detection."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator):
+    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
         """Initialize the config manager."""
+        if coordinator.config_entry is None:
+            raise ValueError("Config entry is required")
         self.config_entry = coordinator.config_entry
         self._config = Config.from_dict(self._merge_entry(coordinator.config_entry))
         self._hass = coordinator.hass
+
+        _LOGGER.debug("ConfigManager initialized with config: %s", self._config)
 
     @property
     def hass(self):
@@ -286,3 +299,8 @@ class ConfigManager:
 
         except Exception as err:
             raise HomeAssistantError(f"Failed to update threshold: {err}") from err
+
+    def update_config(self, options: dict[str, Any]) -> None:
+        """Update configuration from options."""
+        self._config = Config.from_dict(self._merge_entry(self.config_entry))
+        self._config._raw.update(options)

@@ -1,19 +1,21 @@
 """Prior probability calculations for Area Occupancy Detection."""
 
 import asyncio
-import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Dict, List, TypedDict
+import logging
+from typing import TYPE_CHECKING, Any, TypedDict
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
-from sqlalchemy.exc import SQLAlchemyError
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     DEFAULT_PROB_GIVEN_FALSE,
@@ -21,9 +23,13 @@ from ..const import (
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
+from ..exceptions import StateError
 from ..utils import validate_datetime, validate_prior, validate_prob
 from .entity_type import EntityType
-from ..coordinator import AreaOccupancyCoordinator
+from .probability import Probability
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,11 +41,14 @@ class TimeInterval(TypedDict):
     end: datetime
     state: str
 
+
 class PriorType(StrEnum):
     """Prior type."""
 
     ENTITY = "entity"
     ENTITY_TYPE = "entity_type"
+    TYPE = "type"
+    OVERALL = "overall"
 
 
 @dataclass
@@ -59,11 +68,63 @@ class Prior:
         self.prob_given_false = validate_prob(self.prob_given_false)
         self.last_updated = validate_datetime(self.last_updated)
 
+    def update(self, probability: Probability) -> None:
+        """Update prior based on new probability.
+
+        Args:
+            probability: The new probability to use for updating
+
+        Raises:
+            StateError: If there's an error updating the prior
+
+        """
+        try:
+            # Calculate new prior using Bayes' theorem
+            numerator = probability.probability * self.prior
+            denominator = probability.probability * self.prior + (
+                1 - probability.probability
+            ) * (1 - self.prior)
+
+            if denominator == 0:
+                raise StateError("Denominator is zero in prior update")
+
+            self.prior = max(
+                MIN_PROBABILITY,
+                min(MAX_PROBABILITY, numerator / denominator),
+            )
+            self.last_updated = dt_util.utcnow()
+
+        except Exception as err:
+            raise StateError(f"Error updating prior: {err}") from err
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert prior to dictionary for storage."""
+        return {
+            "prior": self.prior,
+            "prob_given_true": self.prob_given_true,
+            "prob_given_false": self.prob_given_false,
+            "last_updated": self.last_updated.isoformat(),
+            "type": self.type.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Prior":
+        """Create prior from dictionary."""
+        last_updated = validate_datetime(dt_util.parse_datetime(data["last_updated"]))
+
+        return cls(
+            prior=data["prior"],
+            prob_given_true=data["prob_given_true"],
+            prob_given_false=data["prob_given_false"],
+            last_updated=last_updated,
+            type=PriorType(data["type"]),
+        )
+
 
 class PriorManager:
     """Manages prior probability calculations."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator):
+    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
         """Initialize the prior manager."""
         self.coordinator = coordinator
         self.config = coordinator.config
@@ -224,7 +285,7 @@ class PriorManager:
         entity_id: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> List[State | Dict[str, Any]] | None:
+    ) -> list[State | dict[str, Any]] | None:
         """Fetch states history from recorder.
 
         Args:
@@ -284,7 +345,7 @@ class PriorManager:
         states: Sequence[State],
         start: datetime,
         end: datetime,
-    ) -> List[TimeInterval]:
+    ) -> list[TimeInterval]:
         """Convert state history to time intervals.
 
         Args:
@@ -296,7 +357,7 @@ class PriorManager:
             List of TimeInterval objects
 
         """
-        intervals: List[TimeInterval] = []
+        intervals: list[TimeInterval] = []
         if not states:
             return intervals
 
@@ -322,8 +383,8 @@ class PriorManager:
     @staticmethod
     def _calculate_conditional_probability_with_intervals(
         entity_id: str,
-        entity_intervals: List[TimeInterval],
-        motion_intervals_by_sensor: Dict[str, List[TimeInterval]],
+        entity_intervals: list[TimeInterval],
+        motion_intervals_by_sensor: dict[str, list[TimeInterval]],
         motion_state_filter: str,  # Should be STATE_ON or STATE_OFF
         entity_active_states: list[str],
     ) -> float:
@@ -371,7 +432,7 @@ class PriorManager:
             )
 
         # Calculate entity state durations during filtered motion intervals
-        entity_active_duration = 0
+        entity_active_duration = 0.0
         for motion_interval in filtered_motion_intervals:
             for entity_interval in entity_intervals:
                 # Calculate overlap between intervals
@@ -392,7 +453,7 @@ class PriorManager:
     def _calculate_prior_probability(
         prob_given_true: float,
         prob_given_false: float,
-        primary_intervals: List[TimeInterval],
+        primary_intervals: list[TimeInterval],
     ) -> float:
         """Calculate prior probability using Bayes' theorem.
 

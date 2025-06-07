@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -16,9 +17,54 @@ from .storage import StorageManager
 
 _LOGGER = logging.getLogger(__name__)
 
-# # Define platforms
-# PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.NUMBER]
 
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Area Occupancy Detection from a config entry."""
+    try:
+        hass.data.setdefault(DOMAIN, {})
+        _LOGGER.debug("Checking entry version")
+
+        # Check if config entry needs migration
+        if entry.version != CONF_VERSION or not entry.version:
+            _LOGGER.debug(
+                "Migrating entry from version %s to %s", entry.version, CONF_VERSION
+            )
+            if not await async_migrate_entry(hass, entry):
+                _LOGGER.error("Migration failed for entry %s", entry.entry_id)
+                return False
+
+        _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
+        # Initialize the coordinator with the unified configuration
+        coordinator = AreaOccupancyCoordinator(hass, entry)
+
+        # Load stored data and initialize states
+        try:
+            await coordinator.async_setup()
+        except Exception as err:
+            _LOGGER.error("Failed to load stored data: %s", err)
+            raise ConfigEntryNotReady("Failed to load stored data") from err
+
+        # Store the coordinator for future use
+        hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
+
+        # Set up services
+        await async_setup_services(hass)
+
+        # Setup platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Add an update listener to handle configuration updates
+        entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
+
+    except Exception as err:
+        _LOGGER.exception(
+            "Failed to set up Area Occupancy integration for entry %s",
+            entry.entry_id,
+        )
+        raise ConfigEntryNotReady(str(err)) from err
+    else:
+        _LOGGER.debug("Setup complete for entry %s", entry.entry_id)
+        return True
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Area Occupancy Detection integration."""
@@ -72,53 +118,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Area Occupancy Detection from a config entry."""
-    try:
-        hass.data.setdefault(DOMAIN, {})
-        _LOGGER.debug("Checking entry version")
-
-        # Check if config entry needs migration
-        if entry.version != CONF_VERSION or not entry.version:
-            _LOGGER.debug(
-                "Migrating entry from version %s to %s", entry.version, CONF_VERSION
-            )
-            if not await async_migrate_entry(hass, entry):
-                _LOGGER.error("Migration failed for entry %s", entry.entry_id)
-                return False
-
-        _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
-        # Initialize the coordinator with the unified configuration
-        coordinator = AreaOccupancyCoordinator(hass, entry)
-
-        # Load stored data and initialize states
-        try:
-            await coordinator.async_setup()
-        except Exception as err:
-            _LOGGER.error("Failed to load stored data: %s", err)
-            raise ConfigEntryNotReady("Failed to load stored data") from err
-
-        # Store the coordinator for future use
-        hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
-
-        # Set up services
-        await async_setup_services(hass)
-
-        # Setup platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-        # Add an update listener to handle configuration updates
-        entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
-
-    except Exception as err:
-        _LOGGER.exception(
-            "Failed to set up Area Occupancy integration for entry %s",
-            entry.entry_id,
-        )
-        raise ConfigEntryNotReady(str(err)) from err
-    else:
-        _LOGGER.debug("Setup complete for entry %s", entry.entry_id)
-        return True
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
