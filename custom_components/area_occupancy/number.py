@@ -10,7 +10,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NAME_THRESHOLD_NUMBER
+from .const import NAME_THRESHOLD_NUMBER
 from .coordinator import AreaOccupancyCoordinator
 
 
@@ -59,9 +59,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Area Occupancy threshold number based on a config entry."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
     # Create a new number entity for the threshold
     number_entity = AreaOccupancyThreshold(

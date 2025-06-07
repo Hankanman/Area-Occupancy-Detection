@@ -46,7 +46,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=config_entry.data.get(CONF_NAME, DEFAULT_NAME),
-            update_interval=timedelta(seconds=1),
+            update_interval=timedelta(seconds=30),  # More reasonable update interval
         )
         self.hass = hass
         self.config_entry = config_entry
@@ -64,6 +64,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._storage_lock = (
             asyncio.Lock()
         )  # Add storage lock to prevent race conditions
+        self._last_saved_data: dict[str, Any] | None = None  # Cache for smart saving
+        self._cached_probability: float | None = (
+            None  # Cache for probability calculation
+        )
 
     @property
     def available(self) -> bool:
@@ -81,8 +85,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sw_version="1.0.0",
         )
 
-    @property
-    def complementary_probability(self) -> float:
+    def _calculate_probability(self) -> float:
         """Calculate the complementary probability across all entities.
 
         This represents the overall probability that the area is occupied,
@@ -111,6 +114,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Calculate final probability
         final_probability = weighted_sum / total_weight
         return validate_prob(final_probability)
+
+    @property
+    def complementary_probability(self) -> float:
+        """Return the cached complementary probability, calculating if needed."""
+        if self._cached_probability is None:
+            self._cached_probability = self._calculate_probability()
+        return self._cached_probability
 
     @property
     def prior_update_interval(self) -> timedelta:
@@ -143,12 +153,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self.config.threshold if self.config else 0.5
 
     # --- Public Methods ---
-    async def async_setup(self) -> None:
-        """Set up the coordinator, load data, initialize states, check priors, and schedule updates."""
+    async def _async_setup(self) -> None:
         try:
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
-            # Load stored data first
+            # Initialize storage and load stored data first
+            await self.storage.async_initialize()
             await self.async_load_stored_data()
 
             # Initialize states after loading stored data
@@ -161,12 +171,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Schedule periodic prior updates
             await self._schedule_next_prior_update()
-
-            # Wait for any pending operations to complete before initial refresh
-            await asyncio.sleep(0)
-
-            # Trigger an initial refresh after setup is complete
-            await self.async_refresh()
 
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s",
@@ -194,6 +198,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Update config
         self.config_manager.update_config(options)
         self.config = self.config_manager.config
+
+        # Clear cached data since configuration changed
+        self._cached_probability = None
+        self._last_saved_data = None
 
         # Update prior update interval if changed
         if "prior_update_interval" in options:
@@ -318,8 +326,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self._schedule_next_prior_update()
 
     # --- Data Saving ---
-    async def _async_save_data(self) -> None:
-        """Save the current data to storage."""
+    async def _async_save_data(self, force: bool = False) -> None:
+        """Save the current data to storage if it has changed.
+
+        Args:
+            force: Force save even if data hasn't changed
+
+        """
+        if not force and self._last_saved_data is not None:
+            # Check if we need to save based on significant changes
+            current_data = {
+                "probability": round(
+                    self.probability, 3
+                ),  # Round to avoid float precision issues
+                "is_occupied": self.is_occupied,
+                "threshold": self.threshold,
+            }
+
+            if current_data == self._last_saved_data:
+                _LOGGER.debug("Data unchanged, skipping save")
+                return
+
         async with self._storage_lock:
             try:
                 _LOGGER.debug("Attempting to save data")
@@ -327,6 +354,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.entry_id,
                     self.entities,
                 )
+
+                # Update saved data cache
+                self._last_saved_data = {
+                    "probability": round(self.probability, 3),
+                    "is_occupied": self.is_occupied,
+                    "threshold": self.threshold,
+                }
+
                 _LOGGER.debug("Data saved successfully")
             except (StorageError, HomeAssistantError) as err:
                 _LOGGER.error("Failed to save data: %s", err)
@@ -366,20 +401,35 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting data update for area %s", self.config.name)
 
+            # Clear cached probability to force recalculation
+            self._cached_probability = None
+
+            # Track failed entity updates
+            failed_entities = []
+
             # Update entity states and calculate probabilities
             for entity in self.entities.entities.values():
                 try:
                     await entity.async_update()
                 except (StateError, ValueError) as err:
-                    _LOGGER.error(
-                        "Error updating entity %s: %s",
+                    _LOGGER.warning(
+                        "Error updating entity %s: %s (will retry next cycle)",
                         entity.entity_id,
                         err,
                     )
+                    failed_entities.append(entity.entity_id)
                     # Continue with other entities even if one fails
                     continue
 
-            # Calculate overall probability
+            # Log failed entities if any
+            if failed_entities:
+                _LOGGER.debug(
+                    "Failed to update %d entities: %s",
+                    len(failed_entities),
+                    failed_entities,
+                )
+
+            # Calculate overall probability (this will use the fresh calculation due to cache clear)
             probability = self.complementary_probability
             is_occupied = probability >= self.config.threshold
 
@@ -389,6 +439,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "is_occupied": is_occupied,
                 "threshold": self.config.threshold,
                 "last_updated": dt_util.utcnow().isoformat(),
+                "failed_entities": failed_entities,  # Include failed entities in data
                 "entities": {
                     entity_id: {
                         "probability": entity.probability.decayed_probability,
@@ -400,18 +451,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 },
             }
 
-            # Save data to storage
+            # Save data to storage (uses smart saving logic)
             await self._async_save_data()
 
             _LOGGER.debug(
-                "Data update completed for area %s: probability=%.2f, is_occupied=%s",
+                "Data update completed for area %s: probability=%.2f, is_occupied=%s, failed_entities=%d",
                 self.config.name,
                 probability,
                 is_occupied,
+                len(failed_entities),
             )
 
         except (StateError, ValueError) as err:
             _LOGGER.error("Error updating data: %s", err)
             raise HomeAssistantError(f"Error updating data: {err}") from err
+
         else:
             return data
