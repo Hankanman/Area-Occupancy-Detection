@@ -75,6 +75,9 @@ class Entity:
 
     async def async_update(self) -> None:
         """Update entity state and probabilities."""
+        # Store previous probability for decay calculation
+        previous_probability = self.probability.probability
+
         # Update last_updated timestamp
         self.last_updated = dt_util.utcnow()
 
@@ -85,10 +88,10 @@ class Entity:
             prob_false=self.type.prob_false,
         )
 
-        # Apply decay
+        # Apply decay using previous probability
         decayed_probability, decay_factor = self.decay.update_decay(
             current_probability=self.probability.probability,
-            previous_probability=self.probability.decayed_probability,
+            previous_probability=previous_probability,
         )
 
         # Update probability with decayed values
@@ -176,12 +179,10 @@ class EntityManager:
             prior: The prior probability information
 
         Returns:
-            The created Entity instance
-
-        Raises:
-            ValueError: If an entity with the given ID already exists
+            The created Entity instance, or existing one if already exists
 
         """
+        # Return existing entity if it already exists
         if entity_id in self._entities:
             return self._entities[entity_id]
 
@@ -231,13 +232,19 @@ class EntityManager:
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
+        # Clean up existing listener
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
 
         entities_to_track = list(self._entities.keys())
         if not entities_to_track:
+            _LOGGER.debug("No entities to track, skipping state listener setup")
             return
+
+        _LOGGER.debug(
+            "Setting up state tracking for %d entities", len(entities_to_track)
+        )
 
         @callback
         def async_state_changed_listener(event) -> None:
@@ -245,7 +252,6 @@ class EntityManager:
             try:
                 entity_id = event.data.get("entity_id")
                 new_state = event.data.get("new_state")
-                old_state = event.data.get("old_state")
 
                 if entity_id not in self._entities:
                     return
@@ -284,28 +290,12 @@ class EntityManager:
                         except (ValueError, TypeError):
                             is_active = False
 
-                # Store previous probability for decay calculation
-                previous_probability = entity.probability.probability
+                # Update is_active status
+                entity.is_active = is_active
 
-                # Calculate new probability
-                entity.probability.calculate_probability(
-                    prior=entity.type.prior,
-                    prob_true=entity.type.prob_true,
-                    prob_false=entity.type.prob_false,
-                )
-
-                # Apply decay using entity's decay instance
-                decayed_probability, decay_factor = entity.decay.update_decay(
-                    current_probability=entity.probability.probability,
-                    previous_probability=previous_probability,
-                )
-
-                # Update probability with decayed values
-                entity.probability.update(
-                    decayed_probability=decayed_probability,
-                    decay_factor=decay_factor,
-                    is_active=is_active,
-                )
+                # Use the entity's async_update method for consistent probability calculations
+                # This ensures all logic is centralized and maintainable
+                self.hass.async_create_task(entity.async_update())
 
             except Exception:
                 _LOGGER.exception(
@@ -340,9 +330,9 @@ class EntityManager:
         entities: dict[str, Entity] = {}
         for input_type, inputs in type_mappings.items():
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
-            for input in inputs:
+            for input_entity_id in inputs:
                 prior = await self.coordinator.priors.calculate(
-                    entity_id=input,
+                    entity_id=input_entity_id,
                     entity_type=entity_type,
                     hass=self.hass,
                     primary_sensor=primary_sensor,
@@ -350,8 +340,8 @@ class EntityManager:
                     end_time=end_time,
                     prior_type=PriorType.ENTITY,
                 )
-                entities[input] = self.create_entity(
-                    entity_id=input,
+                entities[input_entity_id] = self.create_entity(
+                    entity_id=input_entity_id,
                     entity_type=entity_type,
                     prior=prior,
                 )
@@ -362,6 +352,126 @@ class EntityManager:
         if entity_id not in self._entities:
             raise ValueError(f"Entity not found for entity: {entity_id}")
         return self._entities[entity_id]
+
+    def get_entity_metrics(self) -> dict[str, Any]:
+        """Get comprehensive metrics about all entities.
+
+        Returns:
+            Dictionary containing entity metrics and health information
+
+        """
+        now = dt_util.utcnow()
+        entity_types: dict[str, dict[str, Any]] = {}
+        probability_distribution: dict[str, int] = {
+            "high_confidence": 0,  # > 0.8
+            "medium_confidence": 0,  # 0.2 - 0.8
+            "low_confidence": 0,  # < 0.2
+        }
+        last_update_age: dict[str, int] = {}
+
+        metrics = {
+            "total_entities": len(self._entities),
+            "active_entities": sum(1 for e in self._entities.values() if e.is_active),
+            "available_entities": sum(
+                1 for e in self._entities.values() if e.available
+            ),
+            "unavailable_entities": sum(
+                1 for e in self._entities.values() if not e.available
+            ),
+            "decaying_entities": sum(
+                1 for e in self._entities.values() if e.decay.is_decaying
+            ),
+            "entity_types": entity_types,
+            "probability_distribution": probability_distribution,
+            "last_update_age": last_update_age,
+        }
+
+        # Analyze by entity type
+        for entity in self._entities.values():
+            entity_type = entity.type.input_type.value
+            if entity_type not in entity_types:
+                entity_types[entity_type] = {
+                    "count": 0,
+                    "active": 0,
+                    "available": 0,
+                    "avg_probability": 0.0,
+                }
+
+            type_metrics = entity_types[entity_type]
+            type_metrics["count"] += 1
+            if entity.is_active:
+                type_metrics["active"] += 1
+            if entity.available:
+                type_metrics["available"] += 1
+            type_metrics["avg_probability"] += entity.probability.decayed_probability
+
+            # Probability distribution
+            prob = entity.probability.decayed_probability
+            if prob > 0.8:
+                probability_distribution["high_confidence"] += 1
+            elif prob > 0.2:
+                probability_distribution["medium_confidence"] += 1
+            else:
+                probability_distribution["low_confidence"] += 1
+
+            # Update age analysis
+            if entity.last_updated:
+                age_seconds = (now - entity.last_updated).total_seconds()
+                age_category = (
+                    "recent"
+                    if age_seconds < 300
+                    else "stale"
+                    if age_seconds < 3600
+                    else "very_stale"
+                )
+                last_update_age[age_category] = last_update_age.get(age_category, 0) + 1
+
+        # Calculate averages
+        for type_metrics in entity_types.values():
+            if type_metrics["count"] > 0:
+                type_metrics["avg_probability"] /= type_metrics["count"]
+
+        return metrics
+
+    def get_problematic_entities(self) -> dict[str, list[str]]:
+        """Get entities that may need attention.
+
+        Returns:
+            Dictionary categorizing entities by potential issues
+
+        """
+        now = dt_util.utcnow()
+        problems: dict[str, list[str]] = {
+            "unavailable": [],
+            "stale_updates": [],  # No updates > 1 hour
+            "stuck_decay": [],  # Decaying for > 2 hours
+            "extreme_probabilities": [],  # Very high/low probabilities
+        }
+
+        for entity_id, entity in self._entities.items():
+            # Unavailable entities
+            if not entity.available:
+                problems["unavailable"].append(entity_id)
+
+            # Stale updates
+            if (
+                entity.last_updated
+                and (now - entity.last_updated).total_seconds() > 3600
+            ):
+                problems["stale_updates"].append(entity_id)
+
+            # Stuck decay
+            if entity.decay.is_decaying and entity.decay.decay_start_time:
+                decay_duration = (now - entity.decay.decay_start_time).total_seconds()
+                if decay_duration > 7200:  # 2 hours
+                    problems["stuck_decay"].append(entity_id)
+
+            # Extreme probabilities (might indicate sensor issues)
+            prob = entity.probability.decayed_probability
+            if prob > 0.95 or prob < 0.05:
+                problems["extreme_probabilities"].append(entity_id)
+
+        return problems
 
     def cleanup(self) -> None:
         """Clean up resources."""
