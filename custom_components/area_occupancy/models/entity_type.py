@@ -24,11 +24,23 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+class InputType(StrEnum):
+    """Input type."""
+
+    MOTION = "motion"
+    MEDIA = "media"
+    APPLIANCE = "appliance"
+    DOOR = "door"
+    WINDOW = "window"
+    LIGHT = "light"
+    ENVIRONMENTAL = "environmental"
+    WASP_IN_BOX = "wasp_in_box"
 
 @dataclass
 class EntityType:
     """Entity type. active_states or active_range must be provided, but not both."""
 
+    input_type: InputType
     weight: float
     prob_true: float
     prob_false: float
@@ -77,6 +89,7 @@ class EntityType:
     def to_dict(self) -> dict[str, Any]:
         """Convert entity type to dictionary for storage."""
         return {
+            "input_type": self.input_type.value,
             "weight": self.weight,
             "prob_true": self.prob_true,
             "prob_false": self.prob_false,
@@ -89,6 +102,7 @@ class EntityType:
     def from_dict(cls, data: dict[str, Any]) -> "EntityType":
         """Create entity type from dictionary."""
         return cls(
+            input_type=InputType(data["input_type"]),
             weight=data["weight"],
             prob_true=data["prob_true"],
             prob_false=data["prob_false"],
@@ -98,17 +112,6 @@ class EntityType:
         )
 
 
-class InputType(StrEnum):
-    """Input type."""
-
-    MOTION = "motion"
-    MEDIA = "media"
-    APPLIANCE = "appliance"
-    DOOR = "door"
-    WINDOW = "window"
-    LIGHT = "light"
-    ENVIRONMENTAL = "environmental"
-    WASP_IN_BOX = "wasp_in_box"
 
 
 # Central definition of types—add or change defaults here.
@@ -299,7 +302,7 @@ class EntityTypeManager:
                 self._apply_config_overrides(input_type, p)
 
             try:
-                types[input_type] = EntityType(**p)
+                types[input_type] = EntityType(input_type=input_type, **p)
             except Exception as err:
                 raise ValueError(
                     f"Failed to create entity type for {input_type}: {err}"
