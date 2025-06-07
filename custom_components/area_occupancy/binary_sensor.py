@@ -14,7 +14,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NAME_BINARY_SENSOR
+from .const import NAME_BINARY_SENSOR
 from .coordinator import AreaOccupancyCoordinator
 from .virtual_sensor import async_setup_virtual_sensors
 
@@ -64,9 +64,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Area Occupancy Detection binary sensors."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][config_entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
     # 1. Create the main sensor instance
     main_sensor = AreaOccupancyBinarySensor(
@@ -84,9 +82,7 @@ async def async_setup_entry(
             coordinator,
         )
     except (ImportError, ModuleNotFoundError):
-        _LOGGER.warning("Virtual sensor module not available")
-    except Exception:
-        _LOGGER.exception("Error setting up virtual sensors")
+        _LOGGER.debug("Virtual sensor module not available, skipping virtual sensors")
 
     # 3. Combine main and virtual sensors
     all_sensors_to_add = [main_sensor, *virtual_sensors_to_add]

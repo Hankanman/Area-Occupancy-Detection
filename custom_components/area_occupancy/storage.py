@@ -31,10 +31,19 @@ class StorageManager(Store[dict[str, Any]]):
             STORAGE_VERSION,
             STORAGE_KEY,
         )
+        self._initialized = False
 
     def create_empty_storage(self) -> dict[str, Any]:
         """Create empty storage."""
         return {"instances": {}}
+
+    async def async_initialize(self) -> None:
+        """Initialize the storage manager and perform cleanup."""
+        if self._initialized:
+            return
+
+        await self._async_perform_cleanup()
+        self._initialized = True
 
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: dict
@@ -50,6 +59,22 @@ class StorageManager(Store[dict[str, Any]]):
                 }
             return new_data
         return old_data
+
+    async def _async_perform_cleanup(self) -> None:
+        """Perform storage cleanup by removing orphaned instances."""
+        try:
+            _LOGGER.debug("Checking storage for orphaned instances")
+            active_entry_ids = {
+                entry.entry_id
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+            }
+            _LOGGER.debug("Active entry IDs: %s", active_entry_ids)
+
+            await self.async_cleanup_orphaned_instances(active_entry_ids)
+
+        except Exception:
+            # Log error but don't prevent setup from continuing
+            _LOGGER.exception("Error during storage cleanup")
 
     async def async_remove_instance(self, entry_id: str) -> bool:
         """Remove an instance from storage."""

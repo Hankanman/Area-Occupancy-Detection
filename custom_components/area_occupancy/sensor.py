@@ -9,7 +9,10 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR, ROUNDING_PRECISION
@@ -130,7 +133,7 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        if not self.coordinator.data:
+        if not self.coordinator:
             return 0.0
 
         try:
@@ -211,27 +214,25 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
 #             return 0.0
 
 
-# async def async_setup_entry(
-#     hass: HomeAssistant,
-#     entry: ConfigEntry,
-#     async_add_entities: AddEntitiesCallback,
-# ) -> None:
-#     """Set up the Area Occupancy sensors based on a config entry."""
-#     coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
-#         "coordinator"
-#     ]
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the Area Occupancy sensors based on a config entry."""
+    coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
-#     sensors = [
-#         AreaOccupancyProbabilitySensor(coordinator, entry.entry_id),
-#         AreaOccupancyDecaySensor(coordinator, entry.entry_id),
-#     ]
+    sensors = [
+        AreaOccupancyProbabilitySensor(coordinator, entry.entry_id),
+        # AreaOccupancyDecaySensor(coordinator, entry.entry_id),
+    ]
 
-#     # Create priors sensor if history period is configured and greater than 0
-#     history_period = coordinator.config.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
-#     if history_period > 0:
-#         sensors.append(PriorsSensor(coordinator, entry.entry_id))
+    # Create priors sensor if history period is configured and greater than 0
+    # history_period = coordinator.config.history_period
+    # if history_period > 0:
+    #     sensors.append(PriorsSensor(coordinator, entry.entry_id))
 
-#     async_add_entities(sensors, update_before_add=True)
+    async_add_entities(sensors, update_before_add=True)
 
 
 def format_float(value: float) -> float:
