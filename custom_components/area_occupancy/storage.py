@@ -1,9 +1,9 @@
 """Storage manager for Area Occupancy Detection."""
 
+import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -11,6 +11,9 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .exceptions import StorageError
 from .models.entity import EntityManager
+
+if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,15 +26,16 @@ class StorageManager(Store[dict[str, Any]]):
 
     def __init__(
         self,
-        hass: HomeAssistant,
+        coordinator: "AreaOccupancyCoordinator",
     ) -> None:
         """Initialize the storage manager."""
         super().__init__(
-            hass,
+            coordinator.hass,
             STORAGE_VERSION,
             STORAGE_KEY,
         )
         self._initialized = False
+        self._lock = asyncio.Lock()  # Prevent concurrent access issues
 
     def create_empty_storage(self) -> dict[str, Any]:
         """Create empty storage."""
@@ -78,21 +82,27 @@ class StorageManager(Store[dict[str, Any]]):
 
     async def async_remove_instance(self, entry_id: str) -> bool:
         """Remove an instance from storage."""
-        try:
-            data = await self.async_load()
-            if not data:
+        async with self._lock:  # Prevent concurrent modifications
+            try:
+                data = await self.async_load()
+                if not data:
+                    return False
+
+                instances = data.get("instances", {})
+                if not isinstance(instances, dict):
+                    return False
+
+                if entry_id in instances:
+                    del instances[entry_id]
+                    await self.async_save(data)
+                    return True
+
+            except HomeAssistantError as err:
+                _LOGGER.error("Error removing instance %s: %s", entry_id, err)
+                raise StorageError(f"Failed to remove instance: {err}") from err
+
+            else:
                 return False
-
-            if entry_id in data.get("instances", {}):
-                del data["instances"][entry_id]
-                await self.async_save(data)
-                return True
-
-        except (StorageError, HomeAssistantError) as err:
-            _LOGGER.error("Error removing instance %s: %s", entry_id, err)
-            return False
-        else:
-            return False
 
     async def async_cleanup_orphaned_instances(
         self, active_entry_ids: set[str]
@@ -131,9 +141,19 @@ class StorageManager(Store[dict[str, Any]]):
             if not data:
                 return None
 
-            return data.get("instances", {}).get(entry_id)
+            # Validate storage structure
+            if not isinstance(data, dict) or "instances" not in data:
+                _LOGGER.warning("Invalid storage structure, creating empty storage")
+                return None
 
-        except (StorageError, HomeAssistantError) as err:
+            instances = data["instances"]
+            if not isinstance(instances, dict):
+                _LOGGER.warning("Invalid instances structure in storage")
+                return None
+
+            return instances.get(entry_id)
+
+        except HomeAssistantError as err:
             _LOGGER.error("Error loading instance data for %s: %s", entry_id, err)
             return None
 
@@ -141,18 +161,25 @@ class StorageManager(Store[dict[str, Any]]):
         self, entry_id: str, entity_manager: EntityManager
     ) -> None:
         """Save instance data to storage."""
-        try:
-            data = await self.async_load()
-            if not data:
-                data = self.create_empty_storage()
+        async with self._lock:  # Prevent concurrent modifications
+            try:
+                data = await self.async_load()
+                if not data:
+                    data = self.create_empty_storage()
 
-            # Convert entity manager to dict
-            instance_data = entity_manager.to_dict()
+                # Validate storage structure
+                if not isinstance(data, dict):
+                    data = self.create_empty_storage()
+                if "instances" not in data:
+                    data["instances"] = {}
 
-            # Update storage
-            data["instances"][entry_id] = instance_data
-            await self.async_save(data)
+                # Convert entity manager to dict
+                instance_data = entity_manager.to_dict()
 
-        except (StorageError, HomeAssistantError) as err:
-            _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
-            raise
+                # Update storage
+                data["instances"][entry_id] = instance_data
+                await self.async_save(data)
+
+            except HomeAssistantError as err:
+                _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
+                raise StorageError(f"Failed to save instance data: {err}") from err
