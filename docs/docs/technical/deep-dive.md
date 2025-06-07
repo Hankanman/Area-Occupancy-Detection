@@ -43,7 +43,7 @@ This document details the process used by the `area_occupancy` custom component 
 
 1.  **Coordinator Starts:** The `AreaOccupancyCoordinator` is initialized for a configured area.
 2.  **Load Config:** Merges configuration from `data` and `options` of the `ConfigEntry`.
-3.  **Load Stored Priors:** Attempts to load the `PriorState` object for this area from `.storage/area_occupancy.storage` using `AreaOccupancyStore`.
+3.  **Load Stored Priors:** Attempts to load the `PriorState` object for this area from `.storage/area_occupancy.storage` using `StorageManager`.
     *   If successful, `self.prior_state` is populated with learned values and `self._last_prior_update` timestamp is loaded.
     *   If unsuccessful (no file, error), `self.prior_state` is initialized with default values from `const.py` via `Probabilities`.
 4.  **Initialize States:** Gets the *current* state of all configured sensors from `hass.states.get` and populates `self.data.current_states`.
@@ -169,7 +169,7 @@ sequenceDiagram
 9.  **Update `prior_state`:** The results (P(T), P(F), Prior) for the successfully calculated sensor are stored in `self.prior_state.entity_priors`.
 10. **Update Type Priors:** After looping through all sensors, `_update_type_priors_from_entities` averages the newly learned `entity_priors` for each sensor type and updates `self.prior_state.type_priors`.
 11. **Update Overall Prior:** Calculates the new `overall_prior` based on the updated `type_priors` and configured weights, updating `self.prior_state.overall_prior`.
-12. **Save Priors:** Calls `_async_save_prior_state_data` which uses `AreaOccupancyStore` to save the entire updated `self.prior_state` object to the JSON storage file (`.storage/area_occupancy.storage`).
+12. **Save Priors:** Calls `_async_save_prior_state_data` which uses `StorageManager` to save the entire updated `self.prior_state` object to the JSON storage file (`.storage/area_occupancy.storage`).
 13. **Update Timestamp:** Sets `self._last_prior_update` to the current time.
 14. **Reschedule:** Schedules the next hourly update.
 

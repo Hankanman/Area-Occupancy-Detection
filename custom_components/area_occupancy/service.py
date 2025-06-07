@@ -13,7 +13,7 @@ from .exceptions import CalculationError
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_services(hass: HomeAssistant):
+async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
     async def update_priors(call):
@@ -31,10 +31,18 @@ async def async_setup_services(hass: HomeAssistant):
         try:
             _LOGGER.debug("Updating priors for entry_id: %s", entry_id)
 
-            if DOMAIN not in hass.data or entry_id not in hass.data[DOMAIN]:
-                raise_error(f"Integration or instance {entry_id} not found")
+            # Find the config entry and get coordinator
+            config_entry = None
+            for entry in hass.config_entries.async_entries(DOMAIN):
+                if entry.entry_id == entry_id:
+                    config_entry = entry
+                    break
 
-            coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
+            if not config_entry:
+                raise_error(f"Config entry {entry_id} not found")
+
+            coordinator = config_entry.runtime_data
+
             _LOGGER.debug("Found coordinator for entry_id %s", entry_id)
 
             # Get history period from service call, fallback to coordinator config, then to default
