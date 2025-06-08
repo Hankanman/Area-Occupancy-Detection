@@ -25,9 +25,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug(
             "Migrating entry from version %s to %s", entry.version, CONF_VERSION
         )
-        if not await async_migrate_entry(hass, entry):
-            _LOGGER.error("Migration failed for entry %s", entry.entry_id)
-            raise ConfigEntryNotReady("Migration failed")
+        try:
+            migration_result = await async_migrate_entry(hass, entry)
+            if not migration_result:
+                _LOGGER.error("Migration failed for entry %s", entry.entry_id)
+            _LOGGER.info(
+                "Migration completed successfully for entry %s", entry.entry_id
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Migration threw exception for entry %s: %s", entry.entry_id, err
+            )
+            raise ConfigEntryNotReady(
+                f"Migration failed with exception: {err}"
+            ) from err
 
     # Create and setup coordinator
     _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)

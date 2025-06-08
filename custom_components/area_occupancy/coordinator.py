@@ -251,8 +251,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Loading stored data from storage")
 
-            # Load instance data
-            loaded_data = await self.storage.async_load_instance_data(self.entry_id)
+            # Use storage manager's compatibility checking method
+            (
+                loaded_data,
+                was_reset,
+            ) = await self.storage.async_load_with_compatibility_check(
+                self.entry_id, self.config_entry.version
+            )
 
             if loaded_data:
                 last_updated_str = loaded_data.get("last_updated")
@@ -261,23 +266,32 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.entry_id,
                     last_updated_str,
                 )
+
                 # Create entity manager from loaded data
                 self.entities = EntityManager.from_dict(loaded_data, self)
                 if last_updated_str:
                     self._last_prior_update = dt_util.parse_datetime(last_updated_str)
                 else:
                     self._last_prior_update = None
-            else:
-                _LOGGER.info(
-                    "No stored data found for instance %s, initializing with defaults",
+
+                _LOGGER.debug(
+                    "Successfully restored stored data for instance %s",
                     self.entry_id,
                 )
-                self._last_prior_update = None
 
-            _LOGGER.debug(
-                "Successfully restored stored data for instance %s",
-                self.entry_id,
-            )
+            else:
+                # No data loaded (either no data exists, was reset, or had errors)
+                if was_reset:
+                    _LOGGER.info(
+                        "Storage was reset for instance %s, will initialize with defaults",
+                        self.entry_id,
+                    )
+                else:
+                    _LOGGER.info(
+                        "No stored data found for instance %s, initializing with defaults",
+                        self.entry_id,
+                    )
+                self._last_prior_update = None
 
             # Invalidate cache since restored entities may have different probabilities
             self.invalidate_probability_cache()

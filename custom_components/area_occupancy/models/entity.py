@@ -139,10 +139,26 @@ class EntityManager:
     ) -> "EntityManager":
         """Create entity manager from dictionary."""
         manager = cls(coordinator=coordinator)
-        manager._entities = {
-            entity_id: Entity.from_dict(entity)
-            for entity_id, entity in data["entities"].items()
-        }
+
+        # Check if data has the expected structure
+        if "entities" not in data:
+            raise ValueError(
+                f"Invalid storage format: missing 'entities' key in data structure. "
+                f"Available keys: {list(data.keys())}. "
+                f"This should have been caught by storage validation."
+            )
+
+        try:
+            manager._entities = {
+                entity_id: Entity.from_dict(entity)
+                for entity_id, entity in data["entities"].items()
+            }
+        except (KeyError, ValueError, TypeError) as err:
+            raise ValueError(
+                f"Failed to deserialize entity data: {err}. "
+                f"Entity structure may be corrupted or incompatible."
+            ) from err
+
         return manager
 
     async def async_initialize(self) -> None:
