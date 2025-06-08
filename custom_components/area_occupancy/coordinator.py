@@ -62,6 +62,33 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._prior_update_tracker: CALLBACK_TYPE | None = None
 
     @property
+    def dev_mode(self) -> bool:
+        """Check if we're running in development mode.
+
+        Development mode is detected by checking if the integration's logger
+        is set to DEBUG level or if Home Assistant is running with debug enabled.
+
+        Returns:
+            bool: True if in development mode, False otherwise
+
+        """
+        # Check if our specific logger is set to DEBUG
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            return True
+
+        # Check if the root Home Assistant logger is in debug mode
+        ha_logger = logging.getLogger("homeassistant")
+        if ha_logger.isEnabledFor(logging.DEBUG):
+            return True
+
+        # Check if any parent logger of our integration is in debug mode
+        parent_logger = logging.getLogger("homeassistant.components.area_occupancy")
+        if parent_logger.isEnabledFor(logging.DEBUG):
+            return True
+
+        return False
+
+    @property
     def available(self) -> bool:
         """Return if the coordinator is available."""
         return any(entity.available for entity in self.entities.entities.values())
@@ -139,6 +166,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- Public Methods ---
     async def _async_setup(self) -> None:
         try:
+            if self.dev_mode:
+                _LOGGER.info(
+                    "🔧 DEV MODE ENABLED for %s (enhanced logging and storage saves)",
+                    self.config.name,
+                )
+
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
             # Initialize storage and load stored data first
@@ -151,14 +184,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Log all registered entities
             _LOGGER.debug("Registered entities for %s:", self.config.name)
             for entity in self.entities.entities.values():
-                _LOGGER.debug("  - %s (type: %s)", entity.entity_id, entity.type)
+                if self.dev_mode:
+                    _LOGGER.debug(
+                        "  - %s (type: %s, weight: %.2f)",
+                        entity.entity_id,
+                        entity.type.input_type.value,
+                        entity.type.weight,
+                    )
+                else:
+                    _LOGGER.debug("  - %s (type: %s)", entity.entity_id, entity.type)
 
             # Schedule periodic prior updates
             await self._schedule_next_prior_update()
 
             _LOGGER.debug(
-                "Successfully set up AreaOccupancyCoordinator for %s",
+                "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
                 self.config.name,
+                len(self.entities.entities),
             )
 
         except (StorageError, StateError, CalculationError) as err:
@@ -384,15 +426,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting data update for area %s", self.config.name)
 
-            # Save data to storage periodically
+            # In dev mode, save data on every refresh for debugging
+            # In normal mode, save data periodically
+            if self.dev_mode:
+                _LOGGER.debug("Forcing storage save on refresh for debugging")
             await self._async_save_data()
 
-            _LOGGER.debug(
-                "Data update completed for area %s: probability=%.2f, is_occupied=%s",
-                self.config.name,
-                self.probability,
-                self.is_occupied,
-            )
+            if self.dev_mode:
+                _LOGGER.debug(
+                    "Data update completed for area %s: probability=%.2f, is_occupied=%s, entities=%d",
+                    self.config.name,
+                    self.probability,
+                    self.is_occupied,
+                    len(self.entities.entities),
+                )
+            else:
+                _LOGGER.debug(
+                    "Data update completed for area %s: probability=%.2f, is_occupied=%s",
+                    self.config.name,
+                    self.probability,
+                    self.is_occupied,
+                )
 
             # Return minimal data - sensors access coordinator properties directly
             return {"last_updated": dt_util.utcnow().isoformat()}

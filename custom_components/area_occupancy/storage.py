@@ -34,6 +34,7 @@ class StorageManager(Store[dict[str, Any]]):
             STORAGE_VERSION,
             STORAGE_KEY,
         )
+        self._coordinator = coordinator
         self._initialized = False
         self._lock = asyncio.Lock()  # Prevent concurrent access issues
 
@@ -163,6 +164,12 @@ class StorageManager(Store[dict[str, Any]]):
         """Save instance data to storage."""
         async with self._lock:  # Prevent concurrent modifications
             try:
+                # Check if we're in dev mode for enhanced logging
+                dev_mode = self._coordinator.dev_mode
+
+                if dev_mode:
+                    _LOGGER.debug("Starting storage save for instance %s", entry_id)
+
                 data = await self.async_load()
                 if not data:
                     data = self.create_empty_storage()
@@ -176,9 +183,16 @@ class StorageManager(Store[dict[str, Any]]):
                 # Convert entity manager to dict
                 instance_data = entity_manager.to_dict()
 
+                if dev_mode:
+                    entity_count = len(instance_data.get("entities", {}))
+                    _LOGGER.debug("Saving %d entities to storage", entity_count)
+
                 # Update storage
                 data["instances"][entry_id] = instance_data
                 await self.async_save(data)
+
+                if dev_mode:
+                    _LOGGER.debug("Storage save completed for instance %s", entry_id)
 
             except HomeAssistantError as err:
                 _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
