@@ -149,6 +149,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
 
+    def invalidate_probability_cache(self) -> None:
+        """Invalidate the cached probability to force recalculation.
+
+        This should be called whenever:
+        - An entity's probability changes
+        - An entity's active state changes
+        - Entity weights or configuration changes
+        - Prior probabilities are updated
+        """
+        if self._cached_probability is not None:
+            _LOGGER.debug(
+                "Invalidating cached probability for area %s", self.config.name
+            )
+            self._cached_probability = None
+
     # --- Public Methods ---
     async def _async_setup(self) -> None:
         try:
@@ -197,7 +212,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config = self.config_manager.config
 
         # Clear cached data since configuration changed
-        self._cached_probability = None
+        self.invalidate_probability_cache()
         self._last_saved_data = None
 
         # Update prior update interval if changed
@@ -227,6 +242,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 CONF_THRESHOLD: value,
             }
         )
+
+        # Invalidate cache since threshold affects is_occupied calculation
+        self.invalidate_probability_cache()
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -260,6 +278,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Successfully restored stored data for instance %s",
                 self.entry_id,
             )
+
+            # Invalidate cache since restored entities may have different probabilities
+            self.invalidate_probability_cache()
+
         except StorageError as err:
             _LOGGER.warning(
                 "Storage error for instance %s, initializing with defaults: %s",
@@ -282,6 +304,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Delegate the actual prior updating to the PriorManager
             updated_count = await self.priors.update_all_entity_priors(history_period)
+
+            # Invalidate cache since priors affect probability calculations
+            if updated_count > 0:
+                self.invalidate_probability_cache()
 
             _LOGGER.info(
                 "Completed learned priors update for area %s: updated %d entities",

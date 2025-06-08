@@ -734,5 +734,9 @@ class EntityManager:
             try:
                 await entity.async_update()
                 _LOGGER.debug("Successfully updated entity %s", entity_id)
+
+                # Invalidate coordinator's cached probability since entity probability changed
+                self.coordinator.invalidate_probability_cache()
+
             except (ValueError, AttributeError, RuntimeError) as err:
                 _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
