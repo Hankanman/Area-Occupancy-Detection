@@ -239,11 +239,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             HomeAssistantError: If there's an error updating the config entry
 
         """
-        _LOGGER.debug("Updating threshold: %.2f", value)
+        _LOGGER.debug("Updating threshold: %.2f%% (%.3f)", value, value / 100.0)
+
+        # Convert percentage to 0.0-1.0 range for storage
+        threshold_decimal = value / 100.0
 
         await self.config_manager.update_config(
             {
-                CONF_THRESHOLD: value,
+                CONF_THRESHOLD: threshold_decimal,
             }
         )
 
