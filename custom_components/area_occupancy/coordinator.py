@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -46,7 +45,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=config_entry.data.get(CONF_NAME, DEFAULT_NAME),
-            update_interval=timedelta(seconds=30),  # More reasonable update interval
+            update_interval=timedelta(minutes=5),
         )
         self.hass = hass
         self.config_entry = config_entry
@@ -163,6 +162,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Invalidating cached probability for area %s", self.config.name
             )
             self._cached_probability = None
+
+            # Trigger immediate coordinator refresh for real-time updates
+            # This ensures binary sensor and probability sensor update immediately
+            # for automation responsiveness
+            self.hass.async_create_task(self.async_request_refresh())
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
@@ -462,31 +466,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Track failed entity updates
             failed_entities = []
 
-            # Update entity states and calculate probabilities
-            # Use coordinated updates to prevent race conditions with state change events
-            update_tasks = []
-            for entity in self.entities.entities.values():
-                try:
-                    # Use the entity manager's coordinated update instead of direct update
-                    task = self.entities.coordinated_entity_update(entity.entity_id)
-                    update_tasks.append(task)
-                except (StateError, ValueError) as err:
-                    _LOGGER.warning(
-                        "Error creating update task for entity %s: %s (will retry next cycle)",
-                        entity.entity_id,
-                        err,
-                    )
-                    failed_entities.append(entity.entity_id)
-                    continue
-
-            # Wait for all updates to complete
-            if update_tasks:
-                try:
-                    await asyncio.gather(*update_tasks, return_exceptions=True)
-                except (asyncio.CancelledError, RuntimeError, ValueError) as err:
-                    _LOGGER.warning(
-                        "Some entity updates failed during coordinator update: %s", err
-                    )
+            # Note: Entity updates are now handled by state change listeners
+            # and trigger immediate coordinator refreshes via cache invalidation.
+            # This scheduled update mainly serves as a backup and for periodic health checks.
 
             # Log failed entities if any
             if failed_entities:

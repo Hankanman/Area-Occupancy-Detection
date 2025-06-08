@@ -748,11 +748,34 @@ class EntityManager:
         if entity_id in self._entities:
             entity = self._entities[entity_id]
             try:
+                # Store old probability to detect changes
+                old_probability = entity.probability.decayed_probability
+                old_active_state = entity.is_active
+
                 await entity.async_update()
                 _LOGGER.debug("Successfully updated entity %s", entity_id)
 
-                # Invalidate coordinator's cached probability since entity probability changed
-                self.coordinator.invalidate_probability_cache()
+                # Only invalidate cache if probability or active state actually changed
+                # This prevents unnecessary coordinator refreshes
+                new_probability = entity.probability.decayed_probability
+                new_active_state = entity.is_active
+
+                if (
+                    abs(old_probability - new_probability) > 0.001
+                    or old_active_state != new_active_state
+                ):
+                    # Invalidate coordinator's cached probability since entity probability changed
+                    # This will trigger immediate coordinator refresh for real-time updates
+                    self.coordinator.invalidate_probability_cache()
+                    _LOGGER.debug(
+                        "Entity %s triggered probability cache invalidation: "
+                        "prob %.3f->%.3f, active %s->%s",
+                        entity_id,
+                        old_probability,
+                        new_probability,
+                        old_active_state,
+                        new_active_state,
+                    )
 
             except (ValueError, AttributeError, RuntimeError) as err:
                 _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
