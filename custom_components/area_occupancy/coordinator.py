@@ -163,10 +163,55 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._cached_probability = None
 
-            # Trigger immediate coordinator refresh for real-time updates
+            # Trigger immediate data update and notify all sensor entities
             # This ensures binary sensor and probability sensor update immediately
             # for automation responsiveness
-            self.hass.async_create_task(self.async_request_refresh())
+            self.hass.async_create_task(self._async_immediate_update())
+
+    async def _async_immediate_update(self) -> None:
+        """Perform immediate data update and notify all listeners.
+
+        This method bypasses the normal coordinator update interval and immediately
+        calculates new probability data and notifies all sensor entities.
+        """
+        try:
+            _LOGGER.debug(
+                "Performing immediate coordinator update for %s", self.config.name
+            )
+
+            # Calculate new probability (cache was already invalidated)
+            probability = self.complementary_probability
+            is_occupied = probability >= self.config.threshold
+
+            # Create updated data dictionary
+            data = {
+                "probability": probability,
+                "is_occupied": is_occupied,
+                "threshold": self.config.threshold,
+                "last_updated": dt_util.utcnow().isoformat(),
+                "entities": {
+                    entity_id: {
+                        "probability": entity.probability.decayed_probability,
+                        "is_active": entity.is_active,
+                        "state": entity.state,
+                        "last_updated": entity.last_updated.isoformat(),
+                    }
+                    for entity_id, entity in self.entities.entities.items()
+                },
+            }
+
+            # Directly set updated data to trigger immediate sensor updates
+            self.async_set_updated_data(data)
+
+            _LOGGER.debug(
+                "Immediate update completed for area %s: probability=%.2f, is_occupied=%s",
+                self.config.name,
+                probability,
+                is_occupied,
+            )
+
+        except HomeAssistantError as err:
+            _LOGGER.error("Error in immediate coordinator update: %s", err)
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
