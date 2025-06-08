@@ -139,10 +139,181 @@ class EntityManager:
         return manager
 
     async def async_initialize(self) -> None:
-        """Initialize the entities."""
-        self._entities = await self.map_inputs_to_entities()
+        """Initialize the entities with proper restoration support."""
+        # Check if we already have restored entities (from storage)
+        if hasattr(self, "_entities") and self._entities:
+            _LOGGER.debug(
+                "Found %d restored entities, merging with current config",
+                len(self._entities),
+            )
+            await self._merge_restored_with_config()
+        else:
+            _LOGGER.debug(
+                "No restored entities found, creating fresh entities from config"
+            )
+            self._entities = await self.map_inputs_to_entities()
+
         self._setup_entity_tracking()
-        _LOGGER.debug("EntityManager initialized with entities: %s", self._entities)
+        _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
+
+    async def _merge_restored_with_config(self) -> None:
+        """Merge restored entities with current configuration."""
+        try:
+            # Get current config entities
+            config_entities = await self._get_config_entity_mapping()
+
+            # Track what entities we need to keep, update, or create
+            merged_entities: dict[str, Entity] = {}
+
+            # 1. Process existing restored entities
+            for entity_id, restored_entity in self._entities.items():
+                if entity_id in config_entities:
+                    # Entity still exists in config - keep with learned data but update type if needed
+                    current_type = config_entities[entity_id]
+
+                    # Update entity type configuration (weights, states) but preserve learned priors
+                    if restored_entity.type.input_type == current_type.input_type:
+                        # Same type - update configuration but keep learned data
+                        restored_entity.type.weight = current_type.weight
+                        restored_entity.type.active_states = current_type.active_states
+                        restored_entity.type.active_range = current_type.active_range
+                        # Keep learned priors: restored_entity.prior (contains learned data)
+                        _LOGGER.debug(
+                            "Updated config for existing entity %s", entity_id
+                        )
+                    else:
+                        # Type changed - recreate with new type but try to preserve some data
+                        _LOGGER.info(
+                            "Entity type changed for %s: %s -> %s",
+                            entity_id,
+                            restored_entity.type.input_type,
+                            current_type.input_type,
+                        )
+                        restored_entity = await self._recreate_entity_with_new_type(
+                            entity_id, current_type, restored_entity
+                        )
+
+                    merged_entities[entity_id] = restored_entity
+                    # Remove from config_entities so we don't create duplicate
+                    del config_entities[entity_id]
+                else:
+                    # Entity removed from config - log but don't keep
+                    _LOGGER.info(
+                        "Entity %s removed from configuration, dropping stored data",
+                        entity_id,
+                    )
+
+            # 2. Create new entities for any added to config
+            for entity_id, entity_type in config_entities.items():
+                _LOGGER.info(
+                    "Creating new entity %s (type: %s)",
+                    entity_id,
+                    entity_type.input_type,
+                )
+                # Calculate fresh prior for new entity
+                prior = await self._calculate_initial_prior(entity_id, entity_type)
+                new_entity = self.create_entity(
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    prior=prior,
+                )
+                merged_entities[entity_id] = new_entity
+
+            # 3. Replace entity dictionary
+            original_count = len(self._entities)
+            added_count = len(config_entities)
+            self._entities = merged_entities
+
+            _LOGGER.info(
+                "Entity merge complete: %d total entities, %d added from config",
+                len(self._entities),
+                added_count,
+            )
+
+        except Exception as err:
+            _LOGGER.error("Error merging restored entities with config: %s", err)
+            # Fallback to fresh creation
+            _LOGGER.warning("Falling back to fresh entity creation")
+            self._entities = await self.map_inputs_to_entities()
+
+    async def _get_config_entity_mapping(self) -> dict[str, EntityType]:
+        """Get mapping of entity_id -> EntityType from current configuration."""
+        primary_sensor = self.config.sensors.primary_occupancy
+        if not primary_sensor:
+            raise ValueError("Primary occupancy sensor must be configured")
+
+        type_mappings = {
+            InputType.MOTION: self.config.sensors.motion,
+            InputType.MEDIA: self.config.sensors.media,
+            InputType.APPLIANCE: self.config.sensors.appliances,
+            InputType.DOOR: self.config.sensors.doors,
+            InputType.WINDOW: self.config.sensors.windows,
+            InputType.LIGHT: self.config.sensors.lights,
+            InputType.ENVIRONMENTAL: self.config.sensors.illuminance
+            + self.config.sensors.humidity
+            + self.config.sensors.temperature,
+        }
+
+        entity_mapping: dict[str, EntityType] = {}
+        for input_type, entity_ids in type_mappings.items():
+            entity_type = self.coordinator.entity_types.get_entity_type(input_type)
+            for entity_id in entity_ids:
+                entity_mapping[entity_id] = entity_type
+
+        return entity_mapping
+
+    async def _recreate_entity_with_new_type(
+        self, entity_id: str, new_type: EntityType, old_entity: Entity
+    ) -> Entity:
+        """Recreate entity with new type, preserving what data we can."""
+        # Calculate new prior for the new type
+        prior = await self._calculate_initial_prior(entity_id, new_type)
+
+        # Create new entity but preserve some metadata
+        return self.create_entity(
+            entity_id=entity_id,
+            entity_type=new_type,
+            state=old_entity.state,  # Keep current state
+            is_active=old_entity.is_active,  # Keep current active status
+            last_changed=old_entity.last_changed,  # Keep last changed time
+            available=old_entity.available,  # Keep availability
+            prior=prior,  # Use new calculated prior
+        )
+
+    async def _calculate_initial_prior(
+        self, entity_id: str, entity_type: EntityType
+    ) -> Prior:
+        """Calculate initial prior for a new entity."""
+        history_days = self.config.decay.history_period
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=history_days)
+        primary_sensor = self.config.sensors.primary_occupancy
+
+        if not primary_sensor:
+            raise ValueError("Primary occupancy sensor must be configured")
+
+        try:
+            return await self.coordinator.priors.calculate(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                hass=self.hass,
+                primary_sensor=primary_sensor,
+                start_time=start_time,
+                end_time=end_time,
+                prior_type=PriorType.ENTITY,
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to calculate initial prior for %s: %s", entity_id, err
+            )
+            # Return default prior
+            return Prior(
+                prior=entity_type.prior,
+                prob_given_true=entity_type.prob_true,
+                prob_given_false=entity_type.prob_false,
+                last_updated=dt_util.utcnow(),
+                type=PriorType.ENTITY,
+            )
 
     @property
     def entities(self) -> dict[str, Entity]:
