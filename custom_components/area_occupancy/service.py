@@ -96,12 +96,24 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall):
 
 
 async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall):
-    """Get comprehensive entity metrics for diagnostics."""
+    """Get basic entity metrics for diagnostics."""
     entry_id = call.data["entry_id"]
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
-        metrics = coordinator.entities.get_entity_metrics()
+        entities = coordinator.entities.entities
+
+        metrics = {
+            "total_entities": len(entities),
+            "active_entities": sum(1 for e in entities.values() if e.is_active),
+            "available_entities": sum(1 for e in entities.values() if e.available),
+            "unavailable_entities": sum(
+                1 for e in entities.values() if not e.available
+            ),
+            "decaying_entities": sum(
+                1 for e in entities.values() if e.decay.is_decaying
+            ),
+        }
 
         _LOGGER.info("Retrieved entity metrics for entry %s", entry_id)
 
@@ -120,7 +132,17 @@ async def _get_problematic_entities(hass: HomeAssistant, call: ServiceCall):
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
-        problems = coordinator.entities.get_problematic_entities()
+        entities = coordinator.entities.entities
+        now = dt_util.utcnow()
+
+        problems = {
+            "unavailable": [eid for eid, e in entities.items() if not e.available],
+            "stale_updates": [
+                eid
+                for eid, e in entities.items()
+                if e.last_updated and (now - e.last_updated).total_seconds() > 3600
+            ],
+        }
 
         _LOGGER.info("Retrieved problematic entities for entry %s", entry_id)
 
@@ -249,7 +271,18 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
             occupancy_probability = occupancy_state.attributes.get("probability")
 
         # Get entity metrics for additional context
-        metrics = coordinator.entities.get_entity_metrics()
+        entities = coordinator.entities.entities
+        metrics = {
+            "total_entities": len(entities),
+            "active_entities": sum(1 for e in entities.values() if e.is_active),
+            "available_entities": sum(1 for e in entities.values() if e.available),
+            "unavailable_entities": sum(
+                1 for e in entities.values() if not e.available
+            ),
+            "decaying_entities": sum(
+                1 for e in entities.values() if e.decay.is_decaying
+            ),
+        }
 
         status = {
             "area_name": area_name,
