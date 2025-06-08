@@ -150,11 +150,30 @@ class Config:
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create a config from a dictionary with validation."""
         # Validate threshold range
-        threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD))
-        if not 0 <= threshold <= 100:
-            _LOGGER.warning("Invalid threshold %s, using default %s", threshold, DEFAULT_THRESHOLD)
+        threshold_raw = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD))
+
+        # Handle threshold conversion: if it's > 1, treat as percentage and convert to 0.0-1.0
+        if threshold_raw > 1.0:
+            if not 1.0 <= threshold_raw <= 100.0:
+                _LOGGER.warning(
+                    "Invalid threshold percentage %s, using default %s",
+                    threshold_raw,
+                    DEFAULT_THRESHOLD * 100,
+                )
+                threshold = DEFAULT_THRESHOLD
+            else:
+                threshold = threshold_raw / 100.0  # Convert percentage to 0.0-1.0 range
+            # Already in 0.0-1.0 range
+        elif not 0.0 <= threshold_raw <= 1.0:
+            _LOGGER.warning(
+                "Invalid threshold %s, using default %s",
+                threshold_raw,
+                DEFAULT_THRESHOLD,
+            )
             threshold = DEFAULT_THRESHOLD
-            
+        else:
+            threshold = threshold_raw
+
         # Validate weights are positive
         weights_data = {}
         for weight_key, default_val in [
@@ -169,10 +188,15 @@ class Config:
         ]:
             weight_val = float(data.get(weight_key, default_val))
             if weight_val < 0:
-                _LOGGER.warning("Invalid weight %s=%s, using default %s", weight_key, weight_val, default_val)
+                _LOGGER.warning(
+                    "Invalid weight %s=%s, using default %s",
+                    weight_key,
+                    weight_val,
+                    default_val,
+                )
                 weight_val = default_val
             weights_data[weight_key] = weight_val
-            
+
         return cls(
             name=data.get(CONF_NAME, "Area Occupancy"),
             area_id=data.get(CONF_AREA_ID),
@@ -290,15 +314,16 @@ class ConfigManager:
 
     async def update_config(self, options: dict[str, Any]) -> None:
         """Update configuration and persist to Home Assistant config entry.
-        
+
         Args:
             options: Dictionary of configuration options to update
-            
+
         Raises:
             ValueError: If any option values are invalid
             HomeAssistantError: If updating the config entry fails
+
         """
-        
+
         try:
             # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)
@@ -313,9 +338,9 @@ class ConfigManager:
             # Merge existing config entry with new options for internal state
             merged_data = self._merge_entry(self.config_entry)
             merged_data.update(options)
-            
+
             # Create new config object with validation
             self._config = Config.from_dict(merged_data)
-            
+
         except Exception as err:
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
