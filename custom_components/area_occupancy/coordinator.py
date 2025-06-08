@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -328,7 +329,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Finished scheduled prior update task trigger for area %s",
                 self.config.name,
             )
-        except Exception:
+        except (ValueError, RuntimeError, HomeAssistantError):
             _LOGGER.exception(
                 "Error occurred during scheduled prior update for area %s",
                 self.config.name,
@@ -422,18 +423,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             failed_entities = []
 
             # Update entity states and calculate probabilities
+            # Use coordinated updates to prevent race conditions with state change events
+            update_tasks = []
             for entity in self.entities.entities.values():
                 try:
-                    await entity.async_update()
+                    # Use the entity manager's coordinated update instead of direct update
+                    task = self.entities.coordinated_entity_update(entity.entity_id)
+                    update_tasks.append(task)
                 except (StateError, ValueError) as err:
                     _LOGGER.warning(
-                        "Error updating entity %s: %s (will retry next cycle)",
+                        "Error creating update task for entity %s: %s (will retry next cycle)",
                         entity.entity_id,
                         err,
                     )
                     failed_entities.append(entity.entity_id)
-                    # Continue with other entities even if one fails
                     continue
+
+            # Wait for all updates to complete
+            if update_tasks:
+                try:
+                    await asyncio.gather(*update_tasks, return_exceptions=True)
+                except (asyncio.CancelledError, RuntimeError, ValueError) as err:
+                    _LOGGER.warning(
+                        "Some entity updates failed during coordinator update: %s", err
+                    )
 
             # Log failed entities if any
             if failed_entities:
