@@ -510,15 +510,29 @@ class EntityManager:
             ):
                 # Request coordinator update
                 self.coordinator.request_update()
-                _LOGGER.debug(
-                    "Entity %s triggered coordinator update: "
-                    "prob %.3f->%.3f, active %s->%s",
-                    entity_id,
-                    old_probability,
-                    new_probability,
-                    old_active_state,
-                    new_active_state,
-                )
+
+                if self.coordinator.dev_mode:
+                    _LOGGER.debug(
+                        "Entity %s triggered coordinator update: "
+                        "prob %.3f->%.3f, active %s->%s, state=%s, decay_factor=%.3f",
+                        entity_id,
+                        old_probability,
+                        new_probability,
+                        old_active_state,
+                        new_active_state,
+                        entity.state,
+                        entity.probability.decay_factor,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Entity %s triggered coordinator update: "
+                        "prob %.3f->%.3f, active %s->%s",
+                        entity_id,
+                        old_probability,
+                        new_probability,
+                        old_active_state,
+                        new_active_state,
+                    )
 
         except (ValueError, AttributeError, RuntimeError) as err:
             _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
