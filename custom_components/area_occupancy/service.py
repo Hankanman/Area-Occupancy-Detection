@@ -318,11 +318,33 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         }
     )
 
-    # Register services with lambda wrappers to pass hass
+    # Create async wrapper functions to properly handle the service calls
+    async def handle_update_priors(call: ServiceCall):
+        return await _update_priors(hass, call)
+
+    async def handle_reset_entities(call: ServiceCall):
+        return await _reset_entities(hass, call)
+
+    async def handle_get_entity_metrics(call: ServiceCall):
+        return await _get_entity_metrics(hass, call)
+
+    async def handle_get_problematic_entities(call: ServiceCall):
+        return await _get_problematic_entities(hass, call)
+
+    async def handle_get_entity_details(call: ServiceCall):
+        return await _get_entity_details(hass, call)
+
+    async def handle_force_entity_update(call: ServiceCall):
+        return await _force_entity_update(hass, call)
+
+    async def handle_get_area_status(call: ServiceCall):
+        return await _get_area_status(hass, call)
+
+    # Register services with async wrapper functions
     hass.services.async_register(
         DOMAIN,
         "update_priors",
-        lambda call: _update_priors(hass, call),
+        handle_update_priors,
         schema=update_priors_schema,
         supports_response=SupportsResponse.ONLY,
     )
@@ -330,14 +352,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "reset_entities",
-        lambda call: _reset_entities(hass, call),
+        handle_reset_entities,
         schema=reset_entities_schema,
     )
 
     hass.services.async_register(
         DOMAIN,
         "get_entity_metrics",
-        lambda call: _get_entity_metrics(hass, call),
+        handle_get_entity_metrics,
         schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )
@@ -345,7 +367,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "get_problematic_entities",
-        lambda call: _get_problematic_entities(hass, call),
+        handle_get_problematic_entities,
         schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )
@@ -353,7 +375,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "get_entity_details",
-        lambda call: _get_entity_details(hass, call),
+        handle_get_entity_details,
         schema=entity_details_schema,
         supports_response=SupportsResponse.ONLY,
     )
@@ -361,7 +383,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "force_entity_update",
-        lambda call: _force_entity_update(hass, call),
+        handle_force_entity_update,
         schema=force_update_schema,
         supports_response=SupportsResponse.ONLY,
     )
@@ -369,7 +391,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "get_area_status",
-        lambda call: _get_area_status(hass, call),
+        handle_get_area_status,
         schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )

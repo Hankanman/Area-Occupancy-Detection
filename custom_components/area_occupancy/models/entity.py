@@ -764,11 +764,11 @@ class EntityManager:
                     abs(old_probability - new_probability) > 0.001
                     or old_active_state != new_active_state
                 ):
-                    # Invalidate coordinator's cached probability since entity probability changed
-                    # This will trigger immediate coordinator refresh for real-time updates
-                    self.coordinator.invalidate_probability_cache()
+                    # Request coordinator update since entity probability changed
+                    # This will trigger coordinator refresh for real-time updates
+                    self.coordinator.request_update()
                     _LOGGER.debug(
-                        "Entity %s triggered probability cache invalidation: "
+                        "Entity %s triggered coordinator update request: "
                         "prob %.3f->%.3f, active %s->%s",
                         entity_id,
                         old_probability,
