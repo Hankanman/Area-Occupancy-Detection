@@ -16,5 +16,98 @@ update_priors:
       selector:
         number:
           min: 1
-          max: 30
+          max: 90
           step: 1
+
+reset_entities:
+  name: Reset Entities
+  description: "Reset all entity probabilities and learned data to start fresh."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to reset."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    clear_storage:
+      name: Clear Storage
+      description: "Also clear all stored historical data."
+      required: false
+      default: false
+      selector:
+        boolean:
+
+get_area_status:
+  name: Get Area Status
+  description: "Get current area occupancy status, confidence level, and entity summary."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to get status for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+get_entity_metrics:
+  name: Get Entity Metrics
+  description: "Get comprehensive metrics about all entities for diagnostics and monitoring."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to get metrics for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+get_problematic_entities:
+  name: Get Problematic Entities
+  description: "Get entities that may need attention (unavailable, stale updates, stuck decay, etc.)."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to check for problems."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+get_entity_details:
+  name: Get Entity Details
+  description: "Get detailed information about specific entities including probabilities, decay status, and configuration."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    entity_ids:
+      name: Entity IDs
+      description: "List of entity IDs to get details for (leave empty for all entities)."
+      required: false
+      selector:
+        entity:
+          multiple: true
+
+force_entity_update:
+  name: Force Entity Update
+  description: "Force immediate probability recalculation for specific entities."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    entity_ids:
+      name: Entity IDs
+      description: "List of entity IDs to force update (leave empty for all entities)."
+      required: false
+      selector:
+        entity:
+          multiple: true

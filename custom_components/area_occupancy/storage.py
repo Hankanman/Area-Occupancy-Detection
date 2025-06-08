@@ -183,3 +183,14 @@ class StorageManager(Store[dict[str, Any]]):
             except HomeAssistantError as err:
                 _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
                 raise StorageError(f"Failed to save instance data: {err}") from err
+
+    async def async_reset(self) -> None:
+        """Reset storage to empty state."""
+        async with self._lock:
+            try:
+                data = self.create_empty_storage()
+                await self.async_save(data)
+                _LOGGER.info("Storage reset to empty state")
+            except HomeAssistantError as err:
+                _LOGGER.error("Error resetting storage: %s", err)
+                raise StorageError(f"Failed to reset storage: {err}") from err
