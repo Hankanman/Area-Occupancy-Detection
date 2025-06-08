@@ -1,6 +1,5 @@
 """Entity model."""
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
@@ -117,12 +116,6 @@ class EntityManager:
         self.storage = coordinator.storage
         self._entities: dict[str, Entity] = {}
         self._remove_state_listener: CALLBACK_TYPE | None = None
-        # Race condition prevention
-        self._pending_updates: dict[
-            str, datetime
-        ] = {}  # Track pending updates per entity
-        self._update_tasks: dict[str, Any] = {}  # Track running update tasks per entity
-        self._update_debounce_delay = 0.1  # 100ms debounce delay
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity manager to dictionary for storage."""
@@ -163,100 +156,58 @@ class EntityManager:
 
     async def async_initialize(self) -> None:
         """Initialize the entities with proper restoration support."""
-        # Check if we already have restored entities (from storage)
-        if hasattr(self, "_entities") and self._entities:
+        # If we have restored entities, update them with current config
+        if self._entities:
             _LOGGER.debug(
-                "Found %d restored entities, merging with current config",
+                "Found %d restored entities, updating with current config",
                 len(self._entities),
             )
-            await self._merge_restored_with_config()
+            await self._update_entities_from_config()
         else:
             _LOGGER.debug(
                 "No restored entities found, creating fresh entities from config"
             )
-            self._entities = await self.map_inputs_to_entities()
+            self._entities = await self._create_entities_from_config()
 
         self._setup_entity_tracking()
         _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
 
-    async def _merge_restored_with_config(self) -> None:
-        """Merge restored entities with current configuration."""
-        try:
-            # Get current config entities
-            config_entities = await self._get_config_entity_mapping()
+    async def _update_entities_from_config(self) -> None:
+        """Update existing entities with current configuration."""
+        config_entities = await self._get_config_entity_mapping()
+        updated_entities: dict[str, Entity] = {}
 
-            # Track what entities we need to keep, update, or create
-            merged_entities: dict[str, Entity] = {}
+        # Process existing restored entities
+        for entity_id, restored_entity in self._entities.items():
+            if entity_id in config_entities:
+                # Entity still exists in config - update type configuration
+                current_type = config_entities[entity_id]
 
-            # 1. Process existing restored entities
-            for entity_id, restored_entity in self._entities.items():
-                if entity_id in config_entities:
-                    # Entity still exists in config - keep with learned data but update type if needed
-                    current_type = config_entities[entity_id]
+                # Update type configuration but preserve learned data
+                restored_entity.type.weight = current_type.weight
+                restored_entity.type.active_states = current_type.active_states
+                restored_entity.type.active_range = current_type.active_range
 
-                    # Update entity type configuration (weights, states) but preserve learned priors
-                    if restored_entity.type.input_type == current_type.input_type:
-                        # Same type - update configuration but keep learned data
-                        restored_entity.type.weight = current_type.weight
-                        restored_entity.type.active_states = current_type.active_states
-                        restored_entity.type.active_range = current_type.active_range
-                        # Keep learned priors: restored_entity.prior (contains learned data)
-                        _LOGGER.debug(
-                            "Updated config for existing entity %s", entity_id
-                        )
-                    else:
-                        # Type changed - recreate with new type but try to preserve some data
-                        _LOGGER.info(
-                            "Entity type changed for %s: %s -> %s",
-                            entity_id,
-                            restored_entity.type.input_type,
-                            current_type.input_type,
-                        )
-                        restored_entity = await self._recreate_entity_with_new_type(
-                            entity_id, current_type, restored_entity
-                        )
-
-                    merged_entities[entity_id] = restored_entity
-                    # Remove from config_entities so we don't create duplicate
-                    del config_entities[entity_id]
-                else:
-                    # Entity removed from config - log but don't keep
-                    _LOGGER.info(
-                        "Entity %s removed from configuration, dropping stored data",
-                        entity_id,
-                    )
-
-            # 2. Create new entities for any added to config
-            for entity_id, entity_type in config_entities.items():
+                updated_entities[entity_id] = restored_entity
+                del config_entities[entity_id]  # Mark as processed
+            else:
                 _LOGGER.info(
-                    "Creating new entity %s (type: %s)",
+                    "Entity %s removed from configuration, dropping stored data",
                     entity_id,
-                    entity_type.input_type,
                 )
-                # Calculate fresh prior for new entity
-                prior = await self._calculate_initial_prior(entity_id, entity_type)
-                new_entity = self.create_entity(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    prior=prior,
-                )
-                merged_entities[entity_id] = new_entity
 
-            # 3. Replace entity dictionary
-            added_count = len(config_entities)
-            self._entities = merged_entities
-
-            _LOGGER.info(
-                "Entity merge complete: %d total entities, %d added from config",
-                len(self._entities),
-                added_count,
+        # Create new entities for any added to config
+        for entity_id, entity_type in config_entities.items():
+            _LOGGER.info("Creating new entity %s", entity_id)
+            prior = await self._calculate_initial_prior(entity_id, entity_type)
+            updated_entities[entity_id] = self._create_entity(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                prior=prior,
             )
 
-        except (ValueError, KeyError, AttributeError, TypeError) as err:
-            _LOGGER.error("Error merging restored entities with config: %s", err)
-            # Fallback to fresh creation
-            _LOGGER.warning("Falling back to fresh entity creation")
-            self._entities = await self.map_inputs_to_entities()
+        self._entities = updated_entities
+        _LOGGER.info("Entity update complete: %d total entities", len(self._entities))
 
     async def _get_config_entity_mapping(self) -> dict[str, EntityType]:
         """Get mapping of entity_id -> EntityType from current configuration."""
@@ -283,24 +234,6 @@ class EntityManager:
                 entity_mapping[entity_id] = entity_type
 
         return entity_mapping
-
-    async def _recreate_entity_with_new_type(
-        self, entity_id: str, new_type: EntityType, old_entity: Entity
-    ) -> Entity:
-        """Recreate entity with new type, preserving what data we can."""
-        # Calculate new prior for the new type
-        prior = await self._calculate_initial_prior(entity_id, new_type)
-
-        # Create new entity but preserve some metadata
-        return self.create_entity(
-            entity_id=entity_id,
-            entity_type=new_type,
-            state=old_entity.state,  # Keep current state
-            is_active=old_entity.is_active,  # Keep current active status
-            last_changed=old_entity.last_changed,  # Keep last changed time
-            available=old_entity.available,  # Keep availability
-            prior=prior,  # Use new calculated prior
-        )
 
     async def _calculate_initial_prior(
         self, entity_id: str, entity_type: EntityType
@@ -349,45 +282,38 @@ class EntityManager:
         return self._entities
 
     async def reset_entities(self) -> None:
-        """Update the entities."""
-        self._entities = await self.map_inputs_to_entities()
-        # Re-setup tracking after updating entities
+        """Reset entities to fresh state from configuration."""
+        self._entities = await self._create_entities_from_config()
         self._setup_entity_tracking()
 
-    def create_entity(
+    def _create_entity(
         self,
         entity_id: str,
         entity_type: EntityType,
         state: str | float | bool | None = None,
         is_active: bool = False,
-        probability: float = 0.0,
         last_changed: datetime | None = None,
         available: bool = True,
         prior: Prior | None = None,
     ) -> Entity:
-        """Create a new entity and add it to the manager.
+        """Create a new entity.
 
         Args:
             entity_id: The unique identifier for the entity
             entity_type: The type of entity
             state: The current state of the entity
             is_active: Whether the entity is active
-            probability: The probability value
             last_changed: When the entity last changed state
             available: Whether the entity is available
             prior: The prior probability information
 
         Returns:
-            The created Entity instance, or existing one if already exists
+            The created Entity instance
 
         """
-        # Return existing entity if it already exists
-        if entity_id in self._entities:
-            return self._entities[entity_id]
-
-        # Create probability instance first
+        # Create probability instance
         prob = Probability(
-            probability=validate_prob(probability),
+            probability=validate_prob(0.0),
             decayed_probability=validate_prob(0.0),
             decay_factor=validate_prob(1.0),
             last_updated=validate_datetime(last_changed),
@@ -396,8 +322,8 @@ class EntityManager:
 
         # Create decay instance
         decay = Decay(
-            is_decaying=True,
-            decay_start_time=dt_util.utcnow(),
+            is_decaying=False,
+            decay_start_time=None,
             decay_start_probability=validate_prob(0.0),
             decay_factor=validate_prob(1.0),
             decay_window=self.config.decay.window,
@@ -414,7 +340,7 @@ class EntityManager:
                 type=PriorType.ENTITY,
             )
 
-        entity = Entity(
+        return Entity(
             entity_id=entity_id,
             type=entity_type,
             probability=prob,
@@ -425,9 +351,6 @@ class EntityManager:
             last_changed=validate_datetime(last_changed),
             available=available,
         )
-
-        self._entities[entity_id] = entity
-        return entity
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -455,7 +378,6 @@ class EntityManager:
                 if entity_id not in self._entities:
                     return
 
-                # Get the existing entity
                 entity = self._entities[entity_id]
 
                 # Update entity state
@@ -476,11 +398,10 @@ class EntityManager:
                 entity.available = is_available
 
                 # Determine if entity is active based on its type and state
-                active_states = entity.type.active_states or []
                 is_active = False
                 if current_state_val is not None:
                     if entity.type.active_states is not None:
-                        is_active = current_state_val in active_states
+                        is_active = current_state_val in entity.type.active_states
                     elif entity.type.active_range is not None:
                         try:
                             state_val = float(current_state_val)
@@ -492,9 +413,8 @@ class EntityManager:
                 # Update is_active status
                 entity.is_active = is_active
 
-                # Use coordinated update to prevent race conditions
-                # This debounces rapid changes and ensures only one update per entity
-                self.hass.async_create_task(self.coordinated_entity_update(entity_id))
+                # Schedule entity update
+                self.hass.async_create_task(self._async_update_entity(entity_id))
 
             except Exception:
                 _LOGGER.exception(
@@ -507,14 +427,16 @@ class EntityManager:
             async_state_changed_listener,
         )
 
-    async def map_inputs_to_entities(self) -> dict[str, Entity]:
-        """Map inputs to entities."""
+    async def _create_entities_from_config(self) -> dict[str, Entity]:
+        """Create entities from current configuration."""
         history_days = self.config.decay.history_period
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=history_days)
         primary_sensor = self.config.sensors.primary_occupancy
+
         if not primary_sensor:
             raise ValueError("Primary occupancy sensor must be configured")
+
         type_mappings = {
             InputType.MOTION: self.config.sensors.motion,
             InputType.MEDIA: self.config.sensors.media,
@@ -526,6 +448,7 @@ class EntityManager:
             + self.config.sensors.humidity
             + self.config.sensors.temperature,
         }
+
         entities: dict[str, Entity] = {}
         for input_type, inputs in type_mappings.items():
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
@@ -539,7 +462,7 @@ class EntityManager:
                     end_time=end_time,
                     prior_type=PriorType.ENTITY,
                 )
-                entities[input_entity_id] = self.create_entity(
+                entities[input_entity_id] = self._create_entity(
                     entity_id=input_entity_id,
                     entity_type=entity_type,
                     prior=prior,
@@ -552,230 +475,56 @@ class EntityManager:
             raise ValueError(f"Entity not found for entity: {entity_id}")
         return self._entities[entity_id]
 
-    def get_entity_metrics(self) -> dict[str, Any]:
-        """Get comprehensive metrics about all entities.
+    def add_entity(self, entity: Entity) -> None:
+        """Add an entity to the manager."""
+        self._entities[entity.entity_id] = entity
+        _LOGGER.debug("Added entity %s to entity manager", entity.entity_id)
 
-        Returns:
-            Dictionary containing entity metrics and health information
+    def remove_entity(self, entity_id: str) -> None:
+        """Remove an entity from the manager."""
+        if entity_id in self._entities:
+            del self._entities[entity_id]
+            _LOGGER.debug("Removed entity %s from entity manager", entity_id)
 
-        """
-        now = dt_util.utcnow()
-        entity_types: dict[str, dict[str, Any]] = {}
-        probability_distribution: dict[str, int] = {
-            "high_confidence": 0,  # > 0.8
-            "medium_confidence": 0,  # 0.2 - 0.8
-            "low_confidence": 0,  # < 0.2
-        }
-        last_update_age: dict[str, int] = {}
+    async def _async_update_entity(self, entity_id: str) -> None:
+        """Update a single entity."""
+        if entity_id not in self._entities:
+            return
 
-        metrics = {
-            "total_entities": len(self._entities),
-            "active_entities": sum(1 for e in self._entities.values() if e.is_active),
-            "available_entities": sum(
-                1 for e in self._entities.values() if e.available
-            ),
-            "unavailable_entities": sum(
-                1 for e in self._entities.values() if not e.available
-            ),
-            "decaying_entities": sum(
-                1 for e in self._entities.values() if e.decay.is_decaying
-            ),
-            "entity_types": entity_types,
-            "probability_distribution": probability_distribution,
-            "last_update_age": last_update_age,
-        }
+        entity = self._entities[entity_id]
+        try:
+            # Store old probability to detect changes
+            old_probability = entity.probability.decayed_probability
+            old_active_state = entity.is_active
 
-        # Analyze by entity type
-        for entity in self._entities.values():
-            entity_type = entity.type.input_type.value
-            if entity_type not in entity_types:
-                entity_types[entity_type] = {
-                    "count": 0,
-                    "active": 0,
-                    "available": 0,
-                    "avg_probability": 0.0,
-                }
+            await entity.async_update()
+            _LOGGER.debug("Successfully updated entity %s", entity_id)
 
-            type_metrics = entity_types[entity_type]
-            type_metrics["count"] += 1
-            if entity.is_active:
-                type_metrics["active"] += 1
-            if entity.available:
-                type_metrics["available"] += 1
-            type_metrics["avg_probability"] += entity.probability.decayed_probability
+            # Check if significant change occurred
+            new_probability = entity.probability.decayed_probability
+            new_active_state = entity.is_active
 
-            # Probability distribution
-            prob = entity.probability.decayed_probability
-            if prob > 0.8:
-                probability_distribution["high_confidence"] += 1
-            elif prob > 0.2:
-                probability_distribution["medium_confidence"] += 1
-            else:
-                probability_distribution["low_confidence"] += 1
-
-            # Update age analysis
-            if entity.last_updated:
-                age_seconds = (now - entity.last_updated).total_seconds()
-                age_category = (
-                    "recent"
-                    if age_seconds < 300
-                    else "stale"
-                    if age_seconds < 3600
-                    else "very_stale"
-                )
-                last_update_age[age_category] = last_update_age.get(age_category, 0) + 1
-
-        # Calculate averages
-        for type_metrics in entity_types.values():
-            if type_metrics["count"] > 0:
-                type_metrics["avg_probability"] /= type_metrics["count"]
-
-        return metrics
-
-    def get_problematic_entities(self) -> dict[str, list[str]]:
-        """Get entities that may need attention.
-
-        Returns:
-            Dictionary categorizing entities by potential issues
-
-        """
-        now = dt_util.utcnow()
-        problems: dict[str, list[str]] = {
-            "unavailable": [],
-            "stale_updates": [],  # No updates > 1 hour
-            "stuck_decay": [],  # Decaying for > 2 hours
-            "extreme_probabilities": [],  # Very high/low probabilities
-        }
-
-        for entity_id, entity in self._entities.items():
-            # Unavailable entities
-            if not entity.available:
-                problems["unavailable"].append(entity_id)
-
-            # Stale updates
             if (
-                entity.last_updated
-                and (now - entity.last_updated).total_seconds() > 3600
+                abs(old_probability - new_probability) > 0.001
+                or old_active_state != new_active_state
             ):
-                problems["stale_updates"].append(entity_id)
+                # Request coordinator update
+                self.coordinator.request_update()
+                _LOGGER.debug(
+                    "Entity %s triggered coordinator update: "
+                    "prob %.3f->%.3f, active %s->%s",
+                    entity_id,
+                    old_probability,
+                    new_probability,
+                    old_active_state,
+                    new_active_state,
+                )
 
-            # Stuck decay
-            if entity.decay.is_decaying and entity.decay.decay_start_time:
-                decay_duration = (now - entity.decay.decay_start_time).total_seconds()
-                if decay_duration > 7200:  # 2 hours
-                    problems["stuck_decay"].append(entity_id)
-
-            # Extreme probabilities (might indicate sensor issues)
-            prob = entity.probability.decayed_probability
-            if prob > 0.95 or prob < 0.05:
-                problems["extreme_probabilities"].append(entity_id)
-
-        return problems
+        except (ValueError, AttributeError, RuntimeError) as err:
+            _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
 
     def cleanup(self) -> None:
         """Clean up resources."""
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
-
-        # Cancel any pending update tasks
-        for entity_id, task in self._update_tasks.items():
-            if not task.done():
-                task.cancel()
-                _LOGGER.debug("Cancelled pending update task for %s", entity_id)
-
-        # Clear tracking dictionaries
-        self._update_tasks.clear()
-        self._pending_updates.clear()
-
-    async def coordinated_entity_update(self, entity_id: str) -> None:
-        """Coordinate entity updates to prevent race conditions.
-
-        This method ensures:
-        1. Only one update runs per entity at a time
-        2. Rapid state changes are debounced
-        3. The latest state is always used for calculations
-
-        Args:
-            entity_id: The entity ID to update
-
-        """
-        now = dt_util.utcnow()
-
-        # Record this update request
-        self._pending_updates[entity_id] = now
-
-        # If there's already an update task running for this entity, let it handle this update
-        if entity_id in self._update_tasks:
-            _LOGGER.debug("Update already in progress for %s, debouncing", entity_id)
-            return
-
-        try:
-            # Create and track the update task
-            update_task = self.hass.async_create_task(
-                self._debounced_entity_update(entity_id)
-            )
-            self._update_tasks[entity_id] = update_task
-            await update_task
-
-        except (asyncio.CancelledError, RuntimeError, ValueError) as err:
-            _LOGGER.error("Error in coordinated update for %s: %s", entity_id, err)
-        finally:
-            # Clean up task tracking
-            self._update_tasks.pop(entity_id, None)
-            self._pending_updates.pop(entity_id, None)
-
-    async def _debounced_entity_update(self, entity_id: str) -> None:
-        """Debounced entity update that waits for rapid changes to settle.
-
-        Args:
-            entity_id: The entity ID to update
-
-        """
-
-        # Wait for debounce period to handle rapid state changes
-        await asyncio.sleep(self._update_debounce_delay)
-
-        # Check if there have been more recent update requests
-        last_request_time = self._pending_updates.get(entity_id)
-        if last_request_time:
-            time_since_request = (dt_util.utcnow() - last_request_time).total_seconds()
-            if time_since_request < self._update_debounce_delay:
-                # More recent request, wait a bit more
-                await asyncio.sleep(self._update_debounce_delay)
-
-        # Perform the actual update
-        if entity_id in self._entities:
-            entity = self._entities[entity_id]
-            try:
-                # Store old probability to detect changes
-                old_probability = entity.probability.decayed_probability
-                old_active_state = entity.is_active
-
-                await entity.async_update()
-                _LOGGER.debug("Successfully updated entity %s", entity_id)
-
-                # Only invalidate cache if probability or active state actually changed
-                # This prevents unnecessary coordinator refreshes
-                new_probability = entity.probability.decayed_probability
-                new_active_state = entity.is_active
-
-                if (
-                    abs(old_probability - new_probability) > 0.001
-                    or old_active_state != new_active_state
-                ):
-                    # Request coordinator update since entity probability changed
-                    # This will trigger coordinator refresh for real-time updates
-                    self.coordinator.request_update()
-                    _LOGGER.debug(
-                        "Entity %s triggered coordinator update request: "
-                        "prob %.3f->%.3f, active %s->%s",
-                        entity_id,
-                        old_probability,
-                        new_probability,
-                        old_active_state,
-                        new_active_state,
-                    )
-
-            except (ValueError, AttributeError, RuntimeError) as err:
-                _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
