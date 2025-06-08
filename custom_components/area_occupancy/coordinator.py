@@ -60,10 +60,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._next_prior_update: datetime | None = None
         self._last_prior_update: datetime | None = None
         self._prior_update_tracker: CALLBACK_TYPE | None = None
-        self._last_saved_data: dict[str, Any] | None = None  # Cache for smart saving
-        self._cached_probability: float | None = (
-            None  # Cache for probability calculation
-        )
 
     @property
     def available(self) -> bool:
@@ -81,16 +77,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sw_version="1.0.0",
         )
 
-    def _calculate_probability(self) -> float:
-        """Calculate the complementary probability across all entities.
-
-        This represents the overall probability that the area is occupied,
-        taking into account all entity probabilities and their weights.
-
-        Returns:
-            float: The complementary probability (0.0-1.0)
-
-        """
+    @property
+    def probability(self) -> float:
+        """Calculate and return the current occupancy probability (0.0-1.0)."""
         if not self.entities.entities:
             return MIN_PROBABILITY
 
@@ -112,13 +101,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return validate_prob(final_probability)
 
     @property
-    def complementary_probability(self) -> float:
-        """Return the cached complementary probability, calculating if needed."""
-        if self._cached_probability is None:
-            self._cached_probability = self._calculate_probability()
-        return self._cached_probability
-
-    @property
     def prior_update_interval(self) -> timedelta:
         """Return the interval between prior updates."""
         return self._prior_update_interval
@@ -134,11 +116,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._last_prior_update
 
     @property
-    def probability(self) -> float:
-        """Return the current occupancy probability (0.0-1.0)."""
-        return self.complementary_probability
-
-    @property
     def is_occupied(self) -> bool:
         """Return the current occupancy state (True/False)."""
         return self.probability >= self.config.threshold
@@ -148,70 +125,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
 
-    def invalidate_probability_cache(self) -> None:
-        """Invalidate the cached probability to force recalculation.
+    def request_update(self) -> None:
+        """Request an immediate coordinator refresh.
 
-        This should be called whenever:
-        - An entity's probability changes
-        - An entity's active state changes
-        - Entity weights or configuration changes
-        - Prior probabilities are updated
+        This replaces the complex cache invalidation system with a simple
+        request for the coordinator to update as soon as possible.
         """
-        if self._cached_probability is not None:
-            _LOGGER.debug(
-                "Invalidating cached probability for area %s", self.config.name
-            )
-            self._cached_probability = None
-
-            # Trigger immediate data update and notify all sensor entities
-            # This ensures binary sensor and probability sensor update immediately
-            # for automation responsiveness
-            self.hass.async_create_task(self._async_immediate_update())
-
-    async def _async_immediate_update(self) -> None:
-        """Perform immediate data update and notify all listeners.
-
-        This method bypasses the normal coordinator update interval and immediately
-        calculates new probability data and notifies all sensor entities.
-        """
-        try:
-            _LOGGER.debug(
-                "Performing immediate coordinator update for %s", self.config.name
-            )
-
-            # Calculate new probability (cache was already invalidated)
-            probability = self.complementary_probability
-            is_occupied = probability >= self.config.threshold
-
-            # Create updated data dictionary
-            data = {
-                "probability": probability,
-                "is_occupied": is_occupied,
-                "threshold": self.config.threshold,
-                "last_updated": dt_util.utcnow().isoformat(),
-                "entities": {
-                    entity_id: {
-                        "probability": entity.probability.decayed_probability,
-                        "is_active": entity.is_active,
-                        "state": entity.state,
-                        "last_updated": entity.last_updated.isoformat(),
-                    }
-                    for entity_id, entity in self.entities.entities.items()
-                },
-            }
-
-            # Directly set updated data to trigger immediate sensor updates
-            self.async_set_updated_data(data)
-
-            _LOGGER.debug(
-                "Immediate update completed for area %s: probability=%.2f, is_occupied=%s",
-                self.config.name,
-                probability,
-                is_occupied,
-            )
-
-        except HomeAssistantError as err:
-            _LOGGER.error("Error in immediate coordinator update: %s", err)
+        _LOGGER.debug(
+            "Requesting immediate coordinator update for %s", self.config.name
+        )
+        self.hass.async_create_task(self.async_request_refresh())
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
@@ -260,18 +183,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.config_manager.update_config(options)
         self.config = self.config_manager.config
 
-        # Clear cached data since configuration changed
-        self.invalidate_probability_cache()
-        self._last_saved_data = None
-
         # Update prior update interval if changed
         if "prior_update_interval" in options:
             self._prior_update_interval = timedelta(
                 hours=options["prior_update_interval"]
             )
 
-        # Schedule next update
+        # Schedule next update and refresh data
         await self._schedule_next_prior_update()
+        self.request_update()
 
     async def async_update_threshold(self, value: float) -> None:
         """Update the threshold value.
@@ -295,8 +215,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
         )
 
-        # Invalidate cache since threshold affects is_occupied calculation
-        self.invalidate_probability_cache()
+        # Request update since threshold affects is_occupied calculation
+        self.request_update()
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -345,9 +265,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 self._last_prior_update = None
 
-            # Invalidate cache since restored entities may have different probabilities
-            self.invalidate_probability_cache()
-
         except StorageError as err:
             _LOGGER.warning(
                 "Storage error for instance %s, initializing with defaults: %s",
@@ -371,9 +288,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Delegate the actual prior updating to the PriorManager
             updated_count = await self.priors.update_all_entity_priors(history_period)
 
-            # Invalidate cache since priors affect probability calculations
+            # Request update if priors changed
             if updated_count > 0:
-                self.invalidate_probability_cache()
+                self.request_update()
 
             _LOGGER.info(
                 "Completed learned priors update for area %s: updated %d entities",
@@ -433,47 +350,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 await self._schedule_next_prior_update()
 
-    # --- Data Saving ---
-    async def _async_save_data(self, force: bool = False) -> None:
-        """Save the current data to storage if it has changed.
-
-        Args:
-            force: Force save even if data hasn't changed
-
-        """
-        if not force and self._last_saved_data is not None:
-            # Check if we need to save based on significant changes
-            current_data = {
-                "probability": round(
-                    self.probability, 3
-                ),  # Round to avoid float precision issues
-                "is_occupied": self.is_occupied,
-                "threshold": self.threshold,
-            }
-
-            if current_data == self._last_saved_data:
-                _LOGGER.debug("Data unchanged, skipping save")
-                return
-
-        try:
-            _LOGGER.debug("Attempting to save data")
-            await self.storage.async_save_instance_data(
-                self.entry_id,
-                self.entities,
-            )
-
-            # Update saved data cache
-            self._last_saved_data = {
-                "probability": round(self.probability, 3),
-                "is_occupied": self.is_occupied,
-                "threshold": self.threshold,
-            }
-
-            _LOGGER.debug("Data saved successfully")
-        except StorageError as err:
-            _LOGGER.error("Failed to save data: %s", err)
-            raise
-
     # --- Listener Handling ---
     @callback
     def _async_refresh_finished(self) -> None:
@@ -508,60 +384,33 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting data update for area %s", self.config.name)
 
-            # Clear cached probability to force recalculation
-            self._cached_probability = None
-
-            # Track failed entity updates
-            failed_entities = []
-
-            # Note: Entity updates are now handled by state change listeners
-            # and trigger immediate coordinator refreshes via cache invalidation.
-            # This scheduled update mainly serves as a backup and for periodic health checks.
-
-            # Log failed entities if any
-            if failed_entities:
-                _LOGGER.debug(
-                    "Failed to update %d entities: %s",
-                    len(failed_entities),
-                    failed_entities,
-                )
-
-            # Calculate overall probability (this will use the fresh calculation due to cache clear)
-            probability = self.complementary_probability
-            is_occupied = probability >= self.config.threshold
-
-            # Prepare data dictionary
-            data = {
-                "probability": probability,
-                "is_occupied": is_occupied,
-                "threshold": self.config.threshold,
-                "last_updated": dt_util.utcnow().isoformat(),
-                "failed_entities": failed_entities,  # Include failed entities in data
-                "entities": {
-                    entity_id: {
-                        "probability": entity.probability.decayed_probability,
-                        "is_active": entity.is_active,
-                        "state": entity.state,
-                        "last_updated": entity.last_updated.isoformat(),
-                    }
-                    for entity_id, entity in self.entities.entities.items()
-                },
-            }
-
-            # Save data to storage (uses smart saving logic)
+            # Save data to storage periodically
             await self._async_save_data()
 
             _LOGGER.debug(
-                "Data update completed for area %s: probability=%.2f, is_occupied=%s, failed_entities=%d",
+                "Data update completed for area %s: probability=%.2f, is_occupied=%s",
                 self.config.name,
-                probability,
-                is_occupied,
-                len(failed_entities),
+                self.probability,
+                self.is_occupied,
             )
+
+            # Return minimal data - sensors access coordinator properties directly
+            return {"last_updated": dt_util.utcnow().isoformat()}
 
         except (StateError, ValueError) as err:
             _LOGGER.error("Error updating data: %s", err)
             raise HomeAssistantError(f"Error updating data: {err}") from err
 
-        else:
-            return data
+    # --- Data Saving ---
+    async def _async_save_data(self) -> None:
+        """Save the current data to storage."""
+        try:
+            _LOGGER.debug("Saving coordinator data")
+            await self.storage.async_save_instance_data(
+                self.entry_id,
+                self.entities,
+            )
+            _LOGGER.debug("Data saved successfully")
+        except StorageError as err:
+            _LOGGER.error("Failed to save data: %s", err)
+            raise
