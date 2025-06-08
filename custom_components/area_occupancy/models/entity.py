@@ -1,5 +1,6 @@
 """Entity model."""
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
@@ -116,6 +117,12 @@ class EntityManager:
         self.storage = coordinator.storage
         self._entities: dict[str, Entity] = {}
         self._remove_state_listener: CALLBACK_TYPE | None = None
+        # Race condition prevention
+        self._pending_updates: dict[
+            str, datetime
+        ] = {}  # Track pending updates per entity
+        self._update_tasks: dict[str, Any] = {}  # Track running update tasks per entity
+        self._update_debounce_delay = 0.1  # 100ms debounce delay
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity manager to dictionary for storage."""
@@ -220,7 +227,6 @@ class EntityManager:
                 merged_entities[entity_id] = new_entity
 
             # 3. Replace entity dictionary
-            original_count = len(self._entities)
             added_count = len(config_entities)
             self._entities = merged_entities
 
@@ -230,7 +236,7 @@ class EntityManager:
                 added_count,
             )
 
-        except Exception as err:
+        except (ValueError, KeyError, AttributeError, TypeError) as err:
             _LOGGER.error("Error merging restored entities with config: %s", err)
             # Fallback to fresh creation
             _LOGGER.warning("Falling back to fresh entity creation")
@@ -302,7 +308,13 @@ class EntityManager:
                 end_time=end_time,
                 prior_type=PriorType.ENTITY,
             )
-        except Exception as err:
+        except (
+            ValueError,
+            KeyError,
+            AttributeError,
+            ConnectionError,
+            TimeoutError,
+        ) as err:
             _LOGGER.warning(
                 "Failed to calculate initial prior for %s: %s", entity_id, err
             )
@@ -464,9 +476,9 @@ class EntityManager:
                 # Update is_active status
                 entity.is_active = is_active
 
-                # Use the entity's async_update method for consistent probability calculations
-                # This ensures all logic is centralized and maintainable
-                self.hass.async_create_task(entity.async_update())
+                # Use coordinated update to prevent race conditions
+                # This debounces rapid changes and ensures only one update per entity
+                self.hass.async_create_task(self.coordinated_entity_update(entity_id))
 
             except Exception:
                 _LOGGER.exception(
@@ -649,3 +661,78 @@ class EntityManager:
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
+
+        # Cancel any pending update tasks
+        for entity_id, task in self._update_tasks.items():
+            if not task.done():
+                task.cancel()
+                _LOGGER.debug("Cancelled pending update task for %s", entity_id)
+
+        # Clear tracking dictionaries
+        self._update_tasks.clear()
+        self._pending_updates.clear()
+
+    async def coordinated_entity_update(self, entity_id: str) -> None:
+        """Coordinate entity updates to prevent race conditions.
+
+        This method ensures:
+        1. Only one update runs per entity at a time
+        2. Rapid state changes are debounced
+        3. The latest state is always used for calculations
+
+        Args:
+            entity_id: The entity ID to update
+
+        """
+        now = dt_util.utcnow()
+
+        # Record this update request
+        self._pending_updates[entity_id] = now
+
+        # If there's already an update task running for this entity, let it handle this update
+        if entity_id in self._update_tasks:
+            _LOGGER.debug("Update already in progress for %s, debouncing", entity_id)
+            return
+
+        try:
+            # Create and track the update task
+            update_task = self.hass.async_create_task(
+                self._debounced_entity_update(entity_id)
+            )
+            self._update_tasks[entity_id] = update_task
+            await update_task
+
+        except (asyncio.CancelledError, RuntimeError, ValueError) as err:
+            _LOGGER.error("Error in coordinated update for %s: %s", entity_id, err)
+        finally:
+            # Clean up task tracking
+            self._update_tasks.pop(entity_id, None)
+            self._pending_updates.pop(entity_id, None)
+
+    async def _debounced_entity_update(self, entity_id: str) -> None:
+        """Debounced entity update that waits for rapid changes to settle.
+
+        Args:
+            entity_id: The entity ID to update
+
+        """
+
+        # Wait for debounce period to handle rapid state changes
+        await asyncio.sleep(self._update_debounce_delay)
+
+        # Check if there have been more recent update requests
+        last_request_time = self._pending_updates.get(entity_id)
+        if last_request_time:
+            time_since_request = (dt_util.utcnow() - last_request_time).total_seconds()
+            if time_since_request < self._update_debounce_delay:
+                # More recent request, wait a bit more
+                await asyncio.sleep(self._update_debounce_delay)
+
+        # Perform the actual update
+        if entity_id in self._entities:
+            entity = self._entities[entity_id]
+            try:
+                await entity.async_update()
+                _LOGGER.debug("Successfully updated entity %s", entity_id)
+            except (ValueError, AttributeError, RuntimeError) as err:
+                _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
