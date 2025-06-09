@@ -11,6 +11,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .exceptions import StorageError
 from .models.entity import EntityManager
+from .models.entity_type import EntityTypeManager
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -159,7 +160,7 @@ class StorageManager(Store[dict[str, Any]]):
             return None
 
     async def async_save_instance_data(
-        self, entry_id: str, entity_manager: EntityManager
+        self, entry_id: str, entity_manager: EntityManager, entity_types: EntityTypeManager
     ) -> None:
         """Save instance data to storage."""
         async with self._lock:  # Prevent concurrent modifications
@@ -180,15 +181,23 @@ class StorageManager(Store[dict[str, Any]]):
                 if "instances" not in data:
                     data["instances"] = {}
 
-                # Convert entity manager to dict
-                instance_data = entity_manager.to_dict()
+                # Convert entity manager to dict and flatten structure
+                entity_data = entity_manager.to_dict()
+                entity_types_data = entity_types.to_dict()
 
                 if dev_mode:
-                    entity_count = len(instance_data.get("entities", {}))
+                    entity_count = len(entity_data.get("entities", {}))
                     _LOGGER.debug("Saving %d entities to storage", entity_count)
 
-                # Update storage
-                data["instances"][entry_id] = instance_data
+                # Update storage with flattened structure
+                data["instances"][entry_id] = {
+                    "name": self._coordinator.config.name,
+                    "probability": self._coordinator.probability,
+                    "prior": self._coordinator.prior,
+                    "threshold": self._coordinator.threshold,
+                    "entities": entity_data.get("entities", {}),
+                    "entity_types": entity_types_data.get("entity_types", {}),
+                }
                 await self.async_save(data)
 
                 if dev_mode:

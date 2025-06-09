@@ -110,12 +110,12 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
             entities = self.coordinator.entities.entities
             return {
                 "active": [
-                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability.probability)}"
+                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability)}"
                     for entity in entities.values()
                     if entity.is_active
                 ],
                 "inactive": [
-                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability.probability)}"
+                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability)}"
                     for entity in entities.values()
                     if not entity.is_active
                 ],

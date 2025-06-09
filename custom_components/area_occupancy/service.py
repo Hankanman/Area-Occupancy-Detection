@@ -176,13 +176,9 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
                     "state": entity.state,
                     "is_active": entity.is_active,
                     "available": entity.available,
-                    "last_changed": entity.last_changed.isoformat()
-                    if entity.last_changed
-                    else None,
                     "last_updated": entity.last_updated.isoformat(),
-                    "probability": entity.probability.probability,
-                    "decayed_probability": entity.probability.decayed_probability,
-                    "decay_factor": entity.probability.decay_factor,
+                    "probability": entity.probability,
+                    "decay_factor": entity.decay.decay_factor,
                     "is_decaying": entity.decay.is_decaying,
                     "decay_start_time": entity.decay.decay_start_time.isoformat()
                     if entity.decay.decay_start_time
