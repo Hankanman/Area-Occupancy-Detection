@@ -1,11 +1,11 @@
 """Utility functions for the area occupancy component."""
 
 from datetime import datetime
-import logging
 
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ROUNDING_PRECISION,
     MAX_PRIOR,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -13,8 +13,6 @@ from .const import (
     MIN_PROBABILITY,
     MIN_WEIGHT,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 #################################
 # Validation Methods
@@ -41,6 +39,19 @@ def validate_datetime(value: datetime | None) -> datetime:
 def validate_weight(value: float) -> float:
     """Validate a weight value."""
     return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
+
+
+def validate_decay_factor(value: float) -> float:
+    """Validate a decay factor value."""
+    return max(MIN_PROBABILITY, min(value, MAX_PROBABILITY))
+
+
+def format_float(value: float) -> float:
+    """Format float to consistently show 2 decimal places."""
+    try:
+        return round(float(value), ROUNDING_PRECISION)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def bayesian_probability(
@@ -70,7 +81,9 @@ def bayesian_probability(
     else:
         # P(occupied | inactive) = P(inactive | occupied) * P(occupied) / P(inactive)
         numerator = (1 - prob_given_true) * prior
-        denominator = ((1 - prob_given_true) * prior) + ((1 - prob_given_false) * (1 - prior))
+        denominator = ((1 - prob_given_true) * prior) + (
+            (1 - prob_given_false) * (1 - prior)
+        )
 
     if denominator == 0:
         probability = MIN_PROBABILITY
