@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -14,16 +12,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import NAME_BINARY_SENSOR
 from .coordinator import AreaOccupancyCoordinator
-from .virtual_sensor import async_setup_virtual_sensors
 
-_LOGGER = logging.getLogger(__name__)
+NAME_BINARY_SENSOR = "Occupancy Status"
 
 
-class AreaOccupancyBinarySensor(
-    CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity
-):
+class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity):
     """Binary sensor for the occupancy status."""
 
     def __init__(
@@ -67,29 +61,11 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
     # 1. Create the main sensor instance
-    main_sensor = AreaOccupancyBinarySensor(
-        coordinator=coordinator,
-        entry_id=config_entry.entry_id,
-    )
-
-    # 2. Call virtual sensor setup to get virtual sensor instances
-    virtual_sensors_to_add = []
-    try:
-        virtual_sensors_to_add = await async_setup_virtual_sensors(
-            hass,
-            config_entry,
-            async_add_entities,  # Pass it along, though it shouldn't be used inside now
-            coordinator,
+    entities = [
+        Occupancy(
+            coordinator=coordinator,
+            entry_id=config_entry.entry_id,
         )
-    except (ImportError, ModuleNotFoundError):
-        _LOGGER.debug("Virtual sensor module not available, skipping virtual sensors")
+    ]
 
-    # 3. Combine main and virtual sensors
-    all_sensors_to_add = [main_sensor, *virtual_sensors_to_add]
-
-    # 4. Add all entities in a single call
-    if all_sensors_to_add:
-        _LOGGER.debug("Adding %d binary sensor entities", len(all_sensors_to_add))
-        async_add_entities(all_sensors_to_add, update_before_add=True)
-    else:
-        _LOGGER.warning("No binary sensor entities to add.")
+    async_add_entities(entities, update_before_add=True)

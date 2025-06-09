@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -16,15 +15,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import (
-    NAME_DECAY_SENSOR,
-    NAME_PRIORS_SENSOR,
-    NAME_PROBABILITY_SENSOR,
-    ROUNDING_PRECISION,
-)
 from .coordinator import AreaOccupancyCoordinator
+from .utils import format_float
 
-_LOGGER = logging.getLogger(__name__)
+NAME_PRIORS_SENSOR = "Prior Probability"
+NAME_DECAY_SENSOR = "Decay Status"
+NAME_PROBABILITY_SENSOR = "Occupancy Probability"
+NAME_ENTITIES_SENSOR = "Entities"
 
 
 class AreaOccupancySensorBase(
@@ -72,10 +69,10 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        return self.coordinator.prior
+        return format_float(self.coordinator.prior * 100)
 
 
-class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
+class ProbabilitySensor(AreaOccupancySensorBase):
     """Probability sensor for current area occupancy."""
 
     def __init__(
@@ -92,7 +89,6 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = None
 
     @property
     def native_value(self) -> float | None:
@@ -101,34 +97,57 @@ class AreaOccupancyProbabilitySensor(AreaOccupancySensorBase):
         return format_float(self.coordinator.probability * 100)
 
 
+class EntitiesSensor(AreaOccupancySensorBase):
+    """Sensor for all entities."""
+
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entry_id: str,
+    ) -> None:
+        """Initialize the entities sensor."""
+        super().__init__(coordinator, entry_id)
+        self._attr_name = NAME_ENTITIES_SENSOR
+        self._attr_unique_id = (
+            f"{entry_id}_{NAME_ENTITIES_SENSOR.lower().replace(' ', '_')}"
+        )
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the entities as a percentage."""
+        return len(self.coordinator.entities.entities)
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         if not self.coordinator.data:
             return {}
         try:
-            entities = self.coordinator.entities.entities
+            active_entities = self.coordinator.entities.active_entities
+            inactive_entities = self.coordinator.entities.inactive_entities
             return {
                 "active": [
-                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability)}"
-                    for entity in entities.values()
-                    if entity.is_active
+                    {
+                        "id": f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.probability)}",
+                    }
+                    for entity in active_entities
                 ],
                 "inactive": [
-                    f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.decay.decay_factor)} | {format_float(entity.probability)}"
-                    for entity in entities.values()
-                    if not entity.is_active
+                    {
+                        "id": f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.probability)}",
+                    }
+                    for entity in inactive_entities
                 ],
                 "updated": self.coordinator.last_updated
                 if self.coordinator.last_updated
                 else "Never",
             }
         except (TypeError, AttributeError, KeyError):
-            _LOGGER.exception("Error getting probability attributes: %s")
             return {}
 
 
-class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
+class DecaySensor(AreaOccupancySensorBase):
     """Decay status sensor for area occupancy."""
 
     def __init__(
@@ -150,15 +169,24 @@ class AreaOccupancyDecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        if not self.coordinator.data:
-            return 0.0
 
+        return format_float((1 - self.coordinator.decay) * 100)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
         try:
-            # decay_status is already stored as 0.0 to 100.0
-            return format_float(self.coordinator.prior)
-        except AttributeError:
-            _LOGGER.error("Coordinator data missing decay_status attribute")
-            return 0.0
+            active_entities = self.coordinator.entities.active_entities
+            return {
+                "active": [
+                    {
+                        "id": f"{entity.entity_id.split('.')[1]} | {format_float(entity.decay.decay_factor)}",
+                    }
+                    for entity in active_entities
+                ]
+            }
+        except (TypeError, AttributeError, KeyError):
+            return {}
 
 
 async def async_setup_entry(
@@ -169,22 +197,11 @@ async def async_setup_entry(
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
-    sensors = [
-        AreaOccupancyProbabilitySensor(coordinator, entry.entry_id),
-        AreaOccupancyDecaySensor(coordinator, entry.entry_id),
+    entities = [
+        ProbabilitySensor(coordinator, entry.entry_id),
+        DecaySensor(coordinator, entry.entry_id),
+        PriorsSensor(coordinator, entry.entry_id),
+        EntitiesSensor(coordinator, entry.entry_id),
     ]
 
-    # Create priors sensor if history period is configured and greater than 0
-    history_period = coordinator.config.decay.history_period
-    if history_period > 0:
-        sensors.append(PriorsSensor(coordinator, entry.entry_id))
-
-    async_add_entities(sensors, update_before_add=True)
-
-
-def format_float(value: float) -> float:
-    """Format float to consistently show 2 decimal places."""
-    try:
-        return round(float(value), ROUNDING_PRECISION)
-    except (ValueError, TypeError):
-        return 0.0
+    async_add_entities(entities, update_before_add=True)
