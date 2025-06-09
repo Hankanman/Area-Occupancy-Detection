@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local
-from .const import CONF_THRESHOLD, DEFAULT_NAME, DOMAIN, MIN_PROBABILITY, DEFAULT_PRIOR
+from .const import CONF_THRESHOLD, DEFAULT_NAME, DEFAULT_PRIOR, DOMAIN, MIN_PROBABILITY
 from .exceptions import CalculationError, StateError, StorageError
 from .models.config import ConfigManager
 from .models.entity import EntityManager
@@ -164,16 +164,44 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
 
-    def request_update(self) -> None:
+    @property
+    def last_updated(self) -> datetime | None:
+        """Return the last updated timestamp."""
+        return self.data.get("last_updated")
+
+    @property
+    def last_changed(self) -> datetime | None:
+        """Return the last changed timestamp."""
+        return self.data.get("last_changed")
+
+    def request_update(self, force: bool = False) -> None:
         """Request an immediate coordinator refresh.
 
-        This replaces the complex cache invalidation system with a simple
-        request for the coordinator to update as soon as possible.
+        Args:
+            force: If True, bypasses debouncing and forces immediate update
+
         """
-        _LOGGER.debug(
-            "Requesting immediate coordinator update for %s", self.config.name
-        )
-        self.hass.async_create_task(self.async_request_refresh())
+        if force:
+            # Bypass debouncing by directly calling the update methods
+            self.hass.async_create_task(self._async_force_immediate_update())
+        else:
+            self.hass.async_create_task(self.async_request_refresh())
+
+    async def _async_force_immediate_update(self) -> None:
+        """Force immediate coordinator update bypassing any debouncing."""
+        try:
+            _LOGGER.debug("Executing immediate coordinator update")
+
+            # Directly call the data update method
+            data = await self._async_update_data()
+
+            # Immediately notify all listeners with the new data
+            self.async_set_updated_data(data)
+
+        except (HomeAssistantError, ValueError, RuntimeError, AttributeError) as err:
+            _LOGGER.warning("Failed to force immediate coordinator update: %s", err)
+            # Fallback to regular request_update if direct method fails
+            self.hass.async_create_task(self.async_request_refresh())
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
@@ -282,7 +310,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 loaded_data,
                 was_reset,
             ) = await self.storage.async_load_with_compatibility_check(
-                self.entry_id, self.config_entry.version
+                self.entry_id, self.config_entry.version if self.config_entry else 9
             )
 
             if loaded_data:
