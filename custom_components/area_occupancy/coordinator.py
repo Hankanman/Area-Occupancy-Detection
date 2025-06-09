@@ -118,7 +118,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if entity.is_active:  # Only consider active entities
                 weight = entity.type.weight
                 total_weight += weight
-                weighted_sum += entity.probability.decayed_probability * weight
+                weighted_sum += entity.probability * weight
 
         if total_weight == 0:
             return MIN_PROBABILITY
@@ -323,6 +323,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 # Create entity manager from loaded data
                 self.entities = EntityManager.from_dict(loaded_data, self)
+                self.entity_types = EntityTypeManager.from_dict(loaded_data, self)
                 if last_updated_str:
                     self._last_prior_update = dt_util.parse_datetime(last_updated_str)
                 else:
@@ -503,6 +504,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.storage.async_save_instance_data(
                 self.entry_id,
                 self.entities,
+                self.entity_types,
             )
             _LOGGER.debug("Data saved successfully")
         except StorageError as err:

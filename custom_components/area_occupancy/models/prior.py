@@ -23,10 +23,8 @@ from ..const import (
     MAX_PROBABILITY,
     MIN_PROBABILITY,
 )
-from ..exceptions import StateError
 from ..utils import validate_datetime, validate_prior, validate_prob
 from .entity_type import EntityType
-from .probability import Probability
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -54,7 +52,7 @@ class PriorType(StrEnum):
 @dataclass
 class PriorCalculationConfig:
     """Configuration for prior probability calculation."""
-    
+
     entity_type: EntityType
     prior_type: PriorType
     primary_sensor: str
@@ -65,7 +63,17 @@ class PriorCalculationConfig:
 
 @dataclass
 class Prior:
-    """Holds prior probability data for an entity or type, and calculates it."""
+    """Holds learned prior probability data for an entity or type.
+
+    This class stores historically learned probabilities but does not update
+    them based on real-time sensor data. All probability calculations should
+    be handled by the Probability class using Bayesian inference.
+
+    The Prior class is responsible for:
+    - Storing learned historical probabilities
+    - Calculating priors from historical sensor data
+    - Providing stable baseline probabilities for Bayesian calculations
+    """
 
     prior: float
     prob_given_true: float
@@ -79,35 +87,6 @@ class Prior:
         self.prob_given_true = validate_prob(self.prob_given_true)
         self.prob_given_false = validate_prob(self.prob_given_false)
         self.last_updated = validate_datetime(self.last_updated)
-
-    def update(self, probability: Probability) -> None:
-        """Update prior based on new probability.
-
-        Args:
-            probability: The new probability to use for updating
-
-        Raises:
-            StateError: If there's an error updating the prior
-
-        """
-        try:
-            # Calculate new prior using Bayes' theorem
-            numerator = probability.probability * self.prior
-            denominator = probability.probability * self.prior + (
-                1 - probability.probability
-            ) * (1 - self.prior)
-
-            if denominator == 0:
-                raise StateError("Denominator is zero in prior update")
-
-            self.prior = max(
-                MIN_PROBABILITY,
-                min(MAX_PROBABILITY, numerator / denominator),
-            )
-            self.last_updated = dt_util.utcnow()
-
-        except Exception as err:
-            raise StateError(f"Error updating prior: {err}") from err
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""
@@ -163,15 +142,18 @@ class PriorManager:
         """Clear all stored priors."""
         self._priors.clear()
 
-    async def calculate_with_config(self, hass: HomeAssistant, config: PriorCalculationConfig) -> "Prior":
+    async def calculate_with_config(
+        self, hass: HomeAssistant, config: PriorCalculationConfig
+    ) -> "Prior":
         """Calculate learned priors using a configuration object.
-        
+
         Args:
             hass: Home Assistant instance
             config: Prior calculation configuration
-            
+
         Returns:
             Calculated Prior object
+
         """
         return await self.calculate(
             hass=hass,
@@ -185,34 +167,36 @@ class PriorManager:
 
     async def update_all_entity_priors(self, history_period: int | None = None) -> int:
         """Update learned priors for all entities in the coordinator.
-        
+
         Args:
             history_period: Number of days of history to analyze (defaults to config value)
-            
+
         Returns:
             Number of entities successfully updated
-            
+
         Raises:
             ValueError: If no primary occupancy sensor is configured
+
         """
         # Use configured history period if not provided
         if history_period is None:
             history_period = self.coordinator.config.decay.history_period
-        
+
         # Calculate time window for analysis
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=history_period)
-        
+
         # Get primary occupancy sensor
         primary_sensor = self.coordinator.config.sensors.primary_occupancy
         if not primary_sensor:
             raise ValueError("No primary occupancy sensor configured")
-            
+
         _LOGGER.info(
             "Updating learned priors for area %s: analyzing %d days of history",
-            self.coordinator.config.name, history_period
+            self.coordinator.config.name,
+            history_period,
         )
-            
+
         # Update priors for all entities
         updated_count = 0
         for entity in self.coordinator.entities.entities.values():
@@ -226,27 +210,32 @@ class PriorManager:
                     start_time,
                     end_time,
                 )
-                
+
                 # Update the entity's prior
                 entity.prior = prior
                 updated_count += 1
-                
+
                 _LOGGER.debug(
                     "Updated prior for %s: prior=%.3f, prob_true=%.3f, prob_false=%.3f",
-                    entity.entity_id, prior.prior, prior.prob_given_true, prior.prob_given_false
+                    entity.entity_id,
+                    prior.prior,
+                    prior.prob_given_true,
+                    prior.prob_given_false,
                 )
-                
-            except Exception as err:
+
+            except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
                 _LOGGER.warning(
                     "Failed to update prior for %s: %s", entity.entity_id, err
                 )
                 continue
-        
+
         _LOGGER.info(
             "Completed learned priors update for area %s: updated %d/%d entities",
-            self.coordinator.config.name, updated_count, len(self.coordinator.entities.entities)
+            self.coordinator.config.name,
+            updated_count,
+            len(self.coordinator.entities.entities),
         )
-        
+
         return updated_count
 
     async def calculate(
@@ -286,29 +275,79 @@ class PriorManager:
 
         is_primary = entity_id == primary_sensor
 
-        try:
-            if is_primary:
+        # For the primary sensor, we can only calculate the prior (occupancy rate),
+        # but not meaningful conditional probabilities since P(sensor|sensor) doesn't make sense
+        if is_primary:
+            try:
                 primary_states = await self._get_states_from_recorder(
                     hass, entity_id, start_time, end_time
                 )
-                entity_states = primary_states
-            else:
-                try:
-                    primary_states, entity_states = await asyncio.gather(
-                        self._get_states_from_recorder(
-                            hass, primary_sensor, start_time, end_time
-                        ),
-                        self._get_states_from_recorder(
-                            hass, entity_id, start_time, end_time
-                        ),
-                    )
-                except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
+                if not primary_states:
                     _LOGGER.warning(
-                        "Could not fetch states for prior calculation (%s): %s. Using defaults",
+                        "No states found for primary sensor (%s). Using defaults",
                         entity_id,
-                        err,
                     )
                     return fallback_prior
+
+                primary_state_objects = [
+                    state for state in primary_states if isinstance(state, State)
+                ]
+                if not primary_state_objects:
+                    return fallback_prior
+
+                primary_intervals = await self._states_to_intervals(
+                    primary_state_objects, start_time, end_time
+                )
+
+                # For primary sensor, just calculate the occupancy rate as prior
+                occupied_duration = sum(
+                    (interval["end"] - interval["start"]).total_seconds()
+                    for interval in primary_intervals
+                    if interval["state"] == STATE_ON
+                )
+                total_duration = sum(
+                    (interval["end"] - interval["start"]).total_seconds()
+                    for interval in primary_intervals
+                )
+
+                if total_duration == 0:
+                    return fallback_prior
+
+                prior = max(
+                    MIN_PROBABILITY,
+                    min(occupied_duration / total_duration, MAX_PROBABILITY),
+                )
+
+                # Use entity type defaults for conditional probabilities
+                calculated_prior = Prior(
+                    prior=prior,
+                    prob_given_true=entity_type.prob_true,
+                    prob_given_false=entity_type.prob_false,
+                    last_updated=validate_datetime(None),
+                    type=prior_type,
+                )
+
+                self.update_prior(entity_id, calculated_prior)
+
+            except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
+                _LOGGER.warning(
+                    "Could not fetch states for primary sensor (%s): %s. Using defaults",
+                    entity_id,
+                    err,
+                )
+                return fallback_prior
+
+            else:
+                return calculated_prior
+
+        # For non-primary sensors, calculate conditional probabilities
+        try:
+            primary_states, entity_states = await asyncio.gather(
+                self._get_states_from_recorder(
+                    hass, primary_sensor, start_time, end_time
+                ),
+                self._get_states_from_recorder(hass, entity_id, start_time, end_time),
+            )
         except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
             _LOGGER.warning(
                 "Could not fetch states for prior calculation (%s): %s. Using defaults",
@@ -499,8 +538,8 @@ class PriorManager:
             Conditional probability value
 
         """
-        # Get motion intervals for the primary sensor
-        motion_intervals = motion_intervals_by_sensor.get(entity_id, [])
+        # Get motion intervals for the primary sensor (first key in the dict)
+        motion_intervals = next(iter(motion_intervals_by_sensor.values()), [])
 
         # Filter motion intervals by state
         filtered_motion_intervals = [
@@ -578,12 +617,10 @@ class PriorManager:
         if total_duration == 0:
             return 0.5  # Default to 0.5 if no data
 
-        # Calculate P(area occupied)
+        # Calculate P(area occupied) - this IS the prior
         p_occupied = occupied_duration / total_duration
 
-        # Calculate prior using Bayes' theorem
-        prior = (prob_given_true * p_occupied) / (
-            (prob_given_true * p_occupied) + (prob_given_false * (1 - p_occupied))
-        )
+        # The prior is simply the historical occupancy rate
+        prior = p_occupied
 
         return max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))

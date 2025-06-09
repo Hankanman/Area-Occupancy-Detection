@@ -9,11 +9,10 @@ from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
-from ..utils import validate_datetime, validate_prob
+from ..utils import bayesian_probability, validate_datetime, validate_prob
 from .decay import Decay
 from .entity_type import EntityType, InputType
 from .prior import Prior, PriorType
-from .probability import Probability
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -27,48 +26,44 @@ class Entity:
 
     entity_id: str
     type: EntityType
-    probability: Probability
+    probability: float
     prior: Prior
     decay: Decay
     state: str | float | bool | None = None
     is_active: bool = False
-    last_changed: datetime | None = None
     available: bool = True
     last_updated: datetime = field(default_factory=dt_util.utcnow)
 
     def __post_init__(self):
         """Post init."""
-        # Validate last_changed
-        self.last_changed = validate_datetime(self.last_changed)
+        # Validate last_updated
         self.last_updated = validate_datetime(self.last_updated)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity to dictionary for storage."""
         return {
             "entity_id": self.entity_id,
-            "type": self.type.to_dict(),
-            "probability": self.probability.to_dict(),
+            "type": self.type.input_type.value,
+            "probability": self.probability,
             "prior": self.prior.to_dict(),
             "decay": self.decay.to_dict(),
             "state": self.state,
             "is_active": self.is_active,
-            "last_changed": self.last_changed,
             "available": self.available,
             "last_updated": self.last_updated,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Entity":
+    def from_dict(cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator") -> "Entity":
         """Create entity from dictionary."""
         return cls(
             entity_id=data["entity_id"],
-            type=EntityType.from_dict(data["type"]),
-            probability=Probability.from_dict(data["probability"]),
+            type=coordinator.entity_types.get_entity_type(data["type"]),
+            probability=data["probability"],
             prior=Prior.from_dict(data["prior"]),
             decay=Decay.from_dict(data["decay"]),
             state=data["state"],
             is_active=data["is_active"],
-            last_changed=data["last_changed"],
             available=data["available"],
             last_updated=data["last_updated"],
         )
@@ -76,30 +71,27 @@ class Entity:
     async def async_update(self) -> None:
         """Update entity state and probabilities."""
         # Store previous probability for decay calculation
-        previous_probability = self.probability.probability
+        previous_probability = self.probability
 
         # Update last_updated timestamp
         self.last_updated = dt_util.utcnow()
 
         # Update probability based on current state
-        self.probability.calculate_probability(
-            prior=self.type.prior,
-            prob_true=self.type.prob_true,
-            prob_false=self.type.prob_false,
+        probability = bayesian_probability(
+            prior=self.prior.prior,
+            prob_given_true=self.prior.prob_given_true,
+            prob_given_false=self.prior.prob_given_false,
+            is_active=self.is_active,
         )
 
         # Apply decay using previous probability
         decayed_probability, decay_factor = self.decay.update_decay(
-            current_probability=self.probability.probability,
+            current_probability=probability,
             previous_probability=previous_probability,
         )
 
         # Update probability with decayed values
-        self.probability.update(
-            decayed_probability=decayed_probability,
-            decay_factor=decay_factor,
-            is_active=self.is_active,
-        )
+        self.probability = decayed_probability
 
 
 class EntityManager:
@@ -143,7 +135,7 @@ class EntityManager:
 
         try:
             manager._entities = {
-                entity_id: Entity.from_dict(entity)
+                entity_id: Entity.from_dict(entity, coordinator)
                 for entity_id, entity in data["entities"].items()
             }
         except (KeyError, ValueError, TypeError) as err:
@@ -295,7 +287,6 @@ class EntityManager:
         entity_type: EntityType,
         state: str | float | bool | None = None,
         is_active: bool = False,
-        last_changed: datetime | None = None,
         available: bool = True,
         prior: Prior | None = None,
     ) -> Entity:
@@ -319,7 +310,6 @@ class EntityManager:
             ha_state = self.hass.states.get(entity_id)
             if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
                 state = ha_state.state
-                last_changed = ha_state.last_changed
                 available = True
 
                 # Determine if entity is active based on its type and current state
@@ -348,22 +338,16 @@ class EntityManager:
                 available = False
 
         # Create probability instance
-        prob = Probability(
-            probability=validate_prob(0.0),
-            decayed_probability=validate_prob(0.0),
-            decay_factor=validate_prob(1.0),
-            last_updated=validate_datetime(last_changed),
-            is_active=is_active,
-        )
+        prob = validate_prob(0.0)
 
         # Create decay instance
         decay = Decay(
             is_decaying=False,
             decay_start_time=None,
             decay_start_probability=validate_prob(0.0),
-            decay_factor=validate_prob(1.0),
             decay_window=self.config.decay.window,
             decay_enabled=self.config.decay.enabled,
+            decay_factor=validate_prob(1.0),
         )
 
         # Create prior instance if not provided
@@ -384,8 +368,8 @@ class EntityManager:
             decay=decay,
             state=state,
             is_active=is_active,
-            last_changed=validate_datetime(last_changed),
             available=available,
+            last_updated=dt_util.utcnow(),
         )
 
     def _setup_entity_tracking(self) -> None:
@@ -422,15 +406,9 @@ class EntityManager:
                     and new_state.state not in ["unknown", "unavailable", None, ""]
                 )
                 current_state_val = new_state.state if is_available else None
-                last_changed = (
-                    new_state.last_changed
-                    if new_state and new_state.last_changed
-                    else dt_util.utcnow()
-                )
 
                 # Update entity properties
                 entity.state = current_state_val
-                entity.last_changed = last_changed
                 entity.available = is_available
 
                 # Determine if entity is active based on its type and state
@@ -495,7 +473,6 @@ class EntityManager:
                 old_available = entity.available
 
                 entity.state = ha_state.state
-                entity.last_changed = ha_state.last_changed
                 entity.available = True
 
                 # Determine if entity is active based on its type and state
@@ -627,14 +604,14 @@ class EntityManager:
         entity = self._entities[entity_id]
         try:
             # Store old probability to detect changes
-            old_probability = entity.probability.decayed_probability
+            old_probability = entity.probability
             old_active_state = entity.is_active
 
             await entity.async_update()
             _LOGGER.debug("Successfully updated entity %s", entity_id)
 
             # Check if significant change occurred
-            new_probability = entity.probability.decayed_probability
+            new_probability = entity.probability
             new_active_state = entity.is_active
 
             # IMMEDIATE coordinator update - bypass debouncing by forcing data update
@@ -651,7 +628,7 @@ class EntityManager:
                     old_active_state,
                     new_active_state,
                     entity.state,
-                    entity.probability.decay_factor,
+                    entity.decay.decay_factor,
                 )
             else:
                 _LOGGER.debug(

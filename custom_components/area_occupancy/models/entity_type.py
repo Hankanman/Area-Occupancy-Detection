@@ -203,6 +203,38 @@ class EntityTypeManager:
         """Get the entity types."""
         return self._entity_types
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert entity type manager to dictionary for storage."""
+        return {
+            "entity_types": {
+                input_type.value: entity_type.to_dict()
+                for input_type, entity_type in self._entity_types.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
+    ) -> "EntityTypeManager":
+        """Create entity type manager from dictionary."""
+        manager = cls(coordinator=coordinator)
+        if "entity_types" not in data:
+            raise ValueError(
+                "Invalid storage format: missing 'entity_types' key in data structure. "
+                f"Available keys: {list(data.keys())}. "
+                f"This should have been caught by storage validation."
+            )
+
+        try:
+            manager._entity_types = {
+                InputType(input_type): EntityType.from_dict(entity_type)
+                for input_type, entity_type in data["entity_types"].items()
+            }
+        except Exception as err:
+            raise ValueError(f"Invalid entity type data: {err}") from err
+
+        return manager
+
     def get_entity_type(self, input_type: InputType) -> EntityType:
         """Get the entity type for an input type."""
         return self._entity_types[input_type]

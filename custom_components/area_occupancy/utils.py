@@ -43,7 +43,7 @@ def validate_weight(value: float) -> float:
     return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
 
 
-def bayesian_update(
+def bayesian_probability(
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
@@ -62,24 +62,19 @@ def bayesian_update(
 
     """
     # Validate input probabilities
-    prior = validate_prob(prior)
-    prob_given_true = validate_prob(prob_given_true)
-    prob_given_false = validate_prob(prob_given_false)
-
-    # Calculate using Bayes' theorem: P(H|E) = P(E|H)P(H) / P(E)
-    # where P(E) = P(E|H)P(H) + P(E|¬H)P(¬H)
-    # Use prob_given_true if active, prob_given_false if inactive
-    evidence_prob = prob_given_true if is_active else prob_given_false
-    numerator = evidence_prob * prior
-    denominator = numerator + (prob_given_false if is_active else prob_given_true) * (
-        1 - prior
-    )
+    probability = 0.0
+    if is_active:
+        # P(occupied | active) = P(active | occupied) * P(occupied) / P(active)
+        numerator = prob_given_true * prior
+        denominator = (prob_given_true * prior) + (prob_given_false * (1 - prior))
+    else:
+        # P(occupied | inactive) = P(inactive | occupied) * P(occupied) / P(inactive)
+        numerator = (1 - prob_given_true) * prior
+        denominator = ((1 - prob_given_true) * prior) + ((1 - prob_given_false) * (1 - prior))
 
     if denominator == 0:
-        _LOGGER.warning(
-            "Denominator is zero in Bayesian update, returning MIN_PROBABILITY"
-        )
-        return MIN_PROBABILITY
+        probability = MIN_PROBABILITY
+    else:
+        probability = numerator / denominator
 
-    result = numerator / denominator
-    return validate_prob(result)
+    return validate_prob(probability)
