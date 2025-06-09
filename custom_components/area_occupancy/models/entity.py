@@ -3,14 +3,17 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from homeassistant.core import CALLBACK_TYPE, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_point_in_time,
+    async_track_state_change_event,
+)
 from homeassistant.util import dt as dt_util
 
 from ..utils import bayesian_probability, validate_datetime, validate_prob
-from .decay import Decay
+from .decay import DECAY_INTERVAL, Decay
 from .entity_type import EntityType, InputType
 from .prior import Prior, PriorType
 
@@ -33,11 +36,25 @@ class Entity:
     is_active: bool = False
     available: bool = True
     last_updated: datetime = field(default_factory=dt_util.utcnow)
+    # Decay timer management - not serialized
+    _coordinator: Optional["AreaOccupancyCoordinator"] = field(
+        default=None, init=False, repr=False
+    )
+    _decay_timer: CALLBACK_TYPE | None = field(default=None, init=False, repr=False)
+    previous_probability: float = field(default=0.0, init=False, repr=False)
+    previous_is_active: bool = field(default=False, init=False, repr=False)
+    previous_state: str | float | bool | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self):
         """Post init."""
         # Validate last_updated
         self.last_updated = validate_datetime(self.last_updated)
+
+    def set_coordinator(self, coordinator: "AreaOccupancyCoordinator") -> None:
+        """Set the coordinator reference for timer management."""
+        self._coordinator = coordinator
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity to dictionary for storage."""
@@ -54,44 +71,201 @@ class Entity:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator") -> "Entity":
+    def from_dict(
+        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
+    ) -> "Entity":
         """Create entity from dictionary."""
-        return cls(
+        input_type = InputType(data["type"])
+
+        entity = cls(
             entity_id=data["entity_id"],
-            type=coordinator.entity_types.get_entity_type(data["type"]),
+            type=coordinator.entity_types.get_entity_type(input_type),
             probability=data["probability"],
             prior=Prior.from_dict(data["prior"]),
-            decay=Decay.from_dict(data["decay"]),
+            decay=Decay(
+                is_decaying=False,
+                decay_start_time=None,
+                decay_start_probability=validate_prob(0.0),
+                decay_window=coordinator.config.decay.window,
+                decay_enabled=coordinator.config.decay.enabled,
+                decay_factor=validate_prob(1.0),
+            ),
             state=data["state"],
             is_active=data["is_active"],
             available=data["available"],
             last_updated=data["last_updated"],
         )
+        entity.set_coordinator(coordinator)
 
-    async def async_update(self) -> None:
-        """Update entity state and probabilities."""
-        # Store previous probability for decay calculation
-        previous_probability = self.probability
+        # Initialize the previous state fields to current values for restored entities
+        entity.previous_probability = entity.probability
+        entity.previous_is_active = entity.is_active
+
+        # If entity was decaying when saved, restart the decay timer
+        if entity.decay.is_decaying:
+            entity.start_decay_timer()
+
+        return entity
+
+    def update_probability(self, *, preserve_previous_state: bool = False) -> None:
+        """Calculate and update entity probability with decay and prior checks.
+
+        This is the unified method for all probability updates to ensure consistency
+        across entity creation, updates, and decay processes.
+
+        The previous state values are stored in _previous_probability and _previous_is_active
+        fields and are updated at the beginning of each call unless preserve_previous_state is True.
+
+        Args:
+            preserve_previous_state: If True, don't overwrite _previous_* fields (used when
+                                   caller has already set them to capture state transitions)
+
+        Returns:
+            None
+
+        """
+        # Store current values as previous for comparison, unless caller wants to preserve them
+        if not preserve_previous_state:
+            self.previous_probability = self.probability
+            self.previous_is_active = self.is_active
 
         # Update last_updated timestamp
         self.last_updated = dt_util.utcnow()
 
-        # Update probability based on current state
-        probability = bayesian_probability(
+        # Step 1: Calculate probability based on current sensor state
+        current_probability = bayesian_probability(
             prior=self.prior.prior,
             prob_given_true=self.prior.prob_given_true,
             prob_given_false=self.prior.prob_given_false,
             is_active=self.is_active,
         )
 
-        # Apply decay using previous probability
-        decayed_probability, decay_factor = self.decay.update_decay(
-            current_probability=probability,
-            previous_probability=previous_probability,
+        # Step 2: Handle decay state transitions using decay module logic
+        if self.decay.should_start_decay(self.previous_is_active, self.is_active):
+            # Start decay using decay module
+            self.decay.start_decay(self.previous_probability)
+
+            # Start the timer for continuous updates
+            self.start_decay_timer()
+
+            # For the first decay cycle, maintain the previous probability
+            final_probability = self.previous_probability
+
+        elif self.decay.should_stop_decay(self.previous_is_active, self.is_active):
+            # Stop decay using decay module
+            self.decay.stop_decay()
+            self._stop_decay_timer()
+            final_probability = current_probability
+
+        elif self.decay.is_decaying:
+            # Step 3: Apply decay if active
+            decayed_probability, decay_factor = self.decay.update_decay(
+                current_probability=current_probability,
+                previous_probability=self.previous_probability,
+            )
+            final_probability = decayed_probability
+
+            # Check if decay completed using decay module
+            if self.decay.is_decay_complete(final_probability):
+                self._stop_decay_timer()
+                # Stop decay and reset decay state
+                self.decay.stop_decay()
+                # Reset is_active to False when decay completes
+                self.is_active = False
+
+                # Force immediate coordinator update to reflect decay completion
+                if self._coordinator:
+                    self._coordinator.request_update(
+                        force=True,
+                        message=f"Decay completed for {self.entity_id}, forcing final update",
+                    )
+
+        else:
+            # No decay, use current probability
+            final_probability = current_probability
+
+        # Step 4: Update entity probability
+        probability_changed = abs(self.probability - final_probability) > 0.001
+        self.probability = final_probability
+
+        if probability_changed:
+            if self._coordinator:
+                self._coordinator.request_update(
+                    force=True, message="Entity state changed, forcing update"
+                )
+
+    def start_decay_timer(self) -> None:
+        """Start the decay timer that fires every second."""
+        # Respect global decay enabled setting
+        if not self.decay.decay_enabled:
+            return
+
+        if not self._coordinator or not self._coordinator.hass:
+            _LOGGER.warning(
+                "Cannot start decay timer for %s: no coordinator", self.entity_id
+            )
+            return
+
+        if self._decay_timer is not None:
+            # Timer already running, don't start another
+            return
+
+        self._schedule_next_decay_update()
+
+    def _stop_decay_timer(self) -> None:
+        """Stop the decay timer."""
+        if self._decay_timer is not None:
+            self._decay_timer()
+            self._decay_timer = None
+
+    def _schedule_next_decay_update(self) -> None:
+        """Schedule the next decay update in DECAY_INTERVAL seconds."""
+        if not self._coordinator or not self._coordinator.hass:
+            return
+
+        next_update = dt_util.utcnow() + timedelta(seconds=DECAY_INTERVAL)
+        self._decay_timer = async_track_point_in_time(
+            self._coordinator.hass, self._handle_decay_timer, next_update
         )
 
-        # Update probability with decayed values
-        self.probability = decayed_probability
+    async def _handle_decay_timer(self, _now: datetime) -> None:
+        """Handle decay timer firing - update probability with decay."""
+        self._decay_timer = None
+
+        # Check if decay is globally disabled
+        if not self.decay.decay_enabled:
+            _LOGGER.debug(
+                "Decay disabled globally, stopping timer for entity %s", self.entity_id
+            )
+            self.decay.stop_decay()
+            return
+
+        if not self.decay.is_decaying:
+            # Decay was stopped, don't continue
+            return
+
+        try:
+            # Update probability with decay using unified method
+            self.update_probability()
+
+            # Schedule next decay update if still decaying
+            if self.decay.is_decaying:
+                self._schedule_next_decay_update()
+
+        except (ValueError, ZeroDivisionError, TypeError, AttributeError) as err:
+            _LOGGER.error("Error in decay timer for entity %s: %s", self.entity_id, err)
+            # Stop decay on error to prevent continuous failures
+            self._stop_decay_timer()
+            self.decay.stop_decay()
+
+    def stop_decay_completely(self) -> None:
+        """Stop decay and timer completely (public interface)."""
+        self.decay.stop_decay()
+        self._stop_decay_timer()
+
+    def cleanup(self) -> None:
+        """Clean up entity resources."""
+        self._stop_decay_timer()
 
 
 class EntityManager:
@@ -108,6 +282,34 @@ class EntityManager:
         self.storage = coordinator.storage
         self._entities: dict[str, Entity] = {}
         self._remove_state_listener: CALLBACK_TYPE | None = None
+
+    @property
+    def entities(self) -> dict[str, Entity]:
+        """Get the entities."""
+        return self._entities
+
+    @property
+    def entity_ids(self) -> list[str]:
+        """Get the entity IDs."""
+        return list(self._entities.keys())
+
+    @property
+    def active_entities(self) -> list[Entity]:
+        """Get the active entities."""
+        return [
+            entity
+            for entity in self._entities.values()
+            if entity.is_active or entity.decay.is_decaying
+        ]
+
+    @property
+    def inactive_entities(self) -> list[Entity]:
+        """Get the inactive entities."""
+        return [
+            entity
+            for entity in self._entities.values()
+            if not entity.is_active and not entity.decay.is_decaying
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity manager to dictionary for storage."""
@@ -164,8 +366,8 @@ class EntityManager:
         self._setup_entity_tracking()
         _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
 
-        # Request coordinator refresh to update storage with initial states
-        self.coordinator.request_update()
+        # Initialize all entities with current states
+        self._initialize_current_states()
 
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
@@ -182,6 +384,18 @@ class EntityManager:
                 restored_entity.type.weight = current_type.weight
                 restored_entity.type.active_states = current_type.active_states
                 restored_entity.type.active_range = current_type.active_range
+
+                # Update decay configuration from current config
+                restored_entity.decay.decay_enabled = self.config.decay.enabled
+                restored_entity.decay.decay_window = self.config.decay.window
+
+                # If decay was disabled in config, stop any active decay
+                if not self.config.decay.enabled and restored_entity.decay.is_decaying:
+                    _LOGGER.info(
+                        "Decay disabled in config, stopping active decay for entity %s",
+                        entity_id,
+                    )
+                    restored_entity.stop_decay_completely()
 
                 updated_entities[entity_id] = restored_entity
                 del config_entities[entity_id]  # Mark as processed
@@ -223,10 +437,20 @@ class EntityManager:
         }
 
         entity_mapping: dict[str, EntityType] = {}
+
+        # Add the primary occupancy sensor as a motion-type entity with high weight
+        # This is the most reliable indicator and should be included in probability calculation
+        primary_entity_type = self.coordinator.entity_types.get_entity_type(
+            InputType.MOTION
+        )
+        entity_mapping[primary_sensor] = primary_entity_type
+
         for input_type, entity_ids in type_mappings.items():
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
             for entity_id in entity_ids:
-                entity_mapping[entity_id] = entity_type
+                # Avoid adding the primary sensor twice if it's also in the motion list
+                if entity_id != primary_sensor:
+                    entity_mapping[entity_id] = entity_type
 
         return entity_mapping
 
@@ -260,7 +484,9 @@ class EntityManager:
             TimeoutError,
         ) as err:
             _LOGGER.warning(
-                "Failed to calculate initial prior for %s: %s", entity_id, err
+                "Failed to calculate initial prior for %s: %s, using defaults",
+                entity_id,
+                err,
             )
             # Return default prior
             return Prior(
@@ -270,11 +496,6 @@ class EntityManager:
                 last_updated=dt_util.utcnow(),
                 type=PriorType.ENTITY,
             )
-
-    @property
-    def entities(self) -> dict[str, Entity]:
-        """Get the entities."""
-        return self._entities
 
     async def reset_entities(self) -> None:
         """Reset entities to fresh state from configuration."""
@@ -337,10 +558,10 @@ class EntityManager:
                 )
                 available = False
 
-        # Create probability instance
+        # Create probability instance - will be calculated properly below
         prob = validate_prob(0.0)
 
-        # Create decay instance
+        # Create decay instance using configuration values
         decay = Decay(
             is_decaying=False,
             decay_start_time=None,
@@ -360,7 +581,7 @@ class EntityManager:
                 type=PriorType.ENTITY,
             )
 
-        return Entity(
+        entity = Entity(
             entity_id=entity_id,
             type=entity_type,
             probability=prob,
@@ -371,6 +592,16 @@ class EntityManager:
             available=available,
             last_updated=dt_util.utcnow(),
         )
+        entity.set_coordinator(self.coordinator)
+
+        # Calculate initial probability using unified method
+        entity.update_probability()
+
+        # If entity was decaying when saved, restart the decay timer
+        if entity.decay.is_decaying:
+            entity.start_decay_timer()
+
+        return entity
 
     def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
@@ -389,7 +620,7 @@ class EntityManager:
         )
 
         @callback
-        def async_state_changed_listener(event) -> None:
+        async def async_state_changed_listener(event) -> None:
             """Handle state changes for tracked entities."""
             try:
                 entity_id = event.data.get("entity_id")
@@ -399,6 +630,10 @@ class EntityManager:
                     return
 
                 entity = self._entities[entity_id]
+
+                # Capture previous state for transition detection before any updates
+                entity.previous_probability = entity.probability
+                entity.previous_is_active = entity.is_active
 
                 # Update entity state
                 is_available = bool(
@@ -427,19 +662,8 @@ class EntityManager:
                 # Update is_active status
                 entity.is_active = is_active
 
-                # IMMEDIATE entity update for maximum responsiveness
-                # Log the state change before updating
-                old_state = entity.state
-                old_is_active = entity.is_active
-                _LOGGER.debug(
-                    "State change detected for %s: %s -> %s (active: %s -> %s) - triggering immediate update",
-                    entity_id,
-                    old_state,
-                    current_state_val,
-                    old_is_active,
-                    is_active,
-                )
-                self.hass.async_create_task(self._async_update_entity(entity_id))
+                # Update entity probabilities using unified method with preserved previous state
+                entity.update_probability(preserve_previous_state=True)
 
             except Exception:
                 _LOGGER.exception(
@@ -462,16 +686,11 @@ class EntityManager:
         )
 
         entities_updated = 0
-        significant_changes = False
 
         for entity_id, entity in self._entities.items():
             ha_state = self.hass.states.get(entity_id)
             if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
-                # Update entity with current HA state
-                old_state = entity.state
-                old_is_active = entity.is_active
-                old_available = entity.available
-
+                # Set entity state from current HA state
                 entity.state = ha_state.state
                 entity.available = True
 
@@ -490,35 +709,10 @@ class EntityManager:
                 entity.is_active = is_active
                 entities_updated += 1
 
-                # Check for significant changes
-                if (
-                    old_state != entity.state
-                    or old_is_active != entity.is_active
-                    or old_available != entity.available
-                ):
-                    significant_changes = True
-
-                    # Log significant state changes in dev mode
-                    if self.coordinator.dev_mode:
-                        _LOGGER.debug(
-                            "Updated entity %s current state: state %s->%s, active %s->%s, available %s->%s",
-                            entity_id,
-                            old_state,
-                            entity.state,
-                            old_is_active,
-                            entity.is_active,
-                            old_available,
-                            entity.available,
-                        )
-
-                # Update entity probabilities synchronously (without triggering coordinator update yet)
-                self.hass.async_create_task(entity.async_update())
+                # Update entity probability based on current state
+                entity.update_probability()
             else:
-                # Entity not available, mark as such
-                if (
-                    entity.available
-                ):  # Only log if changing from available to unavailable
-                    significant_changes = True
+                # Entity not available in HA
                 entity.available = False
                 _LOGGER.debug(
                     "Entity %s not available in HA, marked as unavailable", entity_id
@@ -529,13 +723,6 @@ class EntityManager:
             entities_updated,
             len(self._entities),
         )
-
-        # If any significant changes occurred, request a coordinator update
-        if significant_changes:
-            _LOGGER.debug(
-                "Requesting coordinator update due to entity state initialization"
-            )
-            self.coordinator.request_update()
 
     async def _create_entities_from_config(self) -> dict[str, Entity]:
         """Create entities from current configuration."""
@@ -596,56 +783,13 @@ class EntityManager:
             del self._entities[entity_id]
             _LOGGER.debug("Removed entity %s from entity manager", entity_id)
 
-    async def _async_update_entity(self, entity_id: str) -> None:
-        """Update a single entity."""
-        if entity_id not in self._entities:
-            return
-
-        entity = self._entities[entity_id]
-        try:
-            # Store old probability to detect changes
-            old_probability = entity.probability
-            old_active_state = entity.is_active
-
-            await entity.async_update()
-            _LOGGER.debug("Successfully updated entity %s", entity_id)
-
-            # Check if significant change occurred
-            new_probability = entity.probability
-            new_active_state = entity.is_active
-
-            # IMMEDIATE coordinator update - bypass debouncing by forcing data update
-            # This ensures sensors get updated immediately on every state change
-            self.coordinator.request_update(force=True)
-
-            if self.coordinator.dev_mode:
-                _LOGGER.debug(
-                    "Entity %s triggered IMMEDIATE coordinator update: "
-                    "prob %.3f->%.3f, active %s->%s, state=%s, decay_factor=%.3f",
-                    entity_id,
-                    old_probability,
-                    new_probability,
-                    old_active_state,
-                    new_active_state,
-                    entity.state,
-                    entity.decay.decay_factor,
-                )
-            else:
-                _LOGGER.debug(
-                    "Entity %s triggered IMMEDIATE coordinator update: "
-                    "prob %.3f->%.3f, active %s->%s",
-                    entity_id,
-                    old_probability,
-                    new_probability,
-                    old_active_state,
-                    new_active_state,
-                )
-
-        except (ValueError, AttributeError, RuntimeError) as err:
-            _LOGGER.warning("Failed to update entity %s: %s", entity_id, err)
-
     def cleanup(self) -> None:
         """Clean up resources."""
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
+
+        # Clean up all entity decay timers
+        for entity in self._entities.values():
+            entity.stop_decay_completely()
+            entity.cleanup()
