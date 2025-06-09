@@ -10,8 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..coordinator import AreaOccupancyCoordinator
-from ..types import WaspInBoxConfig
-from .wasp_in_box import async_setup_entry as setup_wasp_in_box
+from .wasp_in_box import WaspInBoxConfig, async_setup_entry as setup_wasp_in_box
 
 _LOGGER = logging.getLogger(__name__)
 
