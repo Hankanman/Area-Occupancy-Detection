@@ -313,21 +313,40 @@ class PriorManager:
                 if total_duration == 0:
                     return fallback_prior
 
-                prior = max(
+                learned_prior_value = max(
                     MIN_PROBABILITY,
                     min(occupied_duration / total_duration, MAX_PROBABILITY),
                 )
 
-                # Use entity type defaults for conditional probabilities
-                calculated_prior = Prior(
-                    prior=prior,
+                # Create learned prior with entity type defaults for conditional probabilities
+                learned_prior = Prior(
+                    prior=learned_prior_value,
                     prob_given_true=entity_type.prob_true,
                     prob_given_false=entity_type.prob_false,
                     last_updated=validate_datetime(None),
                     type=prior_type,
                 )
 
-                self.update_prior(entity_id, calculated_prior)
+                # Validate learned prior and log comparison
+                _LOGGER.debug(
+                    "Primary sensor prior calculation for %s: learned=%.3f, default=%.3f",
+                    entity_id,
+                    learned_prior.prior,
+                    fallback_prior.prior,
+                )
+
+                # If learned prior is suspiciously low (< 0.05), prefer defaults
+                # This prevents the system from getting stuck with unrealistic low priors
+                if learned_prior.prior < 0.05:
+                    _LOGGER.warning(
+                        "Learned prior %.3f for primary sensor %s is very low, using default %.3f instead",
+                        learned_prior.prior,
+                        entity_id,
+                        fallback_prior.prior,
+                    )
+                    return fallback_prior
+
+                self.update_prior(entity_id, learned_prior)
 
             except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
                 _LOGGER.warning(
@@ -336,9 +355,8 @@ class PriorManager:
                     err,
                 )
                 return fallback_prior
-
             else:
-                return calculated_prior
+                return learned_prior
 
         # For non-primary sensors, calculate conditional probabilities
         try:
@@ -384,37 +402,62 @@ class PriorManager:
             entity_state_objects, start_time, end_time
         )
 
-        prob_given_true = self._calculate_conditional_probability_with_intervals(
-            entity_id,
-            entity_intervals,
-            {primary_sensor: primary_intervals},
-            STATE_ON,
-            entity_type.active_states or [],
+        learned_prob_given_true = (
+            self._calculate_conditional_probability_with_intervals(
+                entity_id,
+                entity_intervals,
+                {primary_sensor: primary_intervals},
+                STATE_ON,
+                entity_type.active_states or [],
+            )
         )
-        prob_given_false = self._calculate_conditional_probability_with_intervals(
-            entity_id,
-            entity_intervals,
-            {primary_sensor: primary_intervals},
-            STATE_OFF,
-            entity_type.active_states or [],
+        learned_prob_given_false = (
+            self._calculate_conditional_probability_with_intervals(
+                entity_id,
+                entity_intervals,
+                {primary_sensor: primary_intervals},
+                STATE_OFF,
+                entity_type.active_states or [],
+            )
         )
 
-        prior = self._calculate_prior_probability(
-            prob_given_true, prob_given_false, primary_intervals
-        )
+        learned_prior_value = self._calculate_prior_probability(primary_intervals)
 
-        calculated_prior = Prior(
-            prior=prior,
-            prob_given_true=prob_given_true,
-            prob_given_false=prob_given_false,
+        learned_prior = Prior(
+            prior=learned_prior_value,
+            prob_given_true=learned_prob_given_true,
+            prob_given_false=learned_prob_given_false,
             last_updated=validate_datetime(None),
             type=prior_type,
         )
 
-        # Store the calculated prior
-        self.update_prior(entity_id, calculated_prior)
+        # Log the learned vs default values for debugging
+        _LOGGER.debug(
+            "Prior calculation for %s: learned=%.3f, default=%.3f, prob_true: learned=%.3f/default=%.3f, prob_false: learned=%.3f/default=%.3f",
+            entity_id,
+            learned_prior.prior,
+            fallback_prior.prior,
+            learned_prior.prob_given_true,
+            fallback_prior.prob_given_true,
+            learned_prior.prob_given_false,
+            fallback_prior.prob_given_false,
+        )
 
-        return calculated_prior
+        # If learned prior is suspiciously low (< 0.05), prefer defaults
+        # This prevents the system from getting stuck with unrealistic low priors
+        if learned_prior.prior < 0.05:
+            _LOGGER.warning(
+                "Learned prior %.3f for %s is very low, using default %.3f instead",
+                learned_prior.prior,
+                entity_id,
+                fallback_prior.prior,
+            )
+            return fallback_prior
+
+        # Store the calculated prior
+        self.update_prior(entity_id, learned_prior)
+
+        return learned_prior
 
     async def _get_states_from_recorder(
         self,
@@ -588,19 +631,19 @@ class PriorManager:
 
     @staticmethod
     def _calculate_prior_probability(
-        prob_given_true: float,
-        prob_given_false: float,
         primary_intervals: list[TimeInterval],
     ) -> float:
-        """Calculate prior probability using Bayes' theorem.
+        """Calculate prior probability from historical occupancy rate.
+
+        This calculates the simple historical prior probability (occupancy rate)
+        from the primary sensor intervals. This is NOT a Bayesian calculation
+        but rather a straightforward frequency calculation.
 
         Args:
-            prob_given_true: P(sensor active | area occupied)
-            prob_given_false: P(sensor active | area not occupied)
             primary_intervals: List of time intervals for primary sensor
 
         Returns:
-            Prior probability value
+            Prior probability value (historical occupancy rate)
 
         """
         # Calculate total duration of occupied and unoccupied states
