@@ -114,8 +114,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         total_weight = 0.0
         weighted_sum = 0.0
 
+        # Include ALL entities (both active and inactive) in the calculation
+        # Inactive entities provide valuable negative evidence about occupancy
+        # Each entity's probability already reflects whether it's active or inactive
+        # through the bayesian_probability calculation using prob_given_true/prob_given_false
         for entity in self.entities.entities.values():
-            if entity.is_active:  # Only consider active entities
+            # Only include available entities in the calculation
+            if entity.available:
                 weight = entity.type.weight
                 total_weight += weight
                 weighted_sum += entity.probability * weight
@@ -138,6 +143,36 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return DEFAULT_PRIOR
 
         return sum(priors) / len(priors)
+
+    @property
+    def decay(self) -> float:
+        """Calculate the current decay probability (0.0-1.0)."""
+        if not self.entities.entities:
+            return 0.0
+
+        # Calculate weighted average of decay factors for entities that are actually decaying
+        decaying_entities = [
+            entity
+            for entity in self.entities.entities.values()
+            if entity.decay.is_decaying and entity.available
+        ]
+
+        if not decaying_entities:
+            return 1.0  # No decay active means full probability (decay factor = 1.0)
+
+        # Weight decay factors by entity weight
+        total_weight = 0.0
+        weighted_decay_sum = 0.0
+
+        for entity in decaying_entities:
+            weight = entity.type.weight
+            total_weight += weight
+            weighted_decay_sum += entity.decay.decay_factor * weight
+
+        if total_weight == 0:
+            return 1.0
+
+        return weighted_decay_sum / total_weight
 
     @property
     def prior_update_interval(self) -> timedelta:
@@ -174,13 +209,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the last changed timestamp."""
         return self.data.get("last_changed")
 
-    def request_update(self, force: bool = False) -> None:
+    def request_update(self, force: bool = False, message: str = "") -> None:
         """Request an immediate coordinator refresh.
 
         Args:
             force: If True, bypasses debouncing and forces immediate update
+            message: Optional message to log when updating
 
         """
+        if message:
+            _LOGGER.debug(message)
+
         if force:
             # Bypass debouncing by directly calling the update methods
             self.hass.async_create_task(self._async_force_immediate_update())
@@ -214,11 +253,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
-            # Initialize storage and load stored data first
+            # Initialize storage first
             await self.storage.async_initialize()
+
+            # Initialize entity types before loading stored data
+            # (needed for entity deserialization)
+            await self.entity_types.async_initialize()
+
+            # Load stored data
             await self.async_load_stored_data()
 
-            # Initialize states after loading stored data
+            # Initialize entities after loading stored data
             await self.entities.async_initialize()
 
             # Log all registered entities
@@ -265,15 +310,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.config_manager.update_config(options)
         self.config = self.config_manager.config
 
-        # Update prior update interval if changed
-        if "prior_update_interval" in options:
-            self._prior_update_interval = timedelta(
-                hours=options["prior_update_interval"]
-            )
+        # Always re-initialize entities and entity types when configuration changes
+        _LOGGER.info(
+            "Configuration updated, re-initializing entities for %s", self.config.name
+        )
+
+        # Update entity types with new configuration
+        self.entity_types.cleanup()
+        await self.entity_types.async_initialize()
+
+        # Clean up existing entity tracking and re-initialize
+        self.entities.cleanup()
+        await self.entities.async_initialize()
 
         # Schedule next update and refresh data
         await self._schedule_next_prior_update()
-        self.request_update()
+        self.request_update(message="Options updated, requesting update")
 
     async def async_update_threshold(self, value: float) -> None:
         """Update the threshold value.
@@ -298,7 +350,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         # Request update since threshold affects is_occupied calculation
-        self.request_update()
+        self.request_update(message="Threshold updated, requesting update")
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -323,7 +375,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 # Create entity manager from loaded data
                 self.entities = EntityManager.from_dict(loaded_data, self)
-                self.entity_types = EntityTypeManager.from_dict(loaded_data, self)
                 if last_updated_str:
                     self._last_prior_update = dt_util.parse_datetime(last_updated_str)
                 else:
@@ -373,7 +424,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Request update if priors changed
             if updated_count > 0:
-                self.request_update()
+                self.request_update(message="Learned priors updated, requesting update")
 
             _LOGGER.info(
                 "Completed learned priors update for area %s: updated %d entities",
@@ -504,7 +555,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.storage.async_save_instance_data(
                 self.entry_id,
                 self.entities,
-                self.entity_types,
             )
             _LOGGER.debug("Data saved successfully")
         except StorageError as err:
