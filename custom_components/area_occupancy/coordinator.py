@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local
-from .const import CONF_THRESHOLD, DEFAULT_NAME, DOMAIN, MIN_PROBABILITY
+from .const import CONF_THRESHOLD, DEFAULT_NAME, DOMAIN, MIN_PROBABILITY, DEFAULT_PRIOR
 from .exceptions import CalculationError, StateError, StorageError
 from .models.config import ConfigManager
 from .models.entity import EntityManager
@@ -126,6 +126,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Calculate final probability
         final_probability = weighted_sum / total_weight
         return validate_prob(final_probability)
+
+    @property
+    def prior(self) -> float:
+        """Calculate overall area prior from entity priors."""
+        if not self.entities.entities:
+            return DEFAULT_PRIOR
+
+        priors = [entity.prior.prior for entity in self.entities.entities.values()]
+        if not priors:
+            return DEFAULT_PRIOR
+
+        return sum(priors) / len(priors)
 
     @property
     def prior_update_interval(self) -> timedelta:

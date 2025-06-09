@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
+from typing import TypedDict
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -42,13 +43,33 @@ from ..const import (
 from ..coordinator import AreaOccupancyCoordinator
 from ..models.entity import Entity
 from ..models.entity_type import InputType
-from ..types import WaspInBoxAttributes, WaspInBoxConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 # Door state constants
 DOOR_OPEN = STATE_ON
 DOOR_CLOSED = STATE_OFF
+
+
+class WaspInBoxConfig(TypedDict):
+    """TypedDict for wasp in box sensor configuration."""
+
+    enabled: bool
+    motion_timeout: int
+    weight: float
+    max_duration: int
+
+
+class WaspInBoxAttributes(TypedDict):
+    """TypedDict for wasp in box attributes."""
+
+    door_state: str
+    last_door_time: str | None
+    motion_state: str
+    last_motion_time: str | None
+    motion_timeout: int
+    max_duration: int
+    last_occupied_time: str | None
 
 
 async def async_setup_entry(

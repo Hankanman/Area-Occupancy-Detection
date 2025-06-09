@@ -172,6 +172,9 @@ class EntityManager:
         self._setup_entity_tracking()
         _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
 
+        # Request coordinator refresh to update storage with initial states
+        self.coordinator.request_update()
+
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
         config_entities = await self._get_config_entity_mapping()
@@ -311,6 +314,39 @@ class EntityManager:
             The created Entity instance
 
         """
+        # If no state provided, get current state from Home Assistant
+        if state is None:
+            ha_state = self.hass.states.get(entity_id)
+            if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
+                state = ha_state.state
+                last_changed = ha_state.last_changed
+                available = True
+
+                # Determine if entity is active based on its type and current state
+                if entity_type.active_states is not None:
+                    is_active = state in entity_type.active_states
+                elif entity_type.active_range is not None:
+                    try:
+                        state_val = float(state)
+                        min_val, max_val = entity_type.active_range
+                        is_active = min_val <= state_val <= max_val
+                    except (ValueError, TypeError):
+                        is_active = False
+
+                _LOGGER.debug(
+                    "Initialized entity %s with current HA state: state=%s, is_active=%s, available=%s",
+                    entity_id,
+                    state,
+                    is_active,
+                    available,
+                )
+            else:
+                _LOGGER.debug(
+                    "Entity %s has no valid current state in HA, using defaults",
+                    entity_id,
+                )
+                available = False
+
         # Create probability instance
         prob = Probability(
             probability=validate_prob(0.0),
@@ -426,6 +462,92 @@ class EntityManager:
             entities_to_track,
             async_state_changed_listener,
         )
+
+        # Initialize current states for all entities after setting up tracking
+        self._initialize_current_states()
+
+    def _initialize_current_states(self) -> None:
+        """Initialize entity states from current Home Assistant states."""
+        _LOGGER.debug(
+            "Initializing current states for %d entities", len(self._entities)
+        )
+
+        entities_updated = 0
+        significant_changes = False
+
+        for entity_id, entity in self._entities.items():
+            ha_state = self.hass.states.get(entity_id)
+            if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
+                # Update entity with current HA state
+                old_state = entity.state
+                old_is_active = entity.is_active
+                old_available = entity.available
+
+                entity.state = ha_state.state
+                entity.last_changed = ha_state.last_changed
+                entity.available = True
+
+                # Determine if entity is active based on its type and state
+                is_active = False
+                if entity.type.active_states is not None:
+                    is_active = ha_state.state in entity.type.active_states
+                elif entity.type.active_range is not None:
+                    try:
+                        state_val = float(ha_state.state)
+                        min_val, max_val = entity.type.active_range
+                        is_active = min_val <= state_val <= max_val
+                    except (ValueError, TypeError):
+                        is_active = False
+
+                entity.is_active = is_active
+                entities_updated += 1
+
+                # Check for significant changes
+                if (
+                    old_state != entity.state
+                    or old_is_active != entity.is_active
+                    or old_available != entity.available
+                ):
+                    significant_changes = True
+
+                    # Log significant state changes in dev mode
+                    if self.coordinator.dev_mode:
+                        _LOGGER.debug(
+                            "Updated entity %s current state: state %s->%s, active %s->%s, available %s->%s",
+                            entity_id,
+                            old_state,
+                            entity.state,
+                            old_is_active,
+                            entity.is_active,
+                            old_available,
+                            entity.available,
+                        )
+
+                # Update entity probabilities synchronously (without triggering coordinator update yet)
+                self.hass.async_create_task(entity.async_update())
+            else:
+                # Entity not available, mark as such
+                if (
+                    entity.available
+                ):  # Only log if changing from available to unavailable
+                    significant_changes = True
+                entity.available = False
+                _LOGGER.debug(
+                    "Entity %s not available in HA, marked as unavailable", entity_id
+                )
+
+        _LOGGER.debug(
+            "Initialized current states for %d/%d entities",
+            entities_updated,
+            len(self._entities),
+        )
+
+        # If any significant changes occurred, request a coordinator update
+        if significant_changes:
+            _LOGGER.debug(
+                "Requesting coordinator update due to entity state initialization"
+            )
+            self.coordinator.request_update()
 
     async def _create_entities_from_config(self) -> dict[str, Entity]:
         """Create entities from current configuration."""
