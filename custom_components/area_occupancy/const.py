@@ -88,13 +88,6 @@ DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_LIGHT: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 
-# Entity naming
-NAME_PROBABILITY_SENSOR: Final = "Occupancy Probability"
-NAME_BINARY_SENSOR: Final = "Occupancy Status"
-NAME_PRIORS_SENSOR: Final = "Prior Probability"
-NAME_DECAY_SENSOR = "Decay Status"
-NAME_THRESHOLD_NUMBER: Final = "Occupancy Threshold"
-
 # Decay lambda - A higher value results in faster decay.
 # Original value (0.866) resulted in ~65% remaining at half decay_window.
 # Doubled value (1.733) results in ~42% remaining at half decay_window.
