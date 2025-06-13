@@ -336,12 +336,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         _LOGGER.debug("Updating threshold: %.2f%% (%.3f)", value, value / 100.0)
 
-        # Convert percentage to 0.0-1.0 range for storage
-        threshold_decimal = value / 100.0
-
         await self.config_manager.update_config(
             {
-                CONF_THRESHOLD: threshold_decimal,
+                CONF_THRESHOLD: value / 100.0,
             }
         )
 

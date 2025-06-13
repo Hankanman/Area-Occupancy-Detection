@@ -102,7 +102,7 @@ WEIGHT_MIN = 0
 WEIGHT_MAX = 1
 
 THRESHOLD_STEP = 1
-THRESHOLD_MIN = 0
+THRESHOLD_MIN = 1
 THRESHOLD_MAX = 100
 
 HISTORY_PERIOD_STEP = 1
@@ -802,10 +802,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         as it is built through the flow.
         """
         self._data: dict[str, Any] = {}
-
-    def is_matching(self, other_flow: ConfigEntry) -> bool:
-        """Check if the entry matches the current flow."""
-        return other_flow.entry_id == getattr(self, "entry_id", None)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
