@@ -19,12 +19,14 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
     CONF_WINDOW_ACTIVE_STATE,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
@@ -251,6 +253,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         data = migrate_config(data)
         options = migrate_config(options)
 
+        # Handle threshold value with default if not present
+        threshold = options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        options[CONF_THRESHOLD] = validate_threshold(threshold)
+
         # Update the config entry with new data and options
         _LOGGER.debug("Updating config entry for %s", config_entry.entry_id)
         hass.config_entries.async_update_entry(
@@ -266,3 +272,19 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         return False
     else:
         return True
+
+
+def validate_threshold(threshold: float) -> float:
+    """Validate the threshold value.
+
+    Args:
+        threshold: The threshold value to validate
+
+    Returns:
+        The validated threshold value
+
+    """
+
+    if threshold < 1.0:
+        return round(threshold * 100.0, 0)
+    return round(threshold, 0)

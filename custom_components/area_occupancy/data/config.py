@@ -150,29 +150,7 @@ class Config:
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create a config from a dictionary with validation."""
         # Validate threshold range
-        threshold_raw = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD))
-
-        # Handle threshold conversion: if it's > 1, treat as percentage and convert to 0.0-1.0
-        if threshold_raw > 1.0:
-            if not 1.0 <= threshold_raw <= 100.0:
-                _LOGGER.warning(
-                    "Invalid threshold percentage %s, using default %s",
-                    threshold_raw,
-                    DEFAULT_THRESHOLD * 100,
-                )
-                threshold = DEFAULT_THRESHOLD
-            else:
-                threshold = threshold_raw / 100.0  # Convert percentage to 0.0-1.0 range
-            # Already in 0.0-1.0 range
-        elif not 0.0 <= threshold_raw <= 1.0:
-            _LOGGER.warning(
-                "Invalid threshold %s, using default %s",
-                threshold_raw,
-                DEFAULT_THRESHOLD,
-            )
-            threshold = DEFAULT_THRESHOLD
-        else:
-            threshold = threshold_raw
+        threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)) / 100.0
 
         # Validate weights are positive
         weights_data = {}

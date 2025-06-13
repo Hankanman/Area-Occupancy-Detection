@@ -23,7 +23,7 @@ DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.6.1-pre1"
 CONF_VERSION: Final = 9
-CONF_VERSION_MINOR: Final = 0
+CONF_VERSION_MINOR: Final = 1
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -66,7 +66,7 @@ CONF_WEIGHT_WASP: Final = "weight_wasp"
 CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
-DEFAULT_THRESHOLD: Final = 0.5
+DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
