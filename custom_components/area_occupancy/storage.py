@@ -151,7 +151,14 @@ class StorageManager(Store[dict[str, Any]]):
                 _LOGGER.warning("Invalid instances structure in storage")
                 return None
 
-            return instances.get(entry_id)
+            instance_data = instances.get(entry_id)
+            if instance_data and "entity_types" in instance_data:
+                # Restore entity_types into the coordinator
+                from .data.entity_type import EntityTypeManager
+                self._coordinator.entity_types = EntityTypeManager.from_dict(
+                    {"entity_types": instance_data["entity_types"]}, self._coordinator
+                )
+            return instance_data
 
         except HomeAssistantError as err:
             _LOGGER.error("Error loading instance data for %s: %s", entry_id, err)
@@ -183,6 +190,8 @@ class StorageManager(Store[dict[str, Any]]):
 
                 # Convert entity manager to dict and flatten structure
                 entity_data = entity_manager.to_dict()
+                # Get entity_types as dict
+                entity_types = entity_manager.coordinator.entity_types.to_dict()
 
                 if dev_mode:
                     entity_count = len(entity_data.get("entities", {}))
@@ -195,6 +204,7 @@ class StorageManager(Store[dict[str, Any]]):
                     "prior": self._coordinator.prior,
                     "threshold": self._coordinator.threshold,
                     "entities": entity_data.get("entities", {}),
+                    "entity_types": entity_types.get("entity_types", {}),
                 }
                 await self.async_save(data)
 
@@ -337,6 +347,13 @@ class StorageManager(Store[dict[str, Any]]):
         if not isinstance(entities_data, dict):
             _LOGGER.debug("Storage 'entities' data is not a dictionary")
             return False
+
+        # Validate entity_types structure if present
+        if "entity_types" in data:
+            entity_types_data = data["entity_types"]
+            if not isinstance(entity_types_data, dict):
+                _LOGGER.debug("Storage 'entity_types' data is not a dictionary")
+                return False
 
         # Sample validate a few entities to ensure format compatibility
         for entity_id, entity_data in list(entities_data.items())[:3]:  # Check first 3
