@@ -21,11 +21,7 @@ from homeassistant.util import dt as dt_util
 
 # Local
 from .const import CONF_THRESHOLD, DEFAULT_NAME, DEFAULT_PRIOR, DOMAIN, MIN_PROBABILITY
-from .exceptions import CalculationError, StateError, StorageError
-from .models.config import ConfigManager
-from .models.entity import EntityManager
-from .models.entity_type import EntityTypeManager
-from .models.prior import PriorManager
+from .data import ConfigManager, EntityManager, EntityTypeManager, PriorManager
 from .storage import StorageManager
 from .utils import validate_prob
 
@@ -288,7 +284,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(self.entities.entities),
             )
 
-        except (StorageError, StateError, CalculationError) as err:
+        except HomeAssistantError as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
 
@@ -399,7 +395,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 self._last_prior_update = None
 
-        except StorageError as err:
+        except HomeAssistantError as err:
             _LOGGER.warning(
                 "Storage error for instance %s, initializing with defaults: %s",
                 self.entry_id,
@@ -543,7 +539,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Return minimal data - sensors access coordinator properties directly
             return {"last_updated": dt_util.utcnow().isoformat()}
 
-        except (StateError, ValueError) as err:
+        except (HomeAssistantError, ValueError) as err:
             _LOGGER.error("Error updating data: %s", err)
             raise HomeAssistantError(f"Error updating data: {err}") from err
 
@@ -557,6 +553,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entities,
             )
             _LOGGER.debug("Data saved successfully")
-        except StorageError as err:
+        except HomeAssistantError as err:
             _LOGGER.error("Failed to save data: %s", err)
             raise

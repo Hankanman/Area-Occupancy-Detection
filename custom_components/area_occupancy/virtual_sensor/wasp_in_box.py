@@ -41,8 +41,8 @@ from ..const import (
     NAME_WASP_IN_BOX,
 )
 from ..coordinator import AreaOccupancyCoordinator
-from ..models.entity import Entity
-from ..models.entity_type import InputType
+from ..data.entity import Entity
+from ..data.entity_type import InputType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,8 +94,8 @@ async def async_setup_entry(
         config,
         coordinator,
         coordinator.entry_id,
-        coordinator.inputs.door_sensors,
-        coordinator.inputs.motion_sensors,
+        coordinator.config.door_sensors,
+        coordinator.config.motion_sensors,
     )
 
 
@@ -154,7 +154,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._entity = Entity(
             entity_id=self._attr_unique_id,
             type=coordinator.entity_types.get_entity_type(InputType.WASP_IN_BOX),
-            coordinator=coordinator,
         )
 
         # Check if we have required entities configured
