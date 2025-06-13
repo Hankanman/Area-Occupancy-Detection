@@ -21,12 +21,12 @@ from .const import (
 
 def validate_prob(value: float) -> float:
     """Validate a probability value."""
-    return max(MIN_PROBABILITY, min(value, MAX_PROBABILITY))
+    return max(0.001, min(value, 1.0))
 
 
 def validate_prior(value: float) -> float:
     """Validate a prior value."""
-    return max(MIN_PRIOR, min(value, MAX_PRIOR))
+    return max(0.001, min(value, 1.0))
 
 
 def validate_datetime(value: datetime | None) -> datetime:
@@ -80,10 +80,10 @@ def bayesian_probability(
         denominator = (prob_given_true * prior) + (prob_given_false * (1 - prior))
     else:
         # P(occupied | inactive) = P(inactive | occupied) * P(occupied) / P(inactive)
-        numerator = (1 - prob_given_true) * prior
-        denominator = ((1 - prob_given_true) * prior) + (
-            (1 - prob_given_false) * (1 - prior)
-        )
+        # For inactive state, we use prob_given_false directly since it represents
+        # the probability of the sensor being inactive when the area is occupied
+        numerator = prob_given_false * prior
+        denominator = (prob_given_false * prior) + ((1 - prob_given_false) * (1 - prior))
 
     if denominator == 0:
         probability = MIN_PROBABILITY

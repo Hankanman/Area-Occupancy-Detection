@@ -21,6 +21,7 @@ from ..const import (
     DEFAULT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
     MAX_PROBABILITY,
+    MIN_PRIOR,
     MIN_PROBABILITY,
 )
 from ..utils import validate_datetime, validate_prior, validate_prob
@@ -337,7 +338,7 @@ class PriorManager:
 
                 # If learned prior is suspiciously low (< 0.05), prefer defaults
                 # This prevents the system from getting stuck with unrealistic low priors
-                if learned_prior.prior < 0.05:
+                if learned_prior.prior < MIN_PRIOR:
                     _LOGGER.warning(
                         "Learned prior %.3f for primary sensor %s is very low, using default %.3f instead",
                         learned_prior.prior,
