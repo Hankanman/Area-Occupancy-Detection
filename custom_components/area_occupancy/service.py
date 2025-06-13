@@ -9,7 +9,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .exceptions import CalculationError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
             "update_timestamp": dt_util.utcnow().isoformat(),
         }
 
-    except (CalculationError, HomeAssistantError, ValueError, RuntimeError) as err:
+    except (HomeAssistantError, ValueError, RuntimeError) as err:
         error_msg = f"Failed to update priors for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err

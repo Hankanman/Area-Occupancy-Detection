@@ -27,14 +27,14 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         """Initialize the threshold entity."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
-        self._attr_name = NAME_THRESHOLD_NUMBER
+        self._attr_name = "Threshold"
         self._attr_unique_id = (
             f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
         )
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 99.0
         self._attr_native_step = 1.0
-        self._attr_mode = NumberMode.AUTO
+        self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_device_info = coordinator.device_info

@@ -9,8 +9,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .exceptions import StorageError
-from .models.entity import EntityManager
+from .data.entity import EntityManager
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -100,7 +99,7 @@ class StorageManager(Store[dict[str, Any]]):
 
             except HomeAssistantError as err:
                 _LOGGER.error("Error removing instance %s: %s", entry_id, err)
-                raise StorageError(f"Failed to remove instance: {err}") from err
+                raise HomeAssistantError(f"Failed to remove instance: {err}") from err
 
             else:
                 return False
@@ -129,7 +128,7 @@ class StorageManager(Store[dict[str, Any]]):
 
             await self.async_save(data)
 
-        except (StorageError, HomeAssistantError) as err:
+        except HomeAssistantError as err:
             _LOGGER.error("Error cleaning up orphaned instances: %s", err)
             return False
         else:
@@ -204,14 +203,16 @@ class StorageManager(Store[dict[str, Any]]):
 
             except HomeAssistantError as err:
                 _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
-                raise StorageError(f"Failed to save instance data: {err}") from err
+                raise HomeAssistantError(
+                    f"Failed to save instance data: {err}"
+                ) from err
 
     async def async_reset(self) -> None:
         """Reset storage data."""
         try:
             await self.async_save({})
             _LOGGER.info("Storage data reset successfully")
-        except StorageError as err:
+        except HomeAssistantError as err:
             _LOGGER.error("Failed to reset storage data: %s", err)
             raise
 
@@ -281,7 +282,7 @@ class StorageManager(Store[dict[str, Any]]):
                 entry_id,
             )
 
-        except StorageError as err:
+        except HomeAssistantError as err:
             _LOGGER.warning(
                 "Storage error for instance %s, initializing with defaults: %s",
                 entry_id,
@@ -303,7 +304,7 @@ class StorageManager(Store[dict[str, Any]]):
                     "Storage reset due to data format error for instance %s", entry_id
                 )
                 was_reset = True
-            except StorageError:
+            except HomeAssistantError:
                 _LOGGER.warning("Failed to reset storage for instance %s", entry_id)
 
             return None, was_reset
