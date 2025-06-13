@@ -230,6 +230,11 @@ class PriorManager:
                 )
                 continue
 
+        # Learn and update entity type priors from all entities
+        self.coordinator.entity_types.learn_from_entities(
+            self.coordinator.entities.entities
+        )
+
         _LOGGER.info(
             "Completed learned priors update for area %s: updated %d/%d entities",
             self.coordinator.config.name,

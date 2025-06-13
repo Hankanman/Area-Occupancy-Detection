@@ -155,14 +155,17 @@ class StorageManager(Store[dict[str, Any]]):
             if instance_data and "entity_types" in instance_data:
                 # Restore entity_types into the coordinator
                 from .data.entity_type import EntityTypeManager
+
                 self._coordinator.entity_types = EntityTypeManager.from_dict(
                     {"entity_types": instance_data["entity_types"]}, self._coordinator
                 )
-            return instance_data
 
         except HomeAssistantError as err:
             _LOGGER.error("Error loading instance data for %s: %s", entry_id, err)
             return None
+
+        else:
+            return instance_data
 
     async def async_save_instance_data(
         self,

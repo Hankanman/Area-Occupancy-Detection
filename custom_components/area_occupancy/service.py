@@ -312,6 +312,31 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
         return {"area_status": status}
 
 
+async def _get_entity_type_learned_data(hass: HomeAssistant, call: ServiceCall):
+    """Return the learned entity_type data for an entry_id."""
+    entry_id = call.data["entry_id"]
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+        entity_types = coordinator.entity_types.entity_types
+        learned_data = {}
+        for input_type, et in entity_types.items():
+            learned_data[input_type.value] = {
+                "prior": et.prior,
+                "prob_true": et.prob_true,
+                "prob_false": et.prob_false,
+                "weight": et.weight,
+                "active_states": et.active_states,
+                "active_range": et.active_range,
+            }
+        _LOGGER.info("Retrieved learned entity_type data for entry %s", entry_id)
+    except Exception as err:
+        error_msg = f"Failed to get entity_type learned data for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return {"entity_types": learned_data}
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -346,6 +371,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         }
     )
 
+    entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
+
     # Create async wrapper functions to properly handle the service calls
     async def handle_update_priors(call: ServiceCall):
         return await _update_priors(hass, call)
@@ -367,6 +394,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_get_area_status(call: ServiceCall):
         return await _get_area_status(hass, call)
+
+    async def handle_get_entity_type_learned_data(call: ServiceCall):
+        return await _get_entity_type_learned_data(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -421,6 +451,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "get_area_status",
         handle_get_area_status,
         schema=entry_id_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_entity_type_learned_data",
+        handle_get_entity_type_learned_data,
+        schema=entity_type_learned_schema,
         supports_response=SupportsResponse.ONLY,
     )
 
