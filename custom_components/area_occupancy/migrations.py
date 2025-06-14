@@ -30,10 +30,10 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
+    STORAGE_KEY,
 )
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
-from .storage import STORAGE_KEY, STORAGE_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
         # Create a direct Store instance for migration (bypassing StorageManager)
         from homeassistant.helpers.storage import Store
 
-        store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        store: Store[dict[str, Any]] = Store(hass, CONF_VERSION, STORAGE_KEY)
 
         # Load data with current version
         data = await store.async_load()
