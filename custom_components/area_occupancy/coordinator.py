@@ -55,7 +55,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entity_types = EntityTypeManager(self)
         self.priors = PriorManager(self)
         self.entities = EntityManager(self)
-        self._prior_update_interval = timedelta(hours=1)  # Default to 1 hour
         self._next_prior_update: datetime | None = None
         self._last_prior_update: datetime | None = None
         self._prior_update_tracker: CALLBACK_TYPE | None = None
@@ -63,33 +62,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Track specific binary sensor entity_ids
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
-
-    @property
-    def dev_mode(self) -> bool:
-        """Check if we're running in development mode.
-
-        Development mode is detected by checking if the integration's logger
-        is set to DEBUG level or if Home Assistant is running with debug enabled.
-
-        Returns:
-            bool: True if in development mode, False otherwise
-
-        """
-        # Check if our specific logger is set to DEBUG
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            return True
-
-        # Check if the root Home Assistant logger is in debug mode
-        ha_logger = logging.getLogger("homeassistant")
-        if ha_logger.isEnabledFor(logging.DEBUG):
-            return True
-
-        # Check if any parent logger of our integration is in debug mode
-        parent_logger = logging.getLogger("homeassistant.components.area_occupancy")
-        if parent_logger.isEnabledFor(logging.DEBUG):
-            return True
-
-        return False
 
     @property
     def available(self) -> bool:
@@ -110,77 +82,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def probability(self) -> float:
         """Calculate and return the current occupancy probability (0.0-1.0)."""
-        if not self.entities.entities:
-            return MIN_PROBABILITY
-
-        # Calculate weighted sum of all entity probabilities
-        total_weight = 0.0
-        weighted_sum = 0.0
-
-        # Include ALL entities (both active and inactive) in the calculation
-        # Inactive entities provide valuable negative evidence about occupancy
-        # Each entity's probability already reflects whether it's active or inactive
-        # through the bayesian_probability calculation using prob_given_true/prob_given_false
-        for entity in self.entities.entities.values():
-            # Only include available entities in the calculation
-            if entity.available:
-                weight = entity.type.weight
-                total_weight += weight
-                weighted_sum += entity.probability * weight
-
-        if total_weight == 0:
-            return MIN_PROBABILITY
-
-        # Calculate final probability
-        final_probability = weighted_sum / total_weight
-        return validate_prob(final_probability)
+        return self._calculate_entity_aggregates()["probability"]
 
     @property
     def prior(self) -> float:
         """Calculate overall area prior from entity priors."""
-        if not self.entities.entities:
-            return DEFAULT_PRIOR
-
-        priors = [entity.prior.prior for entity in self.entities.entities.values()]
-        if not priors:
-            return DEFAULT_PRIOR
-
-        return sum(priors) / len(priors)
+        return self._calculate_entity_aggregates()["prior"]
 
     @property
     def decay(self) -> float:
         """Calculate the current decay probability (0.0-1.0)."""
-        if not self.entities.entities:
-            return 0.0
-
-        # Calculate weighted average of decay factors for entities that are actually decaying
-        decaying_entities = [
-            entity
-            for entity in self.entities.entities.values()
-            if entity.decay.is_decaying and entity.available
-        ]
-
-        if not decaying_entities:
-            return 1.0  # No decay active means full probability (decay factor = 1.0)
-
-        # Weight decay factors by entity weight
-        total_weight = 0.0
-        weighted_decay_sum = 0.0
-
-        for entity in decaying_entities:
-            weight = entity.type.weight
-            total_weight += weight
-            weighted_decay_sum += entity.decay.decay_factor * weight
-
-        if total_weight == 0:
-            return 1.0
-
-        return weighted_decay_sum / total_weight
-
-    @property
-    def prior_update_interval(self) -> timedelta:
-        """Return the interval between prior updates."""
-        return self._prior_update_interval
+        return self._calculate_entity_aggregates()["decay"]
 
     @property
     def next_prior_update(self) -> datetime | None:
@@ -239,62 +151,32 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         if force:
             # Bypass debouncing by directly calling the update methods
-            self.hass.async_create_task(self._async_force_immediate_update())
+            self.hass.async_create_task(self._async_immediate_update())
         else:
             self.hass.async_create_task(self.async_request_refresh())
 
-    async def _async_force_immediate_update(self) -> None:
+    async def _async_immediate_update(self) -> None:
         """Force immediate coordinator update bypassing any debouncing."""
         try:
             _LOGGER.debug("Executing immediate coordinator update")
-
-            # Directly call the data update method
             data = await self._async_update_data()
-
-            # Immediately notify all listeners with the new data
             self.async_set_updated_data(data)
-
         except (HomeAssistantError, ValueError, RuntimeError, AttributeError) as err:
             _LOGGER.warning("Failed to force immediate coordinator update: %s", err)
-            # Fallback to regular request_update if direct method fails
+            # Fallback to regular update if direct method fails
             self.hass.async_create_task(self.async_request_refresh())
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
+        """Initialize the coordinator and its components."""
         try:
-            if self.dev_mode:
-                _LOGGER.info(
-                    "🔧 DEV MODE ENABLED for %s (enhanced logging and storage saves)",
-                    self.config.name,
-                )
-
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
-            # Initialize storage first
+            # Initialize components in order
             await self.storage.async_initialize()
-
-            # Initialize entity types before loading stored data
-            # (needed for entity deserialization)
             await self.entity_types.async_initialize()
-
-            # Load stored data
             await self.async_load_stored_data()
-
-            # Initialize entities after loading stored data
             await self.entities.async_initialize()
-
-            # Log all registered entities
-            _LOGGER.debug("Registered entities for %s:", self.config.name)
-            for entity in self.entities.entities.values():
-                if self.dev_mode:
-                    _LOGGER.debug(
-                        "  - %s (type: %s, weight: %.2f)",
-                        entity.entity_id,
-                        entity.type.input_type.value,
-                        entity.type.weight,
-                    )
-                else:
-                    _LOGGER.debug("  - %s (type: %s)", entity.entity_id, entity.type)
 
             # Schedule periodic prior updates
             await self._schedule_next_prior_update()
@@ -319,6 +201,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Clean up entity manager
         self.entities.cleanup()
 
+        # Shutdown storage manager to save any pending data
+        await self.storage.async_shutdown()
+
         await super().async_shutdown()
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
@@ -342,6 +227,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Schedule next update and refresh data
         await self._schedule_next_prior_update()
+
+        # Force immediate save after configuration changes
+        await self._async_save_data(force=True)
+
         self.request_update(message="Options updated, requesting update")
 
     async def async_update_threshold(self, value: float) -> None:
@@ -431,8 +320,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Delegate the actual prior updating to the PriorManager
             updated_count = await self.priors.update_all_entity_priors()
 
-            # Request update if priors changed
+            # Request update and save immediately if priors changed
             if updated_count > 0:
+                await self._async_save_data(force=True)
                 self.request_update(message="Learned priors updated, requesting update")
 
             _LOGGER.info(
@@ -452,19 +342,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Schedule the next prior update at the start of the next hour."""
         if self._prior_update_tracker is not None:
             self._prior_update_tracker()
-            self._prior_update_tracker = None
 
         now = dt_util.utcnow()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        self._next_prior_update = next_hour
+        self._next_prior_update = now.replace(
+            minute=0, second=0, microsecond=0
+        ) + timedelta(hours=1)
 
         self._prior_update_tracker = async_track_point_in_time(
             self.hass, self._handle_prior_update, self._next_prior_update
         )
         _LOGGER.debug(
-            "Scheduled next prior update for %s in area %s",
-            self._next_prior_update.isoformat(),
-            self.config.name,
+            "Scheduled next prior update for %s", self._next_prior_update.isoformat()
         )
 
     async def _handle_prior_update(self, _now: datetime) -> None:
@@ -477,21 +365,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Performing scheduled prior update for area %s", self.config.name
             )
             await self.update_learned_priors()
-            _LOGGER.info(
-                "Finished scheduled prior update task trigger for area %s",
-                self.config.name,
-            )
-        except (ValueError, RuntimeError, HomeAssistantError):
-            _LOGGER.exception(
-                "Error occurred during scheduled prior update for area %s",
-                self.config.name,
-            )
-            # Ensure rescheduling happens even if the update task itself failed unexpectedly
-            if not self._prior_update_tracker:
-                _LOGGER.warning(
-                    "Update_learned_priors failed to reschedule, attempting fallback reschedule"
-                )
-                await self._schedule_next_prior_update()
+        except Exception:
+            _LOGGER.exception("Error during scheduled prior update")
+            # Reschedule even if update failed
+            await self._schedule_next_prior_update()
 
     # --- Listener Handling ---
     @callback
@@ -527,27 +404,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting data update for area %s", self.config.name)
 
-            # In dev mode, save data on every refresh for debugging
-            # In normal mode, save data periodically
-            if self.dev_mode:
-                _LOGGER.debug("Forcing storage save on refresh for debugging")
+            # Save data periodically
             await self._async_save_data()
 
-            if self.dev_mode:
-                _LOGGER.debug(
-                    "Data update completed for area %s: probability=%.2f, is_occupied=%s, entities=%d",
-                    self.config.name,
-                    self.probability,
-                    self.is_occupied,
-                    len(self.entities.entities),
-                )
-            else:
-                _LOGGER.debug(
-                    "Data update completed for area %s: probability=%.2f, is_occupied=%s",
-                    self.config.name,
-                    self.probability,
-                    self.is_occupied,
-                )
+            _LOGGER.debug(
+                "Data update completed for area %s: probability=%.2f, is_occupied=%s",
+                self.config.name,
+                self.probability,
+                self.is_occupied,
+            )
 
             # Return minimal data - sensors access coordinator properties directly
             return {"last_updated": dt_util.utcnow().isoformat()}
@@ -557,15 +422,74 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise HomeAssistantError(f"Error updating data: {err}") from err
 
     # --- Data Saving ---
-    async def _async_save_data(self) -> None:
-        """Save the current data to storage."""
+    async def _async_save_data(self, force: bool = False) -> None:
+        """Save the current data to storage with optimized frequency.
+
+        Args:
+            force: If True, bypass debouncing and save immediately
+
+        """
         try:
-            _LOGGER.debug("Saving coordinator data")
+            _LOGGER.debug("Requesting storage save for coordinator data")
             await self.storage.async_save_instance_data(
                 self.entry_id,
                 self.entities,
+                force=force,
             )
-            _LOGGER.debug("Data saved successfully")
+            _LOGGER.debug("Storage save request completed")
         except HomeAssistantError as err:
             _LOGGER.error("Failed to save data: %s", err)
-            raise
+            # Don't re-raise in normal operations to avoid breaking the update cycle
+            # Only re-raise on forced saves
+            if force:
+                raise
+
+    def _calculate_entity_aggregates(self) -> dict[str, float]:
+        """Calculate probability, prior, and decay aggregates from entities in a single pass.
+
+        Returns:
+            Dict with 'probability', 'prior', and 'decay' keys
+
+        """
+        if not self.entities.entities:
+            return {
+                "probability": MIN_PROBABILITY,
+                "prior": DEFAULT_PRIOR,
+                "decay": 1.0,
+            }
+
+        # Single pass through entities
+        total_weight = 0.0
+        weighted_prob_sum = 0.0
+        prior_sum = 0.0
+        prior_count = 0
+        decay_weight = 0.0
+        weighted_decay_sum = 0.0
+
+        for entity in self.entities.entities.values():
+            if entity.available:
+                weight = entity.type.weight
+                total_weight += weight
+                weighted_prob_sum += entity.probability * weight
+
+                # For decay calculation
+                if entity.decay.is_decaying:
+                    decay_weight += weight
+                    weighted_decay_sum += entity.decay.decay_factor * weight
+
+            # Prior calculation (includes all entities)
+            prior_sum += entity.prior.prior
+            prior_count += 1
+
+        # Calculate results
+        probability = (
+            (weighted_prob_sum / total_weight) if total_weight > 0 else MIN_PROBABILITY
+        )
+        prior = (prior_sum / prior_count) if prior_count > 0 else DEFAULT_PRIOR
+        decay = (weighted_decay_sum / decay_weight) if decay_weight > 0 else 1.0
+
+        return {
+            "probability": validate_prob(probability),
+            "prior": prior,
+            "decay": decay,
+        }

@@ -24,7 +24,6 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..utils import validate_datetime, validate_prior, validate_prob
-from .entity_type import EntityType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -39,17 +38,6 @@ class TimeInterval(TypedDict):
     start: datetime
     end: datetime
     state: str
-
-
-@dataclass
-class PriorCalculationConfig:
-    """Configuration for prior probability calculation."""
-
-    entity_type: EntityType
-    primary_sensor: str
-    entity_id: str
-    start_time: datetime
-    end_time: datetime
 
 
 @dataclass
