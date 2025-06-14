@@ -62,6 +62,19 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_device_info: DeviceInfo | None = coordinator.device_info
 
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        # Let the coordinator know our entity_id
+        self.coordinator.occupancy_entity_id = self.entity_id
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle entity which will be removed."""
+        # Clear the entity_id from coordinator
+        if self.coordinator.occupancy_entity_id == self.entity_id:
+            self.coordinator.occupancy_entity_id = None
+        await super().async_will_remove_from_hass()
+
     @property
     def icon(self) -> str:
         """Return the icon to use in the frontend."""
@@ -155,6 +168,14 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             await self._restore_previous_state()
             self._setup_entity_tracking()
 
+            # Let the coordinator know our entity_id
+            self._coordinator.wasp_entity_id = self.entity_id
+
+            # Re-initialize entity manager to include wasp sensor in probability calculation
+            if self._coordinator.config.wasp_in_box.enabled:
+                _LOGGER.debug("Wasp sensor registered, re-initializing entity manager")
+                await self._coordinator.entities.async_initialize()
+
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
             _LOGGER.exception(
@@ -193,6 +214,15 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is removed."""
         _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
+
+        # Clear the entity_id from coordinator and re-initialize entity manager
+        if self._coordinator.wasp_entity_id == self.entity_id:
+            self._coordinator.wasp_entity_id = None
+            # Re-initialize entity manager to remove wasp sensor from probability calculation
+            if self._coordinator.config.wasp_in_box.enabled:
+                _LOGGER.debug("Wasp sensor removed, re-initializing entity manager")
+                await self._coordinator.entities.async_initialize()
+
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
@@ -383,7 +413,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Update Home Assistant state
         self.async_write_ha_state()
 
-        # No need to update coordinator entities since this is a standalone sensor
+        # WaspInBoxSensor works as a standalone sensor and doesn't interfere with coordinator entities
 
         _LOGGER.debug("State changed from %s to %s", old_state, new_state)
 

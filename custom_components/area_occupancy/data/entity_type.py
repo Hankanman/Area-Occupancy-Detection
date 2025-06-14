@@ -30,7 +30,6 @@ class InputType(StrEnum):
     WINDOW = "window"
     LIGHT = "light"
     ENVIRONMENTAL = "environmental"
-    WASP_IN_BOX = "wasp_in_box"
 
 
 @dataclass
@@ -334,13 +333,5 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "prior": 0.1,
         "active_states": None,
         "active_range": (0.0, 0.2),
-    },
-    InputType.WASP_IN_BOX: {
-        "weight": 0.2,
-        "prob_true": 0.45,
-        "prob_false": 0.05,
-        "prior": 0.4,
-        "active_states": [STATE_ON],
-        "active_range": None,
     },
 }

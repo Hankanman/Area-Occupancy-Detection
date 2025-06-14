@@ -86,6 +86,33 @@ class Sensors:
     doors: list[str] = field(default_factory=list)
     windows: list[str] = field(default_factory=list)
 
+    def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
+        """Get motion sensors including wasp sensor if enabled and available.
+
+        Args:
+            coordinator: The coordinator instance to get wasp entity_id from
+
+        Returns:
+            list[str]: List of motion sensor entity_ids including wasp if applicable
+
+        """
+
+        motion_sensors = self.motion.copy()
+
+        # Add wasp sensor if enabled and entity_id is available
+        if (
+            coordinator
+            and coordinator.config.wasp_in_box.enabled
+            and coordinator.wasp_entity_id
+        ):
+            motion_sensors.append(coordinator.wasp_entity_id)
+            _LOGGER.debug(
+                "Adding wasp sensor %s to motion sensors list",
+                coordinator.wasp_entity_id,
+            )
+
+        return motion_sensors
+
 
 @dataclass
 class SensorStates:
