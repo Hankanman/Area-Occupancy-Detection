@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 from ..utils import bayesian_probability, validate_datetime, validate_prob
 from .decay import DECAY_INTERVAL, Decay
 from .entity_type import EntityType, InputType
-from .prior import Prior, PriorType
+from .prior import Prior
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -458,23 +458,10 @@ class EntityManager:
         self, entity_id: str, entity_type: EntityType
     ) -> Prior:
         """Calculate initial prior for a new entity."""
-        history_days = self.config.decay.history_period
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=history_days)
-        primary_sensor = self.config.sensors.primary_occupancy
-
-        if not primary_sensor:
-            raise ValueError("Primary occupancy sensor must be configured")
 
         try:
             return await self.coordinator.priors.calculate(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                hass=self.hass,
-                primary_sensor=primary_sensor,
-                start_time=start_time,
-                end_time=end_time,
-                prior_type=PriorType.ENTITY,
+                entity=self.get_entity(entity_id),
             )
         except (
             ValueError,
@@ -494,7 +481,6 @@ class EntityManager:
                 prob_given_true=entity_type.prob_true,
                 prob_given_false=entity_type.prob_false,
                 last_updated=dt_util.utcnow(),
-                type=PriorType.ENTITY,
             )
 
     async def reset_entities(self) -> None:
@@ -578,7 +564,6 @@ class EntityManager:
                 prob_given_true=entity_type.prob_true,
                 prob_given_false=entity_type.prob_false,
                 last_updated=dt_util.utcnow(),
-                type=PriorType.ENTITY,
             )
 
         entity = Entity(
@@ -726,13 +711,6 @@ class EntityManager:
 
     async def _create_entities_from_config(self) -> dict[str, Entity]:
         """Create entities from current configuration."""
-        history_days = self.config.decay.history_period
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=history_days)
-        primary_sensor = self.config.sensors.primary_occupancy
-
-        if not primary_sensor:
-            raise ValueError("Primary occupancy sensor must be configured")
 
         type_mappings = {
             InputType.MOTION: self.config.sensors.motion,
@@ -747,23 +725,29 @@ class EntityManager:
         }
 
         entities: dict[str, Entity] = {}
+
+        # First pass: Create all entities with default priors
         for input_type, inputs in type_mappings.items():
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
             for input_entity_id in inputs:
-                prior = await self.coordinator.priors.calculate(
-                    entity_id=input_entity_id,
-                    entity_type=entity_type,
-                    hass=self.hass,
-                    primary_sensor=primary_sensor,
-                    start_time=start_time,
-                    end_time=end_time,
-                    prior_type=PriorType.ENTITY,
+                # Create entity with default priors from entity type
+                default_prior = Prior(
+                    prior=entity_type.prior,
+                    prob_given_true=entity_type.prob_true,
+                    prob_given_false=entity_type.prob_false,
+                    last_updated=dt_util.utcnow(),
                 )
                 entities[input_entity_id] = self._create_entity(
                     entity_id=input_entity_id,
                     entity_type=entity_type,
-                    prior=prior,
+                    prior=default_prior,
                 )
+
+        # Second pass: Update priors for all entities now that they exist
+        for entity in entities.values():
+            learned_prior = await self.coordinator.priors.calculate(entity)
+            entity.prior = learned_prior
+
         return entities
 
     def get_entity(self, entity_id: str) -> Entity:
