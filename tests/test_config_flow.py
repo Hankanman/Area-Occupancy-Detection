@@ -7,10 +7,8 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from homeassistant import config_entries, data_entry_flow
-from homeassistant.core import HomeAssistant
 
-from custom_components.area_occupancy.const import (  # noqa: TID252
+from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
@@ -65,6 +63,8 @@ from custom_components.area_occupancy.const import (  # noqa: TID252
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
 )
+from homeassistant import config_entries, data_entry_flow
+from homeassistant.core import HomeAssistant
 
 # Enable debug logging for tests
 logging.basicConfig(level=logging.DEBUG)

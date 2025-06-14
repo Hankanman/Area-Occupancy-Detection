@@ -2,16 +2,14 @@
 
 from unittest.mock import patch
 
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.area_occupancy.const import DOMAIN  # noqa: TID252
-from custom_components.area_occupancy.coordinator import (
-    AreaOccupancyCoordinator,  # noqa: TID252
-)
+from custom_components.area_occupancy.const import DOMAIN
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
 
-from .conftest import TEST_CONFIG  # noqa: TID251
+from .conftest import TEST_CONFIG
 
 
 async def test_setup(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
