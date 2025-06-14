@@ -79,7 +79,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removing Area Occupancy config entry: %s", entry_id)
 
     try:
-        store = StorageManager(hass)
+        store = StorageManager(entry.runtime_data.coordinator)
         removed = await store.async_remove_instance(entry_id)
         if removed:
             _LOGGER.info(

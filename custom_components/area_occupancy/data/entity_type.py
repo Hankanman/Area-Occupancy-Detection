@@ -14,7 +14,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import State
 
-from .prior import Prior
 from ..utils import validate_prior, validate_prob, validate_weight
 
 if TYPE_CHECKING:
@@ -246,10 +245,12 @@ class EntityTypeManager:
 
     def learn_from_entities(self, entities: dict[str, Any]) -> None:
         """Update each EntityType's prior, prob_true, and prob_false as the average of all entity priors for that type."""
+        # Local import to avoid circular dependency
+        from .prior import Prior
 
         # Group entity priors by input type
         grouped: dict[InputType, list[Prior]] = {
-            k: [] for k in self._entity_types.keys()
+            k: [] for k in self._entity_types
         }
         for entity in entities.values():
             # entity can be Entity or dict, handle both

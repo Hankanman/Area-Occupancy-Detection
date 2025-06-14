@@ -21,7 +21,10 @@ from homeassistant.util import dt as dt_util
 
 # Local
 from .const import CONF_THRESHOLD, DEFAULT_NAME, DEFAULT_PRIOR, DOMAIN, MIN_PROBABILITY
-from .data import ConfigManager, EntityManager, EntityTypeManager, PriorManager
+from .data.config import ConfigManager
+from .data.entity import EntityManager
+from .data.entity_type import EntityTypeManager
+from .data.prior import PriorManager
 from .storage import StorageManager
 from .utils import validate_prob
 
@@ -402,18 +405,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Re-raise as ConfigEntryNotReady if loading fails critically
             raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
 
-    async def update_learned_priors(self, history_period: int | None = None) -> None:
-        """Update learned priors using historical data.
-
-        Args:
-            history_period: Number of days of history to analyze (defaults to config value)
-
-        """
+    async def update_learned_priors(self) -> None:
+        """Update learned priors using historical data."""
         try:
             _LOGGER.info("Starting learned priors update for area %s", self.config.name)
 
             # Delegate the actual prior updating to the PriorManager
-            updated_count = await self.priors.update_all_entity_priors(history_period)
+            updated_count = await self.priors.update_all_entity_priors()
 
             # Request update if priors changed
             if updated_count > 0:

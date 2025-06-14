@@ -3,8 +3,7 @@
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from enum import StrEnum
+from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -29,6 +28,7 @@ from .entity_type import EntityType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from .entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,21 +41,11 @@ class TimeInterval(TypedDict):
     state: str
 
 
-class PriorType(StrEnum):
-    """Prior type."""
-
-    ENTITY = "entity"
-    ENTITY_TYPE = "entity_type"
-    TYPE = "type"
-    OVERALL = "overall"
-
-
 @dataclass
 class PriorCalculationConfig:
     """Configuration for prior probability calculation."""
 
     entity_type: EntityType
-    prior_type: PriorType
     primary_sensor: str
     entity_id: str
     start_time: datetime
@@ -80,7 +70,6 @@ class Prior:
     prob_given_true: float
     prob_given_false: float
     last_updated: datetime
-    type: PriorType
 
     def __post_init__(self):
         """Validate properties after initialization."""
@@ -96,7 +85,6 @@ class Prior:
             "prob_given_true": self.prob_given_true,
             "prob_given_false": self.prob_given_false,
             "last_updated": self.last_updated.isoformat(),
-            "type": self.type.value,
         }
 
     @classmethod
@@ -109,7 +97,6 @@ class Prior:
             prob_given_true=data["prob_given_true"],
             prob_given_false=data["prob_given_false"],
             last_updated=last_updated,
-            type=PriorType(data["type"]),
         )
 
 
@@ -143,30 +130,7 @@ class PriorManager:
         """Clear all stored priors."""
         self._priors.clear()
 
-    async def calculate_with_config(
-        self, hass: HomeAssistant, config: PriorCalculationConfig
-    ) -> "Prior":
-        """Calculate learned priors using a configuration object.
-
-        Args:
-            hass: Home Assistant instance
-            config: Prior calculation configuration
-
-        Returns:
-            Calculated Prior object
-
-        """
-        return await self.calculate(
-            hass=hass,
-            entity_type=config.entity_type,
-            prior_type=config.prior_type,
-            primary_sensor=config.primary_sensor,
-            entity_id=config.entity_id,
-            start_time=config.start_time,
-            end_time=config.end_time,
-        )
-
-    async def update_all_entity_priors(self, history_period: int | None = None) -> int:
+    async def update_all_entity_priors(self) -> int:
         """Update learned priors for all entities in the coordinator.
 
         Args:
@@ -179,38 +143,18 @@ class PriorManager:
             ValueError: If no primary occupancy sensor is configured
 
         """
-        # Use configured history period if not provided
-        if history_period is None:
-            history_period = self.coordinator.config.decay.history_period
-
-        # Calculate time window for analysis
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=history_period)
-
-        # Get primary occupancy sensor
-        primary_sensor = self.coordinator.config.sensors.primary_occupancy
-        if not primary_sensor:
-            raise ValueError("No primary occupancy sensor configured")
 
         _LOGGER.info(
             "Updating learned priors for area %s: analyzing %d days of history",
             self.coordinator.config.name,
-            history_period,
+            self.coordinator.config.history.period,
         )
 
         # Update priors for all entities
         updated_count = 0
         for entity in self.coordinator.entities.entities.values():
             try:
-                prior = await self.calculate(
-                    self.coordinator.hass,
-                    entity.type,
-                    PriorType.ENTITY,
-                    primary_sensor,
-                    entity.entity_id,
-                    start_time,
-                    end_time,
-                )
+                prior = await self.calculate(entity)
 
                 # Update the entity's prior
                 entity.prior = prior
@@ -246,15 +190,24 @@ class PriorManager:
 
     async def calculate(
         self,
-        hass: HomeAssistant,
-        entity_type: EntityType,
-        prior_type: PriorType,
-        primary_sensor: str,
-        entity_id: str,
-        start_time: datetime,
-        end_time: datetime,
+        entity: "Entity",
     ) -> "Prior":
         """Calculate learned priors for a given entity."""
+
+        hass: HomeAssistant = self.coordinator.hass
+        entity_id = entity.entity_id
+        entity_type = entity.type
+        if self.coordinator.config.sensors.primary_occupancy:
+            primary_sensor = self.coordinator.config.sensors.primary_occupancy
+        else:
+            raise ValueError("No primary occupancy sensor configured")
+        if self.coordinator.config.start_time:
+            start_time = self.coordinator.config.start_time
+        else:
+            raise ValueError("No start time configured")
+        if self.coordinator.config.end_time:
+            end_time = self.coordinator.config.end_time
+
         if end_time <= start_time:
             _LOGGER.error("End time must be after start time")
             raise ValueError("End time must be after start time")
@@ -270,7 +223,6 @@ class PriorManager:
             prob_given_false=entity_type.prob_false,
             prior=entity_type.prior,
             last_updated=validate_datetime(None),
-            type=prior_type,
         )
 
         # Check if we have a cached prior that's still valid
@@ -330,7 +282,6 @@ class PriorManager:
                     prob_given_true=entity_type.prob_true,
                     prob_given_false=entity_type.prob_false,
                     last_updated=validate_datetime(None),
-                    type=prior_type,
                 )
 
                 # Validate learned prior and log comparison
@@ -434,7 +385,6 @@ class PriorManager:
             prob_given_true=learned_prob_given_true,
             prob_given_false=learned_prob_given_false,
             last_updated=validate_datetime(None),
-            type=prior_type,
         )
 
         # Log the learned vs default values for debugging

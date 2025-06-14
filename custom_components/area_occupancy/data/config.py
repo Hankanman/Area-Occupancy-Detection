@@ -1,11 +1,13 @@
 """Configuration model and manager for Area Occupancy Detection."""
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_APPLIANCE_ACTIVE_STATES,
@@ -118,8 +120,14 @@ class Decay:
     enabled: bool = DEFAULT_DECAY_ENABLED
     window: int = DEFAULT_DECAY_WINDOW
     min_delay: int = DEFAULT_DECAY_MIN_DELAY
-    history_period: int = DEFAULT_HISTORY_PERIOD
-    historical_analysis_enabled: bool = DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+
+
+@dataclass
+class History:
+    """History configuration."""
+
+    enabled: bool = DEFAULT_HISTORICAL_ANALYSIS_ENABLED
+    period: int = DEFAULT_HISTORY_PERIOD
 
 
 @dataclass
@@ -143,8 +151,19 @@ class Config:
     sensor_states: SensorStates = field(default_factory=SensorStates)
     weights: Weights = field(default_factory=Weights)
     decay: Decay = field(default_factory=Decay)
+    history: History = field(default_factory=History)
     wasp_in_box: WaspInBox = field(default_factory=WaspInBox)
     _raw: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def start_time(self) -> datetime:
+        """Return the start time of the history period."""
+        return dt_util.utcnow() - timedelta(days=self.history.period)
+
+    @property
+    def end_time(self) -> datetime:
+        """Return the end time of the history period."""
+        return dt_util.utcnow()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -217,15 +236,15 @@ class Config:
                 enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
                 window=int(data.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)),
                 min_delay=int(data.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)),
-                history_period=int(
-                    data.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)
-                ),
-                historical_analysis_enabled=bool(
+            ),
+            history=History(
+                enabled=bool(
                     data.get(
                         CONF_HISTORICAL_ANALYSIS_ENABLED,
                         DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
                     )
                 ),
+                period=int(data.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)),
             ),
             wasp_in_box=WaspInBox(
                 enabled=bool(data.get(CONF_WASP_ENABLED, False)),
