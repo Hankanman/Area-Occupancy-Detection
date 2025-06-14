@@ -425,7 +425,7 @@ class EntityManager:
             raise ValueError("Primary occupancy sensor must be configured")
 
         type_mappings = {
-            InputType.MOTION: self.config.sensors.motion,
+            InputType.MOTION: self.config.sensors.get_motion_sensors(self.coordinator),
             InputType.MEDIA: self.config.sensors.media,
             InputType.APPLIANCE: self.config.sensors.appliances,
             InputType.DOOR: self.config.sensors.doors,
@@ -713,7 +713,7 @@ class EntityManager:
         """Create entities from current configuration."""
 
         type_mappings = {
-            InputType.MOTION: self.config.sensors.motion,
+            InputType.MOTION: self.config.sensors.get_motion_sensors(self.coordinator),
             InputType.MEDIA: self.config.sensors.media,
             InputType.APPLIANCE: self.config.sensors.appliances,
             InputType.DOOR: self.config.sensors.doors,

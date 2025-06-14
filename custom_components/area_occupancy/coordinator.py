@@ -60,6 +60,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_prior_update: datetime | None = None
         self._prior_update_tracker: CALLBACK_TYPE | None = None
 
+        # Track specific binary sensor entity_ids
+        self.occupancy_entity_id: str | None = None
+        self.wasp_entity_id: str | None = None
+
     @property
     def dev_mode(self) -> bool:
         """Check if we're running in development mode.
@@ -207,6 +211,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def last_changed(self) -> datetime | None:
         """Return the last changed timestamp."""
         return self.data.get("last_changed")
+
+    @property
+    def binary_sensor_entity_ids(self) -> dict[str, str | None]:
+        """Return the entity_ids of the binary sensors created by this integration.
+
+        Returns:
+            dict[str, str | None]: Dictionary with 'occupancy' and 'wasp' keys
+                                 containing their respective entity_ids or None if not set.
+
+        """
+        return {
+            "occupancy": self.occupancy_entity_id,
+            "wasp": self.wasp_entity_id,
+        }
 
     def request_update(self, force: bool = False, message: str = "") -> None:
         """Request an immediate coordinator refresh.
