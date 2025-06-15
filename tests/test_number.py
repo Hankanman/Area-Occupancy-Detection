@@ -82,7 +82,9 @@ class TestThreshold:
         # Should call coordinator's async_update_threshold with decimal value
         mock_coordinator.async_update_threshold.assert_called_once_with(0.75)
 
-    async def test_async_set_native_value_edge_cases(self, mock_coordinator: Mock) -> None:
+    async def test_async_set_native_value_edge_cases(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test setting edge case values."""
         entity = Threshold(mock_coordinator, "test_entry")
 
@@ -100,27 +102,37 @@ class TestThreshold:
         await entity.async_set_native_value(50.0)
         mock_coordinator.async_update_threshold.assert_called_with(0.5)
 
-    async def test_async_set_native_value_invalid_low(self, mock_coordinator: Mock) -> None:
+    async def test_async_set_native_value_invalid_low(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test setting value below minimum."""
         entity = Threshold(mock_coordinator, "test_entry")
 
-        with pytest.raises(ServiceValidationError, match="Threshold must be between 1 and 99"):
+        with pytest.raises(
+            ServiceValidationError, match="Threshold must be between 1 and 99"
+        ):
             await entity.async_set_native_value(0.5)
 
         # Should not call coordinator
         mock_coordinator.async_update_threshold.assert_not_called()
 
-    async def test_async_set_native_value_invalid_high(self, mock_coordinator: Mock) -> None:
+    async def test_async_set_native_value_invalid_high(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test setting value above maximum."""
         entity = Threshold(mock_coordinator, "test_entry")
 
-        with pytest.raises(ServiceValidationError, match="Threshold must be between 1 and 99"):
+        with pytest.raises(
+            ServiceValidationError, match="Threshold must be between 1 and 99"
+        ):
             await entity.async_set_native_value(100.0)
 
         # Should not call coordinator
         mock_coordinator.async_update_threshold.assert_not_called()
 
-    async def test_async_set_native_value_coordinator_error(self, mock_coordinator: Mock) -> None:
+    async def test_async_set_native_value_coordinator_error(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test handling coordinator errors."""
         entity = Threshold(mock_coordinator, "test_entry")
 
@@ -183,7 +195,9 @@ class TestThreshold:
 
             # Check that the call was made with properly converted value
             called_value = mock_coordinator.async_update_threshold.call_args[0][0]
-            assert abs(called_value - expected_decimal) < 0.01  # Allow small floating point differences
+            assert (
+                abs(called_value - expected_decimal) < 0.01
+            )  # Allow small floating point differences
 
 
 class TestAsyncSetupEntry:
@@ -289,10 +303,14 @@ class TestThresholdIntegration:
         updates = [25.0, 50.0, 75.0, 90.0]
         expected_decimals = [0.25, 0.5, 0.75, 0.9]
 
-        for percentage, expected_decimal in zip(updates, expected_decimals, strict=False):
+        for percentage, expected_decimal in zip(
+            updates, expected_decimals, strict=False
+        ):
             mock_coordinator.async_update_threshold.reset_mock()
             await entity.async_set_native_value(percentage)
-            mock_coordinator.async_update_threshold.assert_called_once_with(expected_decimal)
+            mock_coordinator.async_update_threshold.assert_called_once_with(
+                expected_decimal
+            )
 
     def test_threshold_boundary_validation(
         self, comprehensive_threshold: Threshold
@@ -318,7 +336,7 @@ class TestThresholdIntegration:
         # Test coordinator error followed by successful update
         mock_coordinator.async_update_threshold.side_effect = [
             Exception("Temporary error"),
-            None  # Success on second call
+            None,  # Success on second call
         ]
 
         # First call should raise exception
@@ -342,7 +360,9 @@ class TestThresholdIntegration:
         test_thresholds = [0.1, 0.25, 0.5, 0.75, 0.9]
         expected_percentages = [10.0, 25.0, 50.0, 75.0, 90.0]
 
-        for threshold, expected_percentage in zip(test_thresholds, expected_percentages, strict=False):
+        for threshold, expected_percentage in zip(
+            test_thresholds, expected_percentages, strict=False
+        ):
             mock_coordinator.threshold = threshold
             assert entity.native_value == expected_percentage
 

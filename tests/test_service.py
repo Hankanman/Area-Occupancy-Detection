@@ -29,11 +29,7 @@ class TestGetCoordinator:
         mock_hass = Mock(spec=HomeAssistant)
         mock_coordinator = Mock()
 
-        mock_hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        mock_hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
 
         result = _get_coordinator(mock_hass, "test_entry_id")
         assert result == mock_coordinator
@@ -65,11 +61,7 @@ class TestUpdatePriors:
         mock_coordinator = Mock()
         mock_coordinator.update_learned_priors = AsyncMock(return_value=5)
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     @pytest.fixture
@@ -79,7 +71,9 @@ class TestUpdatePriors:
         call.data = {"entry_id": "test_entry_id"}
         return call
 
-    async def test_update_priors_success(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_update_priors_success(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test successful prior update."""
         await _update_priors(mock_hass, mock_call)
 
@@ -94,7 +88,9 @@ class TestUpdatePriors:
         with pytest.raises(ServiceValidationError, match="entry_id is required"):
             await _update_priors(mock_hass, mock_call)
 
-    async def test_update_priors_coordinator_error(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_update_priors_coordinator_error(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test prior update with coordinator error."""
         coordinator = mock_hass.data[DOMAIN]["test_entry_id"]
         coordinator.update_learned_priors.side_effect = Exception("Update failed")
@@ -114,11 +110,7 @@ class TestResetEntities:
         mock_coordinator.entity_manager = Mock()
         mock_coordinator.entity_manager.reset_entities = AsyncMock()
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     @pytest.fixture
@@ -128,7 +120,9 @@ class TestResetEntities:
         call.data = {"entry_id": "test_entry_id"}
         return call
 
-    async def test_reset_entities_success(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_reset_entities_success(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test successful entity reset."""
         await _reset_entities(mock_hass, mock_call)
 
@@ -143,12 +137,16 @@ class TestResetEntities:
         with pytest.raises(ServiceValidationError, match="entry_id is required"):
             await _reset_entities(mock_hass, mock_call)
 
-    async def test_reset_entities_no_entity_manager(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_reset_entities_no_entity_manager(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test entity reset with no entity manager."""
         coordinator = mock_hass.data[DOMAIN]["test_entry_id"]
         coordinator.entity_manager = None
 
-        with pytest.raises(ServiceValidationError, match="Entity manager not available"):
+        with pytest.raises(
+            ServiceValidationError, match="Entity manager not available"
+        ):
             await _reset_entities(mock_hass, mock_call)
 
 
@@ -180,11 +178,7 @@ class TestGetEntityMetrics:
             "light.test_light": mock_entity2,
         }
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     @pytest.fixture
@@ -195,7 +189,9 @@ class TestGetEntityMetrics:
         call.return_response = True
         return call
 
-    async def test_get_entity_metrics_success(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_get_entity_metrics_success(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test successful entity metrics retrieval."""
         result = await _get_entity_metrics(mock_hass, mock_call)
 
@@ -221,7 +217,9 @@ class TestGetEntityMetrics:
         with pytest.raises(ServiceValidationError, match="entry_id is required"):
             await _get_entity_metrics(mock_hass, mock_call)
 
-    async def test_get_entity_metrics_no_entity_manager(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_get_entity_metrics_no_entity_manager(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test entity metrics with no entity manager."""
         coordinator = mock_hass.data[DOMAIN]["test_entry_id"]
         coordinator.entity_manager = None
@@ -261,11 +259,7 @@ class TestGetProblematicEntities:
             "sensor.normal": mock_entity3,
         }
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     @pytest.fixture
@@ -276,7 +270,9 @@ class TestGetProblematicEntities:
         call.return_response = True
         return call
 
-    async def test_get_problematic_entities_success(self, mock_hass: Mock, mock_call: Mock) -> None:
+    async def test_get_problematic_entities_success(
+        self, mock_hass: Mock, mock_call: Mock
+    ) -> None:
         """Test successful problematic entities retrieval."""
         result = await _get_problematic_entities(mock_hass, mock_call)
 
@@ -294,12 +290,14 @@ class TestGetProblematicEntities:
         # Should not include normal entity
         assert "sensor.normal" not in problematic
 
-    async def test_get_problematic_entities_with_threshold(self, mock_hass: Mock) -> None:
+    async def test_get_problematic_entities_with_threshold(
+        self, mock_hass: Mock
+    ) -> None:
         """Test problematic entities with custom threshold."""
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {
             "entry_id": "test_entry_id",
-            "probability_threshold": 90  # Custom threshold
+            "probability_threshold": 90,  # Custom threshold
         }
         mock_call.return_response = True
 
@@ -354,11 +352,7 @@ class TestGetEntityDetails:
             "binary_sensor.motion1": mock_entity,
         }
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     async def test_get_entity_details_success(self, mock_hass: Mock) -> None:
@@ -366,7 +360,7 @@ class TestGetEntityDetails:
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {
             "entry_id": "test_entry_id",
-            "entity_id": "binary_sensor.motion1"
+            "entity_id": "binary_sensor.motion1",
         }
         mock_call.return_response = True
 
@@ -399,7 +393,7 @@ class TestGetEntityDetails:
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {
             "entry_id": "test_entry_id",
-            "entity_id": "binary_sensor.nonexistent"
+            "entity_id": "binary_sensor.nonexistent",
         }
         mock_call.return_response = True
 
@@ -426,11 +420,7 @@ class TestForceEntityUpdate:
             "binary_sensor.motion1": mock_entity,
         }
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     async def test_force_entity_update_success(self, mock_hass: Mock) -> None:
@@ -438,7 +428,7 @@ class TestForceEntityUpdate:
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {
             "entry_id": "test_entry_id",
-            "entity_id": "binary_sensor.motion1"
+            "entity_id": "binary_sensor.motion1",
         }
 
         await _force_entity_update(mock_hass, mock_call)
@@ -463,7 +453,7 @@ class TestForceEntityUpdate:
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {
             "entry_id": "test_entry_id",
-            "entity_id": "binary_sensor.nonexistent"
+            "entity_id": "binary_sensor.nonexistent",
         }
 
         with pytest.raises(ServiceValidationError, match="Entity not found"):
@@ -487,11 +477,7 @@ class TestGetAreaStatus:
         mock_coordinator.last_updated = "2023-01-01T12:00:00+00:00"
         mock_coordinator.last_changed = "2023-01-01T11:30:00+00:00"
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     async def test_get_area_status_success(self, mock_hass: Mock) -> None:
@@ -514,7 +500,9 @@ class TestGetAreaStatus:
         assert "last_updated" in status
         assert "last_changed" in status
 
-    async def test_get_area_status_unavailable_coordinator(self, mock_hass: Mock) -> None:
+    async def test_get_area_status_unavailable_coordinator(
+        self, mock_hass: Mock
+    ) -> None:
         """Test area status with unavailable coordinator."""
         coordinator = mock_hass.data[DOMAIN]["test_entry_id"]
         coordinator.available = False
@@ -547,15 +535,9 @@ class TestGetEntityTypeLearned:
         mock_entity_type.prob_false = 0.1
         mock_entity_type.prior = 0.3
 
-        mock_coordinator.entity_types.entity_types = {
-            "motion": mock_entity_type
-        }
+        mock_coordinator.entity_types.entity_types = {"motion": mock_entity_type}
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
         return hass
 
     async def test_get_entity_type_learned_data_success(self, mock_hass: Mock) -> None:
@@ -576,7 +558,9 @@ class TestGetEntityTypeLearned:
         assert motion_data["prob_false"] == 10.0
         assert motion_data["prior"] == 30.0
 
-    async def test_get_entity_type_learned_data_no_entity_types(self, mock_hass: Mock) -> None:
+    async def test_get_entity_type_learned_data_no_entity_types(
+        self, mock_hass: Mock
+    ) -> None:
         """Test entity type learned data with no entity types."""
         coordinator = mock_hass.data[DOMAIN]["test_entry_id"]
         coordinator.entity_types = None
@@ -603,7 +587,9 @@ class TestAsyncSetupServices:
         assert mock_hass.services.async_register.call_count == 8
 
         # Check that all expected services were registered
-        registered_services = [call[0][1] for call in mock_hass.services.async_register.call_args_list]
+        registered_services = [
+            call[0][1] for call in mock_hass.services.async_register.call_args_list
+        ]
         expected_services = [
             "update_priors",
             "reset_entities",
@@ -654,7 +640,12 @@ class TestServiceIntegration:
         for entity_id, probability, is_active, available in [
             ("binary_sensor.motion1", 0.8, True, True),
             ("binary_sensor.motion2", 0.3, False, True),
-            ("light.test_light", 0.95, True, False),  # Problematic - unavailable and high prob
+            (
+                "light.test_light",
+                0.95,
+                True,
+                False,
+            ),  # Problematic - unavailable and high prob
         ]:
             mock_entity = Mock()
             mock_entity.entity_id = entity_id
@@ -666,11 +657,7 @@ class TestServiceIntegration:
 
         mock_coordinator.entity_manager.entities = mock_entities
 
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": mock_coordinator
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": mock_coordinator}}
 
         return hass
 
@@ -689,14 +676,16 @@ class TestServiceIntegration:
         problematic_call.data = {"entry_id": "test_entry_id"}
         problematic_call.return_response = True
 
-        problematic_result = await _get_problematic_entities(comprehensive_hass, problematic_call)
+        problematic_result = await _get_problematic_entities(
+            comprehensive_hass, problematic_call
+        )
         assert "light.test_light" in problematic_result["problematic_entities"]
 
         # 3. Force entity update
         update_call = Mock(spec=ServiceCall)
         update_call.data = {
             "entry_id": "test_entry_id",
-            "entity_id": "light.test_light"
+            "entity_id": "light.test_light",
         }
 
         await _force_entity_update(comprehensive_hass, update_call)
@@ -712,7 +701,9 @@ class TestServiceIntegration:
         await _update_priors(comprehensive_hass, priors_call)
         coordinator.update_learned_priors.assert_called_once()
 
-    async def test_error_handling_across_services(self, comprehensive_hass: Mock) -> None:
+    async def test_error_handling_across_services(
+        self, comprehensive_hass: Mock
+    ) -> None:
         """Test error handling across different services."""
         # Test with invalid entry_id
         invalid_call = Mock(spec=ServiceCall)
@@ -741,7 +732,9 @@ class TestServiceIntegration:
         with pytest.raises(ServiceValidationError, match="entry_id is required"):
             await _force_entity_update(comprehensive_hass, empty_call)
 
-    async def test_service_return_value_consistency(self, comprehensive_hass: Mock) -> None:
+    async def test_service_return_value_consistency(
+        self, comprehensive_hass: Mock
+    ) -> None:
         """Test return value consistency across services."""
         # All services that return data should have consistent structure
         call = Mock(spec=ServiceCall)

@@ -1,24 +1,25 @@
 """Tests for migrations.py module."""
 
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 
-from custom_components.area_occupancy.migrations import (
-    async_migrate_unique_ids,
-    migrate_primary_occupancy_sensor,
-    migrate_config,
-    async_migrate_storage,
-    async_migrate_entry,
-    validate_threshold,
-)
+import pytest
+
 from custom_components.area_occupancy.const import (
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_MOTION_SENSORS,
+    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
     DEFAULT_THRESHOLD,
 )
+from custom_components.area_occupancy.migrations import (
+    async_migrate_entry,
+    async_migrate_storage,
+    async_migrate_unique_ids,
+    migrate_config,
+    migrate_primary_occupancy_sensor,
+    validate_threshold,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 
 
 class TestAsyncMigrateUniqueIds:
@@ -41,7 +42,9 @@ class TestAsyncMigrateUniqueIds:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test successful unique ID migration."""
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_get_registry:
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.entities = {
                 "sensor.old_unique_id": Mock(unique_id="old_unique_id"),
@@ -59,7 +62,9 @@ class TestAsyncMigrateUniqueIds:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test migration with no entities to migrate."""
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_get_registry:
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.entities = {}
             mock_get_registry.return_value = mock_registry
@@ -217,8 +222,12 @@ class TestAsyncMigrateEntry:
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration from version 1.0 to 1.1."""
-        with patch("custom_components.area_occupancy.migrations.async_migrate_unique_ids") as mock_migrate_ids:
-            with patch("custom_components.area_occupancy.migrations.async_migrate_storage") as mock_migrate_storage:
+        with patch(
+            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+        ) as mock_migrate_ids:
+            with patch(
+                "custom_components.area_occupancy.migrations.async_migrate_storage"
+            ) as mock_migrate_storage:
                 mock_migrate_ids.return_value = None
                 mock_migrate_storage.return_value = None
 
@@ -240,9 +249,7 @@ class TestAsyncMigrateEntry:
         assert mock_config_entry_v1_1.version == 1
         assert mock_config_entry_v1_1.minor_version == 1
 
-    async def test_async_migrate_entry_future_version(
-        self, mock_hass: Mock
-    ) -> None:
+    async def test_async_migrate_entry_future_version(self, mock_hass: Mock) -> None:
         """Test migration from future version."""
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = 2
@@ -258,7 +265,7 @@ class TestAsyncMigrateEntry:
         """Test migration with error during migration."""
         with patch(
             "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
-            side_effect=Exception("Migration error")
+            side_effect=Exception("Migration error"),
         ):
             result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
 
@@ -270,8 +277,12 @@ class TestAsyncMigrateEntry:
         """Test migration with invalid threshold value."""
         mock_config_entry_v1_0.data[CONF_THRESHOLD] = 150  # Invalid threshold
 
-        with patch("custom_components.area_occupancy.migrations.async_migrate_unique_ids") as mock_migrate_ids:
-            with patch("custom_components.area_occupancy.migrations.async_migrate_storage") as mock_migrate_storage:
+        with patch(
+            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+        ) as mock_migrate_ids:
+            with patch(
+                "custom_components.area_occupancy.migrations.async_migrate_storage"
+            ) as mock_migrate_storage:
                 mock_migrate_ids.return_value = None
                 mock_migrate_storage.return_value = None
 
@@ -330,8 +341,12 @@ class TestMigrationsIntegration:
             CONF_THRESHOLD: 150,  # Invalid threshold
         }
 
-        with patch("custom_components.area_occupancy.migrations.async_migrate_unique_ids") as mock_migrate_ids:
-            with patch("custom_components.area_occupancy.migrations.async_migrate_storage") as mock_migrate_storage:
+        with patch(
+            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+        ) as mock_migrate_ids:
+            with patch(
+                "custom_components.area_occupancy.migrations.async_migrate_storage"
+            ) as mock_migrate_storage:
                 mock_migrate_ids.return_value = None
                 mock_migrate_storage.return_value = None
 
@@ -340,11 +355,16 @@ class TestMigrationsIntegration:
                 assert result is True
                 assert mock_entry.version == 1
                 assert mock_entry.minor_version == 1
-                
+
                 # Check data migration
                 assert CONF_PRIMARY_OCCUPANCY_SENSOR in mock_entry.data
-                assert mock_entry.data[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
-                assert mock_entry.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD  # Fixed invalid threshold
+                assert (
+                    mock_entry.data[CONF_PRIMARY_OCCUPANCY_SENSOR]
+                    == "binary_sensor.motion1"
+                )
+                assert (
+                    mock_entry.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD
+                )  # Fixed invalid threshold
 
                 # Check migration steps were called
                 mock_migrate_ids.assert_called()
@@ -367,4 +387,4 @@ class TestMigrationsIntegration:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",
         }
         result = migrate_config(config)
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion2" 
+        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion2"

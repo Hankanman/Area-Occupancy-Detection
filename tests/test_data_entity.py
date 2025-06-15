@@ -105,7 +105,11 @@ class TestEntity:
         assert isinstance(entity.last_updated, datetime)
 
     def test_set_coordinator(
-        self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock, mock_coordinator: Mock
+        self,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test setting coordinator reference."""
         entity = Entity(
@@ -146,9 +150,7 @@ class TestEntity:
         assert "decay" in result
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
-    def test_from_dict(
-        self, mock_decay_class: Mock, mock_coordinator: Mock
-    ) -> None:
+    def test_from_dict(self, mock_decay_class: Mock, mock_coordinator: Mock) -> None:
         """Test creating Entity from dictionary."""
         # Setup mock coordinator with entity types
         mock_entity_type = Mock()
@@ -187,7 +189,11 @@ class TestEntity:
 
     @patch("custom_components.area_occupancy.utils.bayesian_probability")
     def test_update_probability_basic(
-        self, mock_bayesian: Mock, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
+        self,
+        mock_bayesian: Mock,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
     ) -> None:
         """Test basic probability update without decay."""
         mock_bayesian.return_value = 0.7
@@ -209,7 +215,11 @@ class TestEntity:
 
     @patch("custom_components.area_occupancy.utils.bayesian_probability")
     def test_update_probability_start_decay(
-        self, mock_bayesian: Mock, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
+        self,
+        mock_bayesian: Mock,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
     ) -> None:
         """Test probability update when starting decay."""
         mock_bayesian.return_value = 0.3
@@ -225,7 +235,7 @@ class TestEntity:
             is_active=False,  # Currently inactive
         )
 
-        with patch.object(entity, 'start_decay_timer') as mock_start_timer:
+        with patch.object(entity, "start_decay_timer") as mock_start_timer:
             entity.update_probability()
 
             # Should maintain previous probability for first decay cycle
@@ -235,7 +245,11 @@ class TestEntity:
 
     @patch("custom_components.area_occupancy.utils.bayesian_probability")
     def test_update_probability_continue_decay(
-        self, mock_bayesian: Mock, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
+        self,
+        mock_bayesian: Mock,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
     ) -> None:
         """Test probability update when continuing decay."""
         mock_bayesian.return_value = 0.3
@@ -260,7 +274,11 @@ class TestEntity:
 
     @patch("custom_components.area_occupancy.utils.bayesian_probability")
     def test_update_probability_stop_decay(
-        self, mock_bayesian: Mock, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
+        self,
+        mock_bayesian: Mock,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
     ) -> None:
         """Test probability update when stopping decay."""
         mock_bayesian.return_value = 0.8
@@ -276,7 +294,7 @@ class TestEntity:
             is_active=True,  # Became active
         )
 
-        with patch.object(entity, '_stop_decay_timer') as mock_stop_timer:
+        with patch.object(entity, "_stop_decay_timer") as mock_stop_timer:
             entity.update_probability()
 
             assert entity.probability == 0.8  # Current probability
@@ -284,7 +302,11 @@ class TestEntity:
             mock_stop_timer.assert_called_once()
 
     def test_start_decay_timer(
-        self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock, mock_coordinator: Mock
+        self,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test starting decay timer."""
         entity = Entity(
@@ -296,7 +318,9 @@ class TestEntity:
         )
         entity.set_coordinator(mock_coordinator)
 
-        with patch('custom_components.area_occupancy.data.entity.async_track_point_in_time') as mock_track:
+        with patch(
+            "custom_components.area_occupancy.data.entity.async_track_point_in_time"
+        ) as mock_track:
             entity.start_decay_timer()
 
             # Should schedule timer if decay is enabled and coordinator is available
@@ -304,7 +328,11 @@ class TestEntity:
                 mock_track.assert_called_once()
 
     def test_start_decay_timer_disabled(
-        self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock, mock_coordinator: Mock
+        self,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test starting decay timer when decay is disabled."""
         mock_decay.decay_enabled = False
@@ -318,7 +346,9 @@ class TestEntity:
         )
         entity.set_coordinator(mock_coordinator)
 
-        with patch('custom_components.area_occupancy.data.entity.async_track_point_in_time') as mock_track:
+        with patch(
+            "custom_components.area_occupancy.data.entity.async_track_point_in_time"
+        ) as mock_track:
             entity.start_decay_timer()
 
             # Should not schedule timer when decay is disabled
@@ -347,7 +377,11 @@ class TestEntity:
         assert entity._decay_timer is None
 
     async def test_handle_decay_timer(
-        self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock, mock_coordinator: Mock
+        self,
+        mock_entity_type: Mock,
+        mock_prior: Mock,
+        mock_decay: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test handling decay timer firing."""
         mock_decay.is_decaying = True
@@ -361,8 +395,8 @@ class TestEntity:
         )
         entity.set_coordinator(mock_coordinator)
 
-        with patch.object(entity, 'update_probability') as mock_update:
-            with patch.object(entity, '_schedule_next_decay_update') as mock_schedule:
+        with patch.object(entity, "update_probability") as mock_update:
+            with patch.object(entity, "_schedule_next_decay_update") as mock_schedule:
                 await entity._handle_decay_timer(dt_util.utcnow())
 
                 mock_update.assert_called_once()
@@ -382,7 +416,7 @@ class TestEntity:
             decay=mock_decay,
         )
 
-        with patch.object(entity, '_stop_decay_timer') as mock_stop_timer:
+        with patch.object(entity, "_stop_decay_timer") as mock_stop_timer:
             entity.stop_decay_completely()
 
             mock_decay.stop_decay.assert_called_once()
@@ -400,7 +434,7 @@ class TestEntity:
             decay=mock_decay,
         )
 
-        with patch.object(entity, '_stop_decay_timer') as mock_stop_timer:
+        with patch.object(entity, "_stop_decay_timer") as mock_stop_timer:
             entity.cleanup()
 
             mock_stop_timer.assert_called_once()
@@ -524,11 +558,7 @@ class TestEntityManager:
         mock_entity = Mock()
         mock_from_dict.return_value = mock_entity
 
-        data = {
-            "entities": {
-                "test_entity": {"entity_id": "test", "probability": 0.5}
-            }
-        }
+        data = {"entities": {"test_entity": {"entity_id": "test", "probability": 0.5}}}
 
         manager = EntityManager.from_dict(data, mock_coordinator)
 
@@ -540,9 +570,9 @@ class TestEntityManager:
         """Test async initialization."""
         manager = EntityManager(mock_coordinator)
 
-        with patch.object(manager, '_update_entities_from_config') as mock_update:
-            with patch.object(manager, '_setup_entity_tracking') as mock_setup:
-                with patch.object(manager, '_initialize_current_states') as mock_init:
+        with patch.object(manager, "_update_entities_from_config") as mock_update:
+            with patch.object(manager, "_setup_entity_tracking") as mock_setup:
+                with patch.object(manager, "_initialize_current_states") as mock_init:
                     await manager.async_initialize()
 
                     mock_update.assert_called_once()
@@ -615,7 +645,9 @@ class TestEntityManager:
         assert len(manager._entities) == 0
 
     @patch("homeassistant.helpers.event.async_track_state_change_event")
-    def test_setup_entity_tracking(self, mock_track: Mock, mock_coordinator: Mock) -> None:
+    def test_setup_entity_tracking(
+        self, mock_track: Mock, mock_coordinator: Mock
+    ) -> None:
         """Test setting up entity state tracking."""
         manager = EntityManager(mock_coordinator)
 
@@ -650,7 +682,7 @@ class TestEntityManager:
         manager._setup_entity_tracking()
 
         # Simulate state change by calling the method that would be registered
-        with patch.object(manager, '_initialize_current_states'):
+        with patch.object(manager, "_initialize_current_states"):
             await manager.async_initialize()
 
         # Verify entity tracking was set up
@@ -726,9 +758,11 @@ class TestEntityManagerIntegration:
         ]
 
         # Initialize manager
-        with patch.object(manager, '_get_config_entity_mapping') as mock_mapping:
+        with patch.object(manager, "_get_config_entity_mapping") as mock_mapping:
             mock_mapping.return_value = {
-                "binary_sensor.motion1": mock_coordinator.entity_types.get_entity_type(InputType.MOTION)
+                "binary_sensor.motion1": mock_coordinator.entity_types.get_entity_type(
+                    InputType.MOTION
+                )
             }
 
             await manager.async_initialize()
@@ -741,7 +775,7 @@ class TestEntityManagerIntegration:
             entity = manager.entities["binary_sensor.motion1"]
 
             # Update entity state
-            with patch.object(entity, 'update_probability') as mock_update:
+            with patch.object(entity, "update_probability") as mock_update:
                 entity.state = STATE_OFF
                 entity.is_active = False
                 entity.update_probability()

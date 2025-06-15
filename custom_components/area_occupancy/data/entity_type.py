@@ -248,9 +248,7 @@ class EntityTypeManager:
         from .prior import Prior
 
         # Group entity priors by input type
-        grouped: dict[InputType, list[Prior]] = {
-            k: [] for k in self._entity_types
-        }
+        grouped: dict[InputType, list[Prior]] = {k: [] for k in self._entity_types}
         for entity in entities.values():
             # entity can be Entity or dict, handle both
             if hasattr(entity, "type") and hasattr(entity, "prior"):

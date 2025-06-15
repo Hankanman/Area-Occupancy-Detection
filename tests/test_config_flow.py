@@ -52,7 +52,9 @@ class TestBaseOccupancyFlow:
             CONF_THRESHOLD: 60,
         }
 
-        with pytest.raises(vol.Invalid, match="At least one motion sensor must be selected"):
+        with pytest.raises(
+            vol.Invalid, match="At least one motion sensor must be selected"
+        ):
             flow._validate_config(invalid_config)
 
     def test_validate_config_primary_not_in_motion(self) -> None:
@@ -66,7 +68,10 @@ class TestBaseOccupancyFlow:
             CONF_THRESHOLD: 60,
         }
 
-        with pytest.raises(vol.Invalid, match="Primary occupancy sensor must be one of the selected motion sensors"):
+        with pytest.raises(
+            vol.Invalid,
+            match="Primary occupancy sensor must be one of the selected motion sensors",
+        ):
             flow._validate_config(invalid_config)
 
     def test_validate_config_invalid_threshold_low(self) -> None:
@@ -146,11 +151,17 @@ class TestHelperFunctions:
         # Mock entity registry
         mock_registry = Mock()
         mock_registry.entities = {
-            "binary_sensor.motion1": Mock(entity_id="binary_sensor.motion1", platform="template"),
-            "binary_sensor.motion2": Mock(entity_id="binary_sensor.motion2", platform="zha"),
+            "binary_sensor.motion1": Mock(
+                entity_id="binary_sensor.motion1", platform="template"
+            ),
+            "binary_sensor.motion2": Mock(
+                entity_id="binary_sensor.motion2", platform="zha"
+            ),
             "light.test_light": Mock(entity_id="light.test_light", platform="hue"),
             "media_player.tv": Mock(entity_id="media_player.tv", platform="cast"),
-            "sensor.temperature": Mock(entity_id="sensor.temperature", platform="sensor"),
+            "sensor.temperature": Mock(
+                entity_id="sensor.temperature", platform="sensor"
+            ),
         }
         mock_entity_registry.return_value = mock_registry
 
@@ -182,7 +193,9 @@ class TestHelperFunctions:
         mock_hass = Mock(spec=HomeAssistant)
         mock_hass.states.async_all.return_value = []
 
-        with patch("custom_components.area_occupancy.config_flow._get_include_entities") as mock_get_entities:
+        with patch(
+            "custom_components.area_occupancy.config_flow._get_include_entities"
+        ) as mock_get_entities:
             mock_get_entities.return_value = {
                 "binary_sensor": ["binary_sensor.motion1"],
                 "light": ["light.test_light"],
@@ -203,7 +216,9 @@ class TestHelperFunctions:
             CONF_THRESHOLD: 75,
         }
 
-        with patch("custom_components.area_occupancy.config_flow._get_include_entities") as mock_get_entities:
+        with patch(
+            "custom_components.area_occupancy.config_flow._get_include_entities"
+        ) as mock_get_entities:
             mock_get_entities.return_value = {
                 "binary_sensor": ["binary_sensor.motion1"],
             }
@@ -217,7 +232,9 @@ class TestHelperFunctions:
         mock_hass = Mock(spec=HomeAssistant)
         mock_hass.states.async_all.return_value = []
 
-        with patch("custom_components.area_occupancy.config_flow._get_include_entities") as mock_get_entities:
+        with patch(
+            "custom_components.area_occupancy.config_flow._get_include_entities"
+        ) as mock_get_entities:
             mock_get_entities.return_value = {
                 "binary_sensor": ["binary_sensor.motion1"],
             }
@@ -252,7 +269,9 @@ class TestAreaOccupancyConfigFlow:
         flow = AreaOccupancyConfigFlow()
         flow.hass = mock_hass
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_user()
@@ -296,7 +315,9 @@ class TestAreaOccupancyConfigFlow:
             CONF_THRESHOLD: 60,
         }
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_user(user_input)
@@ -317,7 +338,9 @@ class TestAreaOccupancyConfigFlow:
             CONF_THRESHOLD: 60,
         }
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_user(user_input)
@@ -338,8 +361,12 @@ class TestAreaOccupancyConfigFlow:
             CONF_THRESHOLD: 60,
         }
 
-        with patch.object(flow, "_validate_config", side_effect=Exception("Unexpected error")):
-            with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch.object(
+            flow, "_validate_config", side_effect=Exception("Unexpected error")
+        ):
+            with patch(
+                "custom_components.area_occupancy.config_flow.create_schema"
+            ) as mock_create_schema:
                 mock_create_schema.return_value = {"test": vol.Required("test")}
 
                 result = await flow.async_step_user(user_input)
@@ -398,7 +425,9 @@ class TestAreaOccupancyOptionsFlow:
         flow = AreaOccupancyOptionsFlow(mock_config_entry)
         flow.hass = mock_hass
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_init()
@@ -441,7 +470,9 @@ class TestAreaOccupancyOptionsFlow:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         }
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_init(user_input)
@@ -463,7 +494,9 @@ class TestAreaOccupancyOptionsFlow:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         }
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result = await flow.async_step_init(user_input)
@@ -485,8 +518,12 @@ class TestAreaOccupancyOptionsFlow:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         }
 
-        with patch.object(flow, "_validate_config", side_effect=Exception("Unexpected error")):
-            with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch.object(
+            flow, "_validate_config", side_effect=Exception("Unexpected error")
+        ):
+            with patch(
+                "custom_components.area_occupancy.config_flow.create_schema"
+            ) as mock_create_schema:
                 mock_create_schema.return_value = {"test": vol.Required("test")}
 
                 result = await flow.async_step_init(user_input)
@@ -523,7 +560,9 @@ class TestConfigFlowIntegration:
         flow.hass = mock_hass
 
         # Step 1: Show form
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result1 = await flow.async_step_user()
@@ -560,7 +599,9 @@ class TestConfigFlowIntegration:
         flow.hass = mock_hass
 
         # Step 1: Show form with current values
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result1 = await flow.async_step_init()
@@ -592,7 +633,11 @@ class TestConfigFlowIntegration:
 
         # Mock that unique ID is already configured
         with patch.object(flow, "async_set_unique_id") as mock_set_unique_id:
-            with patch.object(flow, "_abort_if_unique_id_configured", side_effect=config_entries.AbortFlow("already_configured")):
+            with patch.object(
+                flow,
+                "_abort_if_unique_id_configured",
+                side_effect=config_entries.AbortFlow("already_configured"),
+            ):
                 with pytest.raises(config_entries.AbortFlow):
                     await flow.async_step_user(user_input)
 
@@ -608,7 +653,9 @@ class TestConfigFlowIntegration:
             CONF_THRESHOLD: 60,
         }
 
-        with patch("custom_components.area_occupancy.config_flow.create_schema") as mock_create_schema:
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
             result1 = await flow.async_step_user(invalid_input)
@@ -631,7 +678,9 @@ class TestConfigFlowIntegration:
 
     async def test_schema_generation_with_entities(self, mock_hass: Mock) -> None:
         """Test schema generation with available entities."""
-        with patch("custom_components.area_occupancy.config_flow._get_include_entities") as mock_get_entities:
+        with patch(
+            "custom_components.area_occupancy.config_flow._get_include_entities"
+        ) as mock_get_entities:
             mock_get_entities.return_value = {
                 "binary_sensor": ["binary_sensor.motion1", "binary_sensor.door1"],
                 "light": ["light.test_light"],

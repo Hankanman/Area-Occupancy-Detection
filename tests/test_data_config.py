@@ -410,7 +410,10 @@ class TestConfig:
         assert config.name == "Living Room"
         assert config.area_id == "living_room"
         assert config.threshold == 0.6
-        assert config.sensors.motion == ["binary_sensor.motion1", "binary_sensor.motion2"]
+        assert config.sensors.motion == [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
         assert config.sensors.primary_occupancy == "binary_sensor.motion1"
         assert config.sensors.media == ["media_player.tv"]
         assert config.sensors.appliances == ["switch.coffee_maker"]
@@ -448,7 +451,7 @@ class TestConfig:
             CONF_THRESHOLD: 50,
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_WEIGHT_MOTION: -0.5,  # Invalid negative weight
-            CONF_WEIGHT_MEDIA: 1.5,   # Invalid weight > 1
+            CONF_WEIGHT_MEDIA: 1.5,  # Invalid weight > 1
         }
 
         config = Config.from_dict(data)
@@ -530,7 +533,9 @@ class TestConfigManager:
         assert result[CONF_NAME] == "Test Area"
         assert result[CONF_DECAY_ENABLED] is False
 
-    def test_config_property_first_access(self, mock_coordinator: Mock, mock_config_entry: Mock) -> None:
+    def test_config_property_first_access(
+        self, mock_coordinator: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test config property on first access."""
         mock_coordinator.config_entry = mock_config_entry
 
@@ -543,7 +548,9 @@ class TestConfigManager:
         assert config.name == "Test Area"
         assert manager._config is not None
 
-    def test_config_property_cached(self, mock_coordinator: Mock, mock_config_entry: Mock) -> None:
+    def test_config_property_cached(
+        self, mock_coordinator: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test config property returns cached value."""
         mock_coordinator.config_entry = mock_config_entry
 
@@ -557,7 +564,9 @@ class TestConfigManager:
         # Should return the same cached instance
         assert config1 is config2
 
-    def test_update_from_entry(self, mock_coordinator: Mock, mock_config_entry: Mock) -> None:
+    def test_update_from_entry(
+        self, mock_coordinator: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test update_from_entry method."""
         mock_coordinator.config_entry = mock_config_entry
 
@@ -596,7 +605,9 @@ class TestConfigManager:
         value = manager.get("nonexistent_key", "default_value")
         assert value == "default_value"
 
-    async def test_update_config(self, mock_coordinator: Mock, mock_config_entry: Mock) -> None:
+    async def test_update_config(
+        self, mock_coordinator: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test update_config method."""
         mock_coordinator.config_entry = mock_config_entry
 

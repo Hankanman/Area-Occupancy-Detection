@@ -5,13 +5,11 @@ from datetime import datetime
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    ROUNDING_PRECISION,
-    MAX_PRIOR,
     MAX_PROBABILITY,
     MAX_WEIGHT,
-    MIN_PRIOR,
     MIN_PROBABILITY,
     MIN_WEIGHT,
+    ROUNDING_PRECISION,
 )
 
 #################################
@@ -83,7 +81,9 @@ def bayesian_probability(
         # For inactive state, we use prob_given_false directly since it represents
         # the probability of the sensor being inactive when the area is occupied
         numerator = prob_given_false * prior
-        denominator = (prob_given_false * prior) + ((1 - prob_given_false) * (1 - prior))
+        denominator = (prob_given_false * prior) + (
+            (1 - prob_given_false) * (1 - prior)
+        )
 
     if denominator == 0:
         probability = MIN_PROBABILITY
