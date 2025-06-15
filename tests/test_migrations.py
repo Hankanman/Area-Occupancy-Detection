@@ -1,5 +1,6 @@
 """Tests for migrations.py module."""
 
+import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -20,6 +21,8 @@ from custom_components.area_occupancy.migrations import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import STORAGE_MANAGER
 
 
 class TestAsyncMigrateUniqueIds:
@@ -71,6 +74,22 @@ class TestAsyncMigrateUniqueIds:
 
             # Should not raise an exception
             await async_migrate_unique_ids(mock_hass, mock_config_entry, "sensor")
+
+    async def test_async_migrate_unique_ids_invalid_platform(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test migration with invalid platform."""
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get"
+        ) as mock_get_registry:
+            mock_registry = Mock()
+            mock_registry.entities = {}
+            mock_get_registry.return_value = mock_registry
+
+            # Should not raise an exception for invalid platform
+            await async_migrate_unique_ids(
+                mock_hass, mock_config_entry, "invalid_platform"
+            )
 
 
 class TestMigratePrimaryOccupancySensor:
@@ -154,34 +173,53 @@ class TestAsyncMigrateStorage:
     def mock_hass(self) -> Mock:
         """Create a mock Home Assistant instance."""
         hass = Mock(spec=HomeAssistant)
+        hass.config = Mock()
+        hass.config.path = Mock(return_value=tempfile.gettempdir())
+        hass.data = {STORAGE_MANAGER: Mock()}
         return hass
 
     async def test_async_migrate_storage_success(self, mock_hass: Mock) -> None:
         """Test successful storage migration."""
-        with patch(
-            "custom_components.area_occupancy.storage.StorageManager"
-        ) as mock_storage_class:
-            mock_storage = Mock()
-            mock_storage.async_perform_cleanup = AsyncMock()
-            mock_storage_class.return_value = mock_storage
-
+        with (
+            patch(
+                "homeassistant.helpers.storage.Store.async_load",
+                new_callable=AsyncMock,
+                return_value={"data": "test"},
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "pathlib.Path.exists",
+                return_value=True,
+            ),
+            patch(
+                "pathlib.Path.unlink",
+            ) as mock_unlink,
+        ):
             await async_migrate_storage(mock_hass, "test_entry_id")
+            mock_unlink.assert_called_once()
 
-            mock_storage.async_perform_cleanup.assert_called_once()
+    async def test_async_migrate_storage_no_data(self, mock_hass: Mock) -> None:
+        """Test storage migration with no existing data."""
+        with patch(
+            "homeassistant.helpers.storage.Store.async_load",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await async_migrate_storage(mock_hass, "test_entry_id")
+            # Should complete without error
 
     async def test_async_migrate_storage_error(self, mock_hass: Mock) -> None:
         """Test storage migration with error."""
         with patch(
-            "custom_components.area_occupancy.storage.StorageManager"
-        ) as mock_storage_class:
-            mock_storage = Mock()
-            mock_storage.async_perform_cleanup = AsyncMock(
-                side_effect=Exception("Storage error")
-            )
-            mock_storage_class.return_value = mock_storage
-
-            # Should not raise exception, just log error
+            "homeassistant.helpers.storage.Store.async_load",
+            new_callable=AsyncMock,
+            side_effect=HomeAssistantError("Storage error"),
+        ):
             await async_migrate_storage(mock_hass, "test_entry_id")
+            # Should handle error gracefully
 
 
 class TestAsyncMigrateEntry:
@@ -203,6 +241,7 @@ class TestAsyncMigrateEntry:
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         }
+        entry.options = {}
         return entry
 
     @pytest.fixture
@@ -216,6 +255,7 @@ class TestAsyncMigrateEntry:
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         }
+        entry.options = {}
         return entry
 
     async def test_async_migrate_entry_v1_0_to_v1_1(
@@ -254,21 +294,22 @@ class TestAsyncMigrateEntry:
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = 2
         mock_entry.minor_version = 0
-
+        mock_entry.entry_id = "test_entry_id"
+        mock_entry.data = {}
+        mock_entry.options = {}
         result = await async_migrate_entry(mock_hass, mock_entry)
-
         assert result is False
 
     async def test_async_migrate_entry_migration_error(
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with error during migration."""
+        mock_config_entry_v1_0.options = {}
         with patch(
             "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
             side_effect=Exception("Migration error"),
         ):
             result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
-
             assert result is False
 
     async def test_async_migrate_entry_invalid_threshold(
@@ -276,7 +317,7 @@ class TestAsyncMigrateEntry:
     ) -> None:
         """Test migration with invalid threshold value."""
         mock_config_entry_v1_0.data[CONF_THRESHOLD] = 150  # Invalid threshold
-
+        mock_config_entry_v1_0.options = {}
         with patch(
             "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
         ) as mock_migrate_ids:
@@ -285,9 +326,7 @@ class TestAsyncMigrateEntry:
             ) as mock_migrate_storage:
                 mock_migrate_ids.return_value = None
                 mock_migrate_storage.return_value = None
-
                 result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
-
                 assert result is True
                 # Should fix invalid threshold
                 assert mock_config_entry_v1_0.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD
@@ -327,6 +366,7 @@ class TestMigrationsIntegration:
     def mock_hass(self) -> Mock:
         """Create a comprehensive mock Home Assistant instance."""
         hass = Mock(spec=HomeAssistant)
+        hass.data = {STORAGE_MANAGER: Mock()}
         return hass
 
     async def test_complete_migration_workflow(self, mock_hass: Mock) -> None:
@@ -340,7 +380,7 @@ class TestMigrationsIntegration:
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
             CONF_THRESHOLD: 150,  # Invalid threshold
         }
-
+        mock_entry.options = {}
         with patch(
             "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
         ) as mock_migrate_ids:
@@ -349,13 +389,10 @@ class TestMigrationsIntegration:
             ) as mock_migrate_storage:
                 mock_migrate_ids.return_value = None
                 mock_migrate_storage.return_value = None
-
                 result = await async_migrate_entry(mock_hass, mock_entry)
-
                 assert result is True
                 assert mock_entry.version == 1
                 assert mock_entry.minor_version == 1
-
                 # Check data migration
                 assert CONF_PRIMARY_OCCUPANCY_SENSOR in mock_entry.data
                 assert (
@@ -365,7 +402,6 @@ class TestMigrationsIntegration:
                 assert (
                     mock_entry.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD
                 )  # Fixed invalid threshold
-
                 # Check migration steps were called
                 mock_migrate_ids.assert_called()
                 mock_migrate_storage.assert_called_once_with(mock_hass, "test_entry_id")
