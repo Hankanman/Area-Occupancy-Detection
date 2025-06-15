@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
-from typing import Any, AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import EntityRegistry
-from homeassistant.util import dt as dt_util
 
 from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
@@ -21,15 +17,19 @@ from custom_components.area_occupancy.const import (
     CONF_THRESHOLD,
     CONF_VERSION,
     DEFAULT_THRESHOLD,
-    DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Config
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_registry import EntityRegistry
+from homeassistant.util import dt as dt_util
 
 
 @pytest.fixture
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+def event_loop() -> Generator[asyncio.AbstractEventLoop]:
     """Create an instance of the default event loop for the test session."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
@@ -126,7 +126,7 @@ def mock_states() -> list[Mock]:
 @pytest.fixture
 async def mock_coordinator(
     mock_hass: Mock, mock_config_entry: Mock
-) -> AsyncGenerator[Mock, None]:
+) -> AsyncGenerator[Mock]:
     """Create a mock coordinator."""
     coordinator = Mock(spec=AreaOccupancyCoordinator)
     coordinator.hass = mock_hass
@@ -158,7 +158,7 @@ async def mock_coordinator(
     coordinator.request_update = Mock()
     coordinator.async_add_listener = Mock(return_value=Mock())
 
-    yield coordinator
+    return coordinator
 
 
 @pytest.fixture
@@ -177,7 +177,7 @@ def mock_entity_type() -> Mock:
 
 
 @pytest.fixture
-def mock_recorder() -> Generator[Mock, None, None]:
+def mock_recorder() -> Generator[Mock]:
     """Mock the recorder component."""
     with patch(
         "custom_components.area_occupancy.data.prior.get_instance"
@@ -189,7 +189,7 @@ def mock_recorder() -> Generator[Mock, None, None]:
 
 
 @pytest.fixture
-def mock_storage() -> Generator[Mock, None, None]:
+def mock_storage() -> Generator[Mock]:
     """Mock the storage system."""
     with patch("homeassistant.helpers.storage.Store") as mock_store:
         store_instance = Mock()
@@ -200,7 +200,7 @@ def mock_storage() -> Generator[Mock, None, None]:
 
 
 @pytest.fixture
-def mock_significant_states() -> Generator[Mock, None, None]:
+def mock_significant_states() -> Generator[Mock]:
     """Mock significant states from recorder."""
     with patch(
         "custom_components.area_occupancy.data.prior.get_significant_states"
@@ -224,17 +224,19 @@ class MockAsyncContextManager:
     """Mock async context manager."""
 
     def __init__(self, return_value: Any = None) -> None:
+        """Initialize the mock async context manager."""
         self.return_value = return_value
 
     async def __aenter__(self) -> Any:
+        """Enter the context manager."""
         return self.return_value
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
+        """Exit the context manager."""
 
 
 @pytest.fixture
-def freeze_time() -> Generator[datetime, None, None]:
+def freeze_time() -> Generator[datetime]:
     """Fixture to freeze time for consistent testing."""
     frozen_time = dt_util.utcnow()
     with patch("homeassistant.util.dt.utcnow", return_value=frozen_time):

@@ -260,7 +260,9 @@ class TestEntitiesSensor:
         assert attributes["available"] == 3  # motion1, motion2, tv are available
         assert attributes["unavailable"] == 1  # light is unavailable
 
-    def test_extra_state_attributes_no_entity_manager(self, mock_coordinator: Mock) -> None:
+    def test_extra_state_attributes_no_entity_manager(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test extra_state_attributes when no entity manager."""
         mock_coordinator.entity_manager = None
         sensor = EntitiesSensor(mock_coordinator, "test_entry")
@@ -273,7 +275,9 @@ class TestEntitiesSensor:
         assert attributes["available"] == 0
         assert attributes["unavailable"] == 0
 
-    def test_extra_state_attributes_empty_entities(self, mock_coordinator: Mock) -> None:
+    def test_extra_state_attributes_empty_entities(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test extra_state_attributes with empty entities."""
         mock_coordinator.entity_manager.entities = {}
         sensor = EntitiesSensor(mock_coordinator, "test_entry")
@@ -380,9 +384,13 @@ class TestDecaySensor:
         decay_details = attributes["decay_details"]
         assert "binary_sensor.motion1" in decay_details
         assert decay_details["binary_sensor.motion1"]["is_decaying"] is True
-        assert decay_details["binary_sensor.motion1"]["decay_factor"] == 80.0  # Converted to percentage
+        assert (
+            decay_details["binary_sensor.motion1"]["decay_factor"] == 80.0
+        )  # Converted to percentage
 
-    def test_extra_state_attributes_no_entity_manager(self, mock_coordinator: Mock) -> None:
+    def test_extra_state_attributes_no_entity_manager(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test extra_state_attributes when no entity manager."""
         mock_coordinator.entity_manager = None
         sensor = DecaySensor(mock_coordinator, "test_entry")
@@ -393,7 +401,9 @@ class TestDecaySensor:
         assert attributes["total_entities"] == 0
         assert attributes["decay_details"] == {}
 
-    def test_extra_state_attributes_empty_entities(self, mock_coordinator: Mock) -> None:
+    def test_extra_state_attributes_empty_entities(
+        self, mock_coordinator: Mock
+    ) -> None:
         """Test extra_state_attributes with empty entities."""
         mock_coordinator.entity_manager.entities = {}
         sensor = DecaySensor(mock_coordinator, "test_entry")
@@ -491,25 +501,31 @@ class TestSensorIntegration:
 
         # Create mock entities with different states
         mock_entities = {}
-        for i, (entity_id, is_active, available, is_decaying) in enumerate([
-            ("binary_sensor.motion1", True, True, True),
-            ("binary_sensor.motion2", False, True, False),
-            ("light.test_light", True, False, False),
-            ("media_player.tv", True, True, True),
-            ("binary_sensor.door", False, True, False),
-        ]):
+        for i, (entity_id, is_active, available, is_decaying) in enumerate(
+            [
+                ("binary_sensor.motion1", True, True, True),
+                ("binary_sensor.motion2", False, True, False),
+                ("light.test_light", True, False, False),
+                ("media_player.tv", True, True, True),
+                ("binary_sensor.door", False, True, False),
+            ]
+        ):
             mock_entity = Mock()
             mock_entity.is_active = is_active
             mock_entity.available = available
             mock_entity.decay.is_decaying = is_decaying
-            mock_entity.decay.decay_start_time = dt_util.utcnow() - timedelta(minutes=i+1) if is_decaying else None
+            mock_entity.decay.decay_start_time = (
+                dt_util.utcnow() - timedelta(minutes=i + 1) if is_decaying else None
+            )
             mock_entity.decay.decay_factor = 0.8 - (i * 0.1) if is_decaying else 1.0
             mock_entities[entity_id] = mock_entity
 
         coordinator.entity_manager.entities = mock_entities
         return coordinator
 
-    def test_all_sensors_with_comprehensive_data(self, comprehensive_coordinator: Mock) -> None:
+    def test_all_sensors_with_comprehensive_data(
+        self, comprehensive_coordinator: Mock
+    ) -> None:
         """Test all sensors with comprehensive coordinator data."""
         # Create all sensor types
         priors_sensor = PriorsSensor(comprehensive_coordinator, "test_entry")
@@ -579,7 +595,9 @@ class TestSensorIntegration:
         assert priors_sensor.native_value == 40.0
         assert decay_sensor.native_value == 70.0
 
-    def test_entities_sensor_dynamic_updates(self, comprehensive_coordinator: Mock) -> None:
+    def test_entities_sensor_dynamic_updates(
+        self, comprehensive_coordinator: Mock
+    ) -> None:
         """Test entities sensor with dynamic entity updates."""
         entities_sensor = EntitiesSensor(comprehensive_coordinator, "test_entry")
 
@@ -598,7 +616,9 @@ class TestSensorIntegration:
         del comprehensive_coordinator.entity_manager.entities["binary_sensor.motion1"]
         assert entities_sensor.native_value == 5
 
-    def test_decay_sensor_dynamic_updates(self, comprehensive_coordinator: Mock) -> None:
+    def test_decay_sensor_dynamic_updates(
+        self, comprehensive_coordinator: Mock
+    ) -> None:
         """Test decay sensor with dynamic decay state updates."""
         decay_sensor = DecaySensor(comprehensive_coordinator, "test_entry")
 
@@ -607,14 +627,20 @@ class TestSensorIntegration:
         assert attrs["entities_decaying"] == 2
 
         # Stop decay on one entity
-        comprehensive_coordinator.entity_manager.entities["binary_sensor.motion1"].decay.is_decaying = False
+        comprehensive_coordinator.entity_manager.entities[
+            "binary_sensor.motion1"
+        ].decay.is_decaying = False
 
         attrs = decay_sensor.extra_state_attributes
         assert attrs["entities_decaying"] == 1
 
         # Start decay on another entity
-        comprehensive_coordinator.entity_manager.entities["binary_sensor.motion2"].decay.is_decaying = True
-        comprehensive_coordinator.entity_manager.entities["binary_sensor.motion2"].decay.decay_factor = 0.6
+        comprehensive_coordinator.entity_manager.entities[
+            "binary_sensor.motion2"
+        ].decay.is_decaying = True
+        comprehensive_coordinator.entity_manager.entities[
+            "binary_sensor.motion2"
+        ].decay.decay_factor = 0.6
 
         attrs = decay_sensor.extra_state_attributes
         assert attrs["entities_decaying"] == 2
@@ -633,7 +659,9 @@ class TestSensorIntegration:
 
         # Test with entity manager that raises exceptions
         comprehensive_coordinator.entity_manager = Mock()
-        comprehensive_coordinator.entity_manager.entities = Mock(side_effect=Exception("Test error"))
+        comprehensive_coordinator.entity_manager.entities = Mock(
+            side_effect=Exception("Test error")
+        )
 
         # Should handle gracefully and not crash
         try:

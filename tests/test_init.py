@@ -1,19 +1,20 @@
 """Tests for __init__.py module."""
 
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+
+import pytest
 
 from custom_components.area_occupancy import (
-    async_setup_entry,
-    async_setup,
-    async_remove_entry,
     async_reload_entry,
+    async_remove_entry,
+    async_setup,
+    async_setup_entry,
     async_unload_entry,
 )
 from custom_components.area_occupancy.const import DOMAIN
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
 
 class TestAsyncSetupEntry:
@@ -275,4 +276,4 @@ class TestEntryUpdated:
         from custom_components.area_occupancy import _async_entry_updated
 
         # Should not raise an exception
-        await _async_entry_updated(mock_hass, mock_config_entry) 
+        await _async_entry_updated(mock_hass, mock_config_entry)

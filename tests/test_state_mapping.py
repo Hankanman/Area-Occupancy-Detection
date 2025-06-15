@@ -1,6 +1,5 @@
 """Tests for state_mapping module."""
 
-
 from custom_components.area_occupancy.state_mapping import (
     StateOption,
     get_default_state,

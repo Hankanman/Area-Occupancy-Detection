@@ -60,7 +60,9 @@ class TestAreaOccupancyCoordinator:
         assert coordinator.name == "Test Area"
         assert coordinator.available is True
 
-    def test_device_info_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_device_info_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test device_info property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -72,7 +74,9 @@ class TestAreaOccupancyCoordinator:
         assert "model" in device_info
         assert device_info["name"] == "Test Area"
 
-    def test_probability_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_probability_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test probability property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -99,7 +103,9 @@ class TestAreaOccupancyCoordinator:
 
         assert coordinator.decay == 0.85
 
-    def test_is_occupied_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_is_occupied_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test is_occupied property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -122,7 +128,9 @@ class TestAreaOccupancyCoordinator:
 
         assert coordinator.threshold == 0.6
 
-    def test_last_updated_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_last_updated_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test last_updated property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -131,7 +139,9 @@ class TestAreaOccupancyCoordinator:
 
         assert coordinator.last_updated == now
 
-    def test_last_changed_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_last_changed_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test last_changed property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -140,7 +150,9 @@ class TestAreaOccupancyCoordinator:
 
         assert coordinator.last_changed == now
 
-    def test_binary_sensor_entity_ids_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_binary_sensor_entity_ids_property(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test binary_sensor_entity_ids property."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -153,31 +165,37 @@ class TestAreaOccupancyCoordinator:
         assert entity_ids["occupancy"] == "binary_sensor.area_occupancy"
         assert entity_ids["wasp"] == "binary_sensor.wasp_box"
 
-    def test_request_update_basic(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_request_update_basic(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test basic request_update functionality."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
-        with patch.object(coordinator, '_async_immediate_update') as mock_update:
+        with patch.object(coordinator, "_async_immediate_update") as mock_update:
             coordinator.request_update()
 
             # Should schedule immediate update
             mock_hass.async_create_task.assert_called_once()
 
-    def test_request_update_with_message(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_request_update_with_message(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test request_update with debug message."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
-        with patch.object(coordinator, '_async_immediate_update') as mock_update:
+        with patch.object(coordinator, "_async_immediate_update") as mock_update:
             coordinator.request_update(force=True, message="Test update")
 
             # Should still schedule update
             mock_hass.async_create_task.assert_called_once()
 
-    async def test_async_immediate_update(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_immediate_update(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _async_immediate_update method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
-        with patch.object(coordinator, 'async_request_refresh') as mock_refresh:
+        with patch.object(coordinator, "async_request_refresh") as mock_refresh:
             await coordinator._async_immediate_update()
 
             mock_refresh.assert_called_once()
@@ -187,13 +205,25 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock all the managers and their initialization
-        with patch('custom_components.area_occupancy.data.config.ConfigManager') as mock_config_mgr:
-            with patch('custom_components.area_occupancy.data.entity_type.EntityTypeManager') as mock_entity_type_mgr:
-                with patch('custom_components.area_occupancy.data.prior.PriorManager') as mock_prior_mgr:
-                    with patch('custom_components.area_occupancy.data.entity.EntityManager') as mock_entity_mgr:
-                        with patch('custom_components.area_occupancy.storage.StorageManager') as mock_storage_mgr:
+        with patch(
+            "custom_components.area_occupancy.data.config.ConfigManager"
+        ) as mock_config_mgr:
+            with patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ) as mock_entity_type_mgr:
+                with patch(
+                    "custom_components.area_occupancy.data.prior.PriorManager"
+                ) as mock_prior_mgr:
+                    with patch(
+                        "custom_components.area_occupancy.data.entity.EntityManager"
+                    ) as mock_entity_mgr:
+                        with patch(
+                            "custom_components.area_occupancy.storage.StorageManager"
+                        ) as mock_storage_mgr:
                             # Mock async methods
-                            mock_entity_type_mgr.return_value.async_initialize = AsyncMock()
+                            mock_entity_type_mgr.return_value.async_initialize = (
+                                AsyncMock()
+                            )
                             mock_entity_mgr.return_value.async_initialize = AsyncMock()
                             mock_storage_mgr.return_value.async_initialize = AsyncMock()
 
@@ -206,7 +236,9 @@ class TestAreaOccupancyCoordinator:
                             assert coordinator.entity_manager is not None
                             assert coordinator.storage_manager is not None
 
-    async def test_async_shutdown(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_shutdown(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_shutdown method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -224,7 +256,9 @@ class TestAreaOccupancyCoordinator:
         coordinator.storage_manager.async_shutdown.assert_called_once()
         coordinator._prior_update_timer.assert_called_once()
 
-    async def test_async_update_options(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_update_options(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_update_options method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -239,14 +273,18 @@ class TestAreaOccupancyCoordinator:
 
         new_options = {"threshold": 70, "decay_enabled": False}
 
-        with patch.object(coordinator, 'async_refresh') as mock_refresh:
+        with patch.object(coordinator, "async_refresh") as mock_refresh:
             await coordinator.async_update_options(new_options)
 
-            coordinator.config_manager.update_config.assert_called_once_with(new_options)
+            coordinator.config_manager.update_config.assert_called_once_with(
+                new_options
+            )
             coordinator.storage_manager.async_save_instance_data.assert_called_once()
             mock_refresh.assert_called_once()
 
-    async def test_async_update_threshold(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_update_threshold(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_update_threshold method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -259,7 +297,7 @@ class TestAreaOccupancyCoordinator:
         coordinator.storage_manager.async_save_instance_data = AsyncMock()
         coordinator.entity_manager = Mock()
 
-        with patch.object(coordinator, 'async_refresh') as mock_refresh:
+        with patch.object(coordinator, "async_refresh") as mock_refresh:
             await coordinator.async_update_threshold(0.75)
 
             # Should convert percentage and update config
@@ -270,7 +308,9 @@ class TestAreaOccupancyCoordinator:
             coordinator.storage_manager.async_save_instance_data.assert_called_once()
             mock_refresh.assert_called_once()
 
-    async def test_async_load_stored_data_new_setup(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_load_stored_data_new_setup(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_load_stored_data for new setup."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -288,7 +328,9 @@ class TestAreaOccupancyCoordinator:
 
         coordinator.entity_manager.async_initialize.assert_called_once()
 
-    async def test_async_load_stored_data_existing_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_load_stored_data_existing_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_load_stored_data with existing data."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -306,16 +348,22 @@ class TestAreaOccupancyCoordinator:
         )
 
         # Mock EntityManager.from_dict
-        with patch('custom_components.area_occupancy.data.entity.EntityManager.from_dict') as mock_from_dict:
+        with patch(
+            "custom_components.area_occupancy.data.entity.EntityManager.from_dict"
+        ) as mock_from_dict:
             mock_entity_manager = Mock()
             mock_from_dict.return_value = mock_entity_manager
 
             await coordinator.async_load_stored_data()
 
-            mock_from_dict.assert_called_once_with(existing_data["entity_manager"], coordinator)
+            mock_from_dict.assert_called_once_with(
+                existing_data["entity_manager"], coordinator
+            )
             assert coordinator.entity_manager == mock_entity_manager
 
-    async def test_update_learned_priors(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_update_learned_priors(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test update_learned_priors method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -328,14 +376,16 @@ class TestAreaOccupancyCoordinator:
         coordinator.storage_manager.async_save_instance_data = AsyncMock()
         coordinator.entity_manager = Mock()
 
-        with patch.object(coordinator, '_schedule_next_prior_update') as mock_schedule:
+        with patch.object(coordinator, "_schedule_next_prior_update") as mock_schedule:
             await coordinator.update_learned_priors()
 
             coordinator.prior_manager.update_all_entity_priors.assert_called_once()
             coordinator.storage_manager.async_save_instance_data.assert_called_once()
             mock_schedule.assert_called_once()
 
-    async def test_schedule_next_prior_update(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_schedule_next_prior_update(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _schedule_next_prior_update method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -345,23 +395,29 @@ class TestAreaOccupancyCoordinator:
         coordinator.config_manager.config.history = Mock()
         coordinator.config_manager.config.history.enabled = True
 
-        with patch('homeassistant.helpers.event.async_track_point_in_time') as mock_track:
+        with patch(
+            "homeassistant.helpers.event.async_track_point_in_time"
+        ) as mock_track:
             await coordinator._schedule_next_prior_update()
 
             mock_track.assert_called_once()
 
-    async def test_handle_prior_update(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_handle_prior_update(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _handle_prior_update method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         coordinator._prior_update_timer = None
 
-        with patch.object(coordinator, 'update_learned_priors') as mock_update:
+        with patch.object(coordinator, "update_learned_priors") as mock_update:
             await coordinator._handle_prior_update(dt_util.utcnow())
 
             mock_update.assert_called_once()
 
-    def test_async_refresh_finished(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_async_refresh_finished(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _async_refresh_finished callback."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -375,7 +431,9 @@ class TestAreaOccupancyCoordinator:
         # Should schedule save
         mock_hass.async_create_task.assert_called_once()
 
-    def test_async_set_updated_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_async_set_updated_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test async_set_updated_data method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -392,7 +450,9 @@ class TestAreaOccupancyCoordinator:
             "last_updated": dt_util.utcnow(),
         }
 
-        with patch.object(coordinator, 'async_update_listeners') as mock_update_listeners:
+        with patch.object(
+            coordinator, "async_update_listeners"
+        ) as mock_update_listeners:
             coordinator.async_set_updated_data(test_data)
 
             # Should update internal state
@@ -414,7 +474,9 @@ class TestAreaOccupancyCoordinator:
         context = {"test": "context"}
 
         # Mock parent method
-        with patch('homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_add_listener') as mock_parent:
+        with patch(
+            "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_add_listener"
+        ) as mock_parent:
             mock_parent.return_value = Mock()  # Mock unsub function
 
             unsub = coordinator.async_add_listener(callback, context)
@@ -422,7 +484,9 @@ class TestAreaOccupancyCoordinator:
             mock_parent.assert_called_once_with(callback, context)
             assert unsub is not None
 
-    async def test_async_update_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_update_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _async_update_data method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -432,7 +496,7 @@ class TestAreaOccupancyCoordinator:
         coordinator.config_manager.config.threshold = 0.6
 
         # Mock entity aggregates calculation
-        with patch.object(coordinator, '_calculate_entity_aggregates') as mock_calc:
+        with patch.object(coordinator, "_calculate_entity_aggregates") as mock_calc:
             mock_calc.return_value = {
                 "probability": 0.7,
                 "prior": 0.35,
@@ -448,7 +512,9 @@ class TestAreaOccupancyCoordinator:
             assert result["is_occupied"] is True  # 0.7 > 0.6
             assert "last_updated" in result
 
-    async def test_async_save_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_async_save_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _async_save_data method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -463,7 +529,9 @@ class TestAreaOccupancyCoordinator:
             "test_entry_id", coordinator.entity_manager, force=True
         )
 
-    def test_calculate_entity_aggregates(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    def test_calculate_entity_aggregates(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test _calculate_entity_aggregates method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -498,7 +566,9 @@ class TestCoordinatorIntegration:
     """Test coordinator integration scenarios."""
 
     @pytest.fixture
-    def comprehensive_coordinator(self, mock_hass: Mock, mock_config_entry: Mock) -> AreaOccupancyCoordinator:
+    def comprehensive_coordinator(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> AreaOccupancyCoordinator:
         """Create a coordinator with comprehensive mocked dependencies."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
@@ -525,7 +595,9 @@ class TestCoordinatorIntegration:
 
         return coordinator
 
-    async def test_full_coordinator_lifecycle(self, comprehensive_coordinator: AreaOccupancyCoordinator) -> None:
+    async def test_full_coordinator_lifecycle(
+        self, comprehensive_coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test complete coordinator lifecycle."""
         coordinator = comprehensive_coordinator
 
@@ -533,7 +605,7 @@ class TestCoordinatorIntegration:
         await coordinator._async_setup()
 
         # Test first refresh
-        with patch.object(coordinator, '_calculate_entity_aggregates') as mock_calc:
+        with patch.object(coordinator, "_calculate_entity_aggregates") as mock_calc:
             mock_calc.return_value = {
                 "probability": 0.7,
                 "prior": 0.35,
@@ -555,12 +627,16 @@ class TestCoordinatorIntegration:
         coordinator.storage_manager.async_initialize.assert_called_once()
         coordinator.storage_manager.async_shutdown.assert_called_once()
 
-    async def test_error_handling_during_setup(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_error_handling_during_setup(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Test error handling during coordinator setup."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock one of the managers to fail during initialization
-        with patch('custom_components.area_occupancy.data.entity.EntityManager') as mock_entity_mgr:
+        with patch(
+            "custom_components.area_occupancy.data.entity.EntityManager"
+        ) as mock_entity_mgr:
             mock_entity_mgr.return_value.async_initialize = AsyncMock(
                 side_effect=Exception("Initialization failed")
             )
@@ -569,7 +645,9 @@ class TestCoordinatorIntegration:
             with pytest.raises(Exception, match="Initialization failed"):
                 await coordinator._async_setup()
 
-    async def test_data_update_with_real_calculations(self, comprehensive_coordinator: AreaOccupancyCoordinator) -> None:
+    async def test_data_update_with_real_calculations(
+        self, comprehensive_coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test data update with realistic entity calculations."""
         coordinator = comprehensive_coordinator
 
@@ -604,7 +682,9 @@ class TestCoordinatorIntegration:
         assert isinstance(result["is_occupied"], bool)
         assert "last_updated" in result
 
-    def test_threshold_boundary_conditions(self, comprehensive_coordinator: AreaOccupancyCoordinator) -> None:
+    def test_threshold_boundary_conditions(
+        self, comprehensive_coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test is_occupied calculation at threshold boundaries."""
         coordinator = comprehensive_coordinator
 
@@ -630,7 +710,9 @@ class TestCoordinatorIntegration:
         coordinator._threshold = 1.0
         assert coordinator.is_occupied is False
 
-    def test_listener_management(self, comprehensive_coordinator: AreaOccupancyCoordinator) -> None:
+    def test_listener_management(
+        self, comprehensive_coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test listener management functionality."""
         coordinator = comprehensive_coordinator
 
@@ -639,7 +721,9 @@ class TestCoordinatorIntegration:
         listener2 = Mock()
 
         # Mock parent class methods
-        with patch('homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_add_listener') as mock_add:
+        with patch(
+            "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_add_listener"
+        ) as mock_add:
             unsub1 = Mock()
             unsub2 = Mock()
             mock_add.side_effect = [unsub1, unsub2]
