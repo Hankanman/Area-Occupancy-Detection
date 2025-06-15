@@ -47,6 +47,7 @@ class StorageManager(Store[dict[str, Any]]):
         self._coordinator = coordinator
         self._initialized = False
         self._lock = asyncio.Lock()  # Prevent concurrent access issues
+        self._data = self.create_empty_storage()  # Initialize data
 
         # Storage optimization attributes
         self._last_save_time: datetime | None = None
@@ -58,7 +59,11 @@ class StorageManager(Store[dict[str, Any]]):
 
     def create_empty_storage(self) -> dict[str, Any]:
         """Create empty storage."""
-        return {"instances": {}}
+        return {
+            "version": CONF_VERSION,
+            "minor_version": CONF_VERSION_MINOR,
+            "data": {"instances": {}},
+        }
 
     async def async_initialize(self) -> None:
         """Initialize the storage manager and perform cleanup."""

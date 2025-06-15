@@ -719,23 +719,39 @@ class BaseOccupancyFlow:
             ValueError: If any validation check fails
 
         """
+        # Validate name
+        name = data.get(CONF_NAME, "")
+        if not name:
+            raise vol.Invalid("Name is required")
+
+        # Validate motion sensors
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
-            raise ValueError("At least one motion sensor is required")
+            raise vol.Invalid("At least one motion sensor is required")
 
         primary_sensor = data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         if not primary_sensor:
-            raise ValueError("A primary occupancy sensor must be selected")
+            raise vol.Invalid("A primary occupancy sensor must be selected")
         if primary_sensor not in motion_sensors:
-            raise ValueError(
-                "Primary occupancy sensor must be selected from the motion sensors"
+            raise vol.Invalid(
+                "Primary occupancy sensor must be one of the selected motion sensors"
             )
+
+        # Validate threshold
+        threshold = data.get(CONF_THRESHOLD)
+        if threshold is not None:
+            if (
+                not isinstance(threshold, (int, float))
+                or threshold < 1
+                or threshold > 100
+            ):
+                raise vol.Invalid("Threshold must be between 1 and 100")
 
         # Validate media devices
         media_devices = data.get(CONF_MEDIA_DEVICES, [])
         media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
         if media_devices and not media_states:
-            raise ValueError(
+            raise vol.Invalid(
                 "Media active states are required when media devices are configured"
             )
 
@@ -745,7 +761,7 @@ class BaseOccupancyFlow:
             CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
         )
         if appliances and not appliance_states:
-            raise ValueError(
+            raise vol.Invalid(
                 "Appliance active states are required when appliances are configured"
             )
 
@@ -753,7 +769,7 @@ class BaseOccupancyFlow:
         door_sensors = data.get(CONF_DOOR_SENSORS, [])
         door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
         if door_sensors and not door_state:
-            raise ValueError(
+            raise vol.Invalid(
                 "Door active state is required when door sensors are configured"
             )
 
@@ -761,7 +777,7 @@ class BaseOccupancyFlow:
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
         if window_sensors and not window_state:
-            raise ValueError(
+            raise vol.Invalid(
                 "Window active state is required when window sensors are configured"
             )
 
@@ -783,8 +799,31 @@ class BaseOccupancyFlow:
         ]
         for name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
-                raise ValueError(
+                raise vol.Invalid(
                     f"{name} must be between {WEIGHT_MIN} and {WEIGHT_MAX}"
+                )
+
+        # Validate decay settings
+        decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
+        if decay_enabled:
+            decay_window = data.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
+            if (
+                not isinstance(decay_window, (int, float))
+                or decay_window < DECAY_WINDOW_MIN
+                or decay_window > DECAY_WINDOW_MAX
+            ):
+                raise vol.Invalid(
+                    f"Decay window must be between {DECAY_WINDOW_MIN} and {DECAY_WINDOW_MAX} seconds"
+                )
+
+            decay_min_delay = data.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
+            if (
+                not isinstance(decay_min_delay, (int, float))
+                or decay_min_delay < DECAY_MIN_DELAY_MIN
+                or decay_min_delay > DECAY_MIN_DELAY_MAX
+            ):
+                raise vol.Invalid(
+                    f"Decay minimum delay must be between {DECAY_MIN_DELAY_MIN} and {DECAY_MIN_DELAY_MAX} seconds"
                 )
 
 
@@ -851,11 +890,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                         flattened_input[key] = value
 
                 self._validate_config(flattened_input)
+                await self.async_set_unique_id(flattened_input.get(CONF_NAME, ""))
+                self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=flattened_input.get(CONF_NAME, ""), data=flattened_input
                 )
 
             except HomeAssistantError as err:
+                _LOGGER.error("Validation error: %s", err)
+                errors["base"] = str(err)
+            except vol.Invalid as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
             except (ValueError, KeyError, TypeError) as err:
@@ -934,6 +978,9 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                 return self.async_create_entry(title="", data=flattened_input)
 
             except HomeAssistantError as err:
+                _LOGGER.error("Validation error: %s", err)
+                errors["base"] = str(err)
+            except vol.Invalid as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
             except (ValueError, KeyError, TypeError) as err:

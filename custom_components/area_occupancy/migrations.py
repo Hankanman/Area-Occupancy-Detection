@@ -284,7 +284,6 @@ def validate_threshold(threshold: float) -> float:
         The validated threshold value
 
     """
-
-    if threshold < 1.0:
-        return round(threshold * 100.0, 0)
+    if threshold < 1.0 or threshold > 99.0:
+        return DEFAULT_THRESHOLD
     return round(threshold, 0)

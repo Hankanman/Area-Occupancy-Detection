@@ -5,50 +5,12 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 
 class TestAreaOccupancyCoordinator:
     """Test AreaOccupancyCoordinator class."""
-
-    @pytest.fixture
-    def mock_hass(self) -> Mock:
-        """Create a mock Home Assistant instance."""
-        hass = Mock(spec=HomeAssistant)
-        hass.config = Mock()
-        hass.config.path = Mock(return_value="/config")
-        hass.states = Mock()
-        hass.config_entries = Mock()
-        hass.data = {}
-        hass.bus = Mock()
-        hass.services = Mock()
-        hass.loop = Mock()
-        hass.async_create_task = Mock()
-        hass.async_add_executor_job = AsyncMock()
-        return hass
-
-    @pytest.fixture
-    def mock_config_entry(self) -> Mock:
-        """Create a mock config entry."""
-        entry = Mock(spec=ConfigEntry)
-        entry.entry_id = "test_entry_id"
-        entry.version = 1
-        entry.minor_version = 1
-        entry.domain = DOMAIN
-        entry.data = {
-            "name": "Test Area",
-            "threshold": 50,
-            "motion_sensors": ["binary_sensor.motion1"],
-        }
-        entry.options = {}
-        entry.runtime_data = None
-        entry.add_update_listener = Mock()
-        entry.async_on_unload = Mock()
-        return entry
 
     def test_initialization(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
         """Test coordinator initialization."""
@@ -81,7 +43,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock internal state
-        coordinator._probability = 0.75
+        coordinator._probability = 0.75  # type: ignore[attr-defined]
 
         assert coordinator.probability == 0.75
 
@@ -90,7 +52,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock internal state
-        coordinator._prior = 0.35
+        coordinator._prior = 0.35  # type: ignore[attr-defined]
 
         assert coordinator.prior == 0.35
 
@@ -99,7 +61,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock internal state
-        coordinator._decay = 0.85
+        coordinator._decay = 0.85  # type: ignore[attr-defined]
 
         assert coordinator.decay == 0.85
 
@@ -110,13 +72,13 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock probability and threshold
-        coordinator._probability = 0.7
-        coordinator._threshold = 0.6
+        coordinator._probability = 0.7  # type: ignore[attr-defined]
+        coordinator._threshold = 0.6  # type: ignore[attr-defined]
 
         assert coordinator.is_occupied is True
 
         # Test below threshold
-        coordinator._probability = 0.5
+        coordinator._probability = 0.5  # type: ignore[attr-defined]
         assert coordinator.is_occupied is False
 
     def test_threshold_property(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
@@ -124,7 +86,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock internal state
-        coordinator._threshold = 0.6
+        coordinator._threshold = 0.6  # type: ignore[attr-defined]
 
         assert coordinator.threshold == 0.6
 
@@ -135,7 +97,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         now = dt_util.utcnow()
-        coordinator._last_updated = now
+        coordinator._last_updated = now  # type: ignore[attr-defined]
 
         assert coordinator.last_updated == now
 
@@ -146,7 +108,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         now = dt_util.utcnow()
-        coordinator._last_changed = now
+        coordinator._last_changed = now  # type: ignore[attr-defined]
 
         assert coordinator.last_changed == now
 
@@ -157,8 +119,8 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock internal state
-        coordinator._occupancy_entity_id = "binary_sensor.area_occupancy"
-        coordinator._wasp_entity_id = "binary_sensor.wasp_box"
+        coordinator._occupancy_entity_id = "binary_sensor.area_occupancy"  # type: ignore[attr-defined]
+        coordinator._wasp_entity_id = "binary_sensor.wasp_box"  # type: ignore[attr-defined]
 
         entity_ids = coordinator.binary_sensor_entity_ids
 
@@ -232,9 +194,9 @@ class TestAreaOccupancyCoordinator:
                             # Verify managers were created and initialized
                             assert coordinator.config_manager is not None
                             assert coordinator.entity_types is not None
-                            assert coordinator.prior_manager is not None
-                            assert coordinator.entity_manager is not None
-                            assert coordinator.storage_manager is not None
+                            assert coordinator.prior_manager is not None  # type: ignore[attr-defined]
+                            assert coordinator.entity_manager is not None  # type: ignore[attr-defined]
+                            assert coordinator.storage_manager is not None  # type: ignore[attr-defined]
 
     async def test_async_shutdown(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -243,18 +205,18 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         # Mock managers
-        coordinator.entity_manager = Mock()
-        coordinator.entity_manager.cleanup = Mock()
-        coordinator.storage_manager = Mock()
-        coordinator.storage_manager.async_shutdown = AsyncMock()
-        coordinator._prior_update_timer = Mock()
+        coordinator.entity_manager = Mock()  # type: ignore[attr-defined]
+        coordinator.entity_manager.cleanup = Mock()  # type: ignore[attr-defined]
+        coordinator.storage_manager = Mock()  # type: ignore[attr-defined]
+        coordinator.storage_manager.async_shutdown = AsyncMock()  # type: ignore[attr-defined]
+        coordinator._prior_update_timer = Mock()  # type: ignore[attr-defined]
 
         await coordinator.async_shutdown()
 
         # Verify cleanup was called
-        coordinator.entity_manager.cleanup.assert_called_once()
-        coordinator.storage_manager.async_shutdown.assert_called_once()
-        coordinator._prior_update_timer.assert_called_once()
+        coordinator.entity_manager.cleanup.assert_called_once()  # type: ignore[attr-defined]
+        coordinator.storage_manager.async_shutdown.assert_called_once()  # type: ignore[attr-defined]
+        coordinator._prior_update_timer.assert_called_once()  # type: ignore[attr-defined]
 
     async def test_async_update_options(
         self, mock_hass: Mock, mock_config_entry: Mock
