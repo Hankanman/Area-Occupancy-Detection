@@ -1,283 +1,576 @@
-"""Storage handling for Area Occupancy Detection."""
+"""Storage manager for Area Occupancy Detection."""
 
+import asyncio
+import contextlib
+from datetime import datetime, timedelta
+import hashlib
+import json
 import logging
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, STORAGE_KEY
-from .exceptions import StorageLoadError, StorageSaveError
-from .types import InstanceData, LoadedInstanceData, PriorState, StoredData
+from .const import CONF_VERSION, CONF_VERSION_MINOR, DOMAIN, STORAGE_KEY
+from .data.entity import EntityManager
+
+if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+# Storage optimization constants
+DEBOUNCE_DELAY = 30  # seconds - minimum time between writes
+PERIODIC_SAVE_INTERVAL = 300  # seconds - force save interval (5 minutes)
+MAX_PENDING_SAVES = (
+    10  # maximum number of pending save requests before forcing immediate save
+)
 
-class AreaOccupancyStore(Store[StoredData]):
-    """Store class for area occupancy data."""
+
+class StorageManager(Store[dict[str, Any]]):
+    """Manage storage for Area Occupancy Detection."""
 
     def __init__(
         self,
-        hass: HomeAssistant,
+        coordinator: "AreaOccupancyCoordinator",
     ) -> None:
-        """Initialize the store."""
-        # Initialize with current version - migration will handle version changes
+        """Initialize the storage manager."""
         super().__init__(
-            hass,
-            CONF_VERSION,  # Start with current version
-            STORAGE_KEY,
+            hass=coordinator.hass,
+            version=CONF_VERSION,
+            key=STORAGE_KEY,
             minor_version=CONF_VERSION_MINOR,
-            atomic_writes=True,
-            private=True,  # Mark as private since it contains state data
         )
-        self.hass = hass
-        self._current_version = CONF_VERSION
-        self._current_minor_version = CONF_VERSION_MINOR
+        self._coordinator = coordinator
+        self._initialized = False
+        self._lock = asyncio.Lock()  # Prevent concurrent access issues
+        self._data = self.create_empty_storage()  # Initialize data
 
-    def create_empty_storage(self) -> StoredData:
-        """Create default storage structure."""
-        return StoredData(instances={})
+        # Storage optimization attributes
+        self._last_save_time: datetime | None = None
+        self._last_data_hash: str | None = None
+        self._pending_save_task: asyncio.Task | None = None
+        self._periodic_save_tracker: CALLBACK_TYPE | None = None
+        self._pending_save_count = 0
+        self._dirty = False
+
+    def create_empty_storage(self) -> dict[str, Any]:
+        """Create empty storage."""
+        return {
+            "version": CONF_VERSION,
+            "minor_version": CONF_VERSION_MINOR,
+            "data": {"instances": {}},
+        }
+
+    async def async_initialize(self) -> None:
+        """Initialize the storage manager and perform cleanup."""
+        if self._initialized:
+            return
+
+        await self._async_perform_cleanup()
+        self._start_periodic_save_timer()
+        self._initialized = True
+
+    async def async_shutdown(self) -> None:
+        """Shutdown the storage manager and clean up resources."""
+        # Cancel pending save task
+        if self._pending_save_task and not self._pending_save_task.done():
+            self._pending_save_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pending_save_task
+
+        # Cancel periodic save timer
+        if self._periodic_save_tracker:
+            self._periodic_save_tracker()
+            self._periodic_save_tracker = None
+
+        # Perform final save if there's dirty data
+        if self._dirty:
+            _LOGGER.debug("Performing final save during shutdown")
+            await self._force_save_now()
+
+    def _start_periodic_save_timer(self) -> None:
+        """Start the periodic save timer."""
+        if self._periodic_save_tracker:
+            return
+
+        next_save = dt_util.utcnow() + timedelta(seconds=PERIODIC_SAVE_INTERVAL)
+        self._periodic_save_tracker = async_track_point_in_time(
+            self.hass, self._handle_periodic_save, next_save
+        )
+        _LOGGER.debug(
+            "Started periodic save timer, next save at %s", next_save.isoformat()
+        )
+
+    async def _handle_periodic_save(self, _now: datetime) -> None:
+        """Handle periodic save timer callback."""
+        self._periodic_save_tracker = None
+
+        if self._dirty:
+            _LOGGER.debug("Periodic save triggered - saving dirty data")
+            await self._force_save_now()
+
+        # Restart the timer
+        self._start_periodic_save_timer()
 
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: dict
     ) -> dict:
-        """Migrate to the new version."""
-        _LOGGER.debug(
-            "Migrating storage from %s.%s to %s.%s",
-            old_major_version,
-            old_minor_version,
-            self._current_version,
-            self._current_minor_version,
-        )
+        """Migrate data to new version."""
+        if old_major_version < 1:
+            # Migrate from version 0 to 1
+            new_data: dict[str, Any] = {"instances": {}}
+            for entry_id in old_data.get("instances", {}):
+                new_data["instances"][entry_id] = {
+                    "entities": {},
+                    "last_updated": dt_util.utcnow().isoformat(),
+                }
+            return new_data
+        return old_data
 
-        data = old_data
+    async def _async_perform_cleanup(self) -> None:
+        """Perform storage cleanup by removing orphaned instances."""
+        try:
+            _LOGGER.debug("Checking storage for orphaned instances")
+            active_entry_ids = {
+                entry.entry_id
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+            }
+            _LOGGER.debug("Active entry IDs: %s", active_entry_ids)
 
-        # Handle migration for any version that's not current
-        if old_major_version != self._current_version:
-            _LOGGER.debug(
-                "Migrating from version %s to %s",
-                old_major_version,
-                self._current_version,
-            )
-            # Create new data structure
-            empty_storage = self.create_empty_storage()
-            new_data = dict(empty_storage)
+            await self.async_cleanup_orphaned_instances(active_entry_ids)
 
-            # If old data had instances, migrate them
-            if "instances" in data:
-                new_data["instances"] = data["instances"]
-
-            data = new_data
-
-        # Add any future version migrations here as needed
-        # This structure allows for step-by-step migrations if needed
-        # For example:
-        # if old_major_version < 7:
-        #     data = migrate_to_7(data)
-        # if old_major_version < 8:
-        #     data = migrate_to_8(data)
-        # etc.
-
-        return data
+        except Exception:
+            # Log error but don't prevent setup from continuing
+            _LOGGER.exception("Error during storage cleanup")
 
     async def async_remove_instance(self, entry_id: str) -> bool:
-        """Remove data for a specific instance ID from storage.
+        """Remove an instance from storage."""
+        async with self._lock:  # Prevent concurrent modifications
+            try:
+                data = await self.async_load()
+                if not data:
+                    return False
 
-        Args:
-            entry_id: The config entry ID of the instance to remove.
+                instances = data.get("instances", {})
+                if not isinstance(instances, dict):
+                    return False
 
-        Returns:
-            True if data was removed, False otherwise.
+                if entry_id in instances:
+                    del instances[entry_id]
+                    await self.async_save(data)
+                    return True
 
-        """
-        try:
-            stored_data = await self.async_load()
-            if (
-                stored_data
-                and "instances" in stored_data
-                and entry_id in stored_data["instances"]
-            ):
-                _LOGGER.debug("Removing instance %s data from storage", entry_id)
-                # Create a copy to modify
-                modified_data = stored_data.copy()
-                modified_data["instances"] = modified_data["instances"].copy()
+            except HomeAssistantError as err:
+                _LOGGER.error("Error removing instance %s: %s", entry_id, err)
+                raise HomeAssistantError(f"Failed to remove instance: {err}") from err
 
-                del modified_data["instances"][entry_id]
-                await self.async_save(modified_data)
-                _LOGGER.info("Successfully removed instance %s from storage", entry_id)
-                return True
-            _LOGGER.debug(
-                "Instance %s not found in storage, skipping removal", entry_id
-            )
-        except Exception:
-            _LOGGER.exception(
-                "Error removing instance %s from storage",
-                entry_id,
-            )
-            return False  # Don't re-raise, allow flow to continue
-        else:
-            return False
+            else:
+                return False
 
     async def async_cleanup_orphaned_instances(
         self, active_entry_ids: set[str]
     ) -> bool:
-        """Remove data for instances not present in the active_entry_ids set.
-
-        Args:
-            active_entry_ids: A set of currently active config entry IDs.
-
-        Returns:
-            True if any orphaned data was removed, False otherwise.
-
-        """
-        removed_any = False
+        """Remove orphaned instances from storage."""
         try:
-            stored_data = await self.async_load()
-            if stored_data and "instances" in stored_data:
-                stored_entry_ids = set(stored_data["instances"].keys())
-                orphaned_ids = stored_entry_ids - active_entry_ids
+            data = await self.async_load()
+            if not data:
+                return False
 
-                if orphaned_ids:
-                    _LOGGER.info(
-                        "Found orphaned instance(s) in storage: %s", orphaned_ids
-                    )
-                    # Create a copy to modify
-                    modified_data = stored_data.copy()
-                    modified_data["instances"] = modified_data["instances"].copy()
+            instances = data.get("instances", {})
+            if not instances:
+                return False
 
-                    for entry_id in orphaned_ids:
-                        if entry_id in modified_data["instances"]:
-                            del modified_data["instances"][entry_id]
-                            _LOGGER.debug(
-                                "Removed orphaned instance %s from storage data",
-                                entry_id,
-                            )
-                            removed_any = True
+            # Find orphaned instances
+            orphaned = set(instances.keys()) - active_entry_ids
+            if not orphaned:
+                return False
 
-                    if removed_any:
-                        await self.async_save(modified_data)
-                        _LOGGER.info(
-                            "Saved cleaned storage data after removing %d orphan(s)",
-                            len(orphaned_ids),
-                        )
-                else:
-                    _LOGGER.debug("No orphaned instances found in storage")
-            else:
-                _LOGGER.debug(
-                    "No storage data found or 'instances' key missing, skipping cleanup"
+            # Remove orphaned instances
+            for entry_id in orphaned:
+                del instances[entry_id]
+
+            await self.async_save(data)
+
+        except HomeAssistantError as err:
+            _LOGGER.error("Error cleaning up orphaned instances: %s", err)
+            return False
+        else:
+            return True
+
+    async def async_load_instance_data(self, entry_id: str) -> dict[str, Any] | None:
+        """Load instance data from storage."""
+        try:
+            data = await self.async_load()
+            if not data:
+                return None
+
+            # Validate storage structure
+            if not isinstance(data, dict) or "instances" not in data:
+                _LOGGER.warning("Invalid storage structure, creating empty storage")
+                return None
+
+            instances = data["instances"]
+            if not isinstance(instances, dict):
+                _LOGGER.warning("Invalid instances structure in storage")
+                return None
+
+            instance_data = instances.get(entry_id)
+            if instance_data and "entity_types" in instance_data:
+                # Restore entity_types into the coordinator
+                from .data.entity_type import EntityTypeManager
+
+                self._coordinator.entity_types = EntityTypeManager.from_dict(
+                    {"entity_types": instance_data["entity_types"]}, self._coordinator
                 )
 
-        except Exception:
-            _LOGGER.exception("Error during storage cleanup")
-            # Don't re-raise, allow setup to continue
+        except HomeAssistantError as err:
+            _LOGGER.error("Error loading instance data for %s: %s", entry_id, err)
+            return None
 
-        return removed_any
+        else:
+            return instance_data
 
-    async def async_load_instance_prior_state(
-        self, entry_id: str
-    ) -> LoadedInstanceData:
-        """Load prior state data for a specific instance from storage.
+    def _calculate_data_hash(self, data: dict[str, Any]) -> str:
+        """Calculate a hash of the data to detect changes."""
+        # Create a stable string representation of the data
+        # Sort keys to ensure consistent ordering
+        data_str = json.dumps(data, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.md5(data_str.encode()).hexdigest()
+
+    def _should_save_immediately(self) -> bool:
+        """Determine if we should save immediately regardless of debouncing."""
+        # Save immediately if we have too many pending save requests
+        if self._pending_save_count >= MAX_PENDING_SAVES:
+            return True
+
+        # Save immediately if too much time has passed since last save
+        if self._last_save_time:
+            time_since_last_save = dt_util.utcnow() - self._last_save_time
+            if time_since_last_save.total_seconds() > PERIODIC_SAVE_INTERVAL:
+                return True
+
+        return False
+
+    async def async_save_instance_data(
+        self,
+        entry_id: str,
+        entity_manager: EntityManager,
+        force: bool = False,
+    ) -> None:
+        """Save instance data to storage with optimized write frequency.
 
         Args:
-            entry_id: The config entry ID of the instance to load.
+            entry_id: The config entry ID
+            entity_manager: The entity manager to save data from
+            force: If True, bypass debouncing and save immediately
+
+        """
+        try:
+            # Prepare the data for saving
+            entity_data = entity_manager.to_dict()
+            entity_types = entity_manager.coordinator.entity_types.to_dict()
+
+            new_instance_data = {
+                "name": self._coordinator.config.name,
+                "probability": self._coordinator.probability,
+                "prior": self._coordinator.prior,
+                "threshold": self._coordinator.threshold,
+                "entities": entity_data.get("entities", {}),
+                "entity_types": entity_types.get("entity_types", {}),
+            }
+
+            # Calculate data hash to detect changes
+            data_hash = self._calculate_data_hash(new_instance_data)
+
+            # Skip save if data hasn't changed
+            if self._last_data_hash == data_hash and not force:
+                _LOGGER.debug("Data unchanged, skipping save for instance %s", entry_id)
+                return
+
+            # Mark as dirty
+            self._dirty = True
+            self._pending_save_count += 1
+
+            # Check if we should save immediately
+            should_save_now = (
+                force
+                or self._should_save_immediately()
+                or self._last_save_time is None  # First save
+            )
+
+            if should_save_now:
+                _LOGGER.debug("Saving immediately for instance %s", entry_id)
+                await self._perform_save(entry_id, new_instance_data, data_hash)
+            else:
+                _LOGGER.debug("Scheduling debounced save for instance %s", entry_id)
+                await self._schedule_debounced_save(
+                    entry_id, new_instance_data, data_hash
+                )
+
+        except HomeAssistantError as err:
+            _LOGGER.error("Error preparing save for instance %s: %s", entry_id, err)
+            raise
+
+    async def _schedule_debounced_save(
+        self, entry_id: str, instance_data: dict[str, Any], data_hash: str
+    ) -> None:
+        """Schedule a debounced save operation."""
+        # Cancel existing pending save task
+        if self._pending_save_task and not self._pending_save_task.done():
+            self._pending_save_task.cancel()
+
+        # Schedule new save task
+        self._pending_save_task = asyncio.create_task(
+            self._debounced_save_worker(entry_id, instance_data, data_hash)
+        )
+
+    async def _debounced_save_worker(
+        self, entry_id: str, instance_data: dict[str, Any], data_hash: str
+    ) -> None:
+        """Worker task that performs debounced save after delay."""
+        try:
+            # Wait for debounce delay
+            await asyncio.sleep(DEBOUNCE_DELAY)
+
+            # Perform the actual save
+            await self._perform_save(entry_id, instance_data, data_hash)
+
+        except asyncio.CancelledError:
+            _LOGGER.debug("Debounced save cancelled for instance %s", entry_id)
+            raise
+        except (HomeAssistantError, OSError, ValueError, TypeError) as err:
+            _LOGGER.error("Error in debounced save worker: %s", err)
+
+    async def _perform_save(
+        self, entry_id: str, instance_data: dict[str, Any], data_hash: str
+    ) -> None:
+        """Perform the actual save operation."""
+        async with self._lock:
+            try:
+                _LOGGER.debug("Performing storage save for instance %s", entry_id)
+
+                data = await self.async_load()
+                if not data:
+                    data = self.create_empty_storage()
+
+                # Validate storage structure
+                if not isinstance(data, dict):
+                    data = self.create_empty_storage()
+                if "instances" not in data:
+                    data["instances"] = {}
+
+                # Update storage with new data
+                data["instances"][entry_id] = instance_data
+                await self.async_save(data)
+
+                # Update tracking variables
+                self._last_save_time = dt_util.utcnow()
+                self._last_data_hash = data_hash
+                self._dirty = False
+                self._pending_save_count = 0
+
+                entity_count = len(instance_data.get("entities", {}))
+                _LOGGER.debug(
+                    "Storage save completed for instance %s with %d entities",
+                    entry_id,
+                    entity_count,
+                )
+
+            except HomeAssistantError as err:
+                _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
+                raise HomeAssistantError(
+                    f"Failed to save instance data: {err}"
+                ) from err
+
+    async def _force_save_now(self) -> None:
+        """Force an immediate save of any pending data."""
+        if self._pending_save_task and not self._pending_save_task.done():
+            # Cancel debounced save and let it complete immediately
+            self._pending_save_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pending_save_task
+
+        # If still dirty, we need to trigger another save
+        # This should only happen in edge cases
+        if self._dirty:
+            _LOGGER.warning("Forcing save with dirty data remaining")
+
+    async def async_reset(self) -> None:
+        """Reset storage data."""
+        try:
+            await self.async_save({})
+            self._last_data_hash = None
+            self._dirty = False
+            self._pending_save_count = 0
+            _LOGGER.info("Storage data reset successfully")
+        except HomeAssistantError as err:
+            _LOGGER.error("Failed to reset storage data: %s", err)
+            raise
+
+    async def async_load_with_compatibility_check(
+        self, entry_id: str, config_entry_version: int
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Load instance data with automatic compatibility checking and migration.
+
+        This method handles:
+        1. Version-based storage reset for incompatible versions
+        2. Format detection and reset for corrupted/incompatible data
+        3. Automatic fallback to defaults when needed
+
+        Args:
+            entry_id: The config entry ID to load data for
+            config_entry_version: The version of the config entry
 
         Returns:
-            LoadedInstanceData dataclass containing name, prior_state, and last_updated.
+            Tuple of (loaded_data, was_reset):
+            - loaded_data: The loaded data dict or None if no data/reset occurred
+            - was_reset: True if storage was reset due to compatibility issues
 
         Raises:
-            StorageLoadError: If loading fails
+            StorageError: If there's a critical storage error
 
         """
+        was_reset = False
+
+        # Check if we have an old config entry version that needs storage reset
+        if config_entry_version < 9:
+            _LOGGER.info(
+                "Config entry version %s is older than 9, resetting storage for compatibility",
+                config_entry_version,
+            )
+            await self.async_remove_instance(entry_id)
+            _LOGGER.info("Storage reset complete for version compatibility")
+            return None, True
+
+        # Try to load instance data
         try:
-            data = await self.async_load()  # Use the store's own load method
-            if not data or "instances" not in data:
-                _LOGGER.debug("No stored data or instances found for loading priors")
-                return LoadedInstanceData(
-                    name=None, prior_state=None, last_updated=None
+            loaded_data = await self.async_load_instance_data(entry_id)
+
+            if loaded_data is None:
+                _LOGGER.info(
+                    "No stored data found for instance %s, will initialize with defaults",
+                    entry_id,
                 )
+                return None, False
 
-            instance_data = data["instances"].get(entry_id)
-            if not instance_data:
-                _LOGGER.debug("No instance data found for %s", entry_id)
-                return LoadedInstanceData(
-                    name=None, prior_state=None, last_updated=None
+            # Validate the data format
+            if not self._validate_storage_format(loaded_data):
+                _LOGGER.warning(
+                    "Detected incompatible storage format for instance %s. "
+                    "Resetting storage to use new format.",
+                    entry_id,
                 )
-
-            name = instance_data.get("name")
-            stored_prior_state_dict = instance_data.get("prior_state")
-            last_updated = instance_data.get("last_updated")
-
-            if not stored_prior_state_dict:
-                _LOGGER.debug("No prior_state dict found for %s", entry_id)
-                return LoadedInstanceData(
-                    name=name, prior_state=None, last_updated=last_updated
+                await self.async_remove_instance(entry_id)
+                _LOGGER.info(
+                    "Storage reset complete for instance %s, will initialize with defaults",
+                    entry_id,
                 )
+                return None, True
 
-            prior_state = PriorState.from_dict(stored_prior_state_dict)
-
-        except Exception as err:
-            _LOGGER.exception("Error loading prior state for %s", entry_id)
-            raise StorageLoadError(f"Failed to load prior state: {err}") from err
-        else:
+            # Data is valid, return it
             _LOGGER.debug(
-                "Loaded prior state for %s: name=%s, last_updated=%s",
+                "Successfully loaded compatible storage data for instance %s",
                 entry_id,
-                name,
-                last_updated,
-            )
-            return LoadedInstanceData(
-                name=name,
-                prior_state=prior_state,
-                last_updated=last_updated,
             )
 
-    async def async_save_instance_prior_state(
-        self, entry_id: str, name: str, prior_state: PriorState
-    ) -> None:
-        """Save prior state data for a specific instance to storage.
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Storage error for instance %s, initializing with defaults: %s",
+                entry_id,
+                err,
+            )
+            # Don't reset on storage errors, just return None
+            return None, False
+
+        except (ValueError, AttributeError, TypeError, KeyError) as err:
+            _LOGGER.warning(
+                "Data format error for instance %s, resetting storage: %s",
+                entry_id,
+                err,
+            )
+            # Reset storage on data format errors
+            try:
+                await self.async_remove_instance(entry_id)
+                _LOGGER.info(
+                    "Storage reset due to data format error for instance %s", entry_id
+                )
+                was_reset = True
+            except HomeAssistantError:
+                _LOGGER.warning("Failed to reset storage for instance %s", entry_id)
+
+            return None, was_reset
+
+        else:
+            return loaded_data, False
+
+    def _validate_storage_format(self, data: dict[str, Any]) -> bool:
+        """Validate that the storage data has the expected format.
 
         Args:
-            entry_id: The config entry ID of the instance to save.
-            name: The name of the area.
-            prior_state: The prior state to save.
+            data: The loaded storage data to validate
+
+        Returns:
+            True if the format is valid, False if it needs to be reset
 
         """
-        try:
-            # Load existing data first using the store's own load method
-            existing_data = await self.async_load()
-            if (
-                not existing_data
-            ):  # Should not happen if load creates empty, but defensive check
-                existing_data = self.create_empty_storage()
-            if "instances" not in existing_data:  # Ensure instances dict exists
-                existing_data["instances"] = {}
+        # Check for required top-level structure
+        if not isinstance(data, dict):
+            _LOGGER.debug("Storage data is not a dictionary")
+            return False
 
-            # Create instance data for this instance
-            instance_data = InstanceData(
-                name=name,
-                prior_state=prior_state.to_dict(),
-                last_updated=dt_util.utcnow().isoformat(),
-            )
+        # Check if it has the new entity-based format
+        if "entities" not in data:
+            _LOGGER.debug("Storage data missing 'entities' key - old format detected")
+            return False
 
-            # Update only this instance's data while preserving others
-            existing_data["instances"][entry_id] = instance_data
+        # Validate entities structure
+        entities_data = data["entities"]
+        if not isinstance(entities_data, dict):
+            _LOGGER.debug("Storage 'entities' data is not a dictionary")
+            return False
 
-            # Log all instances being saved
+        # Validate entity_types structure if present
+        if "entity_types" in data:
+            entity_types_data = data["entity_types"]
+            if not isinstance(entity_types_data, dict):
+                _LOGGER.debug("Storage 'entity_types' data is not a dictionary")
+                return False
+
+        # Sample validate a few entities to ensure format compatibility
+        for entity_id, entity_data in list(entities_data.items())[:3]:  # Check first 3
+            if not self._validate_entity_format(entity_id, entity_data):
+                return False
+
+        return True
+
+    def _validate_entity_format(
+        self, entity_id: str, entity_data: dict[str, Any]
+    ) -> bool:
+        """Validate that an individual entity has the expected format.
+
+        Args:
+            entity_id: The entity ID
+            entity_data: The entity data to validate
+
+        Returns:
+            True if the format is valid, False otherwise
+
+        """
+        required_keys = {"entity_id", "type", "probability", "prior", "decay"}
+
+        if not isinstance(entity_data, dict):
+            _LOGGER.debug("Entity %s data is not a dictionary", entity_id)
+            return False
+
+        missing_keys = required_keys - set(entity_data.keys())
+        if missing_keys:
             _LOGGER.debug(
-                "Saving prior state for instance %s (total instances: %d). All instances: %s",
-                entry_id,
-                len(existing_data["instances"]),
-                list(existing_data["instances"].keys()),
+                "Entity %s missing required keys: %s", entity_id, missing_keys
             )
+            return False
 
-            # Save the modified data using the store's save method
-            await self.async_save(existing_data)
-            _LOGGER.debug(
-                "Saved prior state for instance %s (total instances: %d)",
-                entry_id,
-                len(existing_data["instances"]),
-            )
-
-        except Exception as err:  # Catch broader exceptions during save
-            _LOGGER.exception("Error saving prior state for %s", entry_id)
-            raise StorageSaveError(f"Failed to save prior state: {err}") from err
+        return True

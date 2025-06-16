@@ -1,0 +1,1 @@
+"""Area Occupancy Detection integration."""

@@ -1,0 +1,83 @@
+[MASTER]
+load-plugins = [
+  "pylint.extensions.code_style",
+  "pylint.extensions.typing",
+  "hass_decorator",
+  "hass_enforce_class_module",
+  "hass_enforce_sorted_platforms",
+  "hass_enforce_super_call",
+  "hass_enforce_type_hints",
+  "hass_inheritance",
+  "hass_imports",
+  "hass_logger",
+  "pylint_per_file_ignores",
+]
+persistent = false
+extension-pkg-allow-list = [
+  "av.audio.stream",
+  "av.logging",
+  "av.stream",
+  "ciso8601",
+  "orjson",
+  "cv2",
+]
+fail-on = ["I"]
+
+[BASIC]
+class-const-naming-style = "any"
+
+[MESSAGES CONTROL]
+disable = [
+  "format",
+  "abstract-method",
+  "cyclic-import",
+  "duplicate-code",
+  "inconsistent-return-statements",
+  "locally-disabled",
+  "not-context-manager",
+  "too-few-public-methods",
+  "too-many-ancestors",
+  "too-many-arguments",
+  "too-many-instance-attributes",
+  "too-many-lines",
+  "too-many-locals",
+  "too-many-public-methods",
+  "too-many-boolean-expressions",
+  "too-many-positional-arguments",
+  "wrong-import-order",
+  "consider-using-namedtuple-or-dataclass",
+  "consider-using-assignment-expr",
+  "possibly-used-before-assignment",
+]
+
+enable = [
+  "use-symbolic-message-instead",
+]
+
+per-file-ignores = [
+  "/tests/:redefined-outer-name,use-implicit-booleaness-not-comparison",
+]
+
+[REPORTS]
+score = false
+
+[TYPECHECK]
+ignored-classes = [
+  "_CountingAttr", # for attrs
+]
+mixin-class-rgx = ".*[Mm]ix[Ii]n"
+
+[FORMAT]
+expected-line-ending-format = "LF"
+
+[EXCEPTIONS]
+overgeneral-exceptions = [
+  "builtins.BaseException",
+  "builtins.Exception",
+]
+
+[TYPING]
+runtime-typing = false
+
+[CODE_STYLE]
+max-line-length-suggestions = 72
