@@ -1,6 +1,7 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -30,7 +31,7 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
 
         # Get history period from service call or use coordinator default
         history_period = (
-            call.data.get("history_period") or coordinator.config.decay.history_period
+            call.data.get("history_period") or coordinator.config.history.period
         )
 
         _LOGGER.info(
@@ -48,8 +49,6 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
                 "prior": entity.prior.prior,
                 "prob_given_true": entity.prior.prob_given_true,
                 "prob_given_false": entity.prior.prob_given_false,
-                "last_updated": entity.prior.last_updated.isoformat(),
-                "type": entity.prior.type.value,
                 "entity_type": entity.type.input_type.value,
             }
 
@@ -254,16 +253,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
 
         # Get current occupancy state
         area_name = coordinator.config.name
-        occupancy_entity_id = (
-            f"binary_sensor.{area_name.lower().replace(' ', '_')}_occupancy"
-        )
-
-        # Get occupancy sensor state from hass
-        occupancy_state = hass.states.get(occupancy_entity_id)
-        occupancy_probability = None
-
-        if occupancy_state:
-            occupancy_probability = occupancy_state.attributes.get("probability")
+        occupancy_probability = coordinator.probability
 
         # Get entity metrics for additional context
         entities = coordinator.entities.entities
@@ -281,7 +271,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
 
         status = {
             "area_name": area_name,
-            "is_occupied": occupancy_state.state == "on" if occupancy_state else None,
+            "is_occupied": coordinator.is_occupied,
             "occupancy_probability": occupancy_probability,
             "confidence_level": (
                 "high"
@@ -297,9 +287,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
             "available_entities": metrics["available_entities"],
             "unavailable_entities": metrics["unavailable_entities"],
             "decaying_entities": metrics["decaying_entities"],
-            "last_updated": occupancy_state.last_updated.isoformat()
-            if occupancy_state
-            else None,
+            "last_updated": coordinator.last_updated.isoformat(),
         }
 
         _LOGGER.info("Retrieved area status for entry %s", entry_id)
@@ -374,28 +362,28 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
 
     # Create async wrapper functions to properly handle the service calls
-    async def handle_update_priors(call: ServiceCall):
+    async def handle_update_priors(call: ServiceCall) -> dict[str, Any]:
         return await _update_priors(hass, call)
 
-    async def handle_reset_entities(call: ServiceCall):
+    async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
 
-    async def handle_get_entity_metrics(call: ServiceCall):
+    async def handle_get_entity_metrics(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_metrics(hass, call)
 
-    async def handle_get_problematic_entities(call: ServiceCall):
+    async def handle_get_problematic_entities(call: ServiceCall) -> dict[str, Any]:
         return await _get_problematic_entities(hass, call)
 
-    async def handle_get_entity_details(call: ServiceCall):
+    async def handle_get_entity_details(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_details(hass, call)
 
-    async def handle_force_entity_update(call: ServiceCall):
+    async def handle_force_entity_update(call: ServiceCall) -> dict[str, Any]:
         return await _force_entity_update(hass, call)
 
-    async def handle_get_area_status(call: ServiceCall):
+    async def handle_get_area_status(call: ServiceCall) -> dict[str, Any]:
         return await _get_area_status(hass, call)
 
-    async def handle_get_entity_type_learned_data(call: ServiceCall):
+    async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_type_learned_data(hass, call)
 
     # Register services with async wrapper functions

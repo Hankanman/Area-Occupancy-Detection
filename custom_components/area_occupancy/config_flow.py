@@ -974,6 +974,10 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                         # Handle top-level keys
                         flattened_input[key] = value
 
+                # Add the name from existing config entry for validation
+                # (name is not changeable in options flow but needed for validation)
+                flattened_input[CONF_NAME] = self.config_entry.data.get(CONF_NAME, "")
+
                 self._validate_config(flattened_input)
                 return self.async_create_entry(title="", data=flattened_input)
 
