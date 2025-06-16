@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
+from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
@@ -18,22 +19,21 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
     CONF_WINDOW_ACTIVE_STATE,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
-    NAME_BINARY_SENSOR,
-    NAME_DECAY_SENSOR,
-    NAME_PRIORS_SENSOR,
-    NAME_PROBABILITY_SENSOR,
-    NAME_THRESHOLD_NUMBER,
     PLATFORMS,
+    STORAGE_KEY,
 )
-from .storage import AreaOccupancyStore
+from .number import NAME_THRESHOLD_NUMBER
+from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ async def async_migrate_unique_ids(
     hass: HomeAssistant, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
+    _LOGGER.debug("Starting unique ID migration for platform %s", platform)
     entity_registry = er.async_get(hass)
     updated_entries = 0
     entry_id = config_entry.entry_id
@@ -54,10 +55,12 @@ async def async_migrate_unique_ids(
     }
 
     if platform not in entity_types:
+        _LOGGER.debug("Platform %s not in entity_types, skipping", platform)
         return
 
     # Get the old format prefix to look for
     old_prefix = f"{DOMAIN}_{entry_id}_"
+    _LOGGER.debug("Looking for entities with old prefix: %s", old_prefix)
 
     for entity_id, entity_entry in entity_registry.entities.items():
         old_unique_id = entity_entry.unique_id
@@ -77,7 +80,13 @@ async def async_migrate_unique_ids(
             updated_entries += 1
 
     if updated_entries > 0:
-        _LOGGER.info("Completed migrating %s unique IDs", updated_entries)
+        _LOGGER.info(
+            "Completed migrating %d unique IDs for platform %s",
+            updated_entries,
+            platform,
+        )
+    else:
+        _LOGGER.debug("No unique IDs to migrate for platform %s", platform)
 
 
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
@@ -127,10 +136,15 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
     """Migrate storage data file format."""
-    store = AreaOccupancyStore(hass)
     try:
         _LOGGER.debug("Starting storage file format migration for %s", entry_id)
-        # Load data with old version to trigger migration
+
+        # Create a direct Store instance for migration (bypassing StorageManager)
+        from homeassistant.helpers.storage import Store
+
+        store: Store[dict[str, Any]] = Store(hass, CONF_VERSION, STORAGE_KEY)
+
+        # Load data with current version
         data = await store.async_load()
         if data is None:
             _LOGGER.debug("No existing storage data found, skipping format migration")
@@ -187,25 +201,34 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     )
 
     # --- Run Storage File Migration First ---
+    _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)
     await async_migrate_storage(hass, config_entry.entry_id)
+    _LOGGER.debug("Storage migration completed for %s", config_entry.entry_id)
     # --------------------------------------
 
     # Get existing data
+    _LOGGER.debug("Getting existing config data for %s", config_entry.entry_id)
     data = {**config_entry.data}
     options = {**config_entry.options}
 
     try:
         # Run the unique ID migrations
+        _LOGGER.debug("Starting unique ID migrations for %s", config_entry.entry_id)
         for platform in PLATFORMS:
+            _LOGGER.debug("Migrating unique IDs for platform %s", platform)
             await async_migrate_unique_ids(hass, config_entry, platform)
+        _LOGGER.debug("Unique ID migrations completed for %s", config_entry.entry_id)
     except HomeAssistantError as err:
         _LOGGER.error("Error during unique ID migration: %s", err)
 
     # Remove deprecated fields
+    _LOGGER.debug("Removing deprecated fields for %s", config_entry.entry_id)
     if CONF_AREA_ID in data:
         data.pop(CONF_AREA_ID)
+        _LOGGER.debug("Removed deprecated CONF_AREA_ID")
 
     # Ensure new state configuration values are present with defaults
+    _LOGGER.debug("Adding new state configurations for %s", config_entry.entry_id)
     new_configs = {
         CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
         CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
@@ -226,10 +249,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     try:
         # Apply configuration migrations
+        _LOGGER.debug("Applying configuration migrations for %s", config_entry.entry_id)
         data = migrate_config(data)
         options = migrate_config(options)
 
+        # Handle threshold value with default if not present
+        threshold = options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        options[CONF_THRESHOLD] = validate_threshold(threshold)
+
         # Update the config entry with new data and options
+        _LOGGER.debug("Updating config entry for %s", config_entry.entry_id)
         hass.config_entries.async_update_entry(
             config_entry,
             data=data,
@@ -243,3 +272,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         return False
     else:
         return True
+
+
+def validate_threshold(threshold: float) -> float:
+    """Validate the threshold value.
+
+    Args:
+        threshold: The threshold value to validate
+
+    Returns:
+        The validated threshold value
+
+    """
+    if threshold < 1.0 or threshold > 99.0:
+        return DEFAULT_THRESHOLD
+    return round(threshold, 0)
