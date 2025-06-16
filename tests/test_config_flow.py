@@ -41,6 +41,7 @@ from custom_components.area_occupancy.const import (
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
 
+# ruff: noqa: SLF001
 class TestBaseOccupancyFlow:
     """Test BaseOccupancyFlow class."""
 
@@ -367,7 +368,7 @@ class TestHelperFunctions:
             mock_registry = Mock()
 
             class EntitiesObj:
-                def values(self_inner):
+                def values(self):
                     return [].__iter__()
 
             mock_registry.entities = EntitiesObj()
@@ -469,25 +470,27 @@ class TestAreaOccupancyConfigFlow:
             }
         }
 
-        with patch.object(flow, "_validate_config") as mock_validate:
-            with patch.object(
+        with (
+            patch.object(flow, "_validate_config") as mock_validate,
+            patch.object(
                 flow, "async_set_unique_id", new_callable=AsyncMock
-            ) as mock_set_unique_id:
-                with patch.object(flow, "_abort_if_unique_id_configured") as mock_abort:
-                    result = await flow.async_step_user(user_input)
+            ) as mock_set_unique_id,
+            patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
+        ):
+            result = await flow.async_step_user(user_input)
 
-                    mock_validate.assert_called_once()
-                    mock_set_unique_id.assert_called_once()
-                    mock_abort.assert_called_once()
+            mock_validate.assert_called_once()
+            mock_set_unique_id.assert_called_once()
+            mock_abort.assert_called_once()
 
-                    assert result.get("type") == FlowResultType.CREATE_ENTRY
-                    assert result.get("title") == "Test Area"
-                    assert result.get("data") == {
-                        CONF_NAME: "Test Area",
-                        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                        CONF_THRESHOLD: 60,
-                    }
+            assert result.get("type") == FlowResultType.CREATE_ENTRY
+            assert result.get("title") == "Test Area"
+            assert result.get("data") == {
+                CONF_NAME: "Test Area",
+                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                CONF_THRESHOLD: 60,
+            }
 
     async def test_async_step_user_with_invalid_input(self, mock_hass: Mock) -> None:
         """Test async_step_user with invalid user input."""
@@ -561,34 +564,34 @@ class TestConfigFlowIntegration:
             },
         }
 
-        with patch.object(
-            flow, "async_set_unique_id", new_callable=AsyncMock
-        ) as mock_set_unique_id:
-            with patch.object(flow, "_abort_if_unique_id_configured") as mock_abort:
-                result2 = await flow.async_step_user(user_input)
+        with (
+            patch.object(flow, "async_set_unique_id", new_callable=AsyncMock),
+            patch.object(flow, "_abort_if_unique_id_configured"),
+        ):
+            result2 = await flow.async_step_user(user_input)
 
-                assert result2.get("type") == FlowResultType.CREATE_ENTRY
-                assert result2.get("title") == "Living Room"
-                # The config flow flattens the input, so we need to check the flattened structure
-                expected_data = {
-                    CONF_NAME: "Living Room",
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                    CONF_THRESHOLD: 60,
-                    CONF_WASP_ENABLED: False,
-                }
-                # Check that the essential fields are present
-                result_data = result2.get("data", {})
-                assert result_data.get(CONF_NAME) == expected_data[CONF_NAME]
-                assert (
-                    result_data.get(CONF_MOTION_SENSORS)
-                    == expected_data[CONF_MOTION_SENSORS]
-                )
-                assert (
-                    result_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
-                    == expected_data[CONF_PRIMARY_OCCUPANCY_SENSOR]
-                )
-                assert result_data.get(CONF_THRESHOLD) == expected_data[CONF_THRESHOLD]
+            assert result2.get("type") == FlowResultType.CREATE_ENTRY
+            assert result2.get("title") == "Living Room"
+            # The config flow flattens the input, so we need to check the flattened structure
+            expected_data = {
+                CONF_NAME: "Living Room",
+                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                CONF_THRESHOLD: 60,
+                CONF_WASP_ENABLED: False,
+            }
+            # Check that the essential fields are present
+            result_data = result2.get("data", {})
+            assert result_data.get(CONF_NAME) == expected_data[CONF_NAME]
+            assert (
+                result_data.get(CONF_MOTION_SENSORS)
+                == expected_data[CONF_MOTION_SENSORS]
+            )
+            assert (
+                result_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
+                == expected_data[CONF_PRIMARY_OCCUPANCY_SENSOR]
+            )
+            assert result_data.get(CONF_THRESHOLD) == expected_data[CONF_THRESHOLD]
 
     async def test_complete_options_flow(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -694,30 +697,28 @@ class TestConfigFlowIntegration:
         }
 
         # Mock that unique ID is already configured
-        with patch.object(
-            flow, "async_set_unique_id", new_callable=AsyncMock
-        ) as mock_set_unique_id:
-            with patch.object(
+        with (
+            patch.object(flow, "async_set_unique_id", new_callable=AsyncMock),
+            patch.object(
                 flow,
                 "_abort_if_unique_id_configured",
                 side_effect=AbortFlow("already_configured"),
-            ):
-                with patch(
-                    "custom_components.area_occupancy.config_flow._get_include_entities"
-                ) as mock_get_entities:
-                    mock_get_entities.return_value = {
-                        "appliance": [],
-                        "window": [],
-                        "door": [],
-                    }
-                    # The AbortFlow is caught and converted to an error in the flow
-                    result = await flow.async_step_user(user_input)
-                    assert result.get("type") == FlowResultType.FORM
-                    assert "errors" in result
-                    assert isinstance(result["errors"], dict)
-                    assert (
-                        result["errors"]["base"] == "Flow aborted: already_configured"
-                    )
+            ),
+            patch(
+                "custom_components.area_occupancy.config_flow._get_include_entities"
+            ) as mock_get_entities,
+        ):
+            mock_get_entities.return_value = {
+                "appliance": [],
+                "window": [],
+                "door": [],
+            }
+            # The AbortFlow is caught and converted to an error in the flow
+            result = await flow.async_step_user(user_input)
+            assert result.get("type") == FlowResultType.FORM
+            assert "errors" in result
+            assert isinstance(result["errors"], dict)
+            assert result["errors"]["base"] == "Flow aborted: already_configured"
 
     async def test_error_recovery_in_config_flow(self, mock_hass: Mock) -> None:
         """Test error recovery in config flow."""
@@ -771,13 +772,13 @@ class TestConfigFlowIntegration:
             },
         }
 
-        with patch.object(
-            flow, "async_set_unique_id", new_callable=AsyncMock
-        ) as mock_set_unique_id:
-            with patch.object(flow, "_abort_if_unique_id_configured") as mock_abort:
-                result2 = await flow.async_step_user(valid_input)
+        with (
+            patch.object(flow, "async_set_unique_id", new_callable=AsyncMock),
+            patch.object(flow, "_abort_if_unique_id_configured"),
+        ):
+            result2 = await flow.async_step_user(valid_input)
 
-                assert result2.get("type") == FlowResultType.CREATE_ENTRY
+            assert result2.get("type") == FlowResultType.CREATE_ENTRY
 
     async def test_schema_generation_with_entities(self, mock_hass: Mock) -> None:
         """Test schema generation with available entities."""

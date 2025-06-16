@@ -213,6 +213,13 @@ class PriorManager:
             last_updated=validate_datetime(None),
         )
 
+        # Check if history analysis is disabled
+        if (
+            hasattr(self.coordinator.config, "history")
+            and not self.coordinator.config.history.enabled
+        ):
+            return fallback_prior
+
         # Check if we have a cached prior that's still valid
         cached_prior = self.get_prior(entity_id)
         if cached_prior and cached_prior.last_updated > start_time:
@@ -426,17 +433,21 @@ class PriorManager:
             SQLAlchemyError: If database query fails
 
         """
-        try:
-            _LOGGER.debug(
-                "Fetching states: %s [%s -> %s]",
-                entity_id,
-                start_time,
-                end_time,
-            )
+        _LOGGER.debug(
+            "Fetching states: %s [%s -> %s]",
+            entity_id,
+            start_time,
+            end_time,
+        )
 
-            states = await get_instance(
-                hass
-            ).async_add_executor_job(
+        # Check if recorder is available
+        recorder = get_instance(hass)
+        if recorder is None:
+            _LOGGER.debug("Recorder not available for %s", entity_id)
+            return None
+
+        try:
+            states = await recorder.async_add_executor_job(
                 lambda: get_significant_states(
                     hass,
                     start_time,
@@ -459,8 +470,9 @@ class PriorManager:
 
         except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
             _LOGGER.error("Error getting states for %s: %s", entity_id, err)
-            # Propagate error to be handled by the coordinator
-            raise HomeAssistantError(f"Recorder error for {entity_id}: {err}") from err
+            # Re-raise the exception as documented, let the caller handle fallback
+            raise
+
         else:
             return entity_states
 

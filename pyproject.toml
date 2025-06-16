@@ -354,7 +354,7 @@ per-file-ignores = [
   # redefined-outer-name: Tests reference fixtures in the test function
   # use-implicit-booleaness-not-comparison: Tests need to validate that a list
   # or a dict is returned
-  "/tests/:redefined-outer-name,use-implicit-booleaness-not-comparison",
+  "/tests/:redefined-outer-name,use-implicit-booleaness-not-comparison,private-member-access",
 ]
 
 [tool.pylint.REPORTS]
