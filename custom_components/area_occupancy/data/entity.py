@@ -107,7 +107,9 @@ class Entity:
 
         return entity
 
-    def update_probability(self, *, preserve_previous_state: bool = False) -> None:
+    async def update_probability(
+        self, *, preserve_previous_state: bool = False
+    ) -> None:
         """Calculate and update entity probability with decay and prior checks.
 
         This is the unified method for all probability updates to ensure consistency
@@ -175,8 +177,7 @@ class Entity:
 
                 # Force immediate coordinator update to reflect decay completion
                 if self._coordinator:
-                    self._coordinator.request_update(
-                        force=True,
+                    await self._coordinator.request_update(
                         message=f"Decay completed for {self.entity_id}, forcing final update",
                     )
 
@@ -190,8 +191,8 @@ class Entity:
 
         if probability_changed:
             if self._coordinator:
-                self._coordinator.request_update(
-                    force=True, message="Entity state changed, forcing update"
+                await self._coordinator.request_update(
+                    message="Entity state changed, forcing update"
                 )
 
     def start_decay_timer(self) -> None:
@@ -246,7 +247,7 @@ class Entity:
 
         try:
             # Update probability with decay using unified method
-            self.update_probability()
+            await self.update_probability()
 
             # Schedule next decay update if still decaying
             if self.decay.is_decaying:
@@ -363,11 +364,11 @@ class EntityManager:
             )
             self._entities = await self._create_entities_from_config()
 
-        self._setup_entity_tracking()
+        await self._setup_entity_tracking()
         _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
 
         # Initialize all entities with current states
-        self._initialize_current_states()
+        await self._initialize_current_states()
 
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
@@ -409,7 +410,7 @@ class EntityManager:
         for entity_id, entity_type in config_entities.items():
             _LOGGER.info("Creating new entity %s", entity_id)
             prior = await self._calculate_initial_prior(entity_id, entity_type)
-            updated_entities[entity_id] = self._create_entity(
+            updated_entities[entity_id] = await self._create_entity(
                 entity_id=entity_id,
                 entity_type=entity_type,
                 prior=prior,
@@ -486,9 +487,9 @@ class EntityManager:
     async def reset_entities(self) -> None:
         """Reset entities to fresh state from configuration."""
         self._entities = await self._create_entities_from_config()
-        self._setup_entity_tracking()
+        await self._setup_entity_tracking()
 
-    def _create_entity(
+    async def _create_entity(
         self,
         entity_id: str,
         entity_type: EntityType,
@@ -580,7 +581,7 @@ class EntityManager:
         entity.set_coordinator(self.coordinator)
 
         # Calculate initial probability using unified method
-        entity.update_probability()
+        await entity.update_probability()
 
         # If entity was decaying when saved, restart the decay timer
         if entity.decay.is_decaying:
@@ -588,7 +589,7 @@ class EntityManager:
 
         return entity
 
-    def _setup_entity_tracking(self) -> None:
+    async def _setup_entity_tracking(self) -> None:
         """Set up event listener to track entity state changes."""
         # Clean up existing listener
         if self._remove_state_listener is not None:
@@ -648,7 +649,7 @@ class EntityManager:
                 entity.is_active = is_active
 
                 # Update entity probabilities using unified method with preserved previous state
-                entity.update_probability(preserve_previous_state=True)
+                await entity.update_probability(preserve_previous_state=True)
 
             except Exception:
                 _LOGGER.exception(
@@ -662,9 +663,9 @@ class EntityManager:
         )
 
         # Initialize current states for all entities after setting up tracking
-        self._initialize_current_states()
+        await self._initialize_current_states()
 
-    def _initialize_current_states(self) -> None:
+    async def _initialize_current_states(self) -> None:
         """Initialize entity states from current Home Assistant states."""
         _LOGGER.debug(
             "Initializing current states for %d entities", len(self._entities)
@@ -695,7 +696,7 @@ class EntityManager:
                 entities_updated += 1
 
                 # Update entity probability based on current state
-                entity.update_probability()
+                await entity.update_probability()
             else:
                 # Entity not available in HA
                 entity.available = False
@@ -737,7 +738,7 @@ class EntityManager:
                     prob_given_false=entity_type.prob_false,
                     last_updated=dt_util.utcnow(),
                 )
-                entities[input_entity_id] = self._create_entity(
+                entities[input_entity_id] = await self._create_entity(
                     entity_id=input_entity_id,
                     entity_type=entity_type,
                     prior=default_prior,

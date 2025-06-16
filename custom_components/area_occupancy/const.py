@@ -111,6 +111,12 @@ MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
 MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
 MOTION_DEFAULT_PRIOR: Final[float] = 0.35
 
+# Primary occupancy sensor defaults (optimized for ground truth reliability)
+PRIMARY_PROB_GIVEN_TRUE: Final[float] = (
+    0.95  # Very high confidence when area is occupied
+)
+PRIMARY_PROB_GIVEN_FALSE: Final[float] = 0.02  # Very low false positive rate
+
 # Door sensor defaults
 DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
 DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02

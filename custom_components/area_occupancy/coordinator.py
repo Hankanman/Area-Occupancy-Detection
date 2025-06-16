@@ -16,6 +16,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -138,33 +139,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "wasp": self.wasp_entity_id,
         }
 
-    def request_update(self, force: bool = False, message: str = "") -> None:
+    async def request_update(self, message: str = "") -> None:
         """Request an immediate coordinator refresh.
 
         Args:
-            force: If True, bypasses debouncing and forces immediate update
             message: Optional message to log when updating
 
         """
         if message:
             _LOGGER.debug(message)
 
-        if force:
-            # Bypass debouncing by directly calling the update methods
-            self.hass.async_create_task(self._async_immediate_update())
-        else:
-            self.hass.async_create_task(self.async_request_refresh())
+        data = await self._async_update_data()
 
-    async def _async_immediate_update(self) -> None:
-        """Force immediate coordinator update bypassing any debouncing."""
-        try:
-            _LOGGER.debug("Executing immediate coordinator update")
-            data = await self._async_update_data()
-            self.async_set_updated_data(data)
-        except (HomeAssistantError, ValueError, RuntimeError, AttributeError) as err:
-            _LOGGER.warning("Failed to force immediate coordinator update: %s", err)
-            # Fallback to regular update if direct method fails
-            self.hass.async_create_task(self.async_request_refresh())
+        self.async_set_updated_data(data)
 
     # --- Public Methods ---
     async def _async_setup(self) -> None:
@@ -201,9 +188,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Clean up entity manager
         self.entities.cleanup()
 
-        # Shutdown storage manager to save any pending data
-        await self.storage.async_shutdown()
-
         await super().async_shutdown()
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
@@ -229,9 +213,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._schedule_next_prior_update()
 
         # Force immediate save after configuration changes
-        await self._async_save_data(force=True)
+        await self._async_save_data()
 
-        self.request_update(message="Options updated, requesting update")
+        await self.request_update(message="Options updated, requesting update")
 
     async def async_update_threshold(self, value: float) -> None:
         """Update the threshold value.
@@ -253,7 +237,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         # Request update since threshold affects is_occupied calculation
-        self.request_update(message="Threshold updated, requesting update")
+        await self.request_update(message="Threshold updated, requesting update")
 
     async def async_load_stored_data(self) -> None:
         """Load and restore data from storage."""
@@ -312,18 +296,47 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Re-raise as ConfigEntryNotReady if loading fails critically
             raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
 
-    async def update_learned_priors(self) -> None:
-        """Update learned priors using historical data."""
+    async def update_learned_priors(self, history_period: int | None = None) -> None:
+        """Update learned priors using historical data.
+
+        Args:
+            history_period: Optional history period in days to override config value
+
+        """
         try:
-            _LOGGER.info("Starting learned priors update for area %s", self.config.name)
+            # Check if Home Assistant is shutting down
+            if self.hass.is_stopping:
+                _LOGGER.warning(
+                    "Skipping prior update for area %s - Home Assistant is shutting down",
+                    self.config.name,
+                )
+                return
+
+            # Check if recorder is available
+            recorder = get_instance(self.hass)
+            if recorder is None:
+                _LOGGER.warning(
+                    "Skipping prior update for area %s - Recorder is not available",
+                    self.config.name,
+                )
+                return
+
+            effective_period = history_period or self.config.history.period
+            _LOGGER.info(
+                "Starting learned priors update for area %s with %d days history",
+                self.config.name,
+                effective_period,
+            )
 
             # Delegate the actual prior updating to the PriorManager
-            updated_count = await self.priors.update_all_entity_priors()
+            updated_count = await self.priors.update_all_entity_priors(history_period)
 
             # Request update and save immediately if priors changed
             if updated_count > 0:
-                await self._async_save_data(force=True)
-                self.request_update(message="Learned priors updated, requesting update")
+                await self._async_save_data()
+                await self.request_update(
+                    message="Learned priors updated, requesting update"
+                )
 
             _LOGGER.info(
                 "Completed learned priors update for area %s: updated %d entities",
@@ -333,6 +346,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except ValueError as err:
             _LOGGER.warning("Cannot update priors: %s", err)
+        except RuntimeError as err:
+            if "cannot schedule new futures after shutdown" in str(err):
+                _LOGGER.warning(
+                    "Skipping prior update for area %s - Home Assistant is shutting down",
+                    self.config.name,
+                )
+            else:
+                raise
         finally:
             # Always reschedule the next update
             await self._schedule_next_prior_update()
@@ -422,27 +443,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise HomeAssistantError(f"Error updating data: {err}") from err
 
     # --- Data Saving ---
-    async def _async_save_data(self, force: bool = False) -> None:
-        """Save the current data to storage with optimized frequency.
-
-        Args:
-            force: If True, bypass debouncing and save immediately
-
-        """
+    async def _async_save_data(self) -> None:
+        """Save the current data to storage."""
         try:
             _LOGGER.debug("Requesting storage save for coordinator data")
             await self.storage.async_save_instance_data(
                 self.entry_id,
                 self.entities,
-                force=force,
             )
             _LOGGER.debug("Storage save request completed")
         except HomeAssistantError as err:
             _LOGGER.error("Failed to save data: %s", err)
-            # Don't re-raise in normal operations to avoid breaking the update cycle
-            # Only re-raise on forced saves
-            if force:
-                raise
 
     def _calculate_entity_aggregates(self) -> dict[str, float]:
         """Calculate probability, prior, and decay aggregates from entities in a single pass.

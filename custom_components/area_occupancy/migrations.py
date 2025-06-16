@@ -30,7 +30,6 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
-    STORAGE_KEY,
 )
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
@@ -139,21 +138,7 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
     try:
         _LOGGER.debug("Starting storage file format migration for %s", entry_id)
 
-        # Create a direct Store instance for migration (bypassing StorageManager)
-        from homeassistant.helpers.storage import Store
-
-        store: Store[dict[str, Any]] = Store(hass, CONF_VERSION, STORAGE_KEY)
-
-        # Load data with current version
-        data = await store.async_load()
-        if data is None:
-            _LOGGER.debug("No existing storage data found, skipping format migration")
-            return
-
-        # Save with current version to ensure migration
-        await store.async_save(data)
-
-        # Clean up old instance-specific storage file
+        # Clean up old instance-specific storage file if it exists
         old_file = Path(hass.config.path(".storage", f"{DOMAIN}.{entry_id}.storage"))
         if old_file.exists():
             try:
@@ -162,6 +147,9 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
                 _LOGGER.info("Successfully removed old storage file: %s", old_file)
             except OSError as err:
                 _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
+
+        # The actual data migration is now handled by StorageManager._async_migrate_func
+        # which is automatically called by the Store class when loading data
 
         _LOGGER.debug("Storage file format migration complete for %s", entry_id)
     except (HomeAssistantError, OSError, ValueError) as err:

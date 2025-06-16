@@ -1,6 +1,7 @@
 """Utility functions for the area occupancy component."""
 
 from datetime import datetime
+import math
 
 from homeassistant.util import dt as dt_util
 
@@ -19,12 +20,12 @@ from .const import (
 
 def validate_prob(value: float) -> float:
     """Validate a probability value."""
-    return max(0.001, min(value, 1.0))
+    return max(0.0001, min(value, 1.0))
 
 
 def validate_prior(value: float) -> float:
     """Validate a prior value."""
-    return max(0.001, min(value, 1.0))
+    return max(0.0001, min(value, 1.0))
 
 
 def validate_datetime(value: datetime | None) -> datetime:
@@ -52,42 +53,44 @@ def format_float(value: float) -> float:
         return 0.0
 
 
+EPS = 1e-12
+
+
 def bayesian_probability(
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
     is_active: bool,
 ) -> float:
-    """Perform a Bayesian update using Bayes' theorem.
+    """One-step Bayesian update.
 
     Args:
-        prior: The prior probability (0.0-1.0)
-        prob_given_true: Probability of evidence given true state (0.0-1.0)
-        prob_given_false: Probability of evidence given false state (0.0-1.0)
-        is_active: Whether the sensor is in an active state (default: True)
+        prior: Prior probability P(H) in [0,1].
+        prob_given_true:     P(Evidence present | Hypothesis true)
+        prob_given_false: P(Evidence present | Hypothesis false)
+        is_active:        Evidence.PRESENT or Evidence.ABSENT
 
     Returns:
-        The updated probability (0.0-1.0)
+        Posterior probability P(H | evidence)
 
     """
-    # Validate input probabilities
-    probability = 0.0
-    if is_active:
-        # P(occupied | active) = P(active | occupied) * P(occupied) / P(active)
-        numerator = prob_given_true * prior
-        denominator = (prob_given_true * prior) + (prob_given_false * (1 - prior))
-    else:
-        # P(occupied | inactive) = P(inactive | occupied) * P(occupied) / P(inactive)
-        # For inactive state, we use prob_given_false directly since it represents
-        # the probability of the sensor being inactive when the area is occupied
-        numerator = prob_given_false * prior
-        denominator = (prob_given_false * prior) + (
-            (1 - prob_given_false) * (1 - prior)
-        )
+    # Sanity checks
+    for name, p in {
+        "prior": prior,
+        "p_e_given_h": prob_given_true,
+        "p_e_given_not_h": prob_given_false,
+    }.items():
+        if not (0.0 <= p <= 1.0):
+            raise ValueError(f"{name}={p} is not a probability in [0,1].")
 
-    if denominator == 0:
-        probability = MIN_PROBABILITY
-    else:
-        probability = numerator / denominator
+    if is_active is True:
+        num = prob_given_true * prior
+        den = prob_given_true * prior + prob_given_false * (1 - prior)
+    else:  # Evidence.ABSENT
+        num = (1 - prob_given_true) * prior
+        den = (1 - prob_given_true) * prior + (1 - prob_given_false) * (1 - prior)
 
-    return validate_prob(probability)
+    # Guard against divide-by-zero
+    if math.isclose(den, 0.0, abs_tol=EPS):
+        return 0.0
+    return num / den

@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -20,8 +20,9 @@ from ..const import (
     DEFAULT_PROB_GIVEN_FALSE,
     DEFAULT_PROB_GIVEN_TRUE,
     MAX_PROBABILITY,
-    MIN_PRIOR,
     MIN_PROBABILITY,
+    PRIMARY_PROB_GIVEN_FALSE,
+    PRIMARY_PROB_GIVEN_TRUE,
 )
 from ..utils import validate_datetime, validate_prior, validate_prob
 
@@ -118,7 +119,7 @@ class PriorManager:
         """Clear all stored priors."""
         self._priors.clear()
 
-    async def update_all_entity_priors(self) -> int:
+    async def update_all_entity_priors(self, history_period: int | None = None) -> int:
         """Update learned priors for all entities in the coordinator.
 
         Args:
@@ -132,17 +133,18 @@ class PriorManager:
 
         """
 
+        effective_period = history_period or self.coordinator.config.history.period
         _LOGGER.info(
             "Updating learned priors for area %s: analyzing %d days of history",
             self.coordinator.config.name,
-            self.coordinator.config.history.period,
+            effective_period,
         )
 
         # Update priors for all entities
         updated_count = 0
         for entity in self.coordinator.entities.entities.values():
             try:
-                prior = await self.calculate(entity)
+                prior = await self.calculate(entity, history_period)
 
                 # Update the entity's prior
                 entity.prior = prior
@@ -179,6 +181,7 @@ class PriorManager:
     async def calculate(
         self,
         entity: "Entity",
+        history_period: int | None = None,
     ) -> "Prior":
         """Calculate learned priors for a given entity."""
 
@@ -189,12 +192,11 @@ class PriorManager:
             primary_sensor = self.coordinator.config.sensors.primary_occupancy
         else:
             raise ValueError("No primary occupancy sensor configured")
-        if self.coordinator.config.start_time:
-            start_time = self.coordinator.config.start_time
-        else:
-            raise ValueError("No start time configured")
-        if self.coordinator.config.end_time:
-            end_time = self.coordinator.config.end_time
+
+        # Use provided history period or default from config
+        effective_period = history_period or self.coordinator.config.history.period
+        start_time = dt_util.utcnow() - timedelta(days=effective_period)
+        end_time = dt_util.utcnow()
 
         if end_time <= start_time:
             _LOGGER.error("End time must be after start time")
@@ -271,11 +273,14 @@ class PriorManager:
                     min(occupied_duration / total_duration, MAX_PROBABILITY),
                 )
 
-                # Create learned prior with entity type defaults for conditional probabilities
+                # Create learned prior with optimized conditional probabilities for primary sensor
+                # Since this is the primary sensor (ground truth), it should have high confidence
+                # when active and low false positive rate when the area is actually unoccupied
+
                 learned_prior = Prior(
                     prior=learned_prior_value,
-                    prob_given_true=entity_type.prob_true,
-                    prob_given_false=entity_type.prob_false,
+                    prob_given_true=PRIMARY_PROB_GIVEN_TRUE,
+                    prob_given_false=PRIMARY_PROB_GIVEN_FALSE,
                     last_updated=validate_datetime(None),
                 )
 
@@ -286,17 +291,6 @@ class PriorManager:
                     learned_prior.prior,
                     fallback_prior.prior,
                 )
-
-                # If learned prior is suspiciously low (< 0.05), prefer defaults
-                # This prevents the system from getting stuck with unrealistic low priors
-                if learned_prior.prior < MIN_PRIOR:
-                    _LOGGER.warning(
-                        "Learned prior %.3f for primary sensor %s is very low, using default %.3f instead",
-                        learned_prior.prior,
-                        entity_id,
-                        fallback_prior.prior,
-                    )
-                    return fallback_prior
 
                 self.update_prior(entity_id, learned_prior)
 
@@ -393,17 +387,6 @@ class PriorManager:
             learned_prior.prob_given_false,
             fallback_prior.prob_given_false,
         )
-
-        # If learned prior is suspiciously low (< 0.05), prefer defaults
-        # This prevents the system from getting stuck with unrealistic low priors
-        if learned_prior.prior < 0.05:
-            _LOGGER.warning(
-                "Learned prior %.3f for %s is very low, using default %.3f instead",
-                learned_prior.prior,
-                entity_id,
-                fallback_prior.prior,
-            )
-            return fallback_prior
 
         # Store the calculated prior
         self.update_prior(entity_id, learned_prior)
