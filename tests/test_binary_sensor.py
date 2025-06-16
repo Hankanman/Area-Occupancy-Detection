@@ -14,6 +14,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: SLF001
 class TestOccupancy:
     """Test Occupancy binary sensor entity."""
 
@@ -125,12 +126,14 @@ class TestWaspInBoxSensor:
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
         # Mock state restoration and setup methods
-        with patch.object(entity, "_restore_previous_state") as mock_restore:
-            with patch.object(entity, "_setup_entity_tracking") as mock_setup:
-                await entity.async_added_to_hass()
+        with (
+            patch.object(entity, "_restore_previous_state") as mock_restore,
+            patch.object(entity, "_setup_entity_tracking") as mock_setup,
+        ):
+            await entity.async_added_to_hass()
 
-                mock_restore.assert_called_once()
-                mock_setup.assert_called_once()
+            mock_restore.assert_called_once()
+            mock_setup.assert_called_once()
 
         # Should set wasp entity ID in coordinator
         assert wasp_coordinator.wasp_entity_id == entity.entity_id
@@ -163,15 +166,17 @@ class TestWaspInBoxSensor:
             "last_motion_time": "2023-01-01T11:58:00+00:00",
         }
 
-        with patch.object(entity, "async_get_last_state", return_value=mock_state):
-            with patch.object(entity, "_start_max_duration_timer") as mock_timer:
-                await entity._restore_previous_state()
+        with (
+            patch.object(entity, "async_get_last_state", return_value=mock_state),
+            patch.object(entity, "_start_max_duration_timer") as mock_timer,
+        ):
+            await entity._restore_previous_state()
 
-                # Should restore state and attributes
-                assert entity._attr_is_on is True
-                assert entity._state == STATE_ON
-                assert entity._last_occupied_time is not None
-                mock_timer.assert_called_once()
+            # Should restore state and attributes
+            assert entity._attr_is_on is True
+            assert entity._state == STATE_ON
+            assert entity._last_occupied_time is not None
+            mock_timer.assert_called_once()
 
     async def test_async_will_remove_from_hass(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -324,13 +329,15 @@ class TestWaspInBoxSensor:
         entity._door_state = STATE_OFF  # Door was closed
 
         # Mock async_write_ha_state to avoid entity registration issues
-        with patch.object(entity, "async_write_ha_state"):
-            with patch.object(entity, "_set_state") as mock_set_state:
-                # Door opens (STATE_ON) while occupied
-                entity._process_door_state("binary_sensor.door1", STATE_ON)
+        with (
+            patch.object(entity, "async_write_ha_state"),
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            # Door opens (STATE_ON) while occupied
+            entity._process_door_state("binary_sensor.door1", STATE_ON)
 
-                # Should transition to unoccupied
-                mock_set_state.assert_called_once_with(STATE_OFF)
+            # Should transition to unoccupied
+            mock_set_state.assert_called_once_with(STATE_OFF)
 
     def test_process_door_state_closing_with_recent_motion(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -350,13 +357,15 @@ class TestWaspInBoxSensor:
         )  # Recent motion
 
         # Mock async_write_ha_state to avoid entity registration issues
-        with patch.object(entity, "async_write_ha_state"):
-            with patch.object(entity, "_set_state") as mock_set_state:
-                # Door closes (STATE_OFF) with motion detected
-                entity._process_door_state("binary_sensor.door1", STATE_OFF)
+        with (
+            patch.object(entity, "async_write_ha_state"),
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            # Door closes (STATE_OFF) with motion detected
+            entity._process_door_state("binary_sensor.door1", STATE_OFF)
 
-                # Should transition to occupied
-                mock_set_state.assert_called_once_with(STATE_ON)
+            # Should transition to occupied
+            mock_set_state.assert_called_once_with(STATE_ON)
 
     def test_process_motion_state_detected(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -381,14 +390,16 @@ class TestWaspInBoxSensor:
         """Test setting state to occupied."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
-        with patch.object(entity, "_start_max_duration_timer") as mock_start_timer:
-            with patch.object(entity, "async_write_ha_state") as mock_write_state:
-                entity._set_state(STATE_ON)
+        with (
+            patch.object(entity, "_start_max_duration_timer") as mock_start_timer,
+            patch.object(entity, "async_write_ha_state") as mock_write_state,
+        ):
+            entity._set_state(STATE_ON)
 
-                assert entity._attr_is_on is True
-                assert entity._last_occupied_time is not None
-                mock_start_timer.assert_called_once()
-                mock_write_state.assert_called_once()
+            assert entity._attr_is_on is True
+            assert entity._last_occupied_time is not None
+            mock_start_timer.assert_called_once()
+            mock_write_state.assert_called_once()
 
     def test_set_state_to_unoccupied(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -401,15 +412,17 @@ class TestWaspInBoxSensor:
         entity._last_occupied_time = dt_util.utcnow()
         entity._remove_timer = Mock()
 
-        with patch.object(entity, "async_write_ha_state") as mock_write_state:
-            with patch.object(entity, "_cancel_max_duration_timer") as mock_cancel:
-                entity._set_state(STATE_OFF)
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write_state,
+            patch.object(entity, "_cancel_max_duration_timer") as mock_cancel,
+        ):
+            entity._set_state(STATE_OFF)
 
-                assert entity._attr_is_on is False
-                # The implementation doesn't clear _last_occupied_time in _set_state
-                # It only clears it when the state actually changes to OFF
-                mock_cancel.assert_called_once()
-                mock_write_state.assert_called_once()
+            assert entity._attr_is_on is False
+            # The implementation doesn't clear _last_occupied_time in _set_state
+            # It only clears it when the state actually changes to OFF
+            mock_cancel.assert_called_once()
+            mock_write_state.assert_called_once()
 
     def test_start_max_duration_timer(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -533,8 +546,8 @@ class TestWaspInBoxIntegration:
         entity.entity_id = "binary_sensor.test_wasp_in_box"
 
         # Initialize with known state
-        entity._door_state = STATE_OFF  # type: ignore[attr-defined]
-        entity._motion_state = STATE_OFF  # type: ignore[attr-defined]
+        entity._door_state = STATE_OFF
+        entity._motion_state = STATE_OFF
         entity._attr_is_on = False
 
         return entity
@@ -657,12 +670,13 @@ class TestWaspInBoxIntegration:
         entity = comprehensive_wasp_sensor
 
         # Mock an error during state writing
-        with patch.object(
-            entity, "async_write_ha_state", side_effect=Exception("Write failed")
+        with (
+            patch.object(
+                entity, "async_write_ha_state", side_effect=Exception("Write failed")
+            ),
+            pytest.raises(Exception, match="Write failed"),
         ):
-            # The _set_state method doesn't handle exceptions, so it will raise
-            with pytest.raises(Exception, match="Write failed"):
-                entity._set_state(STATE_ON)
+            entity._set_state(STATE_ON)
 
         # State should still be updated internally even if write fails
         assert entity._attr_is_on is True

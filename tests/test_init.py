@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 
+# ruff: noqa: SLF001
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 

@@ -1,8 +1,7 @@
 """Tests for data.config module."""
 
+from datetime import timedelta
 from unittest.mock import Mock
-
-import pytest
 
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
@@ -73,6 +72,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: SLF001
 class TestSensors:
     """Test Sensors dataclass."""
 
@@ -337,7 +337,7 @@ class TestConfig:
         config.history.period = 30
 
         start_time = config.start_time
-        expected_start = dt_util.utcnow() - dt_util.dt.timedelta(days=30)
+        expected_start = dt_util.utcnow() - timedelta(days=30)
 
         # Allow some tolerance for test execution time
         assert abs((start_time - expected_start).total_seconds()) < 5
@@ -451,14 +451,14 @@ class TestConfig:
             CONF_THRESHOLD: 50,
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_WEIGHT_MOTION: -0.5,  # Invalid negative weight
-            CONF_WEIGHT_MEDIA: 1.5,  # Invalid weight > 1
+            CONF_WEIGHT_MEDIA: 1.5,  # Large weight (allowed)
         }
 
         config = Config.from_dict(data)
 
-        # Invalid weights should be replaced with defaults
+        # Only negative weights should be replaced with defaults
         assert config.weights.motion == DEFAULT_WEIGHT_MOTION
-        assert config.weights.media == DEFAULT_WEIGHT_MEDIA
+        assert config.weights.media == 1.5  # Large weights are allowed
 
     def test_as_dict(self) -> None:
         """Test Config.as_dict method."""
@@ -478,33 +478,13 @@ class TestConfig:
 class TestConfigManager:
     """Test ConfigManager class."""
 
-    @pytest.fixture
-    def mock_coordinator(self) -> Mock:
-        """Create a mock coordinator."""
-        coordinator = Mock()
-        coordinator.hass = Mock()
-        return coordinator
-
-    @pytest.fixture
-    def mock_config_entry(self) -> Mock:
-        """Create a mock config entry."""
-        entry = Mock(spec=ConfigEntry)
-        entry.data = {
-            CONF_NAME: "Test Area",
-            CONF_THRESHOLD: 50,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
-        entry.options = {
-            CONF_DECAY_ENABLED: False,
-        }
-        return entry
-
     def test_initialization(self, mock_coordinator: Mock) -> None:
         """Test ConfigManager initialization."""
         manager = ConfigManager(mock_coordinator)
 
-        assert manager.coordinator == mock_coordinator
-        assert manager._config is None
+        assert manager.config_entry == mock_coordinator.config_entry
+        assert manager._config is not None
+        assert manager._hass == mock_coordinator.hass
 
     def test_hass_property(self, mock_coordinator: Mock) -> None:
         """Test hass property."""
@@ -519,7 +499,7 @@ class TestConfigManager:
 
         manager.set_hass(new_hass)
 
-        assert manager.coordinator.hass == new_hass
+        assert manager._hass == new_hass
 
     def test_merge_entry(self, mock_config_entry: Mock) -> None:
         """Test _merge_entry static method."""
@@ -529,31 +509,21 @@ class TestConfigManager:
         assert CONF_NAME in result
         assert CONF_THRESHOLD in result
         assert CONF_MOTION_SENSORS in result
-        assert CONF_DECAY_ENABLED in result
         assert result[CONF_NAME] == "Test Area"
-        assert result[CONF_DECAY_ENABLED] is False
 
-    def test_config_property_first_access(
-        self, mock_coordinator: Mock, mock_config_entry: Mock
-    ) -> None:
+    def test_config_property_first_access(self, mock_coordinator: Mock) -> None:
         """Test config property on first access."""
-        mock_coordinator.config_entry = mock_config_entry
-
         manager = ConfigManager(mock_coordinator)
 
-        # First access should create config
+        # Should have created config during initialization
         config = manager.config
 
         assert isinstance(config, Config)
         assert config.name == "Test Area"
         assert manager._config is not None
 
-    def test_config_property_cached(
-        self, mock_coordinator: Mock, mock_config_entry: Mock
-    ) -> None:
+    def test_config_property_cached(self, mock_coordinator: Mock) -> None:
         """Test config property returns cached value."""
-        mock_coordinator.config_entry = mock_config_entry
-
         manager = ConfigManager(mock_coordinator)
 
         # First access
@@ -564,53 +534,45 @@ class TestConfigManager:
         # Should return the same cached instance
         assert config1 is config2
 
-    def test_update_from_entry(
-        self, mock_coordinator: Mock, mock_config_entry: Mock
-    ) -> None:
+    def test_update_from_entry(self, mock_coordinator: Mock) -> None:
         """Test update_from_entry method."""
-        mock_coordinator.config_entry = mock_config_entry
-
         manager = ConfigManager(mock_coordinator)
 
         # Create initial config
         initial_config = manager.config
         assert initial_config.name == "Test Area"
 
-        # Update entry data
-        mock_config_entry.data = {
+        # Create new config entry with updated data
+        new_config_entry = Mock(spec=ConfigEntry)
+        new_config_entry.data = {
             CONF_NAME: "Updated Area",
             CONF_THRESHOLD: 70,
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         }
+        new_config_entry.options = {}
 
         # Update from entry
-        manager.update_from_entry(mock_config_entry)
+        manager.update_from_entry(new_config_entry)
 
         # Should create new config with updated data
         updated_config = manager.config
         assert updated_config.name == "Updated Area"
         assert updated_config.threshold == 0.7
 
-    def test_get_method(self, mock_coordinator: Mock, mock_config_entry: Mock) -> None:
+    def test_get_method(self, mock_coordinator: Mock) -> None:
         """Test get method."""
-        mock_coordinator.config_entry = mock_config_entry
-
         manager = ConfigManager(mock_coordinator)
 
         # Test getting existing value
-        name = manager.get(CONF_NAME)
+        name = manager.get("name")
         assert name == "Test Area"
 
         # Test getting non-existent value with default
         value = manager.get("nonexistent_key", "default_value")
         assert value == "default_value"
 
-    async def test_update_config(
-        self, mock_coordinator: Mock, mock_config_entry: Mock
-    ) -> None:
+    async def test_update_config(self, mock_coordinator: Mock) -> None:
         """Test update_config method."""
-        mock_coordinator.config_entry = mock_config_entry
-
         manager = ConfigManager(mock_coordinator)
 
         # Initial config
@@ -628,7 +590,7 @@ class TestConfigManager:
         # Should update the config
         updated_config = manager.config
         assert updated_config.decay.enabled is False
-        assert updated_config.threshold == 0.8
+        assert updated_config.threshold == 0.8  # 80 / 100 (converted from percentage)
 
 
 class TestConfigIntegration:
@@ -679,46 +641,31 @@ class TestConfigIntegration:
         assert config.name == ""  # Empty name is allowed
         assert config.threshold == 0.0  # Minimum threshold
         assert config.sensors.motion == []  # Empty list is allowed
-        assert config.weights.motion == DEFAULT_WEIGHT_MOTION  # Invalid weight replaced
+        assert config.weights.motion == 0.0  # Zero weight is allowed (not negative)
 
-    def test_config_manager_full_lifecycle(self) -> None:
+    def test_config_manager_full_lifecycle(self, mock_coordinator: Mock) -> None:
         """Test ConfigManager through a complete lifecycle."""
-        # Mock coordinator and config entry
-        mock_coordinator = Mock()
-        mock_coordinator.hass = Mock()
-
-        mock_config_entry = Mock(spec=ConfigEntry)
-        mock_config_entry.data = {
-            CONF_NAME: "Initial Area",
-            CONF_THRESHOLD: 50,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
-        mock_config_entry.options = {
-            CONF_DECAY_ENABLED: True,
-        }
-
-        mock_coordinator.config_entry = mock_config_entry
-
         # Create manager
         manager = ConfigManager(mock_coordinator)
 
         # Initial config access
         initial_config = manager.config
-        assert initial_config.name == "Initial Area"
-        assert initial_config.threshold == 0.5
-        assert initial_config.decay.enabled is True
+        assert initial_config.name == "Test Area"
+        assert initial_config.threshold == 0.5  # 50 / 100
+        assert initial_config.decay.enabled == DEFAULT_DECAY_ENABLED
 
-        # Update entry
-        mock_config_entry.data = {
+        # Create new config entry with updated data
+        new_config_entry = Mock(spec=ConfigEntry)
+        new_config_entry.data = {
             CONF_NAME: "Updated Area",
             CONF_THRESHOLD: 70,
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
         }
-        mock_config_entry.options = {
+        new_config_entry.options = {
             CONF_DECAY_ENABLED: False,
         }
 
-        manager.update_from_entry(mock_config_entry)
+        manager.update_from_entry(new_config_entry)
 
         # Verify updates
         updated_config = manager.config

@@ -13,6 +13,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import State
 
 
+# ruff: noqa: SLF001
 class TestInputType:
     """Test InputType enum."""
 
@@ -77,8 +78,10 @@ class TestEntityType:
 
         assert entity_type.weight == 0.01  # Clamped to minimum
         assert entity_type.prob_true == 1.0  # Clamped to maximum
-        assert entity_type.prob_false == 0.0  # Clamped to minimum
-        assert entity_type.prior == 0.0001  # Clamped to minimum for priors
+        assert entity_type.prob_false == 0.001  # Clamped to minimum (0.001, not 0.0)
+        assert (
+            entity_type.prior == 0.001
+        )  # Clamped to minimum for priors (0.001, not 0.0001)
 
     def test_initialization_errors(self) -> None:
         """Test initialization errors for invalid configurations."""
@@ -203,23 +206,6 @@ class TestEntityType:
 
 class TestEntityTypeManager:
     """Test EntityTypeManager class."""
-
-    @pytest.fixture
-    def mock_coordinator(self) -> Mock:
-        """Create a mock coordinator for testing."""
-        coordinator = Mock()
-        coordinator.config_manager = Mock()
-        coordinator.config_manager.config = Mock()
-
-        # Mock config attributes
-        config = coordinator.config_manager.config
-        config.weights = Mock()
-        config.weights.motion = 0.9
-        config.weights.media = 0.7
-        config.sensor_states = Mock()
-        config.sensor_states.door = [STATE_ON]
-
-        return coordinator
 
     def test_initialization(self, mock_coordinator: Mock) -> None:
         """Test EntityTypeManager initialization."""

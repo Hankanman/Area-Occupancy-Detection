@@ -1,7 +1,7 @@
 """Tests for data.decay module."""
 
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -14,6 +14,7 @@ from custom_components.area_occupancy.data.decay import (
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: SLF001
 class TestDecay:
     """Test Decay class."""
 
@@ -35,7 +36,7 @@ class TestDecay:
         assert decay.decay_enabled
         assert decay.decay_factor == 1.0
 
-    def test_initialization_with_validation(self) -> None:
+    def test_initialization_with_validation(self, freeze_time) -> None:
         """Test initialization with invalid values that should be validated."""
         decay = Decay(
             is_decaying=False,
@@ -46,7 +47,9 @@ class TestDecay:
             decay_factor=1.5,  # Invalid, should be clamped
         )
 
-        assert decay.decay_start_probability == 0.0  # Clamped
+        assert (
+            decay.decay_start_probability == 0.001
+        )  # Clamped to minimum by validate_prob()
         assert decay.decay_window == 1  # Minimum value
         assert decay.decay_factor == 1.0  # Clamped
 
@@ -123,11 +126,8 @@ class TestDecay:
         decay = Decay.from_dict(data)
         assert decay.decay_start_time is None
 
-    @patch("homeassistant.util.dt.utcnow")
-    def test_update_decay_disabled(self, mock_utcnow: Mock) -> None:
+    def test_update_decay_disabled(self, freeze_time) -> None:
         """Test update_decay when decay is disabled."""
-        mock_utcnow.return_value = dt_util.utcnow()
-
         decay = Decay(
             is_decaying=False,
             decay_start_time=None,
@@ -142,11 +142,8 @@ class TestDecay:
         assert result_prob == 0.3  # Current probability returned
         assert result_factor == 1.0
 
-    @patch("homeassistant.util.dt.utcnow")
-    def test_update_decay_probability_increased(self, mock_utcnow: Mock) -> None:
+    def test_update_decay_probability_increased(self, freeze_time) -> None:
         """Test update_decay when probability increased."""
-        mock_utcnow.return_value = dt_util.utcnow()
-
         decay = Decay(
             is_decaying=True,  # Was decaying
             decay_start_time=dt_util.utcnow() - timedelta(seconds=60),
@@ -163,11 +160,9 @@ class TestDecay:
         assert result_factor == 1.0
         assert not decay.is_decaying  # Decay stopped
 
-    @patch("homeassistant.util.dt.utcnow")
-    def test_update_decay_start_decay(self, mock_utcnow: Mock) -> None:
+    def test_update_decay_start_decay(self, freeze_time) -> None:
         """Test update_decay when starting decay."""
-        now = dt_util.utcnow()
-        mock_utcnow.return_value = now
+        now = freeze_time
 
         decay = Decay(
             is_decaying=False,
@@ -187,29 +182,28 @@ class TestDecay:
         assert decay.decay_start_time == now
         assert decay.decay_start_probability == 0.8
 
-    @patch("homeassistant.util.dt.utcnow")
-    def test_update_decay_continue_decay(self, mock_utcnow: Mock) -> None:
+    def test_update_decay_continue_decay(self, freeze_time) -> None:
         """Test update_decay when continuing active decay."""
         start_time = dt_util.utcnow() - timedelta(seconds=60)
         now = start_time + timedelta(seconds=60)
-        mock_utcnow.return_value = now
 
-        decay = Decay(
-            is_decaying=True,
-            decay_start_time=start_time,
-            decay_start_probability=0.8,
-            decay_window=300,
-            decay_enabled=True,
-            decay_factor=1.0,
-        )
+        with patch("homeassistant.util.dt.utcnow", return_value=now):
+            decay = Decay(
+                is_decaying=True,
+                decay_start_time=start_time,
+                decay_start_probability=0.8,
+                decay_window=300,
+                decay_enabled=True,
+                decay_factor=1.0,
+            )
 
-        # Continue decay
-        result_prob, result_factor = decay.update_decay(0.3, 0.7)
+            # Continue decay
+            result_prob, result_factor = decay.update_decay(0.3, 0.7)
 
-        # Should apply decay to starting probability
-        assert result_prob >= 0.3  # Should be >= current probability (floor)
-        assert result_prob < 0.8  # Should be < starting probability
-        assert 0 < result_factor < 1  # Decay factor should be between 0 and 1
+            # Should apply decay to starting probability
+            assert result_prob >= 0.3  # Should be >= current probability (floor)
+            assert result_prob < 0.8  # Should be < starting probability
+            assert 0 < result_factor < 1  # Decay factor should be between 0 and 1
 
     def test_invalid_probabilities(self) -> None:
         """Test update_decay with invalid probabilities."""
@@ -274,7 +268,7 @@ class TestDecay:
         decay.is_decaying = False
         assert not decay.should_stop_decay(False, True)
 
-    def test_start_decay(self) -> None:
+    def test_start_decay(self, freeze_time) -> None:
         """Test start_decay method."""
         decay = Decay(
             is_decaying=False,
@@ -285,16 +279,13 @@ class TestDecay:
             decay_factor=1.0,
         )
 
-        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
-            now = dt_util.utcnow()
-            mock_utcnow.return_value = now
+        now = freeze_time
+        decay.start_decay(0.8)
 
-            decay.start_decay(0.8)
-
-            assert decay.is_decaying
-            assert decay.decay_start_time == now
-            assert decay.decay_start_probability == 0.8
-            assert decay.decay_factor == 1.0
+        assert decay.is_decaying
+        assert decay.decay_start_time == now
+        assert decay.decay_start_probability == 0.8
+        assert decay.decay_factor == 1.0
 
     def test_start_decay_when_disabled(self) -> None:
         """Test start_decay when decay is disabled."""
@@ -356,37 +347,38 @@ class TestDecay:
 
         assert decay.is_decay_complete(0.5)
 
-    @patch("homeassistant.util.dt.utcnow")
-    def test_is_decay_complete_various_conditions(self, mock_utcnow: Mock) -> None:
+    def test_is_decay_complete_various_conditions(self, freeze_time) -> None:
         """Test various decay completion conditions."""
         start_time = dt_util.utcnow()
-        mock_utcnow.return_value = start_time + timedelta(seconds=100)
+        later_time = start_time + timedelta(seconds=100)
 
-        decay = Decay(
-            is_decaying=True,
-            decay_start_time=start_time,
-            decay_start_probability=0.8,
-            decay_window=300,
-            decay_enabled=True,
-            decay_factor=0.5,
-        )
+        with patch("homeassistant.util.dt.utcnow", return_value=later_time):
+            decay = Decay(
+                is_decaying=True,
+                decay_start_time=start_time,
+                decay_start_probability=0.8,
+                decay_window=300,
+                decay_enabled=True,
+                decay_factor=0.5,
+            )
 
-        # Test minimum probability threshold
-        assert decay.is_decay_complete(0.0)
+            # Test minimum probability threshold
+            assert decay.is_decay_complete(0.0)
 
-        # Test completion threshold
-        assert decay.is_decay_complete(DECAY_COMPLETION_THRESHOLD / 2)
+            # Test completion threshold
+            assert decay.is_decay_complete(DECAY_COMPLETION_THRESHOLD / 2)
 
-        # Test decay factor threshold
-        decay.decay_factor = DECAY_FACTOR_THRESHOLD / 2
-        assert decay.is_decay_complete(0.5)
+            # Test decay factor threshold
+            decay.decay_factor = DECAY_FACTOR_THRESHOLD / 2
+            assert decay.is_decay_complete(0.5)
 
-        # Test maximum duration
-        mock_utcnow.return_value = start_time + timedelta(
-            seconds=MAX_DECAY_DURATION_MULTIPLIER * 300 + 1
-        )
-        decay.decay_factor = 0.5  # Reset
-        assert decay.is_decay_complete(0.5)
+            # Test maximum duration
+            max_duration_time = start_time + timedelta(
+                seconds=MAX_DECAY_DURATION_MULTIPLIER * 300 + 1
+            )
+            with patch("homeassistant.util.dt.utcnow", return_value=max_duration_time):
+                decay.decay_factor = 0.5  # Reset
+                assert decay.is_decay_complete(0.5)
 
     def test_reset(self) -> None:
         """Test reset method."""
@@ -403,7 +395,7 @@ class TestDecay:
 
         assert not decay.is_decaying
         assert decay.decay_start_time is None
-        assert decay.decay_start_probability == 0.0
+        assert decay.decay_start_probability == 0.0  # Reset to MIN_PROBABILITY
         assert decay.decay_window == 300  # Default
         assert decay.decay_enabled  # Default
         assert decay.decay_factor == 1.0

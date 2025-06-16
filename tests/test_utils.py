@@ -14,6 +14,7 @@ from custom_components.area_occupancy.utils import (
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: SLF001
 class TestValidateProb:
     """Test validate_prob function."""
 

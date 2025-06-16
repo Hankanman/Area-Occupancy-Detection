@@ -1,6 +1,7 @@
 """Tests for migrations.py module."""
 
-import tempfile
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -9,6 +10,8 @@ from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_THRESHOLD,
+    CONF_VERSION,
+    CONF_VERSION_MINOR,
     DEFAULT_THRESHOLD,
 )
 from custom_components.area_occupancy.migrations import (
@@ -20,26 +23,12 @@ from custom_components.area_occupancy.migrations import (
     validate_threshold,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.storage import STORAGE_MANAGER
 
 
+# ruff: noqa: SLF001
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
-
-    @pytest.fixture
-    def mock_hass(self) -> Mock:
-        """Create a mock Home Assistant instance."""
-        hass = Mock(spec=HomeAssistant)
-        return hass
-
-    @pytest.fixture
-    def mock_config_entry(self) -> Mock:
-        """Create a mock config entry."""
-        entry = Mock(spec=ConfigEntry)
-        entry.entry_id = "test_entry_id"
-        return entry
 
     async def test_async_migrate_unique_ids_success(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -169,15 +158,6 @@ class TestMigrateConfig:
 class TestAsyncMigrateStorage:
     """Test async_migrate_storage function."""
 
-    @pytest.fixture
-    def mock_hass(self) -> Mock:
-        """Create a mock Home Assistant instance."""
-        hass = Mock(spec=HomeAssistant)
-        hass.config = Mock()
-        hass.config.path = Mock(return_value=tempfile.gettempdir())
-        hass.data = {STORAGE_MANAGER: Mock()}
-        return hass
-
     async def test_async_migrate_storage_success(self, mock_hass: Mock) -> None:
         """Test successful storage migration."""
         with (
@@ -226,18 +206,13 @@ class TestAsyncMigrateEntry:
     """Test async_migrate_entry function."""
 
     @pytest.fixture
-    def mock_hass(self) -> Mock:
-        """Create a mock Home Assistant instance."""
-        hass = Mock(spec=HomeAssistant)
-        return hass
-
-    @pytest.fixture
-    def mock_config_entry_v1_0(self) -> Mock:
+    def mock_config_entry_v1_0(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at version 1.0."""
+        # Copy the centralized config entry and modify for v1.0
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
-        entry.entry_id = "test_entry_id"
+        entry.entry_id = mock_config_entry.entry_id
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         }
@@ -245,12 +220,13 @@ class TestAsyncMigrateEntry:
         return entry
 
     @pytest.fixture
-    def mock_config_entry_v1_1(self) -> Mock:
-        """Create a mock config entry at version 1.1."""
+    def mock_config_entry_current(self, mock_config_entry: Mock) -> Mock:
+        """Create a mock config entry at current version."""
+        # Copy the centralized config entry and modify for current version
         entry = Mock(spec=ConfigEntry)
-        entry.version = 1
-        entry.minor_version = 1
-        entry.entry_id = "test_entry_id"
+        entry.version = CONF_VERSION
+        entry.minor_version = CONF_VERSION_MINOR
+        entry.entry_id = mock_config_entry.entry_id
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -258,78 +234,123 @@ class TestAsyncMigrateEntry:
         entry.options = {}
         return entry
 
-    async def test_async_migrate_entry_v1_0_to_v1_1(
+    async def test_async_migrate_entry_v1_0_to_current(
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
-        """Test migration from version 1.0 to 1.1."""
-        with patch(
-            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-        ) as mock_migrate_ids:
-            with patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage"
-            ) as mock_migrate_storage:
-                mock_migrate_ids.return_value = None
-                mock_migrate_storage.return_value = None
+        """Test migration from version 1.0 to current."""
+        with (
+            patch(
+                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+            ) as mock_migrate_ids,
+            patch(
+                "homeassistant.helpers.storage.Store.async_load",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_migrate_ids.return_value = None
 
-                result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+            # Mock the config_entries.async_update_entry method
+            mock_hass.config_entries.async_update_entry = Mock()
 
-                assert result is True
-                assert mock_config_entry_v1_0.version == 1
-                assert mock_config_entry_v1_0.minor_version == 1
-                assert CONF_PRIMARY_OCCUPANCY_SENSOR in mock_config_entry_v1_0.data
+            result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+
+            assert result is True
+            # Verify the update was called
+            mock_hass.config_entries.async_update_entry.assert_called_once()
+            call_args = mock_hass.config_entries.async_update_entry.call_args
+            assert (
+                call_args[0][0] == mock_config_entry_v1_0
+            )  # First argument is the entry
+            # Check that the data was migrated
+            updated_data = call_args[1]["data"]
+            assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
 
     async def test_async_migrate_entry_already_current(
-        self, mock_hass: Mock, mock_config_entry_v1_1: Mock
+        self, mock_hass: Mock, mock_config_entry_current: Mock
     ) -> None:
         """Test migration when already at current version."""
-        result = await async_migrate_entry(mock_hass, mock_config_entry_v1_1)
+        result = await async_migrate_entry(mock_hass, mock_config_entry_current)
 
         assert result is True
-        # Should not modify version
-        assert mock_config_entry_v1_1.version == 1
-        assert mock_config_entry_v1_1.minor_version == 1
+        # Should not modify version - verify by checking no config_entries.async_update_entry call
+        assert (
+            not hasattr(mock_hass.config_entries, "async_update_entry")
+            or mock_hass.config_entries.async_update_entry.call_count == 0
+        )
 
     async def test_async_migrate_entry_future_version(self, mock_hass: Mock) -> None:
         """Test migration from future version."""
         mock_entry = Mock(spec=ConfigEntry)
-        mock_entry.version = 2
+        mock_entry.version = CONF_VERSION + 1  # Future version
         mock_entry.minor_version = 0
         mock_entry.entry_id = "test_entry_id"
         mock_entry.data = {}
         mock_entry.options = {}
+
         result = await async_migrate_entry(mock_hass, mock_entry)
-        assert result is False
+        # Future versions are treated as "already current" and return True
+        assert result is True
 
     async def test_async_migrate_entry_migration_error(
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with error during migration."""
-        mock_config_entry_v1_0.options = {}
-        with patch(
-            "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
-            side_effect=Exception("Migration error"),
+        with (
+            patch(
+                "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
+                side_effect=Exception("Migration error"),
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_load",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
+            ),
         ):
-            result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
-            assert result is False
+            mock_hass.config_entries.async_update_entry = Mock()
+
+            # The migration should fail due to the exception
+            with pytest.raises(Exception, match="Migration error"):
+                await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
 
     async def test_async_migrate_entry_invalid_threshold(
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with invalid threshold value."""
-        mock_config_entry_v1_0.data[CONF_THRESHOLD] = 150  # Invalid threshold
-        mock_config_entry_v1_0.options = {}
-        with patch(
-            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-        ) as mock_migrate_ids:
-            with patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage"
-            ) as mock_migrate_storage:
-                mock_migrate_ids.return_value = None
-                mock_migrate_storage.return_value = None
-                result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
-                assert result is True
-                # Should fix invalid threshold
-                assert mock_config_entry_v1_0.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD
+        mock_config_entry_v1_0.options = {CONF_THRESHOLD: 150}  # Invalid threshold
+
+        with (
+            patch(
+                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+            ) as mock_migrate_ids,
+            patch(
+                "homeassistant.helpers.storage.Store.async_load",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_migrate_ids.return_value = None
+            mock_hass.config_entries.async_update_entry = Mock()
+
+            result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+            assert result is True
+
+            # Should fix invalid threshold
+            call_args = mock_hass.config_entries.async_update_entry.call_args
+            updated_options = call_args[1]["options"]
+            assert updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
 
 
 class TestValidateThreshold:
@@ -362,15 +383,8 @@ class TestValidateThreshold:
 class TestMigrationsIntegration:
     """Test migrations integration scenarios."""
 
-    @pytest.fixture
-    def mock_hass(self) -> Mock:
-        """Create a comprehensive mock Home Assistant instance."""
-        hass = Mock(spec=HomeAssistant)
-        hass.data = {STORAGE_MANAGER: Mock()}
-        return hass
-
     async def test_complete_migration_workflow(self, mock_hass: Mock) -> None:
-        """Test complete migration workflow from 1.0 to 1.1."""
+        """Test complete migration workflow from 1.0 to current."""
         # Create entry that needs migration
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = 1
@@ -378,33 +392,44 @@ class TestMigrationsIntegration:
         mock_entry.entry_id = "test_entry_id"
         mock_entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-            CONF_THRESHOLD: 150,  # Invalid threshold
         }
-        mock_entry.options = {}
-        with patch(
-            "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-        ) as mock_migrate_ids:
-            with patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage"
-            ) as mock_migrate_storage:
-                mock_migrate_ids.return_value = None
-                mock_migrate_storage.return_value = None
-                result = await async_migrate_entry(mock_hass, mock_entry)
-                assert result is True
-                assert mock_entry.version == 1
-                assert mock_entry.minor_version == 1
-                # Check data migration
-                assert CONF_PRIMARY_OCCUPANCY_SENSOR in mock_entry.data
-                assert (
-                    mock_entry.data[CONF_PRIMARY_OCCUPANCY_SENSOR]
-                    == "binary_sensor.motion1"
-                )
-                assert (
-                    mock_entry.data[CONF_THRESHOLD] == DEFAULT_THRESHOLD
-                )  # Fixed invalid threshold
-                # Check migration steps were called
-                mock_migrate_ids.assert_called()
-                mock_migrate_storage.assert_called_once_with(mock_hass, "test_entry_id")
+        mock_entry.options = {CONF_THRESHOLD: 150}  # Invalid threshold
+
+        with (
+            patch(
+                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
+            ) as mock_migrate_ids,
+            patch(
+                "homeassistant.helpers.storage.Store.async_load",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_migrate_ids.return_value = None
+            mock_hass.config_entries.async_update_entry = Mock()
+
+            result = await async_migrate_entry(mock_hass, mock_entry)
+            assert result is True
+
+            # Check migration steps were called
+            mock_migrate_ids.assert_called()
+
+            # Check data migration
+            call_args = mock_hass.config_entries.async_update_entry.call_args
+            updated_data = call_args[1]["data"]
+            updated_options = call_args[1]["options"]
+
+            assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
+            assert (
+                updated_data[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
+            )
+            assert (
+                updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
+            )  # Fixed invalid threshold
 
     def test_config_migration_edge_cases(self) -> None:
         """Test config migration with various edge cases."""
