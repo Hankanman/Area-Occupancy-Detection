@@ -681,6 +681,87 @@ class TestConfigFlowIntegration:
             assert result2.get("type") == FlowResultType.CREATE_ENTRY
             assert result2.get("data") == user_input
 
+    async def test_options_flow_adds_name_for_validation(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test that options flow adds name from config entry for validation."""
+        # Set up a config entry with a name
+        mock_config_entry.data = {CONF_NAME: "Test Area"}
+        mock_config_entry.options = {}
+
+        # Create the options flow manually without triggering HA setup
+        flow = Mock(spec=AreaOccupancyOptionsFlow)
+        flow.config_entry = mock_config_entry
+        flow._data = {}
+        flow.hass = mock_hass
+
+        # Bind the actual method we want to test
+        flow.async_step_init = AreaOccupancyOptionsFlow.async_step_init.__get__(
+            flow, AreaOccupancyOptionsFlow
+        )
+
+        # Bind the validate method from BaseOccupancyFlow
+        flow._validate_config = BaseOccupancyFlow._validate_config.__get__(
+            flow, BaseOccupancyFlow
+        )
+
+        # Mock the parent class methods that return flow results
+        flow.async_show_form = Mock(
+            return_value={"type": FlowResultType.FORM, "step_id": "init"}
+        )
+        flow.async_create_entry = Mock(
+            return_value={"type": FlowResultType.CREATE_ENTRY, "title": "", "data": {}}
+        )
+
+        # Mock the entity registry
+        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
+            mock_registry = Mock()
+            mock_registry.entities = Mock()
+            mock_registry.entities.values = Mock(return_value=[])
+            mock_er_get.return_value = mock_registry
+
+            # Mock states
+            mock_hass.states = Mock()
+            mock_hass.states.async_entity_ids = Mock(return_value=[])
+            mock_hass.states.get = Mock(return_value=None)
+
+            # Submit user input without name (as would happen in options flow)
+            user_input = {
+                "motion": {
+                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                },
+                "doors": {},
+                "windows": {},
+                "lights": {},
+                "media": {},
+                "appliances": {},
+                "environmental": {},
+                "wasp_in_box": {},
+                "parameters": {},
+            }
+
+            # Capture the data passed to async_create_entry to verify our fix
+            captured_data = {}
+
+            def capture_create_entry(title="", data=None):
+                captured_data.update(data or {})
+                return {
+                    "type": FlowResultType.CREATE_ENTRY,
+                    "title": title,
+                    "data": data,
+                }
+
+            flow.async_create_entry = capture_create_entry
+
+            # The test should not raise a "Name is required" error
+            result = await flow.async_step_init(user_input)
+
+            # Should create entry successfully
+            assert result.get("type") == FlowResultType.CREATE_ENTRY
+            # The flattened data should include the name from config entry
+            assert captured_data.get(CONF_NAME) == "Test Area"
+
     async def test_config_flow_with_existing_entry(self, mock_hass: Mock) -> None:
         """Test config flow when entry already exists."""
         flow = AreaOccupancyConfigFlow()

@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from custom_components.area_occupancy.storage import StorageManager
-from homeassistant.util import dt as dt_util
+from homeassistant.exceptions import HomeAssistantError
 
 
 # ruff: noqa: SLF001
@@ -19,11 +19,6 @@ class TestStorageManager:
 
             # Verify instance attributes
             assert storage._coordinator == mock_coordinator
-            assert storage._initialized is False
-            assert storage._pending_save_count == 0
-            assert storage._last_data_hash is None
-            assert storage._periodic_save_tracker is None
-            assert storage._dirty is False
 
     def test_create_empty_storage(self, mock_coordinator: Mock) -> None:
         """Test creating empty storage structure."""
@@ -32,9 +27,8 @@ class TestStorageManager:
 
             result = storage.create_empty_storage()
 
-            assert "data" in result
-            assert "instances" in result["data"]
-            assert result["data"]["instances"] == {}
+            assert "instances" in result
+            assert result["instances"] == {}
             assert result["version"] == 9
             assert result["minor_version"] == 1
 
@@ -46,12 +40,9 @@ class TestStorageManager:
         ):
             storage = StorageManager(mock_coordinator)
 
-            with patch.object(
-                storage, "_start_periodic_save_timer"
-            ) as mock_start_timer:
+            with patch.object(storage, "_async_perform_cleanup") as mock_cleanup:
                 await storage.async_initialize()
-
-                mock_start_timer.assert_called_once()
+                mock_cleanup.assert_called_once()
 
     async def test_async_initialize_existing_storage(
         self, mock_coordinator: Mock
@@ -60,9 +51,7 @@ class TestStorageManager:
         existing_data = {
             "version": 9,
             "minor_version": 1,
-            "data": {
-                "instances": {"test_entry": {"entities": {}}},
-            },
+            "instances": {"test_entry": {"entities": {}}},
         }
         with (
             patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
@@ -73,44 +62,9 @@ class TestStorageManager:
         ):
             storage = StorageManager(mock_coordinator)
 
-            with patch.object(
-                storage, "_start_periodic_save_timer"
-            ) as mock_start_timer:
+            with patch.object(storage, "_async_perform_cleanup") as mock_cleanup:
                 await storage.async_initialize()
-
-                mock_start_timer.assert_called_once()
-
-    async def test_async_shutdown(self, mock_coordinator: Mock) -> None:
-        """Test async shutdown."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            # Set up some state
-            mock_tracker = Mock()
-            storage._periodic_save_tracker = mock_tracker
-            storage._dirty = True
-
-            with patch.object(storage, "_force_save_now") as mock_force_save:
-                await storage.async_shutdown()
-
-                # Should cancel timer and force save
-                mock_tracker.assert_called_once()
-                mock_force_save.assert_called_once()
-
-    async def test_handle_periodic_save(self, mock_coordinator: Mock) -> None:
-        """Test handling periodic save."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-            storage._dirty = True
-
-            with (
-                patch.object(storage, "_force_save_now") as mock_force_save,
-                patch.object(storage, "_start_periodic_save_timer") as mock_start_timer,
-            ):
-                await storage._handle_periodic_save(dt_util.utcnow())
-
-                mock_force_save.assert_called_once()
-                mock_start_timer.assert_called_once()
+                mock_cleanup.assert_called_once()
 
     async def test_async_perform_cleanup(self, mock_coordinator: Mock) -> None:
         """Test performing cleanup operations."""
@@ -119,12 +73,19 @@ class TestStorageManager:
             # Set the hass attribute that the method needs
             storage.hass = mock_coordinator.hass
 
+            # Mock config entries to return some active entries
+            mock_entry = Mock()
+            mock_entry.entry_id = "test_entry"
+            mock_coordinator.hass.config_entries.async_entries.return_value = [
+                mock_entry
+            ]
+
             with patch.object(
                 storage, "async_cleanup_orphaned_instances"
             ) as mock_cleanup:
                 await storage._async_perform_cleanup()
 
-                # Should call cleanup
+                # Should call cleanup when there are active entries
                 mock_cleanup.assert_called_once()
 
     async def test_async_remove_instance(self, mock_coordinator: Mock) -> None:
@@ -284,39 +245,10 @@ class TestStorageManager:
 
             assert result is None
 
-    def test_calculate_data_hash(self, mock_coordinator: Mock) -> None:
-        """Test calculating data hash."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            data = {"test": "data", "number": 123}
-
-            hash1 = storage._calculate_data_hash(data)
-            hash2 = storage._calculate_data_hash(data)
-            hash3 = storage._calculate_data_hash({"different": "data"})
-
-            # Same data should produce same hash
-            assert hash1 == hash2
-            # Different data should produce different hash
-            assert hash1 != hash3
-            # Hash should be string
-            assert isinstance(hash1, str)
-
-    def test_should_save_immediately_config_update(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test should_save_immediately for config updates."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            # Simulate max pending saves to trigger immediate save
-            storage._pending_save_count = 10  # MAX_PENDING_SAVES
-            assert storage._should_save_immediately() is True
-
-    async def test_async_save_instance_data_immediate(
+    async def test_async_save_instance_data(
         self, mock_coordinator: Mock, mock_entity_manager: Mock
     ) -> None:
-        """Test saving instance data immediately."""
+        """Test saving instance data."""
         with (
             patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
             patch("homeassistant.helpers.storage.Store.async_load") as mock_load,
@@ -325,123 +257,8 @@ class TestStorageManager:
             storage = StorageManager(mock_coordinator)
             mock_load.return_value = storage.create_empty_storage()
 
-            with patch.object(storage, "_should_save_immediately", return_value=True):
-                await storage.async_save_instance_data(
-                    "test_entry", mock_entity_manager, force=False
-                )
-                mock_save.assert_called_once()
-
-    async def test_async_save_instance_data_forced(
-        self, mock_coordinator: Mock, mock_entity_manager: Mock
-    ) -> None:
-        """Test saving instance data when forced."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch("homeassistant.helpers.storage.Store.async_load") as mock_load,
-            patch("homeassistant.helpers.storage.Store.async_save") as mock_save,
-        ):
-            storage = StorageManager(mock_coordinator)
-            mock_load.return_value = storage.create_empty_storage()
-
-            await storage.async_save_instance_data(
-                "test_entry", mock_entity_manager, force=True
-            )
+            await storage.async_save_instance_data("test_entry", mock_entity_manager)
             mock_save.assert_called_once()
-
-    async def test_schedule_debounced_save(self, mock_coordinator: Mock) -> None:
-        """Test scheduling debounced save."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            instance_data = {"test": "data"}
-            data_hash = "test_hash"
-
-            with patch("asyncio.create_task") as mock_create_task:
-                await storage._schedule_debounced_save(
-                    "test_entry", instance_data, data_hash
-                )
-                mock_create_task.assert_called_once()
-
-    async def test_debounced_save_worker(self, mock_coordinator: Mock) -> None:
-        """Test debounced save worker."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            instance_data = {"test": "data"}
-            data_hash = "test_hash"
-
-            with (
-                patch.object(storage, "_perform_save") as mock_perform_save,
-                patch("asyncio.sleep"),  # Skip the actual sleep
-            ):
-                await storage._debounced_save_worker(
-                    "test_entry", instance_data, data_hash
-                )
-
-                # Should perform save
-                mock_perform_save.assert_called_once()
-
-    async def test_perform_save_data_changed(self, mock_coordinator: Mock) -> None:
-        """Test performing save when data has changed."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch("homeassistant.helpers.storage.Store.async_load") as mock_load,
-            patch("homeassistant.helpers.storage.Store.async_save") as mock_save,
-        ):
-            storage = StorageManager(mock_coordinator)
-            mock_load.return_value = storage.create_empty_storage()
-
-            instance_data = {"test": "data"}
-            data_hash = "new_hash"
-
-            # Set different last hash
-            storage._last_data_hash = "old_hash"
-
-            await storage._perform_save("test_entry", instance_data, data_hash)
-
-            # Should save
-            mock_save.assert_called_once()
-            assert storage._last_data_hash == data_hash
-
-    async def test_perform_save_data_unchanged(self, mock_coordinator: Mock) -> None:
-        """Test performing save when data is unchanged."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch("homeassistant.helpers.storage.Store.async_load") as mock_load,
-            patch("homeassistant.helpers.storage.Store.async_save") as mock_save,
-        ):
-            storage = StorageManager(mock_coordinator)
-            mock_load.return_value = storage.create_empty_storage()
-
-            instance_data = {"test": "data"}
-            data_hash = "same_hash"
-
-            # Set same last hash
-            storage._last_data_hash = "same_hash"
-
-            await storage._perform_save("test_entry", instance_data, data_hash)
-
-            # Should still save (the method always saves)
-            mock_save.assert_called_once()
-
-    async def test_async_reset(self, mock_coordinator: Mock) -> None:
-        """Test resetting storage."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch("homeassistant.helpers.storage.Store.async_save") as mock_save,
-        ):
-            storage = StorageManager(mock_coordinator)
-
-            # Setup some state
-            storage._last_data_hash = "hash"
-            storage._dirty = True
-
-            await storage.async_reset()
-
-            # Should reset state
-            assert storage._last_data_hash is None
-            assert storage._dirty is False
-            mock_save.assert_called_once_with({})
 
     async def test_async_load_with_compatibility_check_compatible(
         self, mock_coordinator: Mock
@@ -453,11 +270,8 @@ class TestStorageManager:
             # Setup compatible data
             compatible_data = {"entities": {}}
 
-            with (
-                patch.object(
-                    storage, "async_load_instance_data", return_value=compatible_data
-                ),
-                patch.object(storage, "_validate_storage_format", return_value=True),
+            with patch.object(
+                storage, "async_load_instance_data", return_value=compatible_data
             ):
                 (
                     result,
@@ -502,75 +316,12 @@ class TestStorageManager:
                 assert result is None
                 assert needs_migration is False
 
-    def test_validate_storage_format_valid(self, mock_coordinator: Mock) -> None:
-        """Test validating valid storage format."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            valid_data = {
-                "entities": {
-                    "test_entity": {
-                        "entity_id": "test_entity",
-                        "type": "motion",
-                        "probability": 0.5,
-                        "prior": {"prior": 0.3},
-                        "decay": {"decay_factor": 1.0},
-                    }
-                }
-            }
-
-            assert storage._validate_storage_format(valid_data) is True
-
-    def test_validate_storage_format_invalid(self, mock_coordinator: Mock) -> None:
-        """Test validating invalid storage format."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            invalid_data = {
-                "version": 1,
-                # Missing required fields
-            }
-
-            assert storage._validate_storage_format(invalid_data) is False
-
-    def test_validate_entity_format_valid(self, mock_coordinator: Mock) -> None:
-        """Test validating valid entity format."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            valid_entity = {
-                "entity_id": "test_entity",
-                "type": "motion",
-                "probability": 0.5,
-                "state": "on",
-                "is_active": True,
-                "available": True,
-                "prior": {"prior": 0.3},
-                "decay": {"decay_factor": 1.0},
-            }
-
-            assert storage._validate_entity_format("test_entity", valid_entity) is True
-
-    def test_validate_entity_format_invalid(self, mock_coordinator: Mock) -> None:
-        """Test validating invalid entity format."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            storage = StorageManager(mock_coordinator)
-
-            invalid_entity = {
-                # Missing required entity_id field
-                "probability": 0.5,
-            }
-
-            assert (
-                storage._validate_entity_format("test_entity", invalid_entity) is False
-            )
-
 
 class TestStorageManagerIntegration:
     """Test StorageManager integration scenarios."""
 
     async def test_full_storage_lifecycle(self, mock_coordinator: Mock) -> None:
-        """Test complete storage lifecycle from initialization to shutdown."""
+        """Test complete storage lifecycle from initialization."""
         with (
             patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
             patch("homeassistant.helpers.storage.Store.async_load") as mock_load,
@@ -584,13 +335,13 @@ class TestStorageManagerIntegration:
             storage.hass = mock_coordinator.hass
 
             # Initialize storage
-            with patch.object(storage, "_start_periodic_save_timer"):
+            with patch.object(storage, "_async_perform_cleanup"):
                 await storage.async_initialize()
 
             # Save some data
             mock_load.return_value = storage.create_empty_storage()
             await storage.async_save_instance_data(
-                "test_entry", mock_coordinator.entities, force=True
+                "test_entry", mock_coordinator.entities
             )
 
             # Verify save was called
@@ -598,11 +349,12 @@ class TestStorageManagerIntegration:
 
             # Test cleanup
             active_entries = {"test_entry", "another_entry"}
-            mock_load.return_value = {"instances": {"test_entry": {}, "orphaned": {}}}
+            mock_load.return_value = {
+                "version": 9,
+                "minor_version": 1,
+                "instances": {"test_entry": {}, "orphaned": {}},
+            }
             await storage.async_cleanup_orphaned_instances(active_entries)
-
-            # Test shutdown
-            await storage.async_shutdown()
 
             # Should have saved multiple times
             assert mock_save.call_count >= 2
@@ -643,7 +395,7 @@ class TestStorageManagerIntegration:
             patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
             patch(
                 "homeassistant.helpers.storage.Store.async_load",
-                return_value={"data": {"instances": {}}},
+                return_value={"instances": {}},
             ),
             patch("homeassistant.helpers.storage.Store.async_save") as mock_save,
         ):
@@ -652,8 +404,8 @@ class TestStorageManagerIntegration:
             # Mock async_save to raise an exception
             mock_save.side_effect = OSError("Save failed")
 
-            # Should not raise exception - should handle gracefully
-            with pytest.raises(OSError):  # The exception should be re-raised
+            # Should raise HomeAssistantError wrapping the OSError
+            with pytest.raises(HomeAssistantError):
                 await storage.async_save_instance_data(
-                    "test_entry", mock_coordinator.entities, force=True
+                    "test_entry", mock_coordinator.entities
                 )
