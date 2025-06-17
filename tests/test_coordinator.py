@@ -85,12 +85,10 @@ class TestAreaOccupancyCoordinator:
 
     def test_request_update_with_message(self, mock_coordinator: Mock) -> None:
         """Test request_update with debug message using centralized mock."""
-        mock_coordinator.request_update(force=True, message="Test update")
+        mock_coordinator.request_update(message="Test update")
 
         # Verify the mock was called with the right parameters
-        mock_coordinator.request_update.assert_called_once_with(
-            force=True, message="Test update"
-        )
+        mock_coordinator.request_update.assert_called_once_with(message="Test update")
 
     async def test_async_immediate_update(self, mock_coordinator: Mock) -> None:
         """Test _async_immediate_update method using centralized mock."""
@@ -184,8 +182,8 @@ class TestAreaOccupancyCoordinator:
 
     async def test_async_save_data(self, mock_coordinator: Mock) -> None:
         """Test _async_save_data method using centralized mock."""
-        await mock_coordinator._async_save_data(force=True)
-        mock_coordinator._async_save_data.assert_called_once_with(force=True)
+        await mock_coordinator._async_save_data()
+        mock_coordinator._async_save_data.assert_called_once_with()
 
     def test_calculate_entity_aggregates(
         self, mock_coordinator_with_sensors: Mock
@@ -491,7 +489,7 @@ class TestCoordinatorRealBehavior:
             coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
             coordinator.async_request_refresh = AsyncMock()
 
-            coordinator.request_update(message="Test message")
+            await coordinator.request_update(message="Test message")
 
             # Should create task for async_request_refresh
             mock_hass.async_create_task.assert_called()
@@ -511,7 +509,7 @@ class TestCoordinatorRealBehavior:
         ):
             coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
-            coordinator.request_update(force=True, message="Test force message")
+            await coordinator.request_update(message="Test force message")
 
             # Should create task for _async_immediate_update
             mock_hass.async_create_task.assert_called()
@@ -684,7 +682,7 @@ class TestCoordinatorErrorHandling:
             await coordinator.update_learned_priors()
 
             # Should save and request update when priors change
-            coordinator._async_save_data.assert_called_once_with(force=True)
+            coordinator._async_save_data.assert_called_once_with()
             coordinator.request_update.assert_called_once()
 
     async def test_async_save_data_error_forced(
@@ -721,7 +719,7 @@ class TestCoordinatorErrorHandling:
 
             # Should raise for forced saves
             with pytest.raises(HomeAssistantError):
-                await coordinator._async_save_data(force=True)
+                await coordinator._async_save_data()
 
     async def test_handle_prior_update_error(
         self, mock_hass: Mock, mock_config_entry: Mock
