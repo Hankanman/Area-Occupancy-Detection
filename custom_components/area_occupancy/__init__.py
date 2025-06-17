@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -12,7 +12,6 @@ from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
-from .storage import StorageManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Area Occupancy Detection integration."""
     _LOGGER.debug("Starting async_setup for %s", DOMAIN)
     return True
@@ -79,17 +78,20 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removing Area Occupancy config entry: %s", entry_id)
 
     try:
-        store = StorageManager(entry.runtime_data.coordinator)
+        # Check if runtime_data exists and has a coordinator
+        if hasattr(entry, "runtime_data") and entry.runtime_data:
+            # Use the existing coordinator's storage manager
+            store = entry.runtime_data.storage
+        else:
+            # Create a temporary coordinator just for cleanup
+            temp_coordinator = AreaOccupancyCoordinator(hass, entry)
+            store = temp_coordinator.storage
+
         removed = await store.async_remove_instance(entry_id)
         if removed:
-            _LOGGER.info(
-                "Instance %s data removed from storage via store method", entry_id
-            )
+            _LOGGER.info("Instance %s data removed from storage", entry_id)
         else:
-            _LOGGER.debug(
-                "Instance %s data removal via store method reported no change",
-                entry_id,
-            )
+            _LOGGER.debug("Instance %s data removal reported no change", entry_id)
 
     except Exception:
         # Log error but don't prevent removal flow

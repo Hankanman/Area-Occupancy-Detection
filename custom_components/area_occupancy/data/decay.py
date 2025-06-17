@@ -1,278 +1,54 @@
 """Decay model for Area Occupancy Detection."""
 
-from dataclasses import dataclass
-from datetime import datetime
-import logging
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 import math
-from typing import Any, Final
+import time
+from typing import Any
 
-from homeassistant.util import dt as dt_util
-
-from ..const import MIN_PROBABILITY
-from ..utils import validate_decay_factor, validate_prob
-
-_LOGGER = logging.getLogger(__name__)
-
-DECAY_LAMBDA = 1.732867952
-# Validation constants
-MIN_DECAY_WINDOW: Final[int] = 1  # Minimum decay window in seconds
-MAX_DECAY_WINDOW: Final[int] = 3600  # Maximum decay window in seconds
-DECAY_INTERVAL: Final[int] = 1  # Decay interval in seconds
-
-# Decay completion constants
-DECAY_COMPLETION_THRESHOLD: Final[float] = (
-    0.02  # Complete decay when probability drops to 2%
-)
-DECAY_FACTOR_THRESHOLD: Final[float] = 0.02  # Complete decay when factor drops to 1%
-MAX_DECAY_DURATION_MULTIPLIER: Final[float] = 3.0  # Complete after 3x decay_window
-MIN_PROBABILITY_CHANGE: Final[float] = (
-    0.001  # Complete if probability change is less than 0.1%
-)
+DEFAULT_HALF_LIFE = 60.0  # seconds until evidence halves (default 1 min)
 
 
 @dataclass
 class Decay:
     """Decay model for Area Occupancy Detection."""
 
-    is_decaying: bool
-    decay_start_time: datetime | None
-    decay_start_probability: float
-    decay_window: int  # in seconds
-    decay_enabled: bool
-    decay_factor: float
+    last_trigger_ts: float = field(default_factory=time.time)  # UNIX epoch seconds
+    half_life: float = DEFAULT_HALF_LIFE  # default half-life
+    is_decaying: bool = False
 
-    def __post_init__(self) -> None:
-        """Validate properties after initialization."""
-        self.decay_start_probability = validate_prob(self.decay_start_probability)
-        self.decay_factor = validate_decay_factor(self.decay_factor)
-        self.decay_window = max(1, self.decay_window)
+    @property
+    def decay_factor(self) -> float:
+        """Freshness of the last motion event in [0,1]."""
+        if not self.is_decaying:
+            return 1.0
+        age = time.time() - self.last_trigger_ts
+        if age <= 0:
+            return 1.0
+        factor = math.pow(0.5, age / self.half_life)
+        # Auto-stop decay when factor becomes negligible
+        if factor < 0.05:
+            self.is_decaying = False
+            return 0.0
+        return factor
 
     def to_dict(self) -> dict[str, Any]:
         """Convert decay to dictionary for storage."""
         return {
+            "last_trigger_ts": self.last_trigger_ts,
+            "half_life": self.half_life,
             "is_decaying": self.is_decaying,
-            "decay_start_time": self.decay_start_time.isoformat()
-            if self.decay_start_time
-            else None,
-            "decay_start_probability": self.decay_start_probability,
-            "decay_window": self.decay_window,
-            "decay_enabled": self.decay_enabled,
-            "decay_factor": self.decay_factor,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Decay":
+    def from_dict(cls, data: dict[str, Any]) -> Decay:
         """Create decay from dictionary."""
-        return cls(
-            is_decaying=data["is_decaying"],
-            decay_start_time=dt_util.parse_datetime(data["decay_start_time"])
-            if data["decay_start_time"]
-            else None,
-            decay_start_probability=data["decay_start_probability"],
-            decay_window=data["decay_window"],
-            decay_enabled=data["decay_enabled"],
-            decay_factor=data["decay_factor"],
+        return Decay(
+            last_trigger_ts=data.get("last_trigger_ts", time.time()),
+            half_life=data.get("half_life", DEFAULT_HALF_LIFE),
+            is_decaying=data.get("is_decaying", False),
         )
-
-    def update_decay(
-        self,
-        current_probability: float,
-        previous_probability: float,
-    ) -> tuple[float, float]:
-        """Calculate decay factor and apply it to probability.
-
-        This implements the decay mechanism as described in the documentation:
-        1. Decay starts ONLY when probability decreases from previous calculation
-        2. When decay starts, we record the time and the probability BEFORE the decrease
-        3. We then exponentially decay from that starting probability over time
-        4. The final probability can never go below what current sensors suggest (floor value)
-        5. Decay stops when probability increases/stays same or reaches minimum
-
-        Args:
-            current_probability: The probability calculated from current sensor states
-            previous_probability: The probability from the previous calculation cycle
-
-        Returns:
-            Tuple of (final_probability, decay_factor)
-
-        Raises:
-            ValueError: If probabilities are invalid
-
-        """
-        # Validate inputs
-        if not self._validate_probabilities(current_probability, previous_probability):
-            raise ValueError("Probabilities must be between 0 and 1")
-
-        if not self.decay_enabled:
-            _LOGGER.debug("Decay disabled, returning current probability")
-            self.decay_factor = 1.0
-            return current_probability, self.decay_factor
-
-        # --- CONDITION 1: Probability increased or stayed the same ---
-        # When this happens, we stop any active decay and return to normal operation
-        if current_probability >= previous_probability:
-            if self.is_decaying:  # Log only if decay was previously active
-                _LOGGER.debug(
-                    "Probability increased/stable: %.3f -> %.3f. Stopping decay",
-                    previous_probability,
-                    current_probability,
-                )
-            # Reset decay state completely
-            self._reset_decay_state()
-            self.decay_factor = 1.0
-            return current_probability, self.decay_factor
-
-        # --- CONDITION 2: Probability decreased, decay wasn't active before ---
-        # This is when we START decay - record the starting point and begin the decay process
-        if not self.is_decaying:
-            _LOGGER.debug(
-                "Probability decreased: %.3f -> %.3f. Starting decay",
-                previous_probability,
-                current_probability,
-            )
-            # Initialize decay with the probability BEFORE the decrease as starting point
-            self.decay_start_time = dt_util.utcnow()
-            self.is_decaying = True
-            self.decay_start_probability = previous_probability
-            self.decay_factor = 1.0
-
-            # For the first decay cycle, we maintain the previous probability
-            # and begin decaying from there in subsequent cycles
-            return previous_probability, self.decay_factor
-
-        # --- CONDITION 3: Probability decreased, decay was already active ---
-        # Continue the existing decay process
-        if not self.decay_start_time or self.decay_start_probability is None:
-            _LOGGER.error(
-                "Inconsistent decay state: is_decaying=True but missing start time or probability. Resetting."
-            )
-            # Recover by starting fresh decay
-            self.decay_start_time = dt_util.utcnow()
-            self.is_decaying = True
-            self.decay_start_probability = previous_probability
-            self.decay_factor = 1.0
-            return previous_probability, self.decay_factor
-
-        # --- Calculate and apply exponential decay ---
-        try:
-            elapsed = (dt_util.utcnow() - self.decay_start_time).total_seconds()
-            self.decay_factor = self._calculate_decay_factor(elapsed)
-
-            # Apply decay to the STARTING probability (when decay began)
-            potential_decayed_prob = self._apply_decay_factor(
-                self.decay_start_probability, self.decay_factor
-            )
-
-            # FLOOR VALUE: Never go below what current sensors suggest
-            # This ensures that if sensors become more active during decay,
-            # we respect that increased activity
-            final_probability = max(potential_decayed_prob, current_probability)
-
-            # Enhanced decay completion detection
-            if self.is_decay_complete(final_probability):
-                self._reset_decay_state()
-                return MIN_PROBABILITY, self.decay_factor
-
-            # Log decay progress for debugging
-            _LOGGER.debug(
-                "Decay active: elapsed=%.1fs, factor=%.3f, start=%.3f -> decayed=%.3f (floor=%.3f)",
-                elapsed,
-                self.decay_factor,
-                self.decay_start_probability,
-                final_probability,
-                current_probability,
-            )
-
-        except (ValueError, ZeroDivisionError) as err:
-            _LOGGER.error("Error in decay calculation: %s", err)
-            # Reset to safe state on calculation error
-            self._reset_decay_state()
-            self.decay_factor = 1.0
-            return current_probability, self.decay_factor
-
-        else:
-            return final_probability, self.decay_factor
-
-    def _reset_decay_state(self) -> None:
-        """Reset decay state to inactive."""
-        self.is_decaying = False
-        self.decay_start_time = None
-        self.decay_start_probability = MIN_PROBABILITY
-
-    def reset(self) -> None:
-        """Reset decay state to defaults."""
-        self._reset_decay_state()
-        self.decay_window = 300  # Default 5 minutes
-        self.decay_enabled = True
-        self.decay_factor = 1.0
-
-    def _validate_probabilities(
-        self, current_probability: float, previous_probability: float
-    ) -> bool:
-        """Validate probability values.
-
-        Args:
-            current_probability: The current probability value
-            previous_probability: The previous probability value
-
-        Returns:
-            True if both probabilities are valid (between 0 and 1)
-
-        """
-        return all(
-            isinstance(p, (int, float)) and 0 <= p <= 1
-            for p in (current_probability, previous_probability)
-        )
-
-    def _calculate_decay_factor(self, elapsed_seconds: float) -> float:
-        """Calculate the decay factor based on elapsed time.
-
-        Args:
-            elapsed_seconds: Time elapsed since decay started
-
-        Returns:
-            Decay factor between 0 and 1
-
-        Raises:
-            ValueError: If elapsed_seconds is negative
-
-        """
-        if elapsed_seconds < 0:
-            raise ValueError(f"Elapsed time cannot be negative: {elapsed_seconds}")
-
-        if elapsed_seconds == 0:
-            return 1.0
-
-        # Prevent overflow for extremely large elapsed times
-        max_exponent = 100  # e^-100 ≈ 3.7e-44, essentially zero
-        exponent = -DECAY_LAMBDA * (elapsed_seconds / self.decay_window)
-
-        if abs(exponent) > max_exponent:
-            return 0.0
-
-        return math.exp(exponent)
-
-    def _apply_decay_factor(self, probability: float, decay_factor: float) -> float:
-        """Apply decay factor to probability with bounds checking.
-
-        Args:
-            probability: Original probability value
-            decay_factor: Decay factor to apply (0-1)
-
-        Returns:
-            Decayed probability value
-
-        Raises:
-            ValueError: If inputs are invalid
-
-        """
-        if not (0 <= probability <= 1):
-            raise ValueError(f"Probability must be between 0 and 1: {probability}")
-        if not (0 <= decay_factor <= 1):
-            raise ValueError(f"Decay factor must be between 0 and 1: {decay_factor}")
-
-        result = probability * decay_factor
-        return validate_prob(result)
 
     def should_start_decay(
         self, previous_is_active: bool, current_is_active: bool
@@ -291,7 +67,6 @@ class Decay:
             previous_is_active is True
             and current_is_active is False
             and not self.is_decaying
-            and self.decay_enabled
         )
 
     def should_stop_decay(
@@ -313,28 +88,6 @@ class Decay:
             and current_is_active is True
         )
 
-    def start_decay(self, starting_probability: float) -> None:
-        """Start decay process with given starting probability.
-
-        Args:
-            starting_probability: Probability to start decay from
-
-        """
-        if not self.decay_enabled:
-            return
-
-        self.is_decaying = True
-        self.decay_start_time = dt_util.utcnow()
-        self.decay_start_probability = validate_prob(starting_probability)
-        self.decay_factor = 1.0
-
-    def stop_decay(self) -> None:
-        """Stop decay process and reset state."""
-        self.is_decaying = False
-        self.decay_start_time = None
-        self.decay_start_probability = MIN_PROBABILITY
-        self.decay_factor = 1.0
-
     def is_decay_complete(self, current_probability: float) -> bool:
         """Check if decay has completed.
 
@@ -348,24 +101,19 @@ class Decay:
         if not self.is_decaying:
             return True
 
-        if not self.decay_start_time:
+        if not self.last_trigger_ts:
             return True
 
-        elapsed = (dt_util.utcnow() - self.decay_start_time).total_seconds()
         # 1. Reached absolute minimum
-        if current_probability <= MIN_PROBABILITY:
+        if current_probability <= 0.0:
             return True
 
         # 2. Reached practical completion threshold (2%)
-        if current_probability <= DECAY_COMPLETION_THRESHOLD:
+        if current_probability <= 0.02:
             return True
 
         # 3. Decay factor has become negligible (1%)
-        if self.decay_factor <= DECAY_FACTOR_THRESHOLD:
-            return True
-
-        # 4. Maximum decay duration exceeded (3x decay window)
-        if elapsed >= MAX_DECAY_DURATION_MULTIPLIER * self.decay_window:
+        if self.decay_factor <= 0.01:
             return True
 
         return False

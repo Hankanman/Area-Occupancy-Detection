@@ -11,8 +11,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import AreaOccupancyCoordinator
@@ -95,6 +95,19 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         """Return the current occupancy probability as a percentage."""
 
         return format_float(self.coordinator.probability * 100)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        import logging
+
+        _LOGGER = logging.getLogger(__name__)
+        _LOGGER.debug(
+            "ProbabilitySensor updating: probability=%.3f%%, is_occupied=%s",
+            self.coordinator.probability * 100,
+            self.coordinator.is_occupied,
+        )
+        super()._handle_coordinator_update()
 
 
 class EntitiesSensor(AreaOccupancySensorBase):
@@ -192,7 +205,7 @@ class DecaySensor(AreaOccupancySensorBase):
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data

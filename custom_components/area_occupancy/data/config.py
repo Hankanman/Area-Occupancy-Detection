@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -294,10 +295,11 @@ class Config:
 class ConfigManager:
     """Manages configuration for Area Occupancy Detection."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
+    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the config manager."""
         if coordinator.config_entry is None:
             raise ValueError("Config entry is required")
+        self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self._config = Config.from_dict(self._merge_entry(coordinator.config_entry))
         self._hass = coordinator.hass
@@ -305,13 +307,13 @@ class ConfigManager:
         _LOGGER.debug("ConfigManager initialized with config: %s", self._config)
 
     @property
-    def hass(self):
+    def hass(self) -> HomeAssistant:
         """Get the Home Assistant instance."""
         if self._hass is None:
             raise RuntimeError("Home Assistant instance not set")
         return self._hass
 
-    def set_hass(self, hass):
+    def set_hass(self, hass: HomeAssistant) -> None:
         """Set the Home Assistant instance."""
         self._hass = hass
 
@@ -365,6 +367,12 @@ class ConfigManager:
 
             # Create new config object with validation
             self._config = Config.from_dict(merged_data)
+
+            # Reload the config entry to update the UI
+            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+
+            # Request update since threshold affects is_occupied calculation
+            await self.coordinator.async_request_refresh()
 
         except Exception as err:
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err

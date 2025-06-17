@@ -92,7 +92,7 @@ class Prior:
 class PriorManager:
     """Manages prior probability calculations."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
+    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the prior manager."""
         self.coordinator = coordinator
         self.config = coordinator.config
