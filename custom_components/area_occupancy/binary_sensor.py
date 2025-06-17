@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -91,6 +91,16 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         """
         return self.coordinator.is_occupied
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        _LOGGER.debug(
+            "Occupancy sensor updating: is_occupied=%s, probability=%.3f",
+            self.coordinator.is_occupied,
+            self.coordinator.probability,
+        )
+        super()._handle_coordinator_update()
+
 
 class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
     """Wasp in Box binary sensor implementation.
@@ -151,7 +161,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Check if we have required entities configured
         if not self._door_entities or not self._motion_entities:
             _LOGGER.warning(
-                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly."
+                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly"
             )
 
         _LOGGER.debug(
@@ -257,7 +267,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         """Set up state tracking for door and motion entities."""
         if not self._door_entities and not self._motion_entities:
             _LOGGER.warning(
-                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly."
+                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly"
             )
             return
 
@@ -270,7 +280,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         valid_entities = self._get_valid_entities()
         if not valid_entities:
             _LOGGER.warning(
-                "No valid entities found to track. Sensor will not function."
+                "No valid entities found to track. Sensor will not function"
             )
             return
 
@@ -471,7 +481,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data

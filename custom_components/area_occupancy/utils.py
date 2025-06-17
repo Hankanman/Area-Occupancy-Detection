@@ -1,7 +1,7 @@
 """Utility functions for the area occupancy component."""
 
 from datetime import datetime
-import math
+from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
@@ -12,6 +12,9 @@ from .const import (
     MIN_WEIGHT,
     ROUNDING_PRECISION,
 )
+
+if TYPE_CHECKING:
+    from .data.entity import Entity
 
 #################################
 # Validation Methods
@@ -57,40 +60,107 @@ EPS = 1e-12
 
 
 def bayesian_probability(
+    *,
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
-    is_active: bool,
+    is_active: bool | None,
+    weight: float,
+    decay_factor: float,
 ) -> float:
-    """One-step Bayesian update.
+    """Weighted, time-decaying single-step Bayesian update (fractional Bayes).
+
+    This function implements a Bayesian update that:
+    1. Weights the evidence based on sensor reliability
+    2. Applies time decay to reduce evidence strength over time
+    3. Handles both positive (ON) and negative (OFF) evidence
 
     Args:
-        prior: Prior probability P(H) in [0,1].
-        prob_given_true:     P(Evidence present | Hypothesis true)
-        prob_given_false: P(Evidence present | Hypothesis false)
-        is_active:        Evidence.PRESENT or Evidence.ABSENT
+        prior: Current probability estimate (0-1)
+        prob_given_true: P(sensor=ON | room=occupied)
+        prob_given_false: P(sensor=ON | room=empty)
+        is_active: Current sensor state (True=ON, False=OFF, None=no change)
+        weight: Sensor reliability weight (0-1)
+        decay_factor: Time decay factor (0-1)
 
     Returns:
-        Posterior probability P(H | evidence)
+        Updated probability estimate (0-1)
 
     """
-    # Sanity checks
-    for name, p in {
-        "prior": prior,
-        "p_e_given_h": prob_given_true,
-        "p_e_given_not_h": prob_given_false,
-    }.items():
-        if not (0.0 <= p <= 1.0):
-            raise ValueError(f"{name}={p} is not a probability in [0,1].")
+    # Return prior unchanged if no new evidence or zero weight/decay
+    if is_active is None or weight == 0.0 or decay_factor == 0.0:
+        return prior
 
-    if is_active is True:
-        num = prob_given_true * prior
-        den = prob_given_true * prior + prob_given_false * (1 - prior)
-    else:  # Evidence.ABSENT
-        num = (1 - prob_given_true) * prior
-        den = (1 - prob_given_true) * prior + (1 - prob_given_false) * (1 - prior)
+    # Calculate likelihood ratio based on sensor state
+    # For ON state: P(sensor=ON|occupied) / P(sensor=ON|empty)
+    # For OFF state: P(sensor=OFF|occupied) / P(sensor=OFF|empty)
+    likelihood_ratio = (
+        (prob_given_true + EPS) / (prob_given_false + EPS)
+        if is_active
+        else (1.0 - prob_given_true + EPS) / (1.0 - prob_given_false + EPS)
+    )
 
-    # Guard against divide-by-zero
-    if math.isclose(den, 0.0, abs_tol=EPS):
-        return 0.0
-    return num / den
+    # Apply sensor weight and time decay to likelihood ratio
+    # This reduces evidence strength for less reliable sensors
+    # and for evidence that is older
+    likelihood_ratio **= weight * decay_factor
+
+    # Convert probability to odds ratio
+    prior_odds = prior / (1.0 - prior + EPS)
+
+    # Update odds ratio using likelihood ratio
+    post_odds = prior_odds * likelihood_ratio
+
+    # Convert back to probability
+    return post_odds / (1.0 + post_odds)
+
+
+def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
+    """Calculate new probability using Bayesian inference based on current observations.
+
+    This method implements Bayes' theorem to update probabilities based on observations.
+    For each observation, it:
+    1. Checks if the observation is True/False/None
+    2. Updates the prior probability using the observation's conditional probabilities
+    3. Handles None cases by skipping the update
+
+    The calculation uses:
+    - Prior probability (initial belief)
+    - P(Data|Hypothesis) - probability of observation given hypothesis is true
+    - P(Data|~Hypothesis) - probability of observation given hypothesis is false
+
+    Args:
+        entities: Dictionary of entities with observations
+        prior: Prior probability
+
+    Returns:
+        float: The updated probability (posterior) after considering all observations
+
+    """
+    posterior = prior
+
+    for e in entities.values():
+        # Observation state --------------------------------------------------
+        observed = (
+            True
+            if e.is_active or e.decay.is_decaying
+            else False
+            if not e.is_active and not e.decay.is_decaying
+            else None
+        )
+
+        # Effective parameters ----------------------------------------------
+        w = e.type.weight  # static sensor importance
+        df = e.decay.decay_factor if e.decay.is_decaying else 1.0
+
+        # Bayesian fusion ----------------------------------------------------
+        posterior = bayesian_probability(
+            prior=posterior,
+            prob_given_true=e.prior.prob_given_true,
+            prob_given_false=e.prior.prob_given_false,
+            is_active=observed,
+            weight=w,
+            decay_factor=df,
+        )
+
+    return posterior

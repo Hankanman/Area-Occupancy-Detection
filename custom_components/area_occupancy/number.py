@@ -7,10 +7,10 @@ from homeassistant.components.sensor import SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .const import CONF_THRESHOLD
 from .coordinator import AreaOccupancyCoordinator
 
 NAME_THRESHOLD_NUMBER = "Occupancy Threshold"
@@ -48,11 +48,7 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""
-        if not 1.0 <= value <= 99.0:
-            raise ServiceValidationError(
-                f"Threshold value must be between 1 and 99, got {value}"
-            )
-        await self.coordinator.async_update_threshold(value)
+        await self.coordinator.config_manager.update_config({CONF_THRESHOLD: value})
 
 
 async def async_setup_entry(
