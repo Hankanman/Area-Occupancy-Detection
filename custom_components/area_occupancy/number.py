@@ -7,6 +7,7 @@ from homeassistant.components.sensor import SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,6 +49,10 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""
+        if value < self._attr_native_min_value or value > self._attr_native_max_value:
+            raise ServiceValidationError(
+                f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
+            )
         await self.coordinator.config_manager.update_config({CONF_THRESHOLD: value})
 
 

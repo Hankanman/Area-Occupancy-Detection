@@ -70,9 +70,9 @@ class TestThreshold:
 
         await entity.async_set_native_value(75.0)
 
-        # Should call coordinator's async_update_threshold with percentage value
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_once_with(
-            75.0
+        # Should call coordinator's config_manager.update_config with threshold value
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_once_with(
+            {"threshold": 75.0}
         )
 
     async def test_async_set_native_value_edge_cases(
@@ -83,17 +83,23 @@ class TestThreshold:
 
         # Test minimum value
         await entity.async_set_native_value(1.0)
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_with(1.0)
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_with(
+            {"threshold": 1.0}
+        )
 
         # Test maximum value
-        mock_coordinator_with_threshold.async_update_threshold.reset_mock()
+        mock_coordinator_with_threshold.config_manager.update_config.reset_mock()
         await entity.async_set_native_value(99.0)
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_with(99.0)
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_with(
+            {"threshold": 99.0}
+        )
 
         # Test mid-range value
-        mock_coordinator_with_threshold.async_update_threshold.reset_mock()
+        mock_coordinator_with_threshold.config_manager.update_config.reset_mock()
         await entity.async_set_native_value(50.0)
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_with(50.0)
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_with(
+            {"threshold": 50.0}
+        )
 
     async def test_async_set_native_value_invalid_low(
         self, mock_coordinator_with_threshold: Mock
@@ -102,12 +108,12 @@ class TestThreshold:
         entity = Threshold(mock_coordinator_with_threshold, "test_entry")
 
         with pytest.raises(
-            ServiceValidationError, match="Threshold value must be between 1 and 99"
+            ServiceValidationError, match="Threshold value must be between 1.0 and 99.0"
         ):
             await entity.async_set_native_value(0.5)
 
         # Should not call coordinator
-        mock_coordinator_with_threshold.async_update_threshold.assert_not_called()
+        mock_coordinator_with_threshold.config_manager.update_config.assert_not_called()
 
     async def test_async_set_native_value_invalid_high(
         self, mock_coordinator_with_threshold: Mock
@@ -116,12 +122,12 @@ class TestThreshold:
         entity = Threshold(mock_coordinator_with_threshold, "test_entry")
 
         with pytest.raises(
-            ServiceValidationError, match="Threshold value must be between 1 and 99"
+            ServiceValidationError, match="Threshold value must be between 1.0 and 99.0"
         ):
             await entity.async_set_native_value(100.0)
 
         # Should not call coordinator
-        mock_coordinator_with_threshold.async_update_threshold.assert_not_called()
+        mock_coordinator_with_threshold.config_manager.update_config.assert_not_called()
 
     async def test_async_set_native_value_coordinator_error(
         self, mock_coordinator_with_threshold: Mock
@@ -130,8 +136,8 @@ class TestThreshold:
         entity = Threshold(mock_coordinator_with_threshold, "test_entry")
 
         # Mock coordinator to raise an exception
-        mock_coordinator_with_threshold.async_update_threshold.side_effect = Exception(
-            "Update failed"
+        mock_coordinator_with_threshold.config_manager.update_config.side_effect = (
+            Exception("Update failed")
         )
 
         with pytest.raises(Exception, match="Update failed"):
@@ -177,16 +183,16 @@ class TestThreshold:
         ]
 
         for percentage, expected_percentage in test_cases:
-            mock_coordinator_with_threshold.async_update_threshold.reset_mock()
+            mock_coordinator_with_threshold.config_manager.update_config.reset_mock()
             await entity.async_set_native_value(percentage)
 
             # Check that the call was made with the percentage value
             called_value = (
-                mock_coordinator_with_threshold.async_update_threshold.call_args[0][0]
+                mock_coordinator_with_threshold.config_manager.update_config.call_args[
+                    0
+                ][0]["threshold"]
             )
-            assert (
-                abs(called_value - expected_percentage) < 0.01
-            )  # Allow small floating point differences
+            assert called_value == expected_percentage
 
 
 class TestAsyncSetupEntry:
@@ -255,15 +261,17 @@ class TestThresholdIntegration:
         await entity.async_set_native_value(75.0)
 
         # Verify coordinator was called with percentage
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_once_with(
-            75.0
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_once_with(
+            {"threshold": 75.0}
         )
 
-        # Simulate coordinator update
+        # Simulate config update effect on coordinator
+        mock_coordinator_with_threshold.config.threshold = 0.75
         mock_coordinator_with_threshold.threshold = 0.75
 
-        # Verify new value
-        assert entity.native_value == 75.0
+        # Verify coordinator state was updated
+        assert mock_coordinator_with_threshold.threshold == 0.75  # Converted to decimal
+        assert entity.native_value == 75.0  # Still in percentage
 
     async def test_multiple_threshold_updates(
         self, comprehensive_threshold: Threshold, mock_coordinator_with_threshold: Mock
@@ -278,11 +286,20 @@ class TestThresholdIntegration:
         for percentage, expected_percentage in zip(
             updates, expected_percentages, strict=False
         ):
-            mock_coordinator_with_threshold.async_update_threshold.reset_mock()
+            mock_coordinator_with_threshold.config_manager.update_config.reset_mock()
             await entity.async_set_native_value(percentage)
-            mock_coordinator_with_threshold.async_update_threshold.assert_called_once_with(
-                expected_percentage
+            mock_coordinator_with_threshold.config_manager.update_config.assert_called_once_with(
+                {"threshold": expected_percentage}
             )
+
+            # Simulate config update effect on coordinator
+            mock_coordinator_with_threshold.config.threshold = (
+                expected_percentage / 100.0
+            )
+            mock_coordinator_with_threshold.threshold = expected_percentage / 100.0
+
+            # Verify entity value
+            assert entity.native_value == expected_percentage
 
     def test_threshold_boundary_validation(
         self, comprehensive_threshold: Threshold
@@ -306,7 +323,7 @@ class TestThresholdIntegration:
         entity = comprehensive_threshold
 
         # Test coordinator error followed by successful update
-        mock_coordinator_with_threshold.async_update_threshold.side_effect = [
+        mock_coordinator_with_threshold.config_manager.update_config.side_effect = [
             Exception("Temporary error"),
             None,  # Success on second call
         ]
@@ -315,12 +332,18 @@ class TestThresholdIntegration:
         with pytest.raises(Exception, match="Temporary error"):
             await entity.async_set_native_value(75.0)
 
-        # Reset side effect for second call
-        mock_coordinator_with_threshold.async_update_threshold.side_effect = None
-
         # Second call should succeed
-        await entity.async_set_native_value(80.0)
-        mock_coordinator_with_threshold.async_update_threshold.assert_called_with(80.0)
+        await entity.async_set_native_value(75.0)
+
+        # Simulate config update effect on coordinator
+        mock_coordinator_with_threshold.config.threshold = 0.75
+        mock_coordinator_with_threshold.threshold = 0.75
+
+        # Verify final state
+        mock_coordinator_with_threshold.config_manager.update_config.assert_called_with(
+            {"threshold": 75.0}
+        )
+        assert entity.native_value == 75.0
 
     def test_state_consistency(
         self, comprehensive_threshold: Threshold, mock_coordinator_with_threshold: Mock
@@ -344,16 +367,16 @@ class TestThresholdIntegration:
         """Test handling of concurrent updates."""
         entity = comprehensive_threshold
 
-        # Mock async_update_threshold to track calls
+        # Mock config_manager.update_config to track calls
         call_count = 0
-        original_method = mock_coordinator_with_threshold.async_update_threshold
+        original_method = mock_coordinator_with_threshold.config_manager.update_config
 
         async def track_calls(value):
             nonlocal call_count
             call_count += 1
             await original_method(value)
 
-        mock_coordinator_with_threshold.async_update_threshold = AsyncMock(
+        mock_coordinator_with_threshold.config_manager.update_config = AsyncMock(
             side_effect=track_calls
         )
 
@@ -363,4 +386,8 @@ class TestThresholdIntegration:
 
         # Both calls should have been made
         assert call_count == 2
-        assert mock_coordinator_with_threshold.async_update_threshold.call_count == 2
+
+        # Verify final state
+        mock_coordinator_with_threshold.config.threshold = 0.7
+        mock_coordinator_with_threshold.threshold = 0.7
+        assert entity.native_value == 70.0

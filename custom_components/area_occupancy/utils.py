@@ -23,12 +23,12 @@ if TYPE_CHECKING:
 
 def validate_prob(value: float) -> float:
     """Validate a probability value."""
-    return max(0.0001, min(value, 1.0))
+    return max(0.001, min(value, 1.0))
 
 
 def validate_prior(value: float) -> float:
     """Validate a prior value."""
-    return max(0.0001, min(value, 1.0))
+    return max(0.001, min(value, 1.0))
 
 
 def validate_datetime(value: datetime | None) -> datetime:
@@ -50,10 +50,7 @@ def validate_decay_factor(value: float) -> float:
 
 def format_float(value: float) -> float:
     """Format float to consistently show 2 decimal places."""
-    try:
-        return round(float(value), ROUNDING_PRECISION)
-    except (ValueError, TypeError):
-        return 0.0
+    return round(float(value), ROUNDING_PRECISION)
 
 
 EPS = 1e-12

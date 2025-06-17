@@ -255,8 +255,12 @@ class EntityTypeManager:
                 input_type = entity.type.input_type
                 prior = entity.prior
             elif isinstance(entity, dict):
-                input_type = InputType(entity["type"])
-                prior = Prior.from_dict(entity["prior"])
+                try:
+                    input_type = InputType(entity["type"])
+                    prior = Prior.from_dict(entity["prior"])
+                except (ValueError, KeyError):
+                    # Skip invalid entity types or missing data
+                    continue
             else:
                 continue
             grouped[input_type].append(prior)

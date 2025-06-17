@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 """Room Occupancy Bayesian Fusion - Tkinter Demo (edge-triggered).
 
 This GUI lets you configure three PIR sensors (entities), toggle their

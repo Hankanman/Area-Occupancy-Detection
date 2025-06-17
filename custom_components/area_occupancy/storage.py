@@ -81,7 +81,7 @@ class StorageManager(Store[dict[str, Any]]):
             if active_entry_ids:
                 await self.async_cleanup_orphaned_instances(active_entry_ids)
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.warning("Error during storage cleanup: %s", err)
 
     async def async_remove_instance(self, entry_id: str) -> bool:
@@ -98,11 +98,11 @@ class StorageManager(Store[dict[str, Any]]):
                 _LOGGER.info("Removed instance data for entry %s", entry_id)
                 return True
 
-            return False
-
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.error("Error removing instance %s: %s", entry_id, err)
             raise HomeAssistantError(f"Failed to remove instance: {err}") from err
+        else:
+            return False
 
     async def async_cleanup_orphaned_instances(
         self, active_entry_ids: set[str]
@@ -126,11 +126,12 @@ class StorageManager(Store[dict[str, Any]]):
                 del instances[entry_id]
 
             await self.async_save(data)
-            return True
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.error("Error cleaning up orphaned instances: %s", err)
             return False
+        else:
+            return True
 
     async def async_load_instance_data(self, entry_id: str) -> dict[str, Any] | None:
         """Load instance data for a specific entry."""
@@ -145,11 +146,12 @@ class StorageManager(Store[dict[str, Any]]):
                 return None
 
             _LOGGER.debug("Loaded instance data for entry %s", entry_id)
-            return instance_data
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.error("Error loading instance data for %s: %s", entry_id, err)
             return None
+        else:
+            return instance_data
 
     async def async_save_instance_data(
         self,
@@ -188,7 +190,7 @@ class StorageManager(Store[dict[str, Any]]):
                 entity_count,
             )
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.error("Error saving instance data for %s: %s", entry_id, err)
             raise HomeAssistantError(f"Failed to save instance data: {err}") from err
 
@@ -196,7 +198,6 @@ class StorageManager(Store[dict[str, Any]]):
         self, entry_id: str, config_entry_version: int
     ) -> tuple[dict[str, Any] | None, bool]:
         """Load instance data with compatibility checking."""
-        was_reset = False
 
         # Check for old config entry version
         if config_entry_version < 9:
@@ -230,12 +231,13 @@ class StorageManager(Store[dict[str, Any]]):
                 "Successfully loaded storage data for instance %s",
                 entry_id,
             )
-            return loaded_data, False
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, ValueError) as err:
             _LOGGER.warning(
                 "Storage error for instance %s, initializing with defaults: %s",
                 entry_id,
                 err,
             )
             return None, False
+        else:
+            return loaded_data, False
