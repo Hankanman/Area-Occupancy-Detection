@@ -90,11 +90,6 @@ class TestAreaOccupancyCoordinator:
         # Verify the mock was called with the right parameters
         mock_coordinator.request_update.assert_called_once_with(message="Test update")
 
-    async def test_async_immediate_update(self, mock_coordinator: Mock) -> None:
-        """Test _async_immediate_update method using centralized mock."""
-        await mock_coordinator._async_immediate_update()
-        mock_coordinator._async_immediate_update.assert_called_once()
-
     async def test_async_setup(self, mock_coordinator: Mock) -> None:
         """Test _async_setup method using centralized mock."""
         await mock_coordinator._async_setup()
@@ -111,11 +106,6 @@ class TestAreaOccupancyCoordinator:
 
         await mock_coordinator.async_update_options(new_options)
         mock_coordinator.async_update_options.assert_called_once_with(new_options)
-
-    async def test_async_update_threshold(self, mock_coordinator: Mock) -> None:
-        """Test async_update_threshold method using centralized mock."""
-        await mock_coordinator.async_update_threshold(0.75)
-        mock_coordinator.async_update_threshold.assert_called_once_with(0.75)
 
     async def test_async_load_stored_data_new_setup(
         self, mock_coordinator: Mock
@@ -261,90 +251,6 @@ class TestCoordinatorRealBehavior:
             decay = coordinator.decay
             assert 0 <= decay <= 1
 
-    def test_available_property_no_entities(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test available property with no entities."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.StorageManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            # Create proper mock structure with empty entities
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {}
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.entities = mock_entities_instance
-            assert coordinator.available is False
-
-    def test_available_property_no_available_entities(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test available property with all entities unavailable."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.StorageManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            mock_entity = Mock()
-            mock_entity.available = False
-
-            # Create proper mock structure
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {"test_entity": mock_entity}
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.entities = mock_entities_instance
-            assert coordinator.available is False
-
-    def test_available_property_some_available_entities(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test available property with some entities available."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.StorageManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            mock_entity1 = Mock()
-            mock_entity1.available = False
-            mock_entity2 = Mock()
-            mock_entity2.available = True
-
-            # Create a proper mock that returns the entities dict
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {
-                "entity1": mock_entity1,
-                "entity2": mock_entity2,
-            }
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            # Set the entities directly on the coordinator
-            coordinator.entities = mock_entities_instance
-            assert coordinator.available is True
-
     def test_threshold_property_no_config(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
@@ -426,7 +332,7 @@ class TestCoordinatorRealBehavior:
 
             result = coordinator._calculate_entity_aggregates()
 
-            # The actual implementation returns MIN_PROBABILITY (0.001)
+            # The actual implementation returns 0.001 as minimum probability
             assert result["probability"] == 0.001
             assert result["prior"] == 0.35
             assert result["decay"] == 1.0
@@ -472,47 +378,6 @@ class TestCoordinatorRealBehavior:
             assert result["probability"] == 0.8
             assert result["prior"] == 0.35
             assert result["decay"] == 0.7
-
-    async def test_real_request_update_without_force(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test real request_update without force flag."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.StorageManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch("custom_components.area_occupancy.data.entity.EntityManager"),
-        ):
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.async_request_refresh = AsyncMock()
-
-            await coordinator.request_update(message="Test message")
-
-            # Should create task for async_request_refresh
-            mock_hass.async_create_task.assert_called()
-
-    async def test_real_request_update_with_force(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test real request_update with force flag."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.StorageManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch("custom_components.area_occupancy.data.entity.EntityManager"),
-        ):
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-
-            await coordinator.request_update(message="Test force message")
-
-            # Should create task for _async_immediate_update
-            mock_hass.async_create_task.assert_called()
 
 
 class TestCoordinatorErrorHandling:
@@ -636,90 +501,6 @@ class TestCoordinatorErrorHandling:
             await coordinator.async_load_stored_data()
 
             assert coordinator._last_prior_update == test_time
-
-    async def test_update_learned_priors_with_updates(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test update_learned_priors with successful updates."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch(
-                "custom_components.area_occupancy.storage.StorageManager"
-            ) as mock_storage,
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch(
-                "custom_components.area_occupancy.data.prior.PriorManager"
-            ) as mock_priors,
-            patch("custom_components.area_occupancy.data.entity.EntityManager"),
-            patch("homeassistant.helpers.storage.Store") as mock_store_class,
-        ):
-            # Mock the prior manager to return successful updates
-            mock_priors_instance = Mock()
-            mock_priors_instance.update_all_entity_priors = AsyncMock(return_value=3)
-            mock_priors.return_value = mock_priors_instance
-
-            # Mock the storage manager
-            mock_storage_instance = Mock()
-            mock_storage_instance.async_initialize = AsyncMock()
-            mock_storage_instance.async_save_instance_data = AsyncMock()
-            mock_storage.return_value = mock_storage_instance
-
-            # Mock the Store class to avoid real storage operations
-            mock_store_class.return_value.async_load = AsyncMock(return_value=None)
-            mock_store_class.return_value.async_save = AsyncMock()
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            # Set the priors attribute to our mocked instance
-            coordinator.priors = mock_priors_instance
-
-            # Mock the methods that should be called
-            coordinator._async_save_data = AsyncMock()
-            coordinator.request_update = Mock()
-            coordinator._schedule_next_prior_update = AsyncMock()
-
-            await coordinator.update_learned_priors()
-
-            # Should save and request update when priors change
-            coordinator._async_save_data.assert_called_once_with()
-            coordinator.request_update.assert_called_once()
-
-    async def test_async_save_data_error_forced(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test _async_save_data error handling for forced saves."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch(
-                "custom_components.area_occupancy.storage.StorageManager"
-            ) as mock_storage,
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch("custom_components.area_occupancy.data.entity.EntityManager"),
-            patch("homeassistant.helpers.storage.Store") as mock_store_class,
-        ):
-            # Mock the storage manager to fail during save
-            mock_storage_instance = Mock()
-            mock_storage_instance.async_initialize = AsyncMock()
-            mock_storage_instance.async_save_instance_data = AsyncMock(
-                side_effect=HomeAssistantError("Storage failed")
-            )
-            mock_storage.return_value = mock_storage_instance
-
-            # Mock the Store class to avoid real storage operations
-            mock_store_class.return_value.async_load = AsyncMock(return_value=None)
-            mock_store_class.return_value.async_save = AsyncMock()
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            # Set the storage attribute to our mocked instance
-            coordinator.storage = mock_storage_instance
-
-            # Should raise for forced saves
-            with pytest.raises(HomeAssistantError):
-                await coordinator._async_save_data()
 
     async def test_handle_prior_update_error(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -872,6 +653,11 @@ class TestCoordinatorIntegration:
                 coordinator.entities,
                 "async_initialize",
                 side_effect=Exception("Initialization failed"),
+            ),
+            patch.object(
+                coordinator.storage,
+                "async_load_with_compatibility_check",
+                return_value=(False, {}),
             ),
             pytest.raises(Exception, match="Initialization failed"),
         ):

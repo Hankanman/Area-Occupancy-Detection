@@ -11,6 +11,7 @@ from custom_components.area_occupancy.data.entity_type import (
 )
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import State
+from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001
@@ -239,3 +240,134 @@ class TestEntityTypeManager:
 
         entity_type = manager.get_entity_type(InputType.MOTION)
         assert entity_type.input_type == InputType.MOTION
+
+    def test_learn_from_entities_with_entity_objects(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test learning from Entity objects."""
+        manager = EntityTypeManager(mock_coordinator)
+
+        # Initialize entity types
+        manager._entity_types = {
+            InputType.MOTION: EntityType(
+                input_type=InputType.MOTION,
+                weight=0.8,
+                prob_true=0.25,
+                prob_false=0.05,
+                prior=0.35,
+                active_states=[STATE_ON],
+            ),
+            InputType.MEDIA: EntityType(
+                input_type=InputType.MEDIA,
+                weight=0.7,
+                prob_true=0.2,
+                prob_false=0.03,
+                prior=0.3,
+                active_states=[STATE_ON],
+            ),
+        }
+
+        # Create mock entities with priors
+        from custom_components.area_occupancy.data.entity import Entity
+        from custom_components.area_occupancy.data.prior import Prior
+
+        motion_entity = Mock(spec=Entity)
+        motion_entity.type = manager._entity_types[InputType.MOTION]
+        motion_entity.prior = Prior(
+            prior=0.4,
+            prob_given_true=0.3,
+            prob_given_false=0.06,
+            last_updated=dt_util.utcnow(),
+        )
+
+        media_entity = Mock(spec=Entity)
+        media_entity.type = manager._entity_types[InputType.MEDIA]
+        media_entity.prior = Prior(
+            prior=0.35,
+            prob_given_true=0.25,
+            prob_given_false=0.04,
+            last_updated=dt_util.utcnow(),
+        )
+
+        # Test learning from entities
+        manager.learn_from_entities(
+            {
+                "motion1": motion_entity,
+                "media1": media_entity,
+            }
+        )
+
+        # Verify motion type was updated with averages
+        motion_type = manager._entity_types[InputType.MOTION]
+        assert motion_type.prior == 0.4
+        assert motion_type.prob_true == 0.3
+        assert motion_type.prob_false == 0.06
+
+        # Verify media type was updated with averages
+        media_type = manager._entity_types[InputType.MEDIA]
+        assert media_type.prior == 0.35
+        assert media_type.prob_true == 0.25
+        assert media_type.prob_false == 0.04
+
+    def test_learn_from_entities_empty(self, mock_coordinator: Mock) -> None:
+        """Test learning from empty entity list."""
+        manager = EntityTypeManager(mock_coordinator)
+
+        # Initialize entity types with known values
+        initial_values = {
+            InputType.MOTION: EntityType(
+                input_type=InputType.MOTION,
+                weight=0.8,
+                prob_true=0.25,
+                prob_false=0.05,
+                prior=0.35,
+                active_states=[STATE_ON],
+            ),
+        }
+        manager._entity_types = initial_values.copy()
+
+        # Test learning from empty entities
+        manager.learn_from_entities({})
+
+        # Verify values were not changed
+        motion_type = manager._entity_types[InputType.MOTION]
+        assert motion_type.prior == initial_values[InputType.MOTION].prior
+        assert motion_type.prob_true == initial_values[InputType.MOTION].prob_true
+        assert motion_type.prob_false == initial_values[InputType.MOTION].prob_false
+
+    def test_learn_from_entities_invalid_type(self, mock_coordinator: Mock) -> None:
+        """Test learning from entities with invalid type."""
+        manager = EntityTypeManager(mock_coordinator)
+
+        # Initialize entity types
+        manager._entity_types = {
+            InputType.MOTION: EntityType(
+                input_type=InputType.MOTION,
+                weight=0.8,
+                prob_true=0.25,
+                prob_false=0.05,
+                prior=0.35,
+                active_states=[STATE_ON],
+            ),
+        }
+
+        # Create entity with invalid type
+        entities = {
+            "invalid": {
+                "type": "invalid_type",
+                "prior": {
+                    "prior": 0.4,
+                    "prob_given_true": 0.3,
+                    "prob_given_false": 0.06,
+                },
+            },
+        }
+
+        # Test learning from invalid entity (should skip invalid type)
+        manager.learn_from_entities(entities)
+
+        # Verify motion type was not changed
+        motion_type = manager._entity_types[InputType.MOTION]
+        assert motion_type.prior == 0.35
+        assert motion_type.prob_true == 0.25
+        assert motion_type.prob_false == 0.05

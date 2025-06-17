@@ -70,7 +70,9 @@ class TestUpdatePriors:
     ) -> None:
         """Test successful prior update."""
         mock_coordinator = Mock()
-        mock_coordinator.config.decay.history_period = 30
+        mock_coordinator.config.history.period = (
+            30  # Set as real number instead of Mock
+        )
         mock_coordinator.update_learned_priors = AsyncMock(return_value=5)
         mock_coordinator.async_refresh = AsyncMock()
 
@@ -80,7 +82,6 @@ class TestUpdatePriors:
         mock_entity.prior.prob_given_true = 0.8
         mock_entity.prior.prob_given_false = 0.1
         mock_entity.prior.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_entity.prior.type.value = "motion"
         mock_entity.type.input_type.value = "motion"
 
         mock_coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
@@ -93,15 +94,29 @@ class TestUpdatePriors:
 
         result = await _update_priors(mock_hass, mock_service_call)
 
-        # Verify coordinator calls
-        mock_coordinator.update_learned_priors.assert_called_once_with(30)
-        mock_coordinator.async_refresh.assert_called_once()
-
-        # Verify return structure
+        # Verify the result structure
         assert "updated_priors" in result
         assert "history_period" in result
         assert "total_entities" in result
         assert "update_timestamp" in result
+
+        # Verify the values
+        assert result["history_period"] == 30
+        assert result["total_entities"] == 1
+        assert isinstance(result["update_timestamp"], str)
+
+        # Verify the prior data
+        priors = result["updated_priors"]
+        assert "binary_sensor.motion1" in priors
+        prior_data = priors["binary_sensor.motion1"]
+        assert prior_data["prior"] == 0.35
+        assert prior_data["prob_given_true"] == 0.8
+        assert prior_data["prob_given_false"] == 0.1
+        assert prior_data["entity_type"] == "motion"
+
+        # Verify the coordinator was called correctly with the configured history period
+        mock_coordinator.update_learned_priors.assert_called_once_with(30)
+        mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_priors_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test prior update with missing entry_id."""
@@ -117,7 +132,7 @@ class TestUpdatePriors:
     ) -> None:
         """Test prior update with coordinator error."""
         mock_coordinator = Mock()
-        mock_coordinator.config.decay.history_period = 30
+        mock_coordinator.config.history.period = 30  # Set as real number
         mock_coordinator.update_learned_priors = AsyncMock(
             side_effect=RuntimeError("Update failed")
         )
@@ -132,6 +147,9 @@ class TestUpdatePriors:
             match="Failed to update priors for test_entry_id: Update failed",
         ):
             await _update_priors(mock_hass, mock_service_call)
+
+        # Verify the coordinator was called with the correct history period
+        mock_coordinator.update_learned_priors.assert_called_once_with(30)
 
 
 class TestResetEntities:
@@ -552,16 +570,18 @@ class TestGetAreaStatus:
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
 
+        # Mock probability and is_occupied properties
+        mock_coordinator.probability = 0.9  # High confidence (> 0.8)
+        mock_coordinator.is_occupied = True
+
+        # Mock last_updated with a Mock object
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_coordinator.last_updated = mock_last_updated
+
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
         mock_service_call.data = {"entry_id": "test_entry_id"}
-
-        # Mock occupancy state - use 0.9 for high confidence (> 0.8)
-        mock_state = Mock()
-        mock_state.state = "on"
-        mock_state.attributes = {"probability": 0.9}
-        mock_state.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_hass.states.get.return_value = mock_state
 
         result = await _get_area_status(mock_hass, mock_service_call)
 
@@ -580,19 +600,25 @@ class TestGetAreaStatus:
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
 
+        # Mock properties for no occupancy state
+        mock_coordinator.probability = None  # No probability available
+        mock_coordinator.is_occupied = False
+
+        # Mock last_updated with a Mock object
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_coordinator.last_updated = mock_last_updated
+
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
         mock_service_call.data = {"entry_id": "test_entry_id"}
-
-        # No occupancy state found
-        mock_hass.states.get.return_value = None
 
         result = await _get_area_status(mock_hass, mock_service_call)
 
         assert "area_status" in result
         status = result["area_status"]
         assert status["area_name"] == "Test Area"
-        assert status["is_occupied"] is None
+        assert status["is_occupied"] is False
         assert status["occupancy_probability"] is None
         assert status["confidence_level"] == "unknown"
 
@@ -690,6 +716,15 @@ class TestServiceIntegration:
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
 
+        # Mock coordinator properties for high confidence state
+        mock_coordinator.probability = 0.9  # High confidence (> 0.8)
+        mock_coordinator.is_occupied = True
+
+        # Mock last_updated with a Mock object
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_coordinator.last_updated = mock_last_updated
+
         # Mock entity types
         from custom_components.area_occupancy.data.entity_type import InputType
 
@@ -708,34 +743,41 @@ class TestServiceIntegration:
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
 
-        # Mock occupancy state for area status - use 0.9 for high confidence
-        mock_state = Mock()
-        mock_state.state = "on"
-        mock_state.attributes = {"probability": 0.9}
-        mock_state.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_hass.states.get.return_value = mock_state
-
         # 1. Get area status
         mock_service_call.data = {"entry_id": "test_entry_id"}
         status_result = await _get_area_status(mock_hass, mock_service_call)
 
         assert "area_status" in status_result
-        assert status_result["area_status"]["area_name"] == "Test Area"
-        assert status_result["area_status"]["is_occupied"] is True
-        assert status_result["area_status"]["occupancy_probability"] == 0.9
-        assert status_result["area_status"]["confidence_level"] == "high"
+        status = status_result["area_status"]
+        assert status["area_name"] == "Test Area"
+        assert status["is_occupied"] is True
+        assert status["occupancy_probability"] == 0.9
+        assert status["confidence_level"] == "high"
 
-        # 2. Get entity type learned data
+        # 2. Get entity metrics
+        metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)
+        assert "metrics" in metrics_result
+        metrics = metrics_result["metrics"]
+        assert metrics["total_entities"] == 0
+        assert metrics["active_entities"] == 0
+        assert metrics["available_entities"] == 0
+        assert metrics["unavailable_entities"] == 0
+        assert metrics["decaying_entities"] == 0
+
+        # 3. Get entity type learned data
         learned_result = await _get_entity_type_learned_data(
             mock_hass, mock_service_call
         )
-
         assert "entity_types" in learned_result
-        assert InputType.MOTION.value in learned_result["entity_types"]
-        motion_data = learned_result["entity_types"][InputType.MOTION.value]
-        assert motion_data["prior"] == 0.3
-        assert motion_data["prob_true"] == 0.8
-        assert motion_data["prob_false"] == 0.2
+        entity_types = learned_result["entity_types"]
+        assert "motion" in entity_types
+        motion_type = entity_types["motion"]
+        assert motion_type["prior"] == 0.3
+        assert motion_type["prob_true"] == 0.8
+        assert motion_type["prob_false"] == 0.2
+        assert motion_type["weight"] == 1.0
+        assert motion_type["active_states"] == ["on"]
+        assert motion_type["active_range"] is None
 
     async def test_error_handling_across_services(
         self, mock_hass: Mock, mock_service_call: Mock
@@ -772,6 +814,15 @@ class TestServiceIntegration:
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
 
+        # Mock coordinator properties for medium confidence state
+        mock_coordinator.probability = 0.8  # Medium confidence (0.2 < 0.8 <= 0.8)
+        mock_coordinator.is_occupied = True
+
+        # Mock last_updated with a Mock object
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_coordinator.last_updated = mock_last_updated
+
         # Mock entity types
         from custom_components.area_occupancy.data.entity_type import InputType
 
@@ -789,22 +840,38 @@ class TestServiceIntegration:
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-
-        # Mock occupancy state
-        mock_state = Mock()
-        mock_state.state = "on"
-        mock_state.attributes = {"probability": 0.8}
-        mock_state.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_hass.states.get.return_value = mock_state
-
         mock_service_call.data = {"entry_id": "test_entry_id"}
 
         # Test return value structures
         status_result = await _get_area_status(mock_hass, mock_service_call)
-        assert isinstance(status_result, dict)
         assert "area_status" in status_result
         status = status_result["area_status"]
-        assert "area_name" in status
-        assert "is_occupied" in status
-        assert "occupancy_probability" in status
-        assert "confidence_level" in status
+        assert status["area_name"] == "Test Area"
+        assert status["is_occupied"] is True
+        assert status["occupancy_probability"] == 0.8
+        assert status["confidence_level"] == "medium"
+
+        # Test metrics consistency
+        metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)
+        assert "metrics" in metrics_result
+        metrics = metrics_result["metrics"]
+        assert metrics["total_entities"] == 0
+        assert metrics["active_entities"] == 0
+        assert metrics["available_entities"] == 0
+        assert metrics["unavailable_entities"] == 0
+        assert metrics["decaying_entities"] == 0
+
+        # Test entity type data consistency
+        learned_result = await _get_entity_type_learned_data(
+            mock_hass, mock_service_call
+        )
+        assert "entity_types" in learned_result
+        entity_types = learned_result["entity_types"]
+        assert "motion" in entity_types
+        motion_type = entity_types["motion"]
+        assert motion_type["prior"] == 0.3
+        assert motion_type["prob_true"] == 0.8
+        assert motion_type["prob_false"] == 0.2
+        assert motion_type["weight"] == 1.0
+        assert motion_type["active_states"] == ["on"]
+        assert motion_type["active_range"] is None

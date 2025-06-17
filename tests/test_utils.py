@@ -1,6 +1,8 @@
 """Tests for utils module."""
 
 from datetime import datetime
+from unittest.mock import Mock
+from typing import TYPE_CHECKING, cast
 
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
@@ -10,8 +12,12 @@ from custom_components.area_occupancy.utils import (
     validate_prior,
     validate_prob,
     validate_weight,
+    overall_probability,
 )
 from homeassistant.util import dt as dt_util
+
+if TYPE_CHECKING:
+    from custom_components.area_occupancy.data.entity import Entity
 
 
 # ruff: noqa: SLF001
@@ -126,7 +132,14 @@ class TestBayesianProbability:
         prob_given_false = 0.1
 
         # Expected: (0.8 * 0.3) / (0.8 * 0.3 + 0.1 * 0.7) = 0.24 / 0.31 ≈ 0.774
-        result = bayesian_probability(prior, prob_given_true, prob_given_false, True)
+        result = bayesian_probability(
+            prior=prior,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
+            is_active=True,
+            weight=1.0,
+            decay_factor=1.0,
+        )
         assert abs(result - 0.774) < 0.001
 
     def test_inactive_state_calculation(self) -> None:
@@ -136,20 +149,42 @@ class TestBayesianProbability:
         prob_given_false = 0.1
 
         # For inactive state: P(occupied | inactive) = P(inactive | occupied) * P(occupied) / P(inactive)
-        # numerator = prob_given_false * prior = 0.1 * 0.3 = 0.03
-        # denominator = (prob_given_false * prior) + ((1 - prob_given_false) * (1 - prior))
-        #             = (0.1 * 0.3) + (0.9 * 0.7) = 0.03 + 0.63 = 0.66
-        # result = 0.03 / 0.66 ≈ 0.045
-        result = bayesian_probability(prior, prob_given_true, prob_given_false, False)
-        assert abs(result - 0.045) < 0.001
+        # P(inactive|occupied) = 1 - prob_given_true = 1 - 0.8 = 0.2
+        # P(inactive|empty) = 1 - prob_given_false = 1 - 0.1 = 0.9
+        # numerator = P(inactive|occupied) * P(occupied) = 0.2 * 0.3 = 0.06
+        # denominator = (0.2 * 0.3) + (0.9 * 0.7) = 0.06 + 0.63 = 0.69
+        # result = 0.06 / 0.69 ≈ 0.087
+        result = bayesian_probability(
+            prior=prior,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
+            is_active=False,
+            weight=1.0,
+            decay_factor=1.0,
+        )
+        assert abs(result - 0.087) < 0.001
 
     def test_edge_cases(self) -> None:
         """Test edge cases for Bayesian calculation."""
         # Test with extreme values
-        result = bayesian_probability(0.0001, 0.99, 0.01, True)
+        result = bayesian_probability(
+            prior=0.0001,
+            prob_given_true=0.99,
+            prob_given_false=0.01,
+            is_active=True,
+            weight=1.0,
+            decay_factor=1.0,
+        )
         assert 0 <= result <= 1
 
-        result = bayesian_probability(0.9999, 0.99, 0.01, False)
+        result = bayesian_probability(
+            prior=0.9999,
+            prob_given_true=0.99,
+            prob_given_false=0.01,
+            is_active=False,
+            weight=1.0,
+            decay_factor=1.0,
+        )
         assert 0 <= result <= 1
 
     def test_probability_bounds(self) -> None:
@@ -165,7 +200,14 @@ class TestBayesianProbability:
         ]
 
         for prior, prob_true, prob_false, is_active in test_cases:
-            result = bayesian_probability(prior, prob_true, prob_false, is_active)
+            result = bayesian_probability(
+                prior=prior,
+                prob_given_true=prob_true,
+                prob_given_false=prob_false,
+                is_active=is_active,
+                weight=1.0,
+                decay_factor=1.0,
+            )
             assert 0 <= result <= 1, (
                 f"Result {result} out of bounds for inputs {prior}, {prob_true}, {prob_false}, {is_active}"
             )
@@ -173,8 +215,137 @@ class TestBayesianProbability:
     def test_validation_of_inputs(self) -> None:
         """Test that invalid inputs are handled properly."""
         # The function should handle out-of-bounds inputs gracefully
-        result = bayesian_probability(-0.1, 1.1, -0.1, True)
+        result = bayesian_probability(
+            prior=-0.1,
+            prob_given_true=1.1,
+            prob_given_false=-0.1,
+            is_active=True,
+            weight=1.0,
+            decay_factor=1.0,
+        )
         assert 0 <= result <= 1
 
-        result = bayesian_probability(1.1, -0.1, 1.1, False)
+        result = bayesian_probability(
+            prior=1.1,
+            prob_given_true=-0.1,
+            prob_given_false=1.1,
+            is_active=False,
+            weight=1.0,
+            decay_factor=1.0,
+        )
         assert 0 <= result <= 1
+
+
+class TestOverallProbability:
+    """Test overall_probability function."""
+
+    def test_single_entity(self) -> None:
+        """Test probability calculation with a single entity."""
+        # Create a mock entity with known probabilities
+        mock_entity = Mock()
+        mock_entity.is_active = True
+        mock_entity.decay.is_decaying = False
+        mock_entity.type.weight = 1.0
+        mock_entity.prior.prob_given_true = 0.8
+        mock_entity.prior.prob_given_false = 0.1
+
+        entities = {"test_entity": cast("Entity", mock_entity)}
+        prior = 0.3
+
+        # Expected: (0.8 * 0.3) / (0.8 * 0.3 + 0.1 * 0.7) = 0.24 / 0.31 ≈ 0.774
+        result = overall_probability(entities, prior)
+        assert abs(result - 0.774) < 0.001
+
+    def test_multiple_entities(self) -> None:
+        """Test probability calculation with multiple entities."""
+        # Create mock entities with different probabilities
+        mock_entity1 = Mock()
+        mock_entity1.is_active = True
+        mock_entity1.decay.is_decaying = False
+        mock_entity1.type.weight = 0.8
+        mock_entity1.prior.prob_given_true = 0.8
+        mock_entity1.prior.prob_given_false = 0.1
+
+        mock_entity2 = Mock()
+        mock_entity2.is_active = False
+        mock_entity2.decay.is_decaying = False
+        mock_entity2.type.weight = 0.6
+        mock_entity2.prior.prob_given_true = 0.7
+        mock_entity2.prior.prob_given_false = 0.2
+
+        entities = {
+            "entity1": cast("Entity", mock_entity1),
+            "entity2": cast("Entity", mock_entity2),
+        }
+        prior = 0.3
+
+        # First entity: (0.8 * 0.3) / (0.8 * 0.3 + 0.1 * 0.7) = 0.24 / 0.31 ≈ 0.774
+        # Second entity: (0.3 * 0.774) / (0.3 * 0.774 + 0.8 * 0.226) ≈ 0.56
+        result = overall_probability(entities, prior)
+        assert 0.5 < result < 0.6  # Allow some flexibility due to floating point math
+
+    def test_decaying_entity(self) -> None:
+        """Test probability calculation with a decaying entity."""
+        mock_entity = Mock()
+        mock_entity.is_active = False
+        mock_entity.decay.is_decaying = True
+        mock_entity.decay.decay_factor = 0.5  # Half decay
+        mock_entity.type.weight = 1.0
+        mock_entity.prior.prob_given_true = 0.8
+        mock_entity.prior.prob_given_false = 0.1
+
+        entities = {"test_entity": cast("Entity", mock_entity)}
+        prior = 0.3
+
+        # For inactive state with decay:
+        # P(inactive|occupied) = 1 - 0.8 = 0.2
+        # P(inactive|empty) = 1 - 0.1 = 0.9
+        # The decay factor (0.5) reduces the weight of the evidence
+        # The inactive state with these probabilities actually increases the probability
+        result = overall_probability(entities, prior)
+        assert abs(result - 0.548) < 0.001  # Expected value with decay factor
+
+    def test_no_entities(self) -> None:
+        """Test probability calculation with no entities."""
+        entities = {}
+        prior = 0.3
+
+        # With no entities, should return the prior unchanged
+        result = overall_probability(entities, prior)
+        assert result == prior
+
+    def test_mixed_states(self) -> None:
+        """Test probability calculation with mixed entity states."""
+        # Create entities with different states
+        mock_active = Mock()
+        mock_active.is_active = True
+        mock_active.decay.is_decaying = False
+        mock_active.type.weight = 1.0
+        mock_active.prior.prob_given_true = 0.8
+        mock_active.prior.prob_given_false = 0.1
+
+        mock_inactive = Mock()
+        mock_inactive.is_active = False
+        mock_inactive.decay.is_decaying = False
+        mock_inactive.type.weight = 1.0
+        mock_inactive.prior.prob_given_true = 0.8
+        mock_inactive.prior.prob_given_false = 0.1
+
+        mock_decaying = Mock()
+        mock_decaying.is_active = False
+        mock_decaying.decay.is_decaying = True
+        mock_decaying.decay.decay_factor = 0.5
+        mock_decaying.type.weight = 1.0
+        mock_decaying.prior.prob_given_true = 0.8
+        mock_decaying.prior.prob_given_false = 0.1
+
+        entities = {
+            "active": cast("Entity", mock_active),
+            "inactive": cast("Entity", mock_inactive),
+            "decaying": cast("Entity", mock_decaying),
+        }
+        prior = 0.3
+
+        # Should combine all evidence appropriately
+        result = overall_probability(entities, prior)
+        assert 0.0 < result < 1.0  # Should be a valid probability

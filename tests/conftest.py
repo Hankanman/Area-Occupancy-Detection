@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Generator
 from datetime import datetime, timedelta
 import tempfile
+import time
 import types
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -79,6 +80,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import EntityRegistry
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Configure pytest-asyncio to use function scope for event loops
@@ -804,22 +806,16 @@ def mock_decay() -> Mock:
 
     decay = Mock(spec=Decay)
     decay.is_decaying = False
-    decay.decay_enabled = True
-    decay.decay_window = 300
+    decay.last_trigger_ts = time.time()
+    decay.half_life = 60.0
     decay.decay_factor = 1.0
-    decay.decay_start_time = None
-    decay.decay_start_probability = 0.0
     decay.should_start_decay.return_value = False
     decay.should_stop_decay.return_value = False
     decay.is_decay_complete.return_value = False
-    decay.update_decay.return_value = (0.5, 1.0)
     decay.to_dict.return_value = {
+        "last_trigger_ts": time.time(),
+        "half_life": 60.0,
         "is_decaying": False,
-        "decay_start_time": None,
-        "decay_start_probability": 0.0,
-        "decay_window": 300,
-        "decay_enabled": True,
-        "decay_factor": 1.0,
     }
     return decay
 
@@ -1001,3 +997,34 @@ def mock_entity_for_prior_tests() -> Mock:
     entity.type.input_type.value = "light"
 
     return entity
+
+
+@pytest.fixture(autouse=True)
+def mock_debouncer_globally():
+    """Automatically mock Debouncer for all tests."""
+    with patch(
+        "custom_components.area_occupancy.coordinator.Debouncer"
+    ) as mock_debouncer_class:
+        mock_debouncer = Mock()
+        mock_debouncer.async_call = AsyncMock(
+            side_effect=lambda: None
+        )  # Ensure it calls the method
+        mock_debouncer.async_shutdown = AsyncMock()
+        mock_debouncer_class.return_value = mock_debouncer
+        yield mock_debouncer
+
+
+@pytest.fixture(autouse=True)
+def mock_data_update_coordinator_debouncer():
+    """Automatically mock DataUpdateCoordinator's debouncer for all tests."""
+    original_init = DataUpdateCoordinator.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._debounced_refresh = AsyncMock()
+
+    with patch(
+        "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.__init__",
+        patched_init,
+    ):
+        yield
