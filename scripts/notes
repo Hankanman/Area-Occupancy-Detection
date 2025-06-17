@@ -4,6 +4,8 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-git diff main..dev > release_diff.txt
+# Get only diffs for the custom_components folder
+git diff main..dev -- custom_components/ > release_diff.txt
 
-git log main...dev --pretty=format:"%h%n%B%n---" > commit_messages.txt
+# Get commit messages, but only for commits that touched custom_components
+git log main..dev --pretty=format:"%h%n%B%n---" -- custom_components/ > commit_messages.txt
