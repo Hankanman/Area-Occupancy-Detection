@@ -1,18 +1,18 @@
 """Tests for utils module."""
 
 from datetime import datetime
-from unittest.mock import Mock
 from typing import TYPE_CHECKING, cast
+from unittest.mock import Mock
 
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
     format_float,
+    overall_probability,
     validate_datetime,
     validate_decay_factor,
     validate_prior,
     validate_prob,
     validate_weight,
-    overall_probability,
 )
 from homeassistant.util import dt as dt_util
 

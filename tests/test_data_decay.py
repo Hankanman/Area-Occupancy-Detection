@@ -1,13 +1,9 @@
 """Tests for the decay module."""
 
-from datetime import datetime, timedelta
 import time
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-import pytest
-
-from custom_components.area_occupancy.data.decay import Decay, DEFAULT_HALF_LIFE
-from custom_components.area_occupancy.const import MIN_PROBABILITY
+from custom_components.area_occupancy.data.decay import DEFAULT_HALF_LIFE, Decay
 
 
 class TestDecay:

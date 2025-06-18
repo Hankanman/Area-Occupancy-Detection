@@ -87,7 +87,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             # Create a temporary coordinator just for cleanup
             temp_coordinator = AreaOccupancyCoordinator(hass, entry)
             store = temp_coordinator.storage
+            # Initialize the storage manager
+            await store.async_initialize()
 
+        # Remove the instance data
         removed = await store.async_remove_instance(entry_id)
         if removed:
             _LOGGER.info("Instance %s data removed from storage", entry_id)

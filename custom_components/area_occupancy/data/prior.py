@@ -190,17 +190,11 @@ class PriorManager:
         entity_type = entity.type
         if self.coordinator.config.sensors.primary_occupancy:
             primary_sensor = self.coordinator.config.sensors.primary_occupancy
-        else:
-            raise ValueError("No primary occupancy sensor configured")
 
         # Use provided history period or default from config
         effective_period = history_period or self.coordinator.config.history.period
         start_time = dt_util.utcnow() - timedelta(days=effective_period)
         end_time = dt_util.utcnow()
-
-        if end_time <= start_time:
-            _LOGGER.error("End time must be after start time")
-            raise ValueError("End time must be after start time")
 
         _LOGGER.debug(
             "Calculating prior for entity: %s",
@@ -238,17 +232,11 @@ class PriorManager:
                     hass, entity_id, start_time, end_time
                 )
                 if not primary_states:
-                    _LOGGER.warning(
-                        "No states found for primary sensor (%s). Using defaults",
-                        entity_id,
-                    )
                     return fallback_prior
 
                 primary_state_objects = [
                     state for state in primary_states if isinstance(state, State)
                 ]
-                if not primary_state_objects:
-                    return fallback_prior
 
                 primary_intervals = await self._states_to_intervals(
                     primary_state_objects, start_time, end_time
