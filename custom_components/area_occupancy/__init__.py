@@ -81,21 +81,16 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         # Check if runtime_data exists and has a coordinator
         if hasattr(entry, "runtime_data") and entry.runtime_data:
-            # Use the existing coordinator's storage manager
-            store = entry.runtime_data.storage
+            # Use the existing coordinator's store
+            store = entry.runtime_data.store
         else:
             # Create a temporary coordinator just for cleanup
             temp_coordinator = AreaOccupancyCoordinator(hass, entry)
-            store = temp_coordinator.storage
-            # Initialize the storage manager
-            await store.async_initialize()
+            store = temp_coordinator.store
 
-        # Remove the instance data
-        removed = await store.async_remove_instance(entry_id)
-        if removed:
-            _LOGGER.info("Instance %s data removed from storage", entry_id)
-        else:
-            _LOGGER.debug("Instance %s data removal reported no change", entry_id)
+        # Remove the per-entry storage file
+        await store.async_remove()
+        _LOGGER.info("Per-entry storage removed for instance %s", entry_id)
 
     except Exception:
         # Log error but don't prevent removal flow

@@ -271,7 +271,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
 
         status = {
             "area_name": area_name,
-            "is_occupied": coordinator.is_occupied,
+            "occupied": coordinator.occupied,
             "occupancy_probability": occupancy_probability,
             "confidence_level": (
                 "high"
@@ -287,7 +287,6 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
             "available_entities": metrics["available_entities"],
             "unavailable_entities": metrics["unavailable_entities"],
             "decaying_entities": metrics["decaying_entities"],
-            "last_updated": coordinator.last_updated.isoformat(),
         }
 
         _LOGGER.info("Retrieved area status for entry %s", entry_id)

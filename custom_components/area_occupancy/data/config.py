@@ -371,7 +371,7 @@ class ConfigManager:
             # Reload the config entry to update the UI
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-            # Request update since threshold affects is_occupied calculation
+            # Request update since threshold affects occupied calculation
             await self.coordinator.async_request_refresh()
 
         except Exception as err:
