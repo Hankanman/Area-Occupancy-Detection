@@ -8,7 +8,6 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_MIN_DELAY,
     CONF_DECAY_WINDOW,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
@@ -39,7 +38,6 @@ from custom_components.area_occupancy.const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
@@ -232,19 +230,16 @@ class TestDecay:
 
         assert decay.enabled == DEFAULT_DECAY_ENABLED
         assert decay.window == DEFAULT_DECAY_WINDOW
-        assert decay.min_delay == DEFAULT_DECAY_MIN_DELAY
 
     def test_initialization_with_values(self) -> None:
         """Test Decay initialization with specific values."""
         decay = Decay(
             enabled=False,
             window=600,
-            min_delay=30,
         )
 
         assert decay.enabled is False
         assert decay.window == 600
-        assert decay.min_delay == 30
 
 
 class TestHistory:
@@ -396,7 +391,6 @@ class TestConfig:
             CONF_WASP_WEIGHT: 0.85,
             CONF_DECAY_ENABLED: False,
             CONF_DECAY_WINDOW: 600,
-            CONF_DECAY_MIN_DELAY: 30,
             CONF_HISTORICAL_ANALYSIS_ENABLED: False,
             CONF_HISTORY_PERIOD: 60,
             CONF_WASP_ENABLED: True,
@@ -437,7 +431,6 @@ class TestConfig:
         assert config.weights.wasp == 0.85
         assert config.decay.enabled is False
         assert config.decay.window == 600
-        assert config.decay.min_delay == 30
         assert config.history.enabled is False
         assert config.history.period == 60
         assert config.wasp_in_box.enabled is True

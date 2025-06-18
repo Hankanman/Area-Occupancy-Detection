@@ -16,7 +16,7 @@ Comprehensive Home Assistant instance mock with:
 
 - Event loop management with automatic setup/cleanup
 - Config entries, states, and entity registry
-- Storage system with version 9.1 support
+ - Storage system with version 9.2 support
 - Event system and service registration
 - Async method support
 
@@ -32,7 +32,7 @@ def test_example(self, mock_hass: Mock) -> None:
 Complete configuration entry with:
 
 - All configuration options with defaults
-- Version settings (9.1)
+ - Version settings (9.2)
 - Runtime data and lifecycle methods
 - Entry ID: "test_entry_id"
 
@@ -199,7 +199,7 @@ Valid entity data structure for testing:
 
 #### `valid_storage_data`
 
-Valid storage data with current format (v9.1):
+Valid storage data with current format (v9.2):
 
 - Proper nested structure: `data.instances.{entry_id}.entities`
 - Contains one test entity with complete data

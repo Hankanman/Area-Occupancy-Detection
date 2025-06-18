@@ -88,8 +88,9 @@ The setup wizard will guide you through:
    - History Period: Days of history to analyze for learning (default: 7 days)
    - Enable Time Decay: Whether probability should decay over time
    - Decay Window: How long until probability fully decays (default: 600 seconds)
-   - Decay Minimum Delay: Wait time before starting decay (default: 60 seconds)
    - Enable Historical Analysis: Whether to learn from historical data
+
+   *Note: The Decay Minimum Delay parameter has been removed as of version 9.2. Existing configurations are migrated automatically.*
 
 ## Technical Details
 

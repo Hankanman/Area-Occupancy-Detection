@@ -90,7 +90,6 @@
                     "parameters": {
                         "data": {
                             "decay_enabled": "Enable Time Decay",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
                             "decay_window": "Decay Window (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis",
                             "history_period": "History Period (days)",
@@ -98,7 +97,6 @@
                         },
                         "data_description": {
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_min_delay": "Minimum time before decay starts.",
                             "decay_window": "Time window over which occupancy probability decays.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
@@ -252,7 +250,6 @@
                     "parameters": {
                         "data": {
                             "decay_enabled": "Enable Time Decay",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
                             "decay_window": "Decay Window (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis",
                             "history_period": "History Period (days)",
@@ -260,7 +257,6 @@
                         },
                         "data_description": {
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_min_delay": "Minimum time before decay starts.",
                             "decay_window": "Time window over which occupancy probability decays.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
