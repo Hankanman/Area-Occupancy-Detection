@@ -853,7 +853,7 @@ split-on-trailing-comma = false
 # Temporary
 "homeassistant/**" = ["PTH"]
 "custom_components/**" = ["PTH"]
-"tests/**" = ["PTH"]
+"tests/**" = ["PTH", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25

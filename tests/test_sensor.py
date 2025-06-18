@@ -92,7 +92,6 @@ class TestPriorsSensor:
         assert sensor.native_value == 100.0
 
 
-
 class TestProbabilitySensor:
     """Test ProbabilitySensor class."""
 
@@ -128,7 +127,6 @@ class TestProbabilitySensor:
         assert sensor.native_value == 100.0
 
 
-
 class TestEntitiesSensor:
     """Test EntitiesSensor class."""
 
@@ -155,7 +153,6 @@ class TestEntitiesSensor:
         sensor = EntitiesSensor(mock_coordinator, "test_entry")
 
         assert sensor.native_value == 0
-
 
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
@@ -198,7 +195,6 @@ class TestEntitiesSensor:
         assert attributes["inactive"] == []
 
 
-
 class TestDecaySensor:
     """Test DecaySensor class."""
 
@@ -233,6 +229,7 @@ class TestDecaySensor:
 
         mock_coordinator.decay = 1.0
         assert sensor.native_value == 0.0  # (1 - 1.0) * 100
+
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
         # Set up mock active entities with decay information
@@ -271,6 +268,9 @@ class TestDecaySensor:
         sensor = DecaySensor(mock_coordinator, "test_entry")
 
         attributes = sensor.extra_state_attributes
+        assert attributes == {"active": []}
+
+
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
