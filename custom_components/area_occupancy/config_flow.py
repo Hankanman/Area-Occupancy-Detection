@@ -42,7 +42,6 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_MIN_DELAY,
     CONF_DECAY_WINDOW,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
@@ -72,7 +71,6 @@ from .const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
@@ -112,10 +110,6 @@ HISTORY_PERIOD_MAX = 30
 DECAY_WINDOW_STEP = 60
 DECAY_WINDOW_MIN = 60
 DECAY_WINDOW_MAX = 3600
-
-DECAY_MIN_DELAY_STEP = 10
-DECAY_MIN_DELAY_MIN = 0
-DECAY_MIN_DELAY_MAX = 3600
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -551,18 +545,6 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 ),
             ),
             vol.Optional(
-                CONF_DECAY_MIN_DELAY,
-                default=defaults.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=DECAY_MIN_DELAY_MIN,
-                    max=DECAY_MIN_DELAY_MAX,
-                    step=DECAY_MIN_DELAY_STEP,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
-            vol.Optional(
                 CONF_HISTORICAL_ANALYSIS_ENABLED,
                 default=defaults.get(
                     CONF_HISTORICAL_ANALYSIS_ENABLED,
@@ -816,15 +798,6 @@ class BaseOccupancyFlow:
                     f"Decay window must be between {DECAY_WINDOW_MIN} and {DECAY_WINDOW_MAX} seconds"
                 )
 
-            decay_min_delay = data.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)
-            if (
-                not isinstance(decay_min_delay, (int, float))
-                or decay_min_delay < DECAY_MIN_DELAY_MIN
-                or decay_min_delay > DECAY_MIN_DELAY_MAX
-            ):
-                raise vol.Invalid(
-                    f"Decay minimum delay must be between {DECAY_MIN_DELAY_MIN} and {DECAY_MIN_DELAY_MAX} seconds"
-                )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
