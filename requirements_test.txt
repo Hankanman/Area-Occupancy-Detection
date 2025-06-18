@@ -3,3 +3,4 @@ pytest-cov
 pytest-homeassistant-custom-component
 astroid
 pylint
+sqlalchemy
