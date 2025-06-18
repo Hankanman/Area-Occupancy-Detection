@@ -302,7 +302,7 @@ def mock_entity_manager() -> Mock:
                 "type": "motion",
                 "probability": 0.7,
                 "state": "on",
-                "is_active": True,
+                "evidence": True,
                 "available": True,
                 "last_updated": dt_util.utcnow().isoformat(),
                 "last_changed": dt_util.utcnow().isoformat(),
@@ -534,7 +534,6 @@ def mock_entity_type() -> Mock:
     entity_type.prior = 0.35
     entity_type.active_states = [STATE_ON]
     entity_type.active_range = None
-    entity_type.is_active = Mock(return_value=True)
     return entity_type
 
 
@@ -655,7 +654,7 @@ def valid_entity_data() -> dict[str, Any]:
         "entity_id": "binary_sensor.test_motion",
         "probability": 0.5,
         "state": STATE_ON,
-        "is_active": True,
+        "evidence": True,
         "available": True,
         "type": "motion",
         "prior": {"prior": 0.3},
@@ -679,7 +678,7 @@ def valid_storage_data() -> dict[str, Any]:
                 "entity_id": "binary_sensor.test_motion",
                 "probability": 0.5,
                 "state": STATE_ON,
-                "is_active": True,
+                "evidence": True,
                 "available": True,
                 "type": "motion",
                 "prior": {"prior": 0.3},
@@ -771,7 +770,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         "binary_sensor.motion1": Mock(
             entity_id="binary_sensor.motion1",
             available=True,
-            is_active=True,
+            evidence=True,
             probability=0.75,
             type=Mock(input_type=InputType.MOTION, weight=0.85),
             decay=Mock(is_decaying=False, decay_factor=1.0),
@@ -780,7 +779,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         "binary_sensor.motion2": Mock(
             entity_id="binary_sensor.motion2",
             available=True,
-            is_active=False,
+            evidence=False,
             probability=0.25,
             type=Mock(input_type=InputType.MOTION, weight=0.85),
             decay=Mock(is_decaying=True, decay_factor=0.8),
@@ -789,7 +788,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         "light.test_light": Mock(
             entity_id="light.test_light",
             available=False,
-            is_active=False,
+            evidence=False,
             probability=0.15,
             type=Mock(input_type=InputType.LIGHT, weight=0.2),
             decay=Mock(is_decaying=False, decay_factor=1.0),
@@ -798,7 +797,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         "media_player.tv": Mock(
             entity_id="media_player.tv",
             available=True,
-            is_active=True,
+            evidence=True,
             probability=0.85,
             type=Mock(input_type=InputType.MEDIA, weight=0.7),
             decay=Mock(is_decaying=False, decay_factor=1.0),
@@ -892,7 +891,7 @@ def mock_comprehensive_entity(
     entity.prior = mock_prior
     entity.decay = mock_decay
     entity.state = STATE_ON
-    entity.is_active = True
+    entity.evidence = True
     entity.available = True
     entity.last_updated = dt_util.utcnow()
     entity.last_changed = dt_util.utcnow()
@@ -913,7 +912,7 @@ def mock_comprehensive_entity(
         "type": InputType.MOTION.value,
         "probability": 0.5,
         "state": STATE_ON,
-        "is_active": True,
+        "evidence": True,
         "available": True,
         "last_updated": dt_util.utcnow().isoformat(),
         "last_changed": dt_util.utcnow().isoformat(),

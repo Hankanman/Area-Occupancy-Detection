@@ -12,7 +12,6 @@ from homeassistant.const import (
     STATE_PLAYING,
     STATE_STANDBY,
 )
-from homeassistant.core import State
 
 from ..utils import validate_prior, validate_prob, validate_weight
 
@@ -54,33 +53,6 @@ class EntityType:
             raise ValueError("Either active_states or active_range must be provided")
         if self.active_states is not None and self.active_range is not None:
             raise ValueError("Cannot provide both active_states and active_range")
-
-    def is_active(self, state: State) -> bool:
-        """Check if the entity state is active.
-
-        Args:
-            state: The current state of the entity
-
-        Returns:
-            bool: True if the state is active, False otherwise
-
-        """
-        try:
-            if self.active_states is not None:
-                return state.state in self.active_states
-            if self.active_range is not None:
-                try:
-                    state_val = float(state.state)
-                    min_val, max_val = self.active_range
-                except (ValueError, TypeError):
-                    return False
-                else:
-                    return min_val <= state_val <= max_val
-
-        except Exception as err:
-            raise ValueError(f"Error checking active state: {err}") from err
-        else:
-            return False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity type to dictionary for storage."""

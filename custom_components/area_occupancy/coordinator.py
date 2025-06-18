@@ -57,8 +57,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             name=config_entry.data.get(CONF_NAME, DEFAULT_NAME),
             update_interval=None,
-            setup_method=self._async_coordinator_setup,
-            update_method=self._async_update_data,
+            setup_method=self.setup,
+            update_method=self.update,
         )
         self.hass = hass
         self.config_entry = config_entry
@@ -101,12 +101,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for entity in self.entities.entities.values():
             # Only apply Bayesian update if sensor has active evidence
             # (currently ON or decaying from recent activity)
-            if entity.is_active or entity.decay.is_decaying:
+            if entity.evidence or entity.decay.is_decaying:
                 posterior = bayesian_probability(
                     prior=posterior,
                     prob_given_true=entity.prior.prob_given_true,
                     prob_given_false=entity.prior.prob_given_false,
-                    is_active=True,  # use weight * decay as fractional power
+                    evidence=True,  # use weight * decay as fractional power
                     weight=entity.type.weight * entity.decay.decay_factor,
                     decay_factor=1.0,
                 )
@@ -160,23 +160,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "wasp": self.wasp_entity_id,
         }
 
-    async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
-        """Track state changes for a list of entity_ids."""
-        # Clean up existing listener if it exists
-        if self._remove_state_listener is not None:
-            self._remove_state_listener()
-            self._remove_state_listener = None
-
-        # Only create new listener if we have entities to track
-        if entity_ids:
-            self._remove_state_listener = async_track_state_change_event(
-                self.hass,
-                entity_ids,
-                self.entities.async_state_changed_listener,
-            )
+    @property
+    def decaying_entities(self) -> list:
+        """Get list of entities currently decaying."""
+        return [
+            entity
+            for entity in self.entities.entities.values()
+            if entity.decay.is_decaying
+        ]
 
     # --- Public Methods ---
-    async def _async_coordinator_setup(self) -> None:
+    async def setup(self) -> None:
         """Initialize the coordinator and its components."""
         try:
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
@@ -200,8 +194,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
+        # Check and manage decay timer based on current entity states
+        self._manage_decay_timer()
+
         # Save current state to storage
         self.store.async_save_coordinator_data(self.entities)
 
@@ -225,7 +222,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._prior_update_tracker = None
 
         # Stop global decay timer
-        self._stop_global_decay_timer()
+        self._stop_decay_timer()
 
         # Clean up state change listener
         if self._remove_state_listener is not None:
@@ -324,6 +321,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Re-raise as ConfigEntryNotReady if loading fails critically
             raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
 
+    # --- Entity State Tracking ---
+    async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
+        """Track state changes for a list of entity_ids."""
+        # Clean up existing listener if it exists
+        if self._remove_state_listener is not None:
+            self._remove_state_listener()
+            self._remove_state_listener = None
+
+        # Only create new listener if we have entities to track
+        if entity_ids:
+            self._remove_state_listener = async_track_state_change_event(
+                self.hass,
+                entity_ids,
+                self.entities.async_state_changed_listener,
+            )
+
+    # --- Prior Update Handling ---
     async def update_learned_priors(self, history_period: int | None = None) -> None:
         """Update learned priors using historical data.
 
@@ -362,7 +376,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Always reschedule the next update
             await self._schedule_next_prior_update()
 
-    # --- Prior Update Handling ---
     async def _schedule_next_prior_update(self) -> None:
         """Schedule the next prior update at the start of the next hour."""
         if self._prior_update_tracker is not None:
@@ -395,71 +408,60 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Reschedule even if update failed
             await self._schedule_next_prior_update()
 
-    # --- Global Decay Timer Management ---
-    def async_notify_decay_started(self) -> None:
-        """Notify coordinator that an entity has started decaying."""
-        if self.config.decay.enabled and self._global_decay_timer is None:
-            self._start_global_decay_timer()
+    # --- Decay Timer Handling ---
+    def _manage_decay_timer(self) -> None:
+        """Manage decay timer based on current entity states and config."""
+        # Stop timer if decay is disabled globally
+        if not self.config.decay.enabled:
+            self._stop_decay_timer()
+            return
+
+        decaying_entities = self.decaying_entities
+
+        # Start timer if we have decaying entities but no timer running
+        if decaying_entities and self._global_decay_timer is None:
+            self._start_decay_timer()
             _LOGGER.debug("Started global decay timer")
+        # Stop timer if no entities are decaying but timer is running
+        elif not decaying_entities and self._global_decay_timer is not None:
+            self._stop_decay_timer()
+            _LOGGER.debug("Stopped global decay timer - no entities decaying")
 
-    def async_notify_decay_stopped(self) -> None:
-        """Notify coordinator that an entity has stopped decaying."""
-        # Check if any entities are still decaying
-        if self._global_decay_timer is not None:
-            decaying_entities = [
-                entity
-                for entity in self.entities.entities.values()
-                if entity.decay.is_decaying
-            ]
-
-            if not decaying_entities:
-                self._stop_global_decay_timer()
-                _LOGGER.debug("Stopped global decay timer - no entities decaying")
-
-    def _start_global_decay_timer(self) -> None:
-        """Start the global decay timer."""
+    def _start_decay_timer(self) -> None:
+        """Start the global decay timer (inline implementation)."""
         if self._global_decay_timer is not None or not self.hass:
             return
 
         next_update = dt_util.utcnow() + timedelta(seconds=DECAY_INTERVAL)
         self._global_decay_timer = async_track_point_in_time(
-            self.hass, self._handle_global_decay_timer, next_update
+            self.hass, self._handle_decay_timer, next_update
         )
 
-    def _stop_global_decay_timer(self) -> None:
-        """Stop the global decay timer."""
+    def _stop_decay_timer(self) -> None:
+        """Stop the global decay timer (inline implementation)."""
         if self._global_decay_timer is not None:
             self._global_decay_timer()
             self._global_decay_timer = None
 
-    async def _handle_global_decay_timer(self, _now: datetime) -> None:
-        """Handle global decay timer firing - refresh coordinator for UI updates."""
+    async def _handle_decay_timer(self, _now: datetime) -> None:
+        """Handle decay timer firing - refresh coordinator and reschedule if needed."""
         self._global_decay_timer = None
 
-        # Check if decay is globally disabled or no entities are decaying
+        # Early exit if decay is disabled globally
         if not self.config.decay.enabled:
-            _LOGGER.debug("Decay disabled globally, stopping global timer")
+            _LOGGER.debug("Decay disabled globally, stopping timer")
             return
 
-        decaying_entities = [
-            entity
-            for entity in self.entities.entities.values()
-            if entity.decay.is_decaying
-        ]
+        decaying_entities = self.decaying_entities
 
+        # Early exit if no entities are decaying
         if not decaying_entities:
-            _LOGGER.debug("No entities decaying, stopping global timer")
+            _LOGGER.debug("No entities decaying, stopping timer")
             return
 
-        # Refresh the coordinator and schedule next update if entities still decaying
+        # Refresh the coordinator for UI updates
         await self.async_refresh()
 
-        # Check again after refresh in case decay factors changed
-        remaining_decaying = [
-            entity
-            for entity in self.entities.entities.values()
-            if entity.decay.is_decaying
-        ]
-
-        if remaining_decaying:
-            self._start_global_decay_timer()
+        # Reschedule timer if entities are still decaying after refresh
+        if self.decaying_entities:
+            self._start_decay_timer()

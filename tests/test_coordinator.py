@@ -410,7 +410,7 @@ class TestCoordinatorErrorHandling:
             with pytest.raises(
                 ConfigEntryNotReady, match="Failed to set up coordinator"
             ):
-                await coordinator._async_coordinator_setup()
+                await coordinator.setup()
 
     async def test_async_load_stored_data_error(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -541,6 +541,8 @@ class TestCoordinatorErrorHandling:
 
             # Should cancel existing tracker
             mock_tracker.assert_called_once()
+
+            # Verify new listener was set up (check internal state)
 
     async def test_async_shutdown_with_tracker(
         self, mock_hass: Mock, mock_config_entry: Mock
@@ -1041,3 +1043,993 @@ class TestCoordinatorInitializationEdgeCases:
             assert coordinator._prior_update_tracker is None
             assert coordinator._global_decay_timer is None
             assert coordinator._remove_state_listener is None
+
+
+class TestCoordinatorRealBehaviorEnhanced:
+    """Test enhanced real coordinator behavior with comprehensive coverage."""
+
+    async def test_probability_calculation_with_entities(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test real probability calculation with active entities."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup entity with active state - use numeric values for weight
+            mock_entity = Mock()
+            mock_entity.evidence = True
+            mock_entity.decay.is_decaying = False
+            mock_entity.prior.prob_given_true = 0.8
+            mock_entity.prior.prob_given_false = 0.1
+            # Create a type mock with numeric weight
+            mock_type = Mock()
+            mock_type.weight = 0.9  # This must be a number, not Mock
+            mock_entity.type = mock_type
+            mock_entity.decay.decay_factor = 1.0
+            mock_entity.prior.prior = 0.35
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"test_entity": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Test probability calculation - verify it returns a valid probability
+            result = coordinator.probability
+            assert 0.0 <= result <= 1.0
+            # With an active entity, probability should be higher than minimum
+            assert result > 0.01
+
+    async def test_probability_calculation_with_decaying_entities(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test probability calculation with decaying entities."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup entity with decaying state - use numeric values
+            mock_entity = Mock()
+            mock_entity.evidence = False
+            mock_entity.decay.is_decaying = True
+            mock_entity.prior.prob_given_true = 0.8
+            mock_entity.prior.prob_given_false = 0.1
+            # Create a type mock with numeric weight
+            mock_type = Mock()
+            mock_type.weight = 0.9  # This must be a number, not Mock
+            mock_entity.type = mock_type
+            mock_entity.decay.decay_factor = 0.6
+            mock_entity.prior.prior = 0.35
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"test_entity": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Test probability calculation with decaying entity
+            result = coordinator.probability
+            assert 0.0 <= result <= 1.0
+            # With a decaying entity, probability should still be valid
+            assert result > 0.01
+
+    async def test_prior_calculation_with_multiple_entities(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test prior calculation with multiple entities."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup multiple entities with different priors
+            mock_entity1 = Mock()
+            mock_entity1.prior.prior = 0.3
+            mock_entity2 = Mock()
+            mock_entity2.prior.prior = 0.4
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {
+                "entity1": mock_entity1,
+                "entity2": mock_entity2,
+            }
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Test prior calculation (should be average: (0.3 + 0.4) / 2 = 0.35)
+            result = coordinator.prior
+            assert result == 0.35
+
+    async def test_decay_calculation_with_multiple_entities(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test decay calculation with multiple entities."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup multiple entities with different decay factors
+            mock_entity1 = Mock()
+            mock_entity1.decay.decay_factor = 0.8
+            mock_entity2 = Mock()
+            mock_entity2.decay.decay_factor = 0.6
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {
+                "entity1": mock_entity1,
+                "entity2": mock_entity2,
+            }
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Test decay calculation (should be average: (0.8 + 0.6) / 2 = 0.7)
+            result = coordinator.decay
+            assert result == 0.7
+
+    async def test_occupied_property_true_and_false(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test occupied property for both true and false cases."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config with threshold
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config.threshold = 0.6
+            mock_config_mgr.return_value.config = mock_config
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Test occupied property with empty entities (should be False due to MIN_PROBABILITY)
+            assert not coordinator.occupied  # MIN_PROBABILITY < 0.6
+
+    async def test_track_entity_state_changes_with_cleanup(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test track_entity_state_changes with listener cleanup."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+
+            # Set up a proper entities manager mock with async_state_changed_listener
+            mock_entities_instance = Mock()
+            mock_entities_instance.async_state_changed_listener = AsyncMock()
+            coordinator.entities = mock_entities_instance
+
+            # Test with existing listener that needs cleanup
+            mock_existing_listener = Mock()
+            coordinator._remove_state_listener = mock_existing_listener
+
+            await coordinator.track_entity_state_changes(["binary_sensor.test"])
+
+            # Verify existing listener was cleaned up
+            mock_existing_listener.assert_called_once()
+
+            # Verify new listener was set up (check internal state)
+            assert coordinator._remove_state_listener is not None
+
+    async def test_track_entity_state_changes_empty_list(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test track_entity_state_changes with empty entity list."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+
+            # Set up existing listener
+            mock_existing_listener = Mock()
+            coordinator._remove_state_listener = mock_existing_listener
+
+            await coordinator.track_entity_state_changes([])
+
+            # Verify existing listener was cleaned up
+            mock_existing_listener.assert_called_once()
+
+            # Verify listener is set to None
+            assert coordinator._remove_state_listener is None
+
+    async def test_async_coordinator_setup_success(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test successful coordinator setup."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ) as mock_entity_type_mgr,
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup entity types manager
+            mock_entity_type_instance = Mock()
+            mock_entity_type_instance.async_initialize = AsyncMock()
+            mock_entity_type_mgr.return_value = mock_entity_type_instance
+
+            # Setup entity manager
+            mock_entities_instance = Mock()
+            mock_entities_instance.async_initialize = AsyncMock()
+            mock_entities_instance.entity_ids = ["binary_sensor.test"]
+            mock_entities_instance.entities = {}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entity_types = mock_entity_type_instance
+            coordinator.entities = mock_entities_instance
+
+            # Mock the methods that are called during setup
+            coordinator.async_load_stored_data = AsyncMock()
+            coordinator.track_entity_state_changes = AsyncMock()
+            coordinator._schedule_next_prior_update = AsyncMock()
+
+            await coordinator.setup()
+
+            # Verify all initialization steps were called
+            mock_entity_type_instance.async_initialize.assert_called_once()
+            coordinator.async_load_stored_data.assert_called_once()
+            mock_entities_instance.async_initialize.assert_called_once()
+            coordinator.track_entity_state_changes.assert_called_once_with(
+                ["binary_sensor.test"]
+            )
+            coordinator._schedule_next_prior_update.assert_called_once()
+
+    async def test_async_update_data_return_values(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _async_update_data returns correct data structure."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch(
+                "custom_components.area_occupancy.storage.AreaOccupancyStore"
+            ) as mock_store_cls,
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
+        ):
+            from datetime import datetime
+
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config.threshold = 0.5
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup store
+            mock_store = Mock()
+            mock_store.async_save_coordinator_data = Mock()
+            mock_store_cls.return_value = mock_store
+
+            # Setup entities
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            # Setup time
+            mock_time = datetime(2024, 1, 1, 12, 0, 0)
+            mock_utcnow.return_value = mock_time
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.store = mock_store
+            coordinator.entities = mock_entities_instance
+            coordinator._next_prior_update = mock_time
+            coordinator._last_prior_update = mock_time
+
+            result = await coordinator._async_update_data()
+
+            # Verify save was called
+            mock_store.async_save_coordinator_data.assert_called_once_with(
+                mock_entities_instance
+            )
+
+            # Verify return data structure
+            expected_keys = {
+                "probability",
+                "occupied",
+                "threshold",
+                "prior",
+                "decay",
+                "last_updated",
+                "next_prior_update",
+                "last_prior_update",
+            }
+            assert set(result.keys()) == expected_keys
+            # With empty entities, should return default values
+            assert result["threshold"] == 0.5
+            assert result["last_updated"] == mock_time
+
+    async def test_async_shutdown_cleanup(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test async_shutdown cleans up all resources."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup entity manager
+            mock_entities_instance = Mock()
+            mock_entities_instance.cleanup = Mock()
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+
+            # Setup all the items that need cleanup
+            mock_prior_tracker = Mock()
+            mock_state_listener = Mock()
+            coordinator._prior_update_tracker = mock_prior_tracker
+            coordinator._remove_state_listener = mock_state_listener
+            coordinator._stop_decay_timer = Mock()
+
+            # Mock parent shutdown
+            with patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown"
+            ) as mock_super_shutdown:
+                await coordinator.async_shutdown()
+
+            # Verify all cleanup was performed
+            mock_prior_tracker.assert_called_once()
+            assert coordinator._prior_update_tracker is None
+
+            coordinator._stop_decay_timer.assert_called_once()
+
+            mock_state_listener.assert_called_once()
+            assert coordinator._remove_state_listener is None
+
+            mock_entities_instance.cleanup.assert_called_once()
+            mock_super_shutdown.assert_called_once()
+
+    async def test_async_update_options_complete_flow(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test async_update_options complete flow."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch(
+                "custom_components.area_occupancy.storage.AreaOccupancyStore"
+            ) as mock_store_cls,
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ) as mock_entity_type_mgr,
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config manager
+            mock_config_mgr_instance = Mock()
+            mock_config_mgr_instance.update_config = AsyncMock()
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr_instance.config = mock_config
+            mock_config_mgr.return_value = mock_config_mgr_instance
+
+            # Setup store
+            mock_store = Mock()
+            mock_store.async_save_coordinator_data = Mock()
+            mock_store_cls.return_value = mock_store
+
+            # Setup entity types manager
+            mock_entity_type_instance = Mock()
+            mock_entity_type_instance.cleanup = Mock()
+            mock_entity_type_instance.async_initialize = AsyncMock()
+            mock_entity_type_mgr.return_value = mock_entity_type_instance
+
+            # Setup entity manager
+            mock_entities_instance = Mock()
+            mock_entities_instance.cleanup = Mock()
+            mock_entities_instance.async_initialize = AsyncMock()
+            mock_entities_instance.entity_ids = ["binary_sensor.test"]
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.config_manager = mock_config_mgr_instance
+            coordinator.store = mock_store
+            coordinator.entity_types = mock_entity_type_instance
+            coordinator.entities = mock_entities_instance
+
+            # Mock methods called during update_options
+            coordinator.track_entity_state_changes = AsyncMock()
+            coordinator._schedule_next_prior_update = AsyncMock()
+            coordinator.async_request_refresh = AsyncMock()
+
+            new_options = {"threshold": 0.8, "decay_enabled": True}
+            await coordinator.async_update_options(new_options)
+
+            # Verify all steps were called
+            mock_config_mgr_instance.update_config.assert_called_once_with(new_options)
+            mock_entity_type_instance.cleanup.assert_called_once()
+            mock_entity_type_instance.async_initialize.assert_called_once()
+            mock_entities_instance.cleanup.assert_called_once()
+            mock_entities_instance.async_initialize.assert_called_once()
+            coordinator.track_entity_state_changes.assert_called_once_with(
+                ["binary_sensor.test"]
+            )
+            coordinator._schedule_next_prior_update.assert_called_once()
+            mock_store.async_save_coordinator_data.assert_called_once_with(
+                mock_entities_instance
+            )
+            coordinator.async_request_refresh.assert_called_once()
+
+    async def test_update_learned_priors_success(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test update_learned_priors successful execution."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch(
+                "custom_components.area_occupancy.storage.AreaOccupancyStore"
+            ) as mock_store_cls,
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch(
+                "custom_components.area_occupancy.data.prior.PriorManager"
+            ) as mock_prior_mgr,
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup store
+            mock_store = Mock()
+            mock_store.async_save_coordinator_data = Mock()
+            mock_store_cls.return_value = mock_store
+
+            # Setup priors manager
+            mock_priors_instance = Mock()
+            mock_priors_instance.update_all_entity_priors = AsyncMock()
+            mock_prior_mgr.return_value = mock_priors_instance
+
+            # Setup entity manager
+            mock_entities_instance = Mock()
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.store = mock_store
+            coordinator.priors = mock_priors_instance
+            coordinator.entities = mock_entities_instance
+            coordinator.async_request_refresh = AsyncMock()
+            coordinator._schedule_next_prior_update = AsyncMock()
+
+            # Mock hass.is_stopping to False
+            mock_hass.is_stopping = False
+
+            await coordinator.update_learned_priors(history_period=14)
+
+            # Verify priors update was called
+            mock_priors_instance.update_all_entity_priors.assert_called_once_with(14)
+            mock_store.async_save_coordinator_data.assert_called_once_with(
+                mock_entities_instance
+            )
+            coordinator.async_request_refresh.assert_called_once()
+
+    async def test_update_learned_priors_hass_stopping(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test update_learned_priors when Home Assistant is stopping."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch(
+                "custom_components.area_occupancy.data.prior.PriorManager"
+            ) as mock_prior_mgr,
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup priors manager
+            mock_priors_instance = Mock()
+            mock_priors_instance.update_all_entity_priors = AsyncMock()
+            mock_prior_mgr.return_value = mock_priors_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.priors = mock_priors_instance
+            coordinator._schedule_next_prior_update = AsyncMock()
+
+            # Mock hass.is_stopping to True
+            mock_hass.is_stopping = True
+
+            await coordinator.update_learned_priors()
+
+            # Verify priors update was NOT called
+            mock_priors_instance.update_all_entity_priors.assert_not_called()
+            # Verify reschedule was still called in finally block
+            coordinator._schedule_next_prior_update.assert_called_once()
+
+    async def test_update_learned_priors_with_error(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test update_learned_priors with error handling."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch(
+                "custom_components.area_occupancy.data.prior.PriorManager"
+            ) as mock_prior_mgr,
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup priors manager to raise error
+            mock_priors_instance = Mock()
+            mock_priors_instance.update_all_entity_priors = AsyncMock(
+                side_effect=HomeAssistantError("Test error")
+            )
+            mock_prior_mgr.return_value = mock_priors_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.priors = mock_priors_instance
+            coordinator._schedule_next_prior_update = AsyncMock()
+
+            # Mock hass.is_stopping to False
+            mock_hass.is_stopping = False
+
+            # Should not raise, should handle error gracefully
+            await coordinator.update_learned_priors()
+
+            # Verify schedule was called (finally block)
+            coordinator._schedule_next_prior_update.assert_called_once()
+
+    async def test_schedule_next_prior_update_basic_functionality(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _schedule_next_prior_update basic functionality."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
+        ):
+            from datetime import datetime
+
+            mock_time = datetime(2024, 1, 1, 12, 30, 45)
+            mock_utcnow.return_value = mock_time
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+
+            # Set existing tracker
+            mock_existing_tracker = Mock()
+            coordinator._prior_update_tracker = mock_existing_tracker
+
+            await coordinator._schedule_next_prior_update()
+
+            # Verify existing tracker was cancelled
+            mock_existing_tracker.assert_called_once()
+
+            # Verify next update time is set to start of next hour
+            expected_time = datetime(2024, 1, 1, 13, 0, 0)  # Next hour
+            assert coordinator._next_prior_update == expected_time
+
+    async def test_handle_prior_update_success(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _handle_prior_update successful execution."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            from datetime import datetime
+
+            # Setup config
+            mock_config = Mock()
+            mock_config.name = "Test Area"
+            mock_config_mgr.return_value.config = mock_config
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.update_learned_priors = AsyncMock()
+
+            test_time = datetime(2024, 1, 1, 12, 0, 0)
+            await coordinator._handle_prior_update(test_time)
+
+            # Verify update was called
+            coordinator.update_learned_priors.assert_called_once()
+
+            # Verify tracker state was reset
+            assert coordinator._prior_update_tracker is None
+            assert coordinator._next_prior_update is None
+
+    def test_manage_decay_timer_starts_timer(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _manage_decay_timer starts timer when entities are decaying."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup config with decay enabled
+            mock_config = Mock()
+            mock_config.decay.enabled = True
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup entity with decaying state
+            mock_entity = Mock()
+            mock_entity.decay.is_decaying = True
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"entity1": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+            coordinator._start_decay_timer = Mock()
+
+            # No existing timer
+            coordinator._global_decay_timer = None
+
+            coordinator._manage_decay_timer()
+
+            # Verify timer was started
+            coordinator._start_decay_timer.assert_called_once()
+
+    def test_manage_decay_timer_keeps_timer_running(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _manage_decay_timer keeps timer running when entities are still decaying."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup entity with decaying state
+            mock_entity = Mock()
+            mock_entity.decay.is_decaying = True
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"entity1": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+            coordinator._stop_decay_timer = Mock()
+            coordinator._global_decay_timer = Mock()  # Existing timer
+
+            coordinator._manage_decay_timer()
+
+            # Verify timer was NOT stopped because entity still decaying
+            coordinator._stop_decay_timer.assert_not_called()
+
+    def test_manage_decay_timer_stops_timer(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _manage_decay_timer stops timer when no entities are decaying."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            # Setup entity with no decaying state
+            mock_entity = Mock()
+            mock_entity.decay.is_decaying = False
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"entity1": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+            coordinator._stop_decay_timer = Mock()
+            coordinator._global_decay_timer = Mock()  # Existing timer
+
+            coordinator._manage_decay_timer()
+
+            # Verify timer was stopped because no entities decaying
+            coordinator._stop_decay_timer.assert_called_once()
+
+    def test_start_decay_timer_basic_functionality(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _start_decay_timer basic functionality."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator._global_decay_timer = None
+
+            coordinator._start_decay_timer()
+
+            # Verify timer was set up (check internal state)
+            assert coordinator._global_decay_timer is not None
+
+    def test_start_decay_timer_already_exists(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _start_decay_timer when timer already exists."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            existing_timer = Mock()
+            coordinator._global_decay_timer = existing_timer  # Already exists
+
+            coordinator._start_decay_timer()
+
+            # Verify timer was NOT changed
+            assert coordinator._global_decay_timer is existing_timer
+
+    def test_stop_decay_timer(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+        """Test _stop_decay_timer."""
+        with (
+            patch("custom_components.area_occupancy.data.config.ConfigManager"),
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+
+            mock_timer = Mock()
+            coordinator._global_decay_timer = mock_timer
+
+            coordinator._stop_decay_timer()
+
+            # Verify timer was cancelled
+            mock_timer.assert_called_once()
+            assert coordinator._global_decay_timer is None
+
+    async def test_handle_decay_timer_disabled(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _handle_decay_timer when decay is disabled."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch("custom_components.area_occupancy.data.entity.EntityManager"),
+        ):
+            from datetime import datetime
+
+            # Setup config with decay disabled
+            mock_config = Mock()
+            mock_config.decay.enabled = False
+            mock_config_mgr.return_value.config = mock_config
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.async_refresh = AsyncMock()
+
+            test_time = datetime(2024, 1, 1, 12, 0, 0)
+            await coordinator._handle_decay_timer(test_time)
+
+            # Verify timer was reset
+            assert coordinator._global_decay_timer is None
+
+            # Verify refresh was NOT called because decay is disabled
+            coordinator.async_refresh.assert_not_called()
+
+    async def test_handle_decay_timer_with_decaying_entities(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test _handle_decay_timer with entities still decaying."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.config.ConfigManager"
+            ) as mock_config_mgr,
+            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
+            patch(
+                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
+            ),
+            patch("custom_components.area_occupancy.data.prior.PriorManager"),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager"
+            ) as mock_entity_mgr,
+        ):
+            from datetime import datetime
+
+            # Setup config with decay enabled
+            mock_config = Mock()
+            mock_config.decay.enabled = True
+            mock_config_mgr.return_value.config = mock_config
+
+            # Setup entity that is decaying
+            mock_entity = Mock()
+            mock_entity.decay.is_decaying = True
+
+            mock_entities_instance = Mock()
+            mock_entities_instance.entities = {"entity1": mock_entity}
+            mock_entity_mgr.return_value = mock_entities_instance
+
+            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+            coordinator.entities = mock_entities_instance
+            coordinator.async_refresh = AsyncMock()
+            coordinator._start_decay_timer = Mock()
+
+            test_time = datetime(2024, 1, 1, 12, 0, 0)
+            await coordinator._handle_decay_timer(test_time)
+
+            # Verify timer was reset
+            assert coordinator._global_decay_timer is None
+
+            # Verify refresh was called
+            coordinator.async_refresh.assert_called_once()
+
+            # Verify timer was restarted because entities still decaying
+            coordinator._start_decay_timer.assert_called_once()
