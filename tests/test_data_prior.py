@@ -10,6 +10,7 @@ from custom_components.area_occupancy.data.prior import (
     PriorManager,
     TimeInterval,
 )
+from custom_components.area_occupancy.const import DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -526,3 +527,96 @@ class TestRecorderIntegration:
             await manager._get_states_from_recorder(
                 mock_coordinator.hass, "test_entity", start, end
             )
+
+
+class TestPriorManagerAdditional:
+    """Additional tests for PriorManager methods."""
+
+    async def test_calculate_uses_cached_prior(
+        self, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+    ) -> None:
+        manager = PriorManager(mock_coordinator)
+        cached = Prior(
+            prior=0.2,
+            prob_given_true=0.3,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+        )
+        manager.update_prior(mock_entity_for_prior_tests.entity_id, cached)
+        result = await manager.calculate(mock_entity_for_prior_tests)
+        assert result is cached
+
+    @patch(
+        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
+    )
+    async def test_calculate_non_primary(
+        self, mock_get: AsyncMock, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+    ) -> None:
+        now = dt_util.utcnow()
+        primary_states = [
+            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=10)),
+            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=5)),
+        ]
+        entity_states = [
+            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=9)),
+            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=4)),
+        ]
+        mock_get.side_effect = [primary_states, entity_states]
+        manager = PriorManager(mock_coordinator)
+        result = await manager.calculate(mock_entity_for_prior_tests)
+        assert isinstance(result, Prior)
+
+    @patch(
+        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
+    )
+    async def test_calculate_primary_sensor(
+        self, mock_get: AsyncMock, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+    ) -> None:
+        mock_entity_for_prior_tests.entity_id = (
+            mock_coordinator.config.sensors.primary_occupancy
+        )
+        now = dt_util.utcnow()
+        states = [
+            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=2)),
+            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=1)),
+        ]
+        mock_get.return_value = states
+        manager = PriorManager(mock_coordinator)
+        result = await manager.calculate(mock_entity_for_prior_tests)
+        assert isinstance(result, Prior)
+
+
+class TestConditionalProbabilityEdgeCases:
+    """Tests for _calculate_conditional_probability_with_intervals edge cases."""
+
+    def test_no_filtered_motion_intervals(self) -> None:
+        now = dt_util.utcnow()
+        motion_intervals = {
+            "sensor": [
+                TimeInterval(start=now, end=now + timedelta(seconds=10), state=STATE_ON)
+            ]
+        }
+
+        prob = PriorManager._calculate_conditional_probability_with_intervals(
+            entity_id="entity",
+            entity_intervals=[],
+            motion_intervals_by_sensor=motion_intervals,
+            motion_state_filter=STATE_OFF,
+            entity_active_states=[STATE_ON],
+        )
+        assert prob == DEFAULT_PROB_GIVEN_FALSE
+
+    def test_zero_motion_duration(self) -> None:
+        now = dt_util.utcnow()
+        motion_intervals = {
+            "sensor": [TimeInterval(start=now, end=now, state=STATE_ON)]
+        }
+
+        prob = PriorManager._calculate_conditional_probability_with_intervals(
+            entity_id="entity",
+            entity_intervals=[],
+            motion_intervals_by_sensor=motion_intervals,
+            motion_state_filter=STATE_ON,
+            entity_active_states=[STATE_ON],
+        )
+        assert prob == DEFAULT_PROB_GIVEN_TRUE
