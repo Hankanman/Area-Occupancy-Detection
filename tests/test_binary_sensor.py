@@ -54,11 +54,11 @@ class TestOccupancy:
         entity = Occupancy(mock_coordinator, "test_entry_id")
 
         # Test occupied state
-        mock_coordinator.is_occupied = True
+        mock_coordinator.occupied = True
         assert entity.icon == "mdi:home-account"
 
         # Test unoccupied state
-        mock_coordinator.is_occupied = False
+        mock_coordinator.occupied = False
         assert entity.icon == "mdi:home-outline"
 
     def test_is_on_property(self, mock_coordinator: Mock) -> None:
@@ -66,11 +66,11 @@ class TestOccupancy:
         entity = Occupancy(mock_coordinator, "test_entry_id")
 
         # Test occupied state
-        mock_coordinator.is_occupied = True
+        mock_coordinator.occupied = True
         assert entity.is_on is True
 
         # Test unoccupied state
-        mock_coordinator.is_occupied = False
+        mock_coordinator.occupied = False
         assert entity.is_on is False
 
 

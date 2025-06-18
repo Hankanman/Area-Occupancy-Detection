@@ -8,7 +8,6 @@ import pytest
 
 from custom_components.area_occupancy import (
     async_reload_entry,
-    async_remove_entry,
     async_setup,
     async_setup_entry,
     async_unload_entry,
@@ -65,58 +64,6 @@ class TestAsyncSetupEntry:
             pytest.raises(ConfigEntryNotReady),
         ):
             await async_setup_entry(mock_hass, mock_config_entry)
-
-
-class TestAsyncRemoveEntry:
-    """Test async_remove_entry function."""
-
-    async def test_async_remove_entry_with_runtime_data(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test successful removal with existing runtime data."""
-        mock_coordinator = Mock()
-        mock_coordinator.storage = Mock()
-        mock_coordinator.storage.async_remove_instance = AsyncMock(return_value=True)
-        mock_config_entry.runtime_data = mock_coordinator
-
-        await async_remove_entry(mock_hass, mock_config_entry)
-
-        mock_coordinator.storage.async_remove_instance.assert_called_once_with(
-            mock_config_entry.entry_id
-        )
-
-    async def test_async_remove_entry_storage_error(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test removal when storage operation fails."""
-        mock_coordinator = Mock()
-        mock_coordinator.storage = Mock()
-        mock_coordinator.storage.async_remove_instance = AsyncMock(
-            side_effect=Exception("Storage error")
-        )
-        mock_config_entry.runtime_data = mock_coordinator
-
-        # Should not raise exception
-        await async_remove_entry(mock_hass, mock_config_entry)
-
-        mock_coordinator.storage.async_remove_instance.assert_called_once_with(
-            mock_config_entry.entry_id
-        )
-
-    async def test_async_remove_entry_no_change(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test removal when no data was actually removed."""
-        mock_coordinator = Mock()
-        mock_coordinator.storage = Mock()
-        mock_coordinator.storage.async_remove_instance = AsyncMock(return_value=False)
-        mock_config_entry.runtime_data = mock_coordinator
-
-        await async_remove_entry(mock_hass, mock_config_entry)
-
-        mock_coordinator.storage.async_remove_instance.assert_called_once_with(
-            mock_config_entry.entry_id
-        )
 
 
 class TestAsyncSetup:

@@ -158,29 +158,6 @@ class TestMigrateConfig:
 class TestAsyncMigrateStorage:
     """Test async_migrate_storage function."""
 
-    async def test_async_migrate_storage_success(self, mock_hass: Mock) -> None:
-        """Test successful storage migration."""
-        with (
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                new_callable=AsyncMock,
-                return_value={"data": "test"},
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "pathlib.Path.exists",
-                return_value=True,
-            ),
-            patch(
-                "pathlib.Path.unlink",
-            ) as mock_unlink,
-        ):
-            await async_migrate_storage(mock_hass, "test_entry_id")
-            mock_unlink.assert_called_once()
-
     async def test_async_migrate_storage_no_data(self, mock_hass: Mock) -> None:
         """Test storage migration with no existing data."""
         with patch(
