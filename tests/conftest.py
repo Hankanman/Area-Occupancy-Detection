@@ -258,14 +258,19 @@ def sample_config_data() -> dict[str, Any]:
 def mock_entity_registry() -> Mock:
     """Create a mock entity registry."""
     registry = Mock(spec=EntityRegistry)
-    registry.entities = {}
     registry.async_get_entity_id = Mock(return_value=None)
     registry.async_update_entity = Mock()
 
     # Add entities property that can be iterated
     class EntitiesContainer:
+        def __init__(self):
+            self._entities = {}
+
         def values(self):
             return []
+
+        def items(self):
+            return self._entities.items()
 
     registry.entities = EntitiesContainer()
     return registry
