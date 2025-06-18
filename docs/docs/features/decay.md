@@ -25,6 +25,8 @@ The decay feature provides a smoother transition from an occupied state to an un
 *   **Decay Enabled:** A toggle to turn the decay feature on or off entirely.
 *   **Decay Window (seconds):** The duration over which the probability decays from its starting point towards the minimum. For example, a 300-second window means it takes 5 minutes for the full decay cycle (though it might stop earlier if probability increases).
 
+Note: The previous *Decay Minimum Delay* option has been removed in version 9.2. Any existing configurations are updated automatically during migration.
+
 ## Output
 
 *   The **Occupancy Probability** sensor reflects the decayed value when decay is active.

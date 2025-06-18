@@ -89,6 +89,17 @@ async def async_migrate_unique_ids(
         _LOGGER.debug("No unique IDs to migrate for platform %s", platform)
 
 
+DECAY_MIN_DELAY_KEY = "decay_min_delay"
+
+
+def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay delay option from config."""
+    if DECAY_MIN_DELAY_KEY in config:
+        config.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from config")
+    return config
+
+
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add primary occupancy sensor.
 
@@ -131,6 +142,7 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     """
     # Apply migrations in order
+    config = remove_decay_min_delay(config)
     return migrate_primary_occupancy_sensor(config)
 
 
@@ -235,6 +247,13 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if CONF_AREA_ID in data:
         data.pop(CONF_AREA_ID)
         _LOGGER.debug("Removed deprecated CONF_AREA_ID")
+
+    if DECAY_MIN_DELAY_KEY in data:
+        data.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from data")
+    if DECAY_MIN_DELAY_KEY in options:
+        options.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from options")
 
     # Ensure new state configuration values are present with defaults
     _LOGGER.debug("Adding new state configurations for %s", config_entry.entry_id)

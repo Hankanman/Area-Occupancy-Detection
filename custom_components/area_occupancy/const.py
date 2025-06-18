@@ -23,7 +23,7 @@ DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.6.1-pre2"
 CONF_VERSION: Final = 9
-CONF_VERSION_MINOR: Final = 1
+CONF_VERSION_MINOR: Final = 2
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -47,7 +47,6 @@ CONF_DECAY_WINDOW: Final = "decay_window"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
-CONF_DECAY_MIN_DELAY: Final = "decay_min_delay"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
@@ -71,7 +70,6 @@ DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
-DEFAULT_DECAY_MIN_DELAY: Final = 60  # 1 minute
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]

@@ -15,7 +15,6 @@ from ..const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_MIN_DELAY,
     CONF_DECAY_WINDOW,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
@@ -46,7 +45,6 @@ from ..const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
     DEFAULT_DECAY_WINDOW,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
@@ -147,7 +145,6 @@ class Decay:
 
     enabled: bool = DEFAULT_DECAY_ENABLED
     window: int = DEFAULT_DECAY_WINDOW
-    min_delay: int = DEFAULT_DECAY_MIN_DELAY
 
 
 @dataclass
@@ -263,7 +260,6 @@ class Config:
             decay=Decay(
                 enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
                 window=int(data.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)),
-                min_delay=int(data.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY)),
             ),
             history=History(
                 enabled=bool(
