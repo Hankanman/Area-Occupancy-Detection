@@ -57,59 +57,74 @@ EPS = 1e-12
 
 
 def bayesian_probability(
-    *,
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
-    is_active: bool | None,
-    weight: float,
-    decay_factor: float,
+    evidence: bool | None,
+    weight: float = 1.0,
+    decay_factor: float = 1.0,
 ) -> float:
-    """Weighted, time-decaying single-step Bayesian update (fractional Bayes).
+    """Calculate Bayesian posterior probability.
 
-    This function implements a Bayesian update that:
-    1. Weights the evidence based on sensor reliability
-    2. Applies time decay to reduce evidence strength over time
-    3. Handles both positive (ON) and negative (OFF) evidence
+    This function computes the posterior probability using Bayes' theorem with
+    weighted evidence and decay factors.
 
     Args:
-        prior: Current probability estimate (0-1)
-        prob_given_true: P(sensor=ON | room=occupied)
-        prob_given_false: P(sensor=ON | room=empty)
-        is_active: Current sensor state (True=ON, False=OFF, None=no change)
-        weight: Sensor reliability weight (0-1)
-        decay_factor: Time decay factor (0-1)
+        prior: Prior probability [0,1]
+        prob_given_true: P(sensor=ON | area=occupied) [0,1]
+        prob_given_false: P(sensor=ON | area=unoccupied) [0,1]
+        evidence: Current sensor state (True=ON, False=OFF, None=no change)
+        weight: Evidence weight multiplier [0,1] (default: 1.0)
+        decay_factor: Time-based decay factor [0,1] (default: 1.0)
 
     Returns:
-        Updated probability estimate (0-1)
+        Posterior probability [0,1]
 
     """
-    # Return prior unchanged if no new evidence or zero weight/decay
-    if is_active is None or weight == 0.0 or decay_factor == 0.0:
+    # Validate all inputs to ensure they're in valid ranges
+    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
+    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
+    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
+    weight = max(0.0, min(weight, 1.0))
+    decay_factor = max(0.0, min(decay_factor, 1.0))
+
+    # No update if no evidence, zero weight, or zero decay
+    if evidence is None or weight == 0.0 or decay_factor == 0.0:
         return prior
 
-    # Calculate likelihood ratio based on sensor state
-    # For ON state: P(sensor=ON|occupied) / P(sensor=ON|empty)
-    # For OFF state: P(sensor=OFF|occupied) / P(sensor=OFF|empty)
-    likelihood_ratio = (
-        (prob_given_true + EPS) / (prob_given_false + EPS)
-        if is_active
-        else (1.0 - prob_given_true + EPS) / (1.0 - prob_given_false + EPS)
-    )
+    # Apply weight and decay to the evidence strength
+    effective_weight = weight * decay_factor
 
-    # Apply sensor weight and time decay to likelihood ratio
-    # This reduces evidence strength for less reliable sensors
-    # and for evidence that is older
-    likelihood_ratio **= weight * decay_factor
+    # Choose likelihood based on evidence
+    if evidence:
+        # P(sensor=ON | area=occupied)
+        likelihood = prob_given_true
+        # P(sensor=ON | area=unoccupied)
+        likelihood_complement = prob_given_false
+    else:
+        # P(sensor=OFF | area=occupied) = 1 - P(sensor=ON | area=occupied)
+        likelihood = 1.0 - prob_given_true
+        # P(sensor=OFF | area=unoccupied) = 1 - P(sensor=ON | area=unoccupied)
+        likelihood_complement = 1.0 - prob_given_false
 
-    # Convert probability to odds ratio
-    prior_odds = prior / (1.0 - prior + EPS)
+    # Calculate marginal probability P(evidence)
+    evidence_prob = likelihood * prior + likelihood_complement * (1.0 - prior)
 
-    # Update odds ratio using likelihood ratio
-    post_odds = prior_odds * likelihood_ratio
+    # Avoid division by zero
+    if evidence_prob <= EPS:
+        return prior
 
-    # Convert back to probability
-    return post_odds / (1.0 + post_odds)
+    # Standard Bayesian update: P(occupied | evidence) = P(evidence | occupied) * P(occupied) / P(evidence)
+    posterior_full = (likelihood * prior) / evidence_prob
+
+    # Apply weighting: interpolate between prior and full Bayesian update
+    if effective_weight < 1.0:
+        posterior = prior + effective_weight * (posterior_full - prior)
+    else:
+        posterior = posterior_full
+
+    # Ensure result is in valid probability range
+    return max(MIN_PROBABILITY, min(posterior, MAX_PROBABILITY))
 
 
 def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
@@ -140,9 +155,9 @@ def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
         # Observation state --------------------------------------------------
         observed = (
             True
-            if e.is_active or e.decay.is_decaying
+            if e.evidence or e.decay.is_decaying
             else False
-            if not e.is_active and not e.decay.is_decaying
+            if not e.evidence and not e.decay.is_decaying
             else None
         )
 
@@ -155,7 +170,7 @@ def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
             prior=posterior,
             prob_given_true=e.prior.prob_given_true,
             prob_given_false=e.prior.prob_given_false,
-            is_active=observed,
+            evidence=observed,
             weight=w,
             decay_factor=df,
         )

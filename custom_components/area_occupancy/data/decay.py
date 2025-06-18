@@ -7,7 +7,7 @@ import math
 import time
 from typing import Any
 
-DEFAULT_HALF_LIFE = 60.0  # seconds until evidence halves (default 1 min)
+DEFAULT_HALF_LIFE = 30.0  # seconds until evidence halves (default 30 seconds)
 
 
 @dataclass
@@ -51,41 +51,39 @@ class Decay:
         )
 
     def should_start_decay(
-        self, previous_is_active: bool, current_is_active: bool
+        self, previous_evidence: bool, current_evidence: bool
     ) -> bool:
         """Determine if decay should start based on state transition.
 
         Args:
-            previous_is_active: Previous is_active state
-            current_is_active: Current is_active state
+            previous_evidence: Previous evidence state
+            current_evidence: Current evidence state
 
         Returns:
             True if decay should start
 
         """
         return (
-            previous_is_active is True
-            and current_is_active is False
+            previous_evidence is True
+            and current_evidence is False
             and not self.is_decaying
         )
 
     def should_stop_decay(
-        self, previous_is_active: bool, current_is_active: bool
+        self, previous_evidence: bool, current_evidence: bool
     ) -> bool:
         """Determine if decay should stop based on state transition.
 
         Args:
-            previous_is_active: Previous is_active state
-            current_is_active: Current is_active state
+            previous_evidence: Previous evidence state
+            current_evidence: Current evidence state
 
         Returns:
             True if decay should stop
 
         """
         return (
-            self.is_decaying
-            and previous_is_active is False
-            and current_is_active is True
+            self.is_decaying and previous_evidence is False and current_evidence is True
         )
 
     def is_decay_complete(self, current_probability: float) -> bool:

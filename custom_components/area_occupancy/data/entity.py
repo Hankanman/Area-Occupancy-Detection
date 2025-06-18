@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
@@ -29,30 +29,49 @@ class Entity:
     prior: Prior
     decay: Decay
     state: str | float | bool | None = None
-    is_active: bool = False
-    previous_is_active: bool = False
+    evidence: bool = False
+    previous_evidence: bool = False
     available: bool = True
     last_updated: datetime = field(default_factory=dt_util.utcnow)
-    # Decay timer management - not serialized
-    _coordinator: Optional["AreaOccupancyCoordinator"] = field(
-        default=None, init=False, repr=False
-    )
     previous_probability: float = field(default=0.0, init=False, repr=False)
-    previous_state: str | float | bool | None = field(
-        default=None, init=False, repr=False
-    )
 
     def __post_init__(self):
         """Post init."""
         # Validate last_updated
         self.last_updated = validate_datetime(self.last_updated)
 
-    def set_coordinator(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Set the coordinator reference for timer management."""
-        self._coordinator = coordinator
+    def update_probability(self) -> bool:
+        """Calculate and update entity probability based on current state.
 
-    def get_state_edge(self) -> bool | None:
-        """Return edge value (True, False) or None if no change.
+        Note: Caller must capture previous state before updating current state
+        by calling _capture_previous_state() or manually setting previous_* fields.
+
+        Returns:
+            bool: True if probability changed significantly (> 0.001), False otherwise
+
+        """
+        # Update timestamp
+        self.last_updated = dt_util.utcnow()
+
+        # Handle state transitions and decay
+        state_edge = self._handle_state_transition()
+
+        # Update probability only if there's evidence (state change)
+        if state_edge is not None:
+            return self._calculate_new_probability(state_edge)
+
+        return False
+
+    def capture_previous_state(self) -> None:
+        """Capture current state as previous for comparison.
+
+        This should be called BEFORE updating the current state values.
+        """
+        self.previous_probability = self.probability
+        self.previous_evidence = self.evidence
+
+    def _handle_state_transition(self) -> bool | None:
+        """Handle state transitions and manage decay timing.
 
         Returns:
             True for rising edge (OFF->ON)
@@ -60,107 +79,62 @@ class Entity:
             None for no change
 
         """
-        if self.is_active == self.previous_is_active:
+        # Detect state edge
+        if self.evidence == self.previous_evidence:
             return None
-        return self.is_active
 
-    async def update_probability(
-        self, *, preserve_previous_state: bool = False
-    ) -> None:
-        """Calculate and update entity probability with edge-triggered decay logic.
+        state_edge = self.evidence
 
-        This method implements the same logic as the demo app's update loop:
-        - Only updates probability on state edges (transitions)
-        - Manages decay timer based on state transitions
-        - Uses Bayesian updates only when there's evidence
-
-        Args:
-            preserve_previous_state: If True, don't overwrite _previous_* fields (used when
-                                   caller has already set them to capture state transitions)
-
-        Returns:
-            None
-
-        """
-        # Store current values as previous for comparison, unless caller wants to preserve them
-        if not preserve_previous_state:
-            self.previous_probability = self.probability
-            self.previous_is_active = self.is_active
-
-        # Update last_updated timestamp
-        self.last_updated = dt_util.utcnow()
-
-        # Get state edge (like demo app's state_edge())
-        is_active_edge = self.get_state_edge()
-
-        # Manage decay timer based on state transitions (like demo app)
-        if is_active_edge is True:  # rising edge (OFF->ON)
-            self.decay.is_decaying = False  # stop decay when ON
-            self._stop_decay_timer()
-        elif is_active_edge is False:  # falling edge (ON->OFF)
+        # Manage decay based on state transition
+        if state_edge:  # Rising edge (OFF->ON)
+            self.decay.is_decaying = False
+        else:  # Falling edge (ON->OFF)
             self.decay.is_decaying = True
             self.decay.last_trigger_ts = time.time()
-            self.start_decay_timer()
 
-        # Only update probability if there's evidence (state change)
-        if is_active_edge is not None:
-            # Calculate new probability using Bayesian update
-            self.probability = bayesian_probability(
-                prior=self.probability,
-                prob_given_true=self.prior.prob_given_true,
-                prob_given_false=self.prior.prob_given_false,
-                is_active=is_active_edge,
-                weight=self.type.weight,
-                decay_factor=self.decay.decay_factor if self.decay.is_decaying else 1.0,
+        return state_edge
+
+    def _calculate_new_probability(self, evidence: bool) -> bool:
+        """Calculate new probability using Bayesian update.
+
+        Args:
+            evidence: Whether this is a rising (True) or falling (False) edge
+
+        Returns:
+            bool: True if probability changed significantly
+
+        """
+        # Calculate new probability
+        self.probability = bayesian_probability(
+            prior=self.probability,
+            prob_given_true=self.prior.prob_given_true,
+            prob_given_false=self.prior.prob_given_false,
+            evidence=evidence,
+            weight=self.type.weight,
+            decay_factor=self.decay.decay_factor if self.decay.is_decaying else 1.0,
+        )
+
+        # Check if probability changed significantly
+        probability_changed = abs(self.probability - self.previous_probability) > 0.001
+
+        if probability_changed:
+            _LOGGER.debug(
+                "Entity %s probability changed from %.3f to %.3f (edge: %s)",
+                self.entity_id,
+                self.previous_probability,
+                self.probability,
+                "ON" if evidence else "OFF",
             )
 
-            # Notify coordinator of probability change
-            probability_changed = (
-                abs(self.probability - self.previous_probability) > 0.001
-            )
-            if probability_changed and self._coordinator:
-                _LOGGER.debug(
-                    "Entity %s probability changed from %.3f to %.3f (edge: %s)",
-                    self.entity_id,
-                    self.previous_probability,
-                    self.probability,
-                    "ON" if is_active_edge else "OFF",
-                )
-                await self._coordinator.async_refresh()
-
-        # For decay updates (no state change), just refresh coordinator if decaying
-        elif self.decay.is_decaying and self._coordinator:
-            await self._coordinator.async_refresh()
-
-    def start_decay_timer(self) -> None:
-        """Start the decay timer that fires every second."""
-        # Respect global decay enabled setting
-        if not self.decay.is_decaying:
-            return
-
-        if not self._coordinator or not self._coordinator.hass:
-            _LOGGER.warning(
-                "Cannot start decay timer for %s: no coordinator", self.entity_id
-            )
-            return
-
-        # Notify coordinator that this entity started decaying
-        self._coordinator.async_notify_decay_started()
-
-    def _stop_decay_timer(self) -> None:
-        """Stop the decay timer."""
-        if self._coordinator:
-            # Notify coordinator that this entity stopped decaying
-            self._coordinator.async_notify_decay_stopped()
+        return probability_changed
 
     def stop_decay_completely(self) -> None:
-        """Stop decay and timer completely (public interface)."""
+        """Stop decay completely (public interface)."""
         self.decay.is_decaying = False
-        self._stop_decay_timer()
 
     def cleanup(self) -> None:
         """Clean up entity resources."""
-        self._stop_decay_timer()
+        self.stop_decay_completely()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity to dictionary for storage."""
@@ -171,7 +145,8 @@ class Entity:
             "prior": self.prior.to_dict(),
             "decay": self.decay.to_dict(),
             "state": self.state,
-            "is_active": self.is_active,
+            "evidence": self.evidence,
+            "previous_evidence": self.previous_evidence,
             "available": self.available,
             "last_updated": self.last_updated,
         }
@@ -190,21 +165,14 @@ class Entity:
             prior=Prior.from_dict(data["prior"]),
             decay=Decay.from_dict(data["decay"]),
             state=data["state"],
-            is_active=data["is_active"],
-            previous_is_active=data.get(
-                "previous_is_active", data["is_active"]
-            ),  # Default to current is_active
+            evidence=data["evidence"],
+            previous_evidence=data["previous_evidence"],
             available=data["available"],
             last_updated=data["last_updated"],
         )
-        entity.set_coordinator(coordinator)
 
         # Initialize the previous state fields to current values for restored entities
         entity.previous_probability = entity.probability
-
-        # If entity was decaying when saved, restart the decay timer
-        if entity.decay.is_decaying:
-            entity.start_decay_timer()
 
         return entity
 
@@ -238,7 +206,7 @@ class EntityManager:
         return [
             entity
             for entity in self._entities.values()
-            if entity.is_active or entity.decay.is_decaying
+            if entity.evidence or entity.decay.is_decaying
         ]
 
     @property
@@ -247,7 +215,7 @@ class EntityManager:
         return [
             entity
             for entity in self._entities.values()
-            if not entity.is_active and not entity.decay.is_decaying
+            if not entity.evidence and not entity.decay.is_decaying
         ]
 
     def to_dict(self) -> dict[str, Any]:
@@ -309,7 +277,28 @@ class EntityManager:
         config_entities = await self._get_config_entity_mapping()
         updated_entities: dict[str, Entity] = {}
 
-        # Process existing restored entities
+        # Process existing entities and mark those that are retained
+        self._process_existing_entities(config_entities, updated_entities)
+
+        # Create new entities for those added to configuration
+        await self._create_new_entities(config_entities, updated_entities)
+
+        # Apply the updated entity collection
+        self._entities = updated_entities
+        _LOGGER.info("Entity update complete: %d total entities", len(self._entities))
+
+    def _process_existing_entities(
+        self,
+        config_entities: dict[str, EntityType],
+        updated_entities: dict[str, Entity],
+    ) -> None:
+        """Process existing restored entities, updating configuration and marking processed ones.
+
+        Args:
+            config_entities: Configuration entity mapping (modified in place to mark processed)
+            updated_entities: Collection to add retained entities to
+
+        """
         for entity_id, restored_entity in self._entities.items():
             if entity_id in config_entities:
                 # Entity still exists in config - update type configuration
@@ -328,26 +317,48 @@ class EntityManager:
                     entity_id,
                 )
 
-        # Create new entities for any added to config
+    async def _create_new_entities(
+        self,
+        config_entities: dict[str, EntityType],
+        updated_entities: dict[str, Entity],
+    ) -> None:
+        """Create new entities for those added to configuration.
+
+        Args:
+            config_entities: Remaining unprocessed entities from configuration
+            updated_entities: Collection to add new entities to
+
+        """
         for entity_id, entity_type in config_entities.items():
             _LOGGER.info("Creating new entity %s", entity_id)
             prior = await self._calculate_initial_prior(entity_id, entity_type)
-            updated_entities[entity_id] = await self._create_entity(
+            updated_entities[entity_id] = await self.create_entity(
                 entity_id=entity_id,
                 entity_type=entity_type,
                 prior=prior,
             )
 
-        self._entities = updated_entities
-        _LOGGER.info("Entity update complete: %d total entities", len(self._entities))
-
     async def _get_config_entity_mapping(self) -> dict[str, EntityType]:
         """Get mapping of entity_id -> EntityType from current configuration."""
-        primary_sensor = self.config.sensors.primary_occupancy
-        if not primary_sensor:
-            raise ValueError("Primary occupancy sensor must be configured")
+        # Build sensor type mappings from configuration
+        type_mappings = self.build_sensor_type_mappings()
 
-        type_mappings = {
+        # Create initial entity mapping from type mappings
+        entity_mapping = self._build_entity_mapping_from_types(type_mappings)
+
+        # Add primary sensor with special handling
+        self._add_primary_sensor_to_mapping(entity_mapping)
+
+        return entity_mapping
+
+    def build_sensor_type_mappings(self) -> dict[InputType, list[str]]:
+        """Build mapping of InputType -> list of entity IDs from configuration.
+
+        Returns:
+            Dictionary mapping sensor types to their configured entity IDs
+
+        """
+        return {
             InputType.MOTION: self.config.sensors.get_motion_sensors(self.coordinator),
             InputType.MEDIA: self.config.sensors.media,
             InputType.APPLIANCE: self.config.sensors.appliances,
@@ -359,23 +370,52 @@ class EntityManager:
             + self.config.sensors.temperature,
         }
 
-        entity_mapping: dict[str, EntityType] = {}
+    def _build_entity_mapping_from_types(
+        self, type_mappings: dict[InputType, list[str]]
+    ) -> dict[str, EntityType]:
+        """Build entity_id -> EntityType mapping from type mappings.
 
-        # Add the primary occupancy sensor as a motion-type entity with high weight
-        # This is the most reliable indicator and should be included in probability calculation
-        primary_entity_type = self.coordinator.entity_types.get_entity_type(
-            InputType.MOTION
-        )
-        entity_mapping[primary_sensor] = primary_entity_type
+        Args:
+            type_mappings: Dictionary of InputType -> list of entity IDs
+
+        Returns:
+            Dictionary mapping entity IDs to their EntityType configurations
+
+        """
+        entity_mapping: dict[str, EntityType] = {}
 
         for input_type, entity_ids in type_mappings.items():
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
             for entity_id in entity_ids:
-                # Avoid adding the primary sensor twice if it's also in the motion list
-                if entity_id != primary_sensor:
-                    entity_mapping[entity_id] = entity_type
+                entity_mapping[entity_id] = entity_type
 
         return entity_mapping
+
+    def _add_primary_sensor_to_mapping(
+        self, entity_mapping: dict[str, EntityType]
+    ) -> None:
+        """Add primary sensor to entity mapping with special motion-type handling.
+
+        Args:
+            entity_mapping: Entity mapping to modify in place
+
+        Raises:
+            ValueError: If primary occupancy sensor is not configured
+
+        """
+        primary_sensor = self.config.sensors.primary_occupancy
+        if not primary_sensor:
+            raise ValueError("Primary occupancy sensor must be configured")
+
+        # Primary sensor always gets motion-type treatment (highest reliability)
+        primary_entity_type = self.coordinator.entity_types.get_entity_type(
+            InputType.MOTION
+        )
+
+        # Override any existing mapping (primary sensor takes precedence)
+        entity_mapping[primary_sensor] = primary_entity_type
+
+        _LOGGER.debug("Added primary sensor %s as motion-type entity", primary_sensor)
 
     async def _calculate_initial_prior(
         self, entity_id: str, entity_type: EntityType
@@ -410,12 +450,12 @@ class EntityManager:
         """Reset entities to fresh state from configuration."""
         self._entities = await self._create_entities_from_config()
 
-    async def _create_entity(
+    async def create_entity(
         self,
         entity_id: str,
         entity_type: EntityType,
         state: str | float | bool | None = None,
-        is_active: bool = False,
+        evidence: bool = False,
         available: bool = True,
         prior: Prior | None = None,
     ) -> Entity:
@@ -425,8 +465,7 @@ class EntityManager:
             entity_id: The unique identifier for the entity
             entity_type: The type of entity
             state: The current state of the entity
-            is_active: Whether the entity is active
-            last_changed: When the entity last changed state
+            evidence: Whether the entity is active
             available: Whether the entity is available
             prior: The prior probability information
 
@@ -434,74 +473,152 @@ class EntityManager:
             The created Entity instance
 
         """
-        # If no state provided, get current state from Home Assistant
-        if state is None:
-            ha_state = self.hass.states.get(entity_id)
-            if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
-                state = ha_state.state
-                available = True
+        # Get current state from Home Assistant if not provided
+        state, available = self._resolve_entity_state(entity_id, state, available)
 
-                # Determine if entity is active based on its type and current state
-                if entity_type.active_states is not None:
-                    is_active = state in entity_type.active_states
-                elif entity_type.active_range is not None:
-                    try:
-                        state_val = float(state)
-                        min_val, max_val = entity_type.active_range
-                        is_active = min_val <= state_val <= max_val
-                    except (ValueError, TypeError):
-                        is_active = False
+        # Create required components
+        decay = self._create_decay_component()
+        prior = self._create_prior_component(entity_type, prior)
 
-                _LOGGER.debug(
-                    "Initialized entity %s with current HA state: state=%s, is_active=%s, available=%s",
-                    entity_id,
-                    state,
-                    is_active,
-                    available,
-                )
-            else:
-                _LOGGER.debug(
-                    "Entity %s has no valid current state in HA, using defaults",
-                    entity_id,
-                )
-                available = False
+        # Create the entity instance
+        entity = self._instantiate_entity(
+            entity_id=entity_id,
+            entity_type=entity_type,
+            state=state,
+            available=available,
+            prior=prior,
+            decay=decay,
+        )
 
-        # Create decay instance using configuration values
-        decay = Decay(
+        # Finalize entity setup
+        self._finalize_entity_setup(entity, state)
+
+        return entity
+
+    def _resolve_entity_state(
+        self, entity_id: str, state: str | float | bool | None, available: bool
+    ) -> tuple[str | float | bool | None, bool]:
+        """Resolve entity state and availability from Home Assistant if needed.
+
+        Args:
+            entity_id: The entity ID
+            state: Current state (if known)
+            available: Current availability (if known)
+
+        Returns:
+            Tuple of (resolved_state, resolved_availability)
+
+        """
+        if state is not None:
+            return state, available
+
+        ha_state = self.hass.states.get(entity_id)
+        if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
+            _LOGGER.debug(
+                "Resolved entity %s state from HA: %s", entity_id, ha_state.state
+            )
+            return ha_state.state, True
+        _LOGGER.debug(
+            "Entity %s has no valid current state in HA, using defaults", entity_id
+        )
+        return None, False
+
+    def _create_decay_component(self) -> Decay:
+        """Create a decay component with current configuration values.
+
+        Returns:
+            Configured Decay instance
+
+        """
+        return Decay(
             last_trigger_ts=dt_util.utcnow().timestamp(),
             half_life=self.config.decay.window,
         )
 
-        # Create prior instance if not provided
-        if prior is None:
-            prior = Prior(
-                prior=entity_type.prior,
-                prob_given_true=entity_type.prob_true,
-                prob_given_false=entity_type.prob_false,
-                last_updated=dt_util.utcnow(),
-            )
+    def _create_prior_component(
+        self, entity_type: EntityType, provided_prior: Prior | None
+    ) -> Prior:
+        """Create a prior component, using provided prior or defaults from entity type.
 
-        entity = Entity(
+        Args:
+            entity_type: The entity type configuration
+            provided_prior: Pre-created prior (if any)
+
+        Returns:
+            Prior instance
+
+        """
+        if provided_prior is not None:
+            return provided_prior
+
+        return Prior(
+            prior=entity_type.prior,
+            prob_given_true=entity_type.prob_true,
+            prob_given_false=entity_type.prob_false,
+            last_updated=dt_util.utcnow(),
+        )
+
+    def _instantiate_entity(
+        self,
+        entity_id: str,
+        entity_type: EntityType,
+        state: str | float | bool | None,
+        available: bool,
+        prior: Prior,
+        decay: Decay,
+    ) -> Entity:
+        """Create the actual Entity instance.
+
+        Args:
+            entity_id: The entity ID
+            entity_type: The entity type
+            state: Current state
+            available: Whether entity is available
+            prior: Prior component
+            decay: Decay component
+
+        Returns:
+            Entity instance
+
+        """
+        return Entity(
             entity_id=entity_id,
             type=entity_type,
-            probability=0.01,
+            probability=0.01,  # Will be calculated in finalization
             prior=prior,
             decay=decay,
             state=state,
-            is_active=is_active,
+            evidence=False,  # Will be determined in finalization
             available=available,
             last_updated=dt_util.utcnow(),
         )
-        entity.set_coordinator(self.coordinator)
 
-        # Calculate initial probability using unified method
-        await entity.update_probability()
+    def _finalize_entity_setup(
+        self, entity: Entity, state: str | float | bool | None
+    ) -> None:
+        """Finalize entity setup by determining active state and calculating initial probability.
 
-        # If entity was decaying when saved, restart the decay timer
-        if entity.decay.is_decaying:
-            entity.start_decay_timer()
+        Args:
+            entity: The entity to finalize
+            state: The current state
 
-        return entity
+        """
+        # Determine if entity is active
+        entity.evidence = EntityManager.is_entity_active(entity, state)
+
+        # Calculate initial probability
+        entity.update_probability()
+
+        # Log successful setup
+        if state is not None:
+            _LOGGER.debug(
+                "Created entity %s: state=%s, evidence=%s, available=%s, probability=%.3f",
+                entity.entity_id,
+                state,
+                entity.evidence,
+                entity.available,
+                entity.probability,
+            )
 
     async def async_state_changed_listener(self, event) -> None:
         """Handle state changes for tracked entities."""
@@ -514,11 +631,10 @@ class EntityManager:
 
             entity = self._entities[entity_id]
 
-            # Capture previous state for transition detection before any updates
-            entity.previous_probability = entity.probability
-            entity.previous_is_active = entity.is_active
+            # Capture previous state BEFORE updating current state
+            entity.capture_previous_state()
 
-            # Update entity state
+            # Update entity state from Home Assistant
             is_available = bool(
                 new_state
                 and new_state.state not in ["unknown", "unavailable", None, ""]
@@ -529,27 +645,50 @@ class EntityManager:
             entity.state = current_state_val
             entity.available = is_available
 
-            # Determine if entity is active based on its type and state
-            is_active = False
-            if current_state_val is not None:
-                if entity.type.active_states is not None:
-                    is_active = current_state_val in entity.type.active_states
-                elif entity.type.active_range is not None:
-                    try:
-                        state_val = float(current_state_val)
-                        min_val, max_val = entity.type.active_range
-                        is_active = min_val <= state_val <= max_val
-                    except (ValueError, TypeError):
-                        is_active = False
+            # Determine if entity is active using helper method
+            entity.evidence = EntityManager.is_entity_active(entity, current_state_val)
 
-            # Update is_active status
-            entity.is_active = is_active
+            # Update entity probabilities - previous state was captured before current state update
+            probability_changed = entity.update_probability()
 
-            # Update entity probabilities using unified method with preserved previous state
-            await entity.update_probability(preserve_previous_state=True)
+            # Trigger coordinator refresh if probability changed significantly
+            if probability_changed:
+                await self.coordinator.async_refresh()
 
         except Exception:
             _LOGGER.exception("Error processing state change for entity %s", entity_id)
+
+    @staticmethod
+    def is_entity_active(entity: "Entity", state: str | float | bool | None) -> bool:
+        """Determine if entity is active based on state.
+
+        Args:
+            entity: The entity to check
+            state: The current state value (can be None or any type)
+
+        Returns:
+            bool: True if entity should be considered active
+
+        """
+        if state is None:
+            return False
+
+        # Convert state to string for comparison
+        state_str = str(state)
+
+        entity_type = entity.type
+        if entity_type.active_states is not None:
+            return state_str in entity_type.active_states
+        if entity_type.active_range is not None:
+            try:
+                value = float(state)  # Use original state for numeric conversion
+                min_val, max_val = entity_type.active_range
+            except (ValueError, TypeError):
+                return False
+            else:
+                return min_val <= value <= max_val
+
+        return False
 
     async def initialize_states(self) -> None:
         """Initialize entity states from current Home Assistant states."""
@@ -559,57 +698,76 @@ class EntityManager:
 
         entities_updated = 0
 
+        # Initialize each entity from current HA state
         for entity_id, entity in self._entities.items():
-            ha_state = self.hass.states.get(entity_id)
-            if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
-                # Set entity state from current HA state
-                entity.state = ha_state.state
-                entity.available = True
-
-                # Determine if entity is active based on its type and state
-                is_active = False
-                if entity.type.active_states is not None:
-                    is_active = ha_state.state in entity.type.active_states
-                elif entity.type.active_range is not None:
-                    try:
-                        state_val = float(ha_state.state)
-                        min_val, max_val = entity.type.active_range
-                        is_active = min_val <= state_val <= max_val
-                    except (ValueError, TypeError):
-                        is_active = False
-
-                entity.is_active = is_active
+            if self._initialize_entity_from_ha_state(entity_id, entity):
                 entities_updated += 1
 
-                # Update entity probability based on current state
-                await entity.update_probability()
-            else:
-                # Entity not available in HA
-                entity.available = False
-                _LOGGER.debug(
-                    "Entity %s not available in HA, marked as unavailable", entity_id
-                )
-
+        # Log completion statistics
         _LOGGER.debug(
             "Initialized current states for %d/%d entities",
             entities_updated,
             len(self._entities),
         )
 
+    def _initialize_entity_from_ha_state(self, entity_id: str, entity: Entity) -> bool:
+        """Initialize a single entity from current Home Assistant state.
+
+        Args:
+            entity_id: The entity ID to initialize
+            entity: The entity instance to update
+
+        Returns:
+            bool: True if entity was successfully updated from HA state
+
+        """
+        ha_state = self.hass.states.get(entity_id)
+
+        # Check if HA state is valid and apply appropriate initialization
+        if ha_state and ha_state.state not in ["unknown", "unavailable", None, ""]:
+            self._apply_entity_state_initialization(entity, ha_state, entity_id, True)
+            return True
+
+        self._apply_entity_state_initialization(entity, None, entity_id, False)
+        return False
+
+    def _apply_entity_state_initialization(
+        self, entity: Entity, ha_state, entity_id: str, is_available: bool
+    ) -> None:
+        """Apply state initialization to entity for both available and unavailable cases.
+
+        Args:
+            entity: The entity to update
+            ha_state: The HA state object (None if unavailable)
+            entity_id: The entity ID (for logging)
+            is_available: Whether the entity state is available
+
+        """
+        if is_available and ha_state:
+            # Set entity state from current HA state
+            entity.state = ha_state.state
+            entity.available = True
+
+            # Determine if entity is active using helper method
+            entity.evidence = EntityManager.is_entity_active(entity, ha_state.state)
+
+            # Set previous state to current for initialization (no transitions on startup)
+            entity.previous_evidence = entity.evidence
+            entity.previous_probability = entity.probability
+
+            # Update entity probability (will detect no transition, but will update timestamp)
+            entity.update_probability()
+        else:
+            # Entity not available in HA
+            entity.available = False
+            _LOGGER.debug(
+                "Entity %s not available in HA, marked as unavailable", entity_id
+            )
+
     async def _create_entities_from_config(self) -> dict[str, Entity]:
         """Create entities from current configuration."""
-
-        type_mappings = {
-            InputType.MOTION: self.config.sensors.get_motion_sensors(self.coordinator),
-            InputType.MEDIA: self.config.sensors.media,
-            InputType.APPLIANCE: self.config.sensors.appliances,
-            InputType.DOOR: self.config.sensors.doors,
-            InputType.WINDOW: self.config.sensors.windows,
-            InputType.LIGHT: self.config.sensors.lights,
-            InputType.ENVIRONMENTAL: self.config.sensors.illuminance
-            + self.config.sensors.humidity
-            + self.config.sensors.temperature,
-        }
+        # Use shared sensor mapping logic instead of duplicating it
+        type_mappings = self.build_sensor_type_mappings()
 
         entities: dict[str, Entity] = {}
 
@@ -624,7 +782,7 @@ class EntityManager:
                     prob_given_false=entity_type.prob_false,
                     last_updated=dt_util.utcnow(),
                 )
-                entities[input_entity_id] = await self._create_entity(
+                entities[input_entity_id] = await self.create_entity(
                     entity_id=input_entity_id,
                     entity_type=entity_type,
                     prior=default_prior,
@@ -656,7 +814,6 @@ class EntityManager:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        # Clean up all entities - they will notify coordinator about decay stopping
+        # Clean up all entities
         for entity in self._entities.values():
-            entity.stop_decay_completely()
             entity.cleanup()

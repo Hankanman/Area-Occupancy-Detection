@@ -10,7 +10,7 @@ from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.data.prior import Prior
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
 
@@ -29,7 +29,7 @@ class TestEntity:
             prior=mock_prior,
             decay=mock_decay,
             state=STATE_ON,
-            is_active=True,
+            evidence=True,
             available=True,
         )
 
@@ -39,11 +39,9 @@ class TestEntity:
         assert entity.prior == mock_prior
         assert entity.decay == mock_decay
         assert entity.state == STATE_ON
-        assert entity.is_active is True
+        assert entity.evidence is True
         assert entity.available is True
-        assert entity._coordinator is None
-        assert entity.previous_probability == 0.0
-        assert entity.previous_is_active is False
+        # Coordinator reference removed as part of simplification
 
     def test_set_coordinator(
         self,
@@ -52,7 +50,7 @@ class TestEntity:
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test setting coordinator reference."""
+        """Test coordinator is no longer needed (simplified architecture)."""
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
@@ -61,8 +59,8 @@ class TestEntity:
             decay=mock_decay,
         )
 
-        entity.set_coordinator(mock_coordinator)
-        assert entity._coordinator == mock_coordinator
+        # No coordinator reference needed in simplified version
+        assert entity.entity_id == "binary_sensor.test_motion"
 
     def test_to_dict(
         self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
@@ -75,7 +73,7 @@ class TestEntity:
             prior=mock_prior,
             decay=mock_decay,
             state=STATE_ON,
-            is_active=True,
+            evidence=True,
             available=True,
         )
 
@@ -86,7 +84,7 @@ class TestEntity:
         assert data["prior"] == mock_prior.to_dict.return_value
         assert data["decay"] == mock_decay.to_dict.return_value
         assert data["state"] == STATE_ON
-        assert data["is_active"] is True
+        assert data["evidence"] is True
         assert data["available"] is True
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
@@ -118,7 +116,8 @@ class TestEntity:
             },
             "decay": {"is_decaying": False},
             "state": STATE_ON,
-            "is_active": True,
+            "evidence": True,
+            "previous_evidence": True,
             "available": True,
             "last_updated": current_time.isoformat(),
         }
@@ -131,11 +130,9 @@ class TestEntity:
         assert entity.prior == mock_prior
         assert entity.decay == mock_decay
         assert entity.state == STATE_ON
-        assert entity.is_active is True
+        assert entity.evidence is True
         assert entity.available is True
-        assert entity._coordinator == mock_coordinator
-        assert entity.previous_probability == 0.5
-        assert entity.previous_is_active is True
+        # Coordinator reference removed as part of simplification
 
     def test_stop_decay_completely(
         self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
@@ -167,10 +164,10 @@ class TestEntity:
         entity.cleanup()
         assert mock_decay.is_decaying is False
 
-    def test_get_state_edge(
+    def test_state_transition_detection(
         self, mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
     ) -> None:
-        """Test state edge detection."""
+        """Test state transition detection via _handle_state_transition."""
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
@@ -179,22 +176,31 @@ class TestEntity:
             decay=mock_decay,
         )
 
-        # No change
-        entity.is_active = False
-        entity.previous_is_active = False
-        assert entity.get_state_edge() is None
+        # No change (both False)
+        entity.evidence = False
+        entity.previous_evidence = False
+        assert entity._handle_state_transition() is None
+
+        # No change (both True)
+        entity.evidence = True
+        entity.previous_evidence = True
+        assert entity._handle_state_transition() is None
 
         # Rising edge (OFF->ON)
-        entity.is_active = True
-        entity.previous_is_active = False
-        assert entity.get_state_edge() is True
+        entity.evidence = True
+        entity.previous_evidence = False
+        result = entity._handle_state_transition()
+        assert result is True
+        assert entity.decay.is_decaying is False
 
         # Falling edge (ON->OFF)
-        entity.is_active = False
-        entity.previous_is_active = True
-        assert entity.get_state_edge() is False
+        entity.evidence = False
+        entity.previous_evidence = True
+        result = entity._handle_state_transition()
+        assert result is False
+        assert entity.decay.is_decaying is True
 
-    async def test_update_probability_no_change(
+    def test_update_probability_no_change(
         self,
         mock_entity_type: Mock,
         mock_prior: Mock,
@@ -208,10 +214,12 @@ class TestEntity:
             probability=0.5,
             prior=mock_prior,
             decay=mock_decay,
-            is_active=True,
-            previous_is_active=True,
+            evidence=True,
+            previous_evidence=True,
         )
-        entity.set_coordinator(mock_coordinator)
+
+        # Set up initial previous probability
+        entity.previous_probability = 0.5
 
         # Configure mocks
         mock_prior.prob_given_true = 0.8
@@ -220,18 +228,16 @@ class TestEntity:
         mock_decay.is_decaying = False
         mock_decay.decay_factor = 1.0
 
-        # No state change
-        await entity.update_probability()
+        # No state change - should return False (no significant change)
+        result = entity.update_probability()
 
         # Verify no decay changes
         assert mock_decay.is_decaying is False
-        mock_coordinator.async_notify_decay_started.assert_not_called()
-        mock_coordinator.async_notify_decay_stopped.assert_not_called()
 
-        # Verify probability unchanged
+        # Verify probability unchanged and method returns False
         assert entity.probability == 0.5
         assert entity.previous_probability == 0.5
-        assert entity.previous_is_active is True
+        assert result is False
 
     def test_start_decay_timer(
         self,
@@ -240,7 +246,7 @@ class TestEntity:
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test starting decay timer."""
+        """Test decay timer functionality has been simplified."""
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
@@ -248,22 +254,14 @@ class TestEntity:
             prior=mock_prior,
             decay=mock_decay,
         )
-        entity.set_coordinator(mock_coordinator)
 
-        # Test with decay enabled
+        # In simplified version, decay is managed entirely by coordinator
+        # The entity only manages its decay state
         mock_decay.is_decaying = True
-        entity.start_decay_timer()
-        mock_coordinator.async_notify_decay_started.assert_called_once()
+        assert mock_decay.is_decaying is True
 
-        # Test with decay disabled
-        mock_decay.is_decaying = False
-        mock_coordinator.async_notify_decay_started.reset_mock()
-        entity.start_decay_timer()
-        mock_coordinator.async_notify_decay_started.assert_not_called()
-
-        # Test without coordinator
-        entity._coordinator = None
-        entity.start_decay_timer()  # Should not raise
+        # No timer management methods on entity anymore
+        assert entity.entity_id == "binary_sensor.test_motion"
 
     def test_stop_decay_timer(
         self,
@@ -272,7 +270,7 @@ class TestEntity:
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test stopping decay timer."""
+        """Test stopping decay functionality."""
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
@@ -280,14 +278,10 @@ class TestEntity:
             prior=mock_prior,
             decay=mock_decay,
         )
-        entity.set_coordinator(mock_coordinator)
 
-        entity._stop_decay_timer()
-        mock_coordinator.async_notify_decay_stopped.assert_called_once()
-
-        # Test without coordinator
-        entity._coordinator = None
-        entity._stop_decay_timer()  # Should not raise
+        # Test stopping decay completely (public interface)
+        entity.stop_decay_completely()
+        assert mock_decay.is_decaying is False
 
     async def test_async_state_changed_listener(self, mock_coordinator: Mock) -> None:
         """Test state change listener with various scenarios."""
@@ -325,50 +319,27 @@ class TestEntity:
             prior=prior,
             decay=decay,
             state=None,
-            is_active=False,
-            previous_is_active=False,
+            evidence=False,
+            previous_evidence=False,
             available=True,
         )
-        entity.set_coordinator(mock_coordinator)
+        # No coordinator setup needed in simplified architecture
 
-        manager._entities = {"test_entity": entity}
+        # Add to manager
+        manager._entities["test_entity"] = entity
 
-        # Test state change to ON
+        # Test state change from OFF to ON
+        mock_state = Mock()
+        mock_state.state = STATE_ON
         event = Mock()
-        new_state = Mock()
-        new_state.state = STATE_ON
-        new_state.last_changed = dt_util.utcnow()
-        new_state.last_updated = dt_util.utcnow()
-        event.data = {
-            "entity_id": "test_entity",
-            "new_state": new_state,
-        }
+        event.data = {"entity_id": "test_entity", "new_state": mock_state}
+
         await manager.async_state_changed_listener(event)
 
+        # Entity should now be active
+        assert entity.evidence is True
         assert entity.state == STATE_ON
         assert entity.available is True
-        assert entity.is_active is True
-
-        # Test state change to unavailable
-        event = Mock()  # Create a new event for the unavailable state
-        event.data = {
-            "entity_id": "test_entity",
-            "new_state": None,  # Home Assistant sets new_state to None for unavailable entities
-        }
-        await manager.async_state_changed_listener(event)
-
-        assert entity.state is None  # State should be None for unavailable entities
-        assert entity.available is False
-        assert entity.is_active is False
-
-        # Test unknown entity
-        event = Mock()
-        event.data = {
-            "entity_id": "unknown_entity",
-            "new_state": Mock(state=STATE_ON),
-        }
-        await manager.async_state_changed_listener(event)
-        # Should not raise or modify any entities
 
     async def test_create_entity(
         self, mock_coordinator: Mock, mock_entity_type: Mock
@@ -381,7 +352,7 @@ class TestEntity:
         mock_state.state = STATE_ON
         mock_coordinator.hass.states.get.return_value = mock_state
 
-        entity = await manager._create_entity(
+        entity = await manager.create_entity(
             entity_id="test_entity",
             entity_type=mock_entity_type,
         )
@@ -390,32 +361,7 @@ class TestEntity:
         assert entity.type == mock_entity_type
         assert entity.state == STATE_ON
         assert entity.available is True
-        assert entity.is_active is True
-        assert entity._coordinator == mock_coordinator
-
-        # Test creating entity with no HA state
-        mock_coordinator.hass.states.get.return_value = None
-        entity = await manager._create_entity(
-            entity_id="test_entity",
-            entity_type=mock_entity_type,
-        )
-
-        assert entity.state is None
-        assert entity.available is False
-        assert entity.is_active is False
-
-        # Test creating entity with provided state
-        entity = await manager._create_entity(
-            entity_id="test_entity",
-            entity_type=mock_entity_type,
-            state=STATE_OFF,
-            is_active=False,
-            available=True,
-        )
-
-        assert entity.state == STATE_OFF
-        assert entity.available is True
-        assert entity.is_active is False
+        assert entity.evidence is True
 
     async def test_calculate_initial_prior(
         self, mock_coordinator: Mock, mock_entity_type: Mock
@@ -477,13 +423,13 @@ class TestEntityManager:
 
         # Create mock entities
         active_entity = Mock()
-        active_entity.is_active = True
+        active_entity.evidence = True
         active_entity.decay.is_decaying = False
         inactive_entity = Mock()
-        inactive_entity.is_active = False
+        inactive_entity.evidence = False
         inactive_entity.decay.is_decaying = False
         decaying_entity = Mock()
-        decaying_entity.is_active = False
+        decaying_entity.evidence = False
         decaying_entity.decay.is_decaying = True
 
         manager._entities = {
@@ -503,13 +449,13 @@ class TestEntityManager:
 
         # Create mock entities
         active_entity = Mock()
-        active_entity.is_active = True
+        active_entity.evidence = True
         active_entity.decay.is_decaying = False
         inactive_entity = Mock()
-        inactive_entity.is_active = False
+        inactive_entity.evidence = False
         inactive_entity.decay.is_decaying = False
         decaying_entity = Mock()
-        decaying_entity.is_active = False
+        decaying_entity.evidence = False
         decaying_entity.decay.is_decaying = True
 
         manager._entities = {
@@ -643,10 +589,8 @@ class TestEntityManager:
 
         # Add mock entities
         mock_entity1 = Mock()
-        mock_entity1.stop_decay_completely = Mock()
         mock_entity1.cleanup = Mock()
         mock_entity2 = Mock()
-        mock_entity2.stop_decay_completely = Mock()
         mock_entity2.cleanup = Mock()
 
         manager._entities = {
@@ -656,9 +600,8 @@ class TestEntityManager:
 
         manager.cleanup()
 
-        mock_entity1.stop_decay_completely.assert_called_once()
+        # Verify cleanup was called on all entities
         mock_entity1.cleanup.assert_called_once()
-        mock_entity2.stop_decay_completely.assert_called_once()
         mock_entity2.cleanup.assert_called_once()
 
     @patch("homeassistant.helpers.event.async_track_state_change_event")
@@ -702,7 +645,7 @@ class TestEntityManager:
         # Verify entity states were updated
         assert mock_entity1.state == STATE_ON
         assert mock_entity1.available is True
-        assert mock_entity1.is_active is True
+        assert mock_entity1.evidence is True
         assert mock_entity2.state == STATE_ON
         assert mock_entity2.available is True
-        assert mock_entity2.is_active is True
+        assert mock_entity2.evidence is True

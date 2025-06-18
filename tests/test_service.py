@@ -212,12 +212,12 @@ class TestGetEntityMetrics:
 
         # Mock entities with metrics
         mock_entity1 = Mock()
-        mock_entity1.is_active = True
+        mock_entity1.evidence = True
         mock_entity1.available = True
         mock_entity1.decay.is_decaying = False
 
         mock_entity2 = Mock()
-        mock_entity2.is_active = False
+        mock_entity2.evidence = False
         mock_entity2.available = True
         mock_entity2.decay.is_decaying = True
 
@@ -372,7 +372,7 @@ class TestGetEntityDetails:
         # Mock entity with details
         mock_entity = Mock()
         mock_entity.state = "on"
-        mock_entity.is_active = True
+        mock_entity.evidence = True
         mock_entity.available = True
         mock_entity.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
         mock_entity.probability = 0.75
@@ -408,7 +408,7 @@ class TestGetEntityDetails:
         assert "binary_sensor.motion1" in result["entity_details"]
         entity_detail = result["entity_details"]["binary_sensor.motion1"]
         assert entity_detail["state"] == "on"
-        assert entity_detail["is_active"] is True
+        assert entity_detail["evidence"] is True
         assert entity_detail["available"] is True
         assert entity_detail["probability"] == 0.75
 

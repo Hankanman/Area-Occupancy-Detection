@@ -10,7 +10,6 @@ from custom_components.area_occupancy.data.entity_type import (
     InputType,
 )
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 
@@ -112,8 +111,13 @@ class TestEntityType:
                 prior=0.35,
             )
 
-    def test_is_active_with_states(self) -> None:
-        """Test is_active method with active_states."""
+    def test_is_entity_active_with_states(self) -> None:
+        """Test EntityManager.is_entity_active method with active_states."""
+        from custom_components.area_occupancy.data.decay import Decay
+        from custom_components.area_occupancy.data.entity import Entity, EntityManager
+        from custom_components.area_occupancy.data.prior import Prior
+        from homeassistant.util import dt as dt_util
+
         entity_type = EntityType(
             input_type=InputType.MOTION,
             weight=0.8,
@@ -123,40 +127,56 @@ class TestEntityType:
             active_states=[STATE_ON],
         )
 
-        # Create mock states
-        active_state = Mock(spec=State)
-        active_state.state = STATE_ON
+        # Create a test entity
+        test_entity = Entity(
+            entity_id="binary_sensor.test",
+            type=entity_type,
+            probability=0.5,
+            prior=Prior(
+                prior=0.5,
+                prob_given_true=0.25,
+                prob_given_false=0.05,
+                last_updated=dt_util.utcnow(),
+            ),
+            decay=Decay(),
+        )
 
-        inactive_state = Mock(spec=State)
-        inactive_state.state = STATE_OFF
+        assert EntityManager.is_entity_active(test_entity, STATE_ON)
+        assert not EntityManager.is_entity_active(test_entity, STATE_OFF)
 
-        assert entity_type.is_active(active_state)
-        assert not entity_type.is_active(inactive_state)
+    def test_is_entity_active_with_range(self) -> None:
+        """Test EntityManager.is_entity_active method with active_range."""
+        from custom_components.area_occupancy.data.decay import Decay
+        from custom_components.area_occupancy.data.entity import Entity, EntityManager
+        from custom_components.area_occupancy.data.prior import Prior
+        from homeassistant.util import dt as dt_util
 
-    def test_is_active_with_range(self) -> None:
-        """Test is_active method with active_range."""
         entity_type = EntityType(
             input_type=InputType.ENVIRONMENTAL,
             weight=0.3,
             prob_true=0.09,
             prob_false=0.01,
             prior=0.0769,
-            active_range=(0.0, 0.2),
+            active_range=(0.0, 1.0),
         )
 
-        # Create mock states
-        active_state = Mock(spec=State)
-        active_state.state = "0.1"  # Within range
+        # Create a test entity
+        test_entity = Entity(
+            entity_id="sensor.test",
+            type=entity_type,
+            probability=0.5,
+            prior=Prior(
+                prior=0.5,
+                prob_given_true=0.09,
+                prob_given_false=0.01,
+                last_updated=dt_util.utcnow(),
+            ),
+            decay=Decay(),
+        )
 
-        inactive_state = Mock(spec=State)
-        inactive_state.state = "0.5"  # Outside range
-
-        invalid_state = Mock(spec=State)
-        invalid_state.state = "not_a_number"
-
-        assert entity_type.is_active(active_state)
-        assert not entity_type.is_active(inactive_state)
-        assert not entity_type.is_active(invalid_state)
+        assert EntityManager.is_entity_active(test_entity, "0.5")
+        assert not EntityManager.is_entity_active(test_entity, "1.5")
+        assert not EntityManager.is_entity_active(test_entity, "invalid")
 
     def test_to_dict(self) -> None:
         """Test converting EntityType to dictionary."""

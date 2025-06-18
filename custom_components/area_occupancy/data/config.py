@@ -349,7 +349,6 @@ class ConfigManager:
             HomeAssistantError: If updating the config entry fails
 
         """
-
         try:
             # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)
@@ -367,9 +366,6 @@ class ConfigManager:
 
             # Create new config object with validation
             self._config = Config.from_dict(merged_data)
-
-            # Reload the config entry to update the UI
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
             # Request update since threshold affects occupied calculation
             await self.coordinator.async_request_refresh()

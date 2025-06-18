@@ -103,7 +103,7 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall):
 
         metrics = {
             "total_entities": len(entities),
-            "active_entities": sum(1 for e in entities.values() if e.is_active),
+            "active_entities": sum(1 for e in entities.values() if e.evidence),
             "available_entities": sum(1 for e in entities.values() if e.available),
             "unavailable_entities": sum(
                 1 for e in entities.values() if not e.available
@@ -172,7 +172,7 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
                 entity = entities.get_entity(entity_id)
                 details[entity_id] = {
                     "state": entity.state,
-                    "is_active": entity.is_active,
+                    "evidence": entity.evidence,
                     "available": entity.available,
                     "last_updated": entity.last_updated.isoformat(),
                     "probability": entity.probability,
@@ -259,7 +259,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
         entities = coordinator.entities.entities
         metrics = {
             "total_entities": len(entities),
-            "active_entities": sum(1 for e in entities.values() if e.is_active),
+            "active_entities": sum(1 for e in entities.values() if e.evidence),
             "available_entities": sum(1 for e in entities.values() if e.available),
             "unavailable_entities": sum(
                 1 for e in entities.values() if not e.available
