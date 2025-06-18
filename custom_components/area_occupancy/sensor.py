@@ -99,14 +99,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        import logging
-
-        _LOGGER = logging.getLogger(__name__)
-        _LOGGER.debug(
-            "ProbabilitySensor updating: probability=%.3f%%, is_occupied=%s",
-            self.coordinator.probability * 100,
-            self.coordinator.is_occupied,
-        )
         super()._handle_coordinator_update()
 
 
@@ -152,9 +144,6 @@ class EntitiesSensor(AreaOccupancySensorBase):
                     }
                     for entity in inactive_entities
                 ],
-                "updated": self.coordinator.last_updated
-                if self.coordinator.last_updated
-                else "Never",
             }
         except (TypeError, AttributeError, KeyError):
             return {}

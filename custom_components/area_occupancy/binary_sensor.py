@@ -89,14 +89,14 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
                  False if no data is available or area is unoccupied.
 
         """
-        return self.coordinator.is_occupied
+        return self.coordinator.occupied
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug(
-            "Occupancy sensor updating: is_occupied=%s, probability=%.3f",
-            self.coordinator.is_occupied,
+            "Occupancy sensor updating: occupied=%s, probability=%.3f",
+            self.coordinator.occupied,
             self.coordinator.probability,
         )
         super()._handle_coordinator_update()

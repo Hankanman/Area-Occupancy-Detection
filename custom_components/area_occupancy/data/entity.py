@@ -220,7 +220,6 @@ class EntityManager:
         self.coordinator = coordinator
         self.config = coordinator.config_manager.config
         self.hass = coordinator.hass
-        self.storage = coordinator.storage
         self._entities: dict[str, Entity] = {}
 
     @property

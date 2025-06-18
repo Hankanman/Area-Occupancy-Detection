@@ -155,8 +155,10 @@ WASP_DEFAULT_PRIOR: Final[float] = 0.60
 # Helper constants
 ROUNDING_PRECISION: Final = 2
 
-# Storage constants
-STORAGE_KEY: Final = f"{DOMAIN}.storage"
+# Storage constants - per-entry storage format
+# Individual storage files will be created as: {DOMAIN}.{entry_id}
+# Legacy storage key for cleanup
+LEGACY_STORAGE_KEY: Final = "area_occupancy.storage"
 
 ########################################################
 # Virtual sensor constants
