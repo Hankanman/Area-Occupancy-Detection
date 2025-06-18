@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
+    LEGACY_STORAGE_KEY,
     PLATFORMS,
 )
 from .number import NAME_THRESHOLD_NUMBER
@@ -134,26 +135,46 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
-    """Migrate storage data file format."""
+    """Migrate legacy multi-instance storage to per-entry storage format."""
     try:
-        _LOGGER.debug("Starting storage file format migration for %s", entry_id)
+        _LOGGER.debug("Starting storage migration for entry %s", entry_id)
 
-        # Clean up old instance-specific storage file if it exists
-        old_file = Path(hass.config.path(".storage", f"{DOMAIN}.{entry_id}.storage"))
-        if old_file.exists():
+        # Check for and clean up legacy multi-instance storage using direct file operations
+        storage_dir = Path(hass.config.config_dir) / ".storage"
+        legacy_file = storage_dir / LEGACY_STORAGE_KEY
+
+        if legacy_file.exists():
+            _LOGGER.info(
+                "Found legacy storage file %s, removing it for fresh start",
+                legacy_file.name,
+            )
             try:
-                _LOGGER.debug("Removing old storage file: %s", old_file)
-                old_file.unlink()
-                _LOGGER.info("Successfully removed old storage file: %s", old_file)
+                legacy_file.unlink()
+                _LOGGER.info("Successfully removed legacy storage file")
             except OSError as err:
-                _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
+                _LOGGER.warning(
+                    "Error removing legacy storage file %s: %s", legacy_file, err
+                )
 
-        # The actual data migration is now handled by StorageManager._async_migrate_func
-        # which is automatically called by the Store class when loading data
+        # Remove any old per-entry storage files from previous versions
+        old_per_entry_file = storage_dir / f"{DOMAIN}.{entry_id}"
+        if old_per_entry_file.exists():
+            try:
+                _LOGGER.debug(
+                    "Removing old per-entry storage file: %s", old_per_entry_file
+                )
+                old_per_entry_file.unlink()
+                _LOGGER.info("Successfully removed old per-entry storage file")
+            except OSError as err:
+                _LOGGER.warning(
+                    "Error removing old per-entry storage file %s: %s",
+                    old_per_entry_file,
+                    err,
+                )
 
-        _LOGGER.debug("Storage file format migration complete for %s", entry_id)
+        _LOGGER.debug("Storage migration completed for entry %s", entry_id)
     except (HomeAssistantError, OSError, ValueError) as err:
-        _LOGGER.error("Error during storage migration for %s: %s", entry_id, err)
+        _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
