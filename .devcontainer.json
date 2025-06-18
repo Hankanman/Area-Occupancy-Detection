@@ -1,5 +1,5 @@
 {
-  "name": "ludeeus/integration_blueprint",
+  "name": "Area Occupancy",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
   "postCreateCommand": "scripts/setup",
   "forwardPorts": [8123],
@@ -41,6 +41,14 @@
   "features": {
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
       "packages": ["ffmpeg", "libturbojpeg0", "libpcap-dev"]
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "nodeGypDependencies": true,
+      "installYarnUsingApt": true,
+      "version": "lts",
+      "pnpmVersion": "latest",
+      "nvmVersion": "latest"
     }
   }
 }
