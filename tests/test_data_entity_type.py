@@ -3,6 +3,8 @@
 from unittest.mock import Mock
 
 import pytest
+from types import SimpleNamespace
+from typing import Any
 
 from custom_components.area_occupancy.data.entity_type import (
     EntityType,
@@ -391,3 +393,83 @@ class TestEntityTypeManager:
         assert motion_type.prior == 0.35
         assert motion_type.prob_true == 0.25
         assert motion_type.prob_false == 0.05
+
+
+class TestEntityTypeManagerOverrides:
+    """Test configuration override helpers."""
+
+    def _make_manager(self, config: Any) -> EntityTypeManager:
+        coordinator = Mock()
+        coordinator.config_manager = Mock(config=config)
+        return EntityTypeManager(coordinator)
+
+    def test_apply_weight_valid(self) -> None:
+        config = SimpleNamespace(weights=SimpleNamespace(motion=0.4))
+        manager = self._make_manager(config)
+        params = {"weight": 0.8}
+        manager._apply_weight(InputType.MOTION, params)
+        assert params["weight"] == 0.4
+
+    def test_apply_weight_invalid(self) -> None:
+        config = SimpleNamespace(weights=SimpleNamespace(motion=1.5))
+        manager = self._make_manager(config)
+        with pytest.raises(ValueError):
+            manager._apply_weight(InputType.MOTION, {})
+
+    def test_apply_states_valid(self) -> None:
+        config = SimpleNamespace(sensor_states=SimpleNamespace(motion=["on", "open"]))
+        manager = self._make_manager(config)
+        params = {"active_states": None, "active_range": (0, 1)}
+        manager._apply_states(InputType.MOTION, params)
+        assert params["active_states"] == ["on", "open"]
+        assert params["active_range"] is None
+
+    def test_apply_states_invalid(self) -> None:
+        config = SimpleNamespace(sensor_states=SimpleNamespace(motion="bad"))
+        manager = self._make_manager(config)
+        with pytest.raises(ValueError):
+            manager._apply_states(InputType.MOTION, {})
+
+    def test_apply_range_valid(self) -> None:
+        config = SimpleNamespace(motion_active_range=(0.1, 0.9))
+        manager = self._make_manager(config)
+        params = {"active_range": None, "active_states": ["on"]}
+        manager._apply_range(InputType.MOTION, params)
+        assert params["active_range"] == (0.1, 0.9)
+        assert params["active_states"] is None
+
+    def test_apply_range_invalid(self) -> None:
+        config = SimpleNamespace(motion_active_range=(1,))
+        manager = self._make_manager(config)
+        with pytest.raises(ValueError):
+            manager._apply_range(InputType.MOTION, {})
+
+    def test_to_dict_roundtrip(self, mock_coordinator: Mock) -> None:
+        manager = self._make_manager(SimpleNamespace())
+        manager._entity_types = {
+            InputType.MOTION: EntityType(
+                input_type=InputType.MOTION,
+                weight=0.5,
+                prob_true=0.2,
+                prob_false=0.1,
+                prior=0.3,
+                active_states=[STATE_ON],
+            )
+        }
+        data = manager.to_dict()
+        loaded = EntityTypeManager.from_dict(data, mock_coordinator)
+        assert loaded.entity_types[InputType.MOTION].weight == 0.5
+
+    def test_from_dict_errors(self, mock_coordinator: Mock) -> None:
+        with pytest.raises(ValueError):
+            EntityTypeManager.from_dict({}, mock_coordinator)
+
+        bad_data = {"entity_types": {"motion": {"weight": 1}}}
+        with pytest.raises(ValueError):
+            EntityTypeManager.from_dict(bad_data, mock_coordinator)
+
+    def test_cleanup(self) -> None:
+        manager = self._make_manager(SimpleNamespace())
+        manager._entity_types = {InputType.MOTION: Mock()}
+        manager.cleanup()
+        assert manager.entity_types == {}

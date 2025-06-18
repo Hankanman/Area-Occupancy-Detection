@@ -34,6 +34,29 @@ class TestAsyncSetupEntry:
         ):
             await async_setup_entry(mock_hass, mock_config_entry)
 
+    async def test_async_setup_entry_success(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test successful setup flow."""
+        coordinator = Mock()
+        coordinator.async_config_entry_first_refresh = AsyncMock()
+        with (
+            patch(
+                "custom_components.area_occupancy.AreaOccupancyCoordinator",
+                return_value=coordinator,
+            ) as mock_coord,
+            patch(
+                "custom_components.area_occupancy.async_setup_services",
+                AsyncMock(),
+            ) as mock_services,
+        ):
+            result = await async_setup_entry(mock_hass, mock_config_entry)
+
+        assert result is True
+        mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
+        mock_services.assert_awaited_once()
+        assert mock_config_entry.runtime_data == coordinator
+
     async def test_async_setup_entry_refresh_failure(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
@@ -180,3 +203,39 @@ class TestEntryUpdated:
             mock_config_entry.options
         )
         mock_coordinator.async_refresh.assert_called_once()
+
+
+class TestAsyncRemoveEntry:
+    """Tests for async_remove_entry function."""
+
+    async def test_remove_entry_with_runtime_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+        """Ensure stored runtime data is used."""
+        store = Mock(async_remove=AsyncMock())
+        mock_config_entry.runtime_data = Mock(store=store)
+        from custom_components.area_occupancy import async_remove_entry
+
+        await async_remove_entry(mock_hass, mock_config_entry)
+        store.async_remove.assert_awaited_once()
+
+    async def test_remove_entry_without_runtime_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+        """Ensure a temporary coordinator is used when runtime_data missing."""
+        store = Mock(async_remove=AsyncMock())
+        with patch(
+            "custom_components.area_occupancy.AreaOccupancyCoordinator",
+            return_value=Mock(store=store),
+        ) as mock_coord:
+            mock_config_entry.runtime_data = None
+            from custom_components.area_occupancy import async_remove_entry
+
+            await async_remove_entry(mock_hass, mock_config_entry)
+            mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
+            store.async_remove.assert_awaited_once()
+
+    async def test_remove_entry_handles_error(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+        """Errors from the store should be logged but not raised."""
+        store = Mock(async_remove=AsyncMock(side_effect=Exception("fail")))
+        mock_config_entry.runtime_data = Mock(store=store)
+        from custom_components.area_occupancy import async_remove_entry
+
+        await async_remove_entry(mock_hass, mock_config_entry)
+        store.async_remove.assert_awaited_once()
