@@ -2,16 +2,8 @@
 
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
-from custom_components.area_occupancy.const import (
-    CONF_VERSION,
-    CONF_VERSION_MINOR,
-    LEGACY_STORAGE_KEY,
-)
+from custom_components.area_occupancy.const import CONF_VERSION, CONF_VERSION_MINOR
 from custom_components.area_occupancy.storage import AreaOccupancyStore
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001

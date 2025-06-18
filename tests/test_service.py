@@ -572,7 +572,7 @@ class TestGetAreaStatus:
 
         # Mock probability and is_occupied properties
         mock_coordinator.probability = 0.9  # High confidence (> 0.8)
-        mock_coordinator.is_occupied = True
+        mock_coordinator.occupied = True
 
         # Mock last_updated with a Mock object
         mock_last_updated = Mock()
@@ -588,7 +588,7 @@ class TestGetAreaStatus:
         assert "area_status" in result
         status = result["area_status"]
         assert status["area_name"] == "Test Area"
-        assert status["is_occupied"] is True
+        assert status["occupied"] is True
         assert status["occupancy_probability"] == 0.9
         assert status["confidence_level"] == "high"
 
@@ -602,7 +602,7 @@ class TestGetAreaStatus:
 
         # Mock properties for no occupancy state
         mock_coordinator.probability = None  # No probability available
-        mock_coordinator.is_occupied = False
+        mock_coordinator.occupied = False
 
         # Mock last_updated with a Mock object
         mock_last_updated = Mock()
@@ -618,7 +618,7 @@ class TestGetAreaStatus:
         assert "area_status" in result
         status = result["area_status"]
         assert status["area_name"] == "Test Area"
-        assert status["is_occupied"] is False
+        assert status["occupied"] is False
         assert status["occupancy_probability"] is None
         assert status["confidence_level"] == "unknown"
 
@@ -718,7 +718,7 @@ class TestServiceIntegration:
 
         # Mock coordinator properties for high confidence state
         mock_coordinator.probability = 0.9  # High confidence (> 0.8)
-        mock_coordinator.is_occupied = True
+        mock_coordinator.occupied = True
 
         # Mock last_updated with a Mock object
         mock_last_updated = Mock()
@@ -750,7 +750,7 @@ class TestServiceIntegration:
         assert "area_status" in status_result
         status = status_result["area_status"]
         assert status["area_name"] == "Test Area"
-        assert status["is_occupied"] is True
+        assert status["occupied"] is True
         assert status["occupancy_probability"] == 0.9
         assert status["confidence_level"] == "high"
 
@@ -816,7 +816,7 @@ class TestServiceIntegration:
 
         # Mock coordinator properties for medium confidence state
         mock_coordinator.probability = 0.8  # Medium confidence (0.2 < 0.8 <= 0.8)
-        mock_coordinator.is_occupied = True
+        mock_coordinator.occupied = True
 
         # Mock last_updated with a Mock object
         mock_last_updated = Mock()
@@ -847,7 +847,7 @@ class TestServiceIntegration:
         assert "area_status" in status_result
         status = status_result["area_status"]
         assert status["area_name"] == "Test Area"
-        assert status["is_occupied"] is True
+        assert status["occupied"] is True
         assert status["occupancy_probability"] == 0.8
         assert status["confidence_level"] == "medium"
 

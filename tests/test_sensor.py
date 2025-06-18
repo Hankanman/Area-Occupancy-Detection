@@ -195,7 +195,6 @@ class TestEntitiesSensor:
         mock_coordinator_with_sensors.data = {"test": "data"}
         mock_coordinator_with_sensors.entities.active_entities = []
         mock_coordinator_with_sensors.entities.inactive_entities = []
-        mock_coordinator_with_sensors.last_updated = "2023-01-01T00:00:00"
 
         sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
         attributes = sensor.extra_state_attributes
@@ -203,7 +202,6 @@ class TestEntitiesSensor:
         # Should return the expected structure
         assert "active" in attributes
         assert "inactive" in attributes
-        assert "updated" in attributes
 
     def test_extra_state_attributes_no_entity_manager(
         self, mock_coordinator: Mock
@@ -222,14 +220,12 @@ class TestEntitiesSensor:
         mock_coordinator.data = {"test": "data"}
         mock_coordinator.entities.active_entities = []
         mock_coordinator.entities.inactive_entities = []
-        mock_coordinator.last_updated = "Never"
 
         sensor = EntitiesSensor(mock_coordinator, "test_entry")
         attributes = sensor.extra_state_attributes
 
         assert "active" in attributes
         assert "inactive" in attributes
-        assert "updated" in attributes
         assert attributes["active"] == []
         assert attributes["inactive"] == []
 

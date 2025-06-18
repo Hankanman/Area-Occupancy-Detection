@@ -403,8 +403,16 @@ def mock_coordinator(
 
     # Add mock entities for prior tests
     coordinator.entities.entities = {
-        "entity1": Mock(entity_id="entity1"),
-        "entity2": Mock(entity_id="entity2"),
+        "entity1": Mock(
+            entity_id="entity1",
+            prior=Mock(prior=0.35),
+            decay=Mock(decay_factor=1.0, is_decaying=False),
+        ),
+        "entity2": Mock(
+            entity_id="entity2",
+            prior=Mock(prior=0.35),
+            decay=Mock(decay_factor=1.0, is_decaying=False),
+        ),
     }
 
     # Entity types
@@ -412,16 +420,16 @@ def mock_coordinator(
     coordinator.entity_types.to_dict = Mock(return_value={"entity_types": {}})
     coordinator.entity_types.async_initialize = AsyncMock()
 
-    # Storage
-    coordinator.storage = Mock()
-    coordinator.storage.async_load = AsyncMock(return_value=None)
-    coordinator.storage.async_save = AsyncMock()
-    coordinator.storage.async_initialize = AsyncMock()
-    coordinator.storage.async_shutdown = AsyncMock()
-    coordinator.storage.async_save_instance_data = AsyncMock()
-    coordinator.storage.async_load_with_compatibility_check = AsyncMock(
+    # Store - Updated for new per-entry storage architecture
+    coordinator.store = Mock()
+    coordinator.store.async_save_coordinator_data = Mock()
+    coordinator.store.async_load_coordinator_data = AsyncMock(return_value=None)
+    coordinator.store.async_load_with_compatibility_check = AsyncMock(
         return_value=(None, False)
     )
+    coordinator.store.async_load = AsyncMock(return_value=None)
+    coordinator.store.async_save = AsyncMock()
+    coordinator.store.async_remove = AsyncMock()
 
     # Priors manager
     coordinator.priors = Mock()
@@ -544,11 +552,13 @@ def mock_recorder() -> Generator[Mock]:
 
 @pytest.fixture
 def mock_storage() -> Generator[Mock]:
-    """Mock the storage system."""
+    """Mock the storage system with new per-entry architecture."""
     with patch("homeassistant.helpers.storage.Store") as mock_store:
         store_instance = Mock()
         store_instance.async_load = AsyncMock(return_value=None)
         store_instance.async_save = AsyncMock()
+        store_instance.async_remove = AsyncMock()
+        store_instance.async_delay_save = Mock()
         # Add required Store attributes
         store_instance._load_future = None
         store_instance._data = None
@@ -558,12 +568,31 @@ def mock_storage() -> Generator[Mock]:
 
 
 @pytest.fixture
-def mock_storage_manager_patches():
-    """Provide common patches for StorageManager tests."""
+def mock_area_occupancy_store() -> Mock:
+    """Mock the AreaOccupancyStore class."""
+    store = Mock()
+    store.async_save_coordinator_data = Mock()
+    store.async_load_coordinator_data = AsyncMock(return_value=None)
+    store.async_load = AsyncMock(return_value=None)
+    store.async_save = AsyncMock()
+    store.async_remove = AsyncMock()
+    store.async_delay_save = Mock()
+    return store
+
+
+@pytest.fixture
+def mock_area_occupancy_store_patches():
+    """Provide common patches for AreaOccupancyStore tests with per-entry architecture."""
     return [
         patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
         patch("homeassistant.helpers.storage.Store.async_load", new_callable=AsyncMock),
         patch("homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock),
+        patch(
+            "homeassistant.helpers.storage.Store.async_remove", new_callable=AsyncMock
+        ),
+        patch(
+            "homeassistant.helpers.storage.Store.async_delay_save", new_callable=Mock
+        ),
         patch(
             "homeassistant.helpers.event.async_track_point_in_time", return_value=Mock()
         ),
@@ -638,30 +667,28 @@ def valid_entity_data() -> dict[str, Any]:
 
 @pytest.fixture
 def valid_storage_data() -> dict[str, Any]:
-    """Create valid storage data for testing with current format."""
+    """Create valid storage data for testing with new per-entry format."""
     return {
-        "version": CONF_VERSION,
-        "minor_version": CONF_VERSION_MINOR,
-        "data": {
-            "instances": {
-                "test_entry_id": {
-                    "entities": {
-                        "binary_sensor.test_motion": {
-                            "entity_id": "binary_sensor.test_motion",
-                            "probability": 0.5,
-                            "state": STATE_ON,
-                            "is_active": True,
-                            "available": True,
-                            "type": "motion",
-                            "prior": {"prior": 0.3},
-                            "decay": {"decay_factor": 1.0},
-                            "last_updated": dt_util.utcnow().isoformat(),
-                            "last_changed": dt_util.utcnow().isoformat(),
-                        }
-                    }
-                }
+        "name": "Test Area",
+        "probability": 0.5,
+        "prior": 0.3,
+        "threshold": 0.5,
+        "last_updated": dt_util.utcnow().isoformat(),
+        "entities": {
+            "binary_sensor.test_motion": {
+                "entity_id": "binary_sensor.test_motion",
+                "probability": 0.5,
+                "state": STATE_ON,
+                "is_active": True,
+                "available": True,
+                "type": "motion",
+                "prior": {"prior": 0.3},
+                "decay": {"decay_factor": 1.0},
+                "last_updated": dt_util.utcnow().isoformat(),
+                "last_changed": dt_util.utcnow().isoformat(),
             }
         },
+        "entity_types": {},
     }
 
 
@@ -707,11 +734,15 @@ def create_mock_entity_registry_with_entities(entities: list[dict]) -> Mock:
 
 
 def create_storage_data_with_entities(entry_id: str, entities: dict) -> dict[str, Any]:
-    """Create storage data with specific entities."""
+    """Create storage data with specific entities for new per-entry format."""
     return {
-        "version": CONF_VERSION,
-        "minor_version": CONF_VERSION_MINOR,
-        "data": {"instances": {entry_id: {"entities": entities}}},
+        "name": f"Test Area {entry_id}",
+        "probability": 0.5,
+        "prior": 0.3,
+        "threshold": 0.5,
+        "last_updated": dt_util.utcnow().isoformat(),
+        "entities": entities,
+        "entity_types": {},
     }
 
 
@@ -1004,19 +1035,25 @@ def mock_entity_for_prior_tests() -> Mock:
     return entity
 
 
+# Note: Debouncer mocking is no longer needed as the coordinator now uses
+# native Store debouncing instead of manual Debouncer instances
+
+
 @pytest.fixture(autouse=True)
-def mock_debouncer_globally():
-    """Automatically mock Debouncer for all tests."""
+def mock_area_occupancy_store_globally():
+    """Automatically mock AreaOccupancyStore for all tests."""
     with patch(
-        "custom_components.area_occupancy.coordinator.Debouncer"
-    ) as mock_debouncer_class:
-        mock_debouncer = Mock()
-        mock_debouncer.async_call = AsyncMock(
-            side_effect=lambda: None
-        )  # Ensure it calls the method
-        mock_debouncer.async_shutdown = AsyncMock()
-        mock_debouncer_class.return_value = mock_debouncer
-        yield mock_debouncer
+        "custom_components.area_occupancy.storage.AreaOccupancyStore"
+    ) as mock_store_class:
+        mock_store = Mock()
+        mock_store.async_save_coordinator_data = Mock()
+        mock_store.async_load_coordinator_data = AsyncMock(return_value=None)
+        mock_store.async_load = AsyncMock(return_value=None)
+        mock_store.async_save = AsyncMock()
+        mock_store.async_remove = AsyncMock()
+        mock_store.async_delay_save = Mock()
+        mock_store_class.return_value = mock_store
+        yield mock_store
 
 
 @pytest.fixture(autouse=True)
