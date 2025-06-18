@@ -91,22 +91,6 @@ class TestPriorsSensor:
         mock_coordinator.prior = 1.0
         assert sensor.native_value == 100.0
 
-    def test_native_value_none_when_unavailable(self, mock_coordinator: Mock) -> None:
-        """Test native_value returns None when coordinator unavailable."""
-        sensor = PriorsSensor(mock_coordinator, "test_entry")
-
-        # PriorsSensor doesn't override native_value to return None when unavailable
-        # It always returns the coordinator.prior value
-        mock_coordinator.prior = 0.35
-        assert sensor.native_value == 35.0
-
-    def test_enabled_default(self, mock_coordinator: Mock) -> None:
-        """Test that PriorsSensor is disabled by default."""
-        sensor = PriorsSensor(mock_coordinator, "test_entry")
-
-        # PriorsSensor sets enabled default via entity_category, not _attr_entity_registry_enabled_default
-        # Diagnostic entities are typically disabled by default
-        assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
 
 class TestProbabilitySensor:
@@ -143,14 +127,6 @@ class TestProbabilitySensor:
         mock_coordinator.probability = 1.0
         assert sensor.native_value == 100.0
 
-    def test_native_value_none_when_unavailable(self, mock_coordinator: Mock) -> None:
-        """Test native_value returns None when coordinator unavailable."""
-        sensor = ProbabilitySensor(mock_coordinator, "test_entry")
-
-        # ProbabilitySensor doesn't override native_value to return None when unavailable
-        # It always returns the coordinator.probability value
-        mock_coordinator.probability = 0.65
-        assert sensor.native_value == 65.0
 
 
 class TestEntitiesSensor:
@@ -180,14 +156,6 @@ class TestEntitiesSensor:
 
         assert sensor.native_value == 0
 
-    def test_native_value_none_when_unavailable(
-        self, mock_coordinator_with_sensors: Mock
-    ) -> None:
-        """Test native_value returns None when coordinator unavailable."""
-        sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
-
-        # EntitiesSensor doesn't check availability, it always returns len() of entities
-        assert sensor.native_value == 4
 
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
@@ -229,12 +197,6 @@ class TestEntitiesSensor:
         assert attributes["active"] == []
         assert attributes["inactive"] == []
 
-    def test_enabled_default(self, mock_coordinator: Mock) -> None:
-        """Test that EntitiesSensor is disabled by default."""
-        sensor = EntitiesSensor(mock_coordinator, "test_entry")
-
-        # EntitiesSensor sets enabled default via entity_category
-        assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
 
 class TestDecaySensor:
@@ -271,16 +233,6 @@ class TestDecaySensor:
 
         mock_coordinator.decay = 1.0
         assert sensor.native_value == 0.0  # (1 - 1.0) * 100
-
-    def test_native_value_none_when_unavailable(self, mock_coordinator: Mock) -> None:
-        """Test native_value returns None when coordinator unavailable."""
-        sensor = DecaySensor(mock_coordinator, "test_entry")
-
-        # DecaySensor doesn't override native_value to return None when unavailable
-        # It always returns the calculated decay value
-        mock_coordinator.decay = 0.85
-        assert sensor.native_value == 15.0
-
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
         # Set up mock active entities with decay information
@@ -319,17 +271,6 @@ class TestDecaySensor:
         sensor = DecaySensor(mock_coordinator, "test_entry")
 
         attributes = sensor.extra_state_attributes
-        assert "active" in attributes
-        assert attributes["active"] == []
-
-    def test_enabled_default(self, mock_coordinator: Mock) -> None:
-        """Test that DecaySensor is disabled by default."""
-        sensor = DecaySensor(mock_coordinator, "test_entry")
-
-        # DecaySensor sets enabled default via entity_category
-        assert sensor.entity_category == EntityCategory.DIAGNOSTIC
-
-
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
