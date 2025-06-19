@@ -7,7 +7,7 @@ import math
 import time
 from typing import Any
 
-DEFAULT_HALF_LIFE = 30.0  # seconds until evidence halves (default 30 seconds)
+DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
 
 
 @dataclass
@@ -15,8 +15,12 @@ class Decay:
     """Decay model for Area Occupancy Detection."""
 
     last_trigger_ts: float = field(default_factory=time.time)  # UNIX epoch seconds
-    half_life: float = DEFAULT_HALF_LIFE  # default half-life
+    half_life: float = DEFAULT_HALF_LIFE  # purpose-based half-life
     is_decaying: bool = False
+
+    def update_half_life(self, new_half_life: float) -> None:
+        """Update the half-life value."""
+        self.half_life = new_half_life
 
     @property
     def decay_factor(self) -> float:

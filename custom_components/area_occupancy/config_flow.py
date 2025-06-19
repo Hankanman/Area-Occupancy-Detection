@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant, callback
@@ -54,6 +54,7 @@ from .const import (
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
@@ -76,6 +77,7 @@ from .const import (
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -90,6 +92,7 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
 )
+from .data.purpose import get_purpose_options
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -501,6 +504,23 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
     )
 
 
+def _create_purpose_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the purpose section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_PURPOSE,
+                default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=cast("list[SelectOptionDict]", get_purpose_options()),
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+    )
+
+
 def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the parameters section."""
     return vol.Schema(
@@ -625,6 +645,15 @@ def create_schema(
     if not is_options:
         # Add the name field only for the initial config flow
         schema_dict[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
+        # Add purpose section right after name in initial config flow
+        schema_dict[vol.Required("purpose")] = section(
+            _create_purpose_section_schema(defaults), {"collapsed": False}
+        )
+    else:
+        # Add purpose section at the top for options flow
+        schema_dict[vol.Required("purpose")] = section(
+            _create_purpose_section_schema(defaults), {"collapsed": False}
+        )
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
@@ -705,6 +734,11 @@ class BaseOccupancyFlow:
         name = data.get(CONF_NAME, "")
         if not name:
             raise vol.Invalid("Name is required")
+
+        # Validate purpose
+        purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        if not purpose:
+            raise vol.Invalid("Purpose is required")
 
         # Validate motion sensors
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
@@ -854,6 +888,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                        elif key == "purpose":
+                            # Flatten purpose settings
+                            flattened_input[CONF_PURPOSE] = value.get(
+                                CONF_PURPOSE, DEFAULT_PURPOSE
+                            )
                         else:
                             # Flatten other sections as before
                             flattened_input.update(value)
@@ -888,16 +927,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow."""
-        return AreaOccupancyOptionsFlow(config_entry)
+        return AreaOccupancyOptionsFlow()
 
 
-class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
+class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     """Handle options flow."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        super().__init__(config_entry)
-        self._data = dict(config_entry.options)
+        super().__init__()
+        self._data: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -939,11 +978,16 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                        elif key == "purpose":
+                            # Flatten purpose settings
+                            flattened_input[CONF_PURPOSE] = value.get(
+                                CONF_PURPOSE, DEFAULT_PURPOSE
+                            )
                         else:
                             # Flatten other sections as before
                             flattened_input.update(value)
                     else:
-                        # Handle top-level keys
+                        # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
 
                 # Add the name from existing config entry for validation
@@ -966,8 +1010,11 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         defaults = {
             **self.config_entry.data,
             **self.config_entry.options,
-            **self._data,
         }
+
+        # Ensure purpose field has a default if missing (for older config entries)
+        if CONF_PURPOSE not in defaults:
+            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
 
         return self.async_show_form(
             step_id="init",

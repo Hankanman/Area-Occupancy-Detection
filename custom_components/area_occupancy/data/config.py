@@ -28,6 +28,7 @@ from ..const import (
     CONF_MOTION_SENSORS,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
@@ -50,6 +51,7 @@ from ..const import (
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -170,6 +172,7 @@ class Config:
     """Configuration for Area Occupancy Detection."""
 
     name: str = "Area Occupancy"
+    purpose: str = DEFAULT_PURPOSE
     area_id: str | None = None
     threshold: float = DEFAULT_THRESHOLD
     sensors: Sensors = field(default_factory=Sensors)
@@ -221,6 +224,7 @@ class Config:
 
         return cls(
             name=data.get(CONF_NAME, "Area Occupancy"),
+            purpose=data.get(CONF_PURPOSE, DEFAULT_PURPOSE),
             area_id=data.get(CONF_AREA_ID),
             threshold=threshold,
             sensors=Sensors(
