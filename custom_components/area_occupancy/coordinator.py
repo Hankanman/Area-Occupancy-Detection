@@ -35,6 +35,7 @@ from .data.config import ConfigManager
 from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import PriorManager
+from .data.purpose import PurposeManager
 from .storage import AreaOccupancyStore
 from .utils import bayesian_probability, validate_prob
 
@@ -71,6 +72,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.store = AreaOccupancyStore(self)
         self.entity_types = EntityTypeManager(self)
         self.priors = PriorManager(self)
+        self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
@@ -177,6 +179,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
+            # Initialize purpose manager
+            await self.purpose.async_initialize()
+
             # Build Default Entity Types
             await self.entity_types.async_initialize()
 
@@ -194,6 +199,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Build Entities
             await self.entities.async_initialize()
+
+            # Update entity decay half-lives based on purpose
+            self._update_entity_decay_half_lives()
 
             # Save current state to storage
             await self.store.async_save_data(force=True)
@@ -262,6 +270,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Clean up entity manager
         self.entities.cleanup()
 
+        # Clean up purpose manager
+        self.purpose.cleanup()
+
         await super().async_shutdown()
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
@@ -269,6 +280,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Update config
         await self.config_manager.update_config(options)
         self.config = self.config_manager.config
+
+        # Update purpose with new configuration
+        await self.purpose.async_initialize()
 
         # Always re-initialize entities and entity types when configuration changes
         _LOGGER.info(
@@ -282,6 +296,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Clean up existing entity tracking and re-initialize
         self.entities.cleanup()
         await self.entities.async_initialize()
+
+        # Update entity decay half-lives with new purpose
+        self._update_entity_decay_half_lives()
 
         # Re-establish entity state tracking with new entity list
         await self.track_entity_state_changes(self.entities.entity_ids)
@@ -379,3 +396,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Reschedule the timer
         self._start_storage_timer()
+
+    def _update_entity_decay_half_lives(self) -> None:
+        """Update entity decay half-lives based on purpose."""
+        purpose_half_life = self.purpose.half_life
+        for entity in self.entities.entities.values():
+            entity.decay.update_half_life(purpose_half_life)

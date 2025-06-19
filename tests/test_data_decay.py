@@ -129,15 +129,17 @@ class TestDecay:
         # Probability at practical threshold
         assert decay.is_decay_complete(0.02) is True
 
-        # Decay factor negligible - use time manipulation instead of patching
+        # Decay factor negligible - use much longer time for new half-life
         decay.last_trigger_ts = freeze_time.timestamp()
-        with patch("time.time", return_value=freeze_time.timestamp() + 1000.0):
+        # Use 10 half-lives (720 * 10 = 7200 seconds) to ensure negligible factor
+        with patch("time.time", return_value=freeze_time.timestamp() + 7200.0):
             assert decay.is_decay_complete(0.5) is True
 
-        # Not complete - use time manipulation instead of patching
+        # Not complete - use shorter time
         decay.last_trigger_ts = freeze_time.timestamp()
         decay.is_decaying = True  # Ensure decay is still active
-        with patch("time.time", return_value=freeze_time.timestamp() + 30.0):
+        # Use 0.1 half-life (72 seconds) to ensure decay is not complete
+        with patch("time.time", return_value=freeze_time.timestamp() + 72.0):
             # Check decay factor first to ensure it's not auto-stopping
             assert decay.decay_factor > 0.05  # Should be well above auto-stop threshold
             assert decay.is_decay_complete(0.5) is False
