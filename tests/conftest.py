@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import Generator
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
@@ -122,11 +122,11 @@ def auto_enable_custom_integrations(
 
 
 @pytest.fixture
-def mock_hass() -> MagicMock:
-    """Return a MagicMock HomeAssistant instance with minimal config for testing."""
-    mock = MagicMock(spec=HomeAssistant)
+def mock_hass() -> Mock:
+    """Return a Mock HomeAssistant instance with minimal config for testing."""
+    mock = Mock(spec=HomeAssistant)
     mock.data = {DOMAIN: {}}
-    mock_config = MagicMock()
+    mock_config = Mock()
     mock_config.config_dir = "/tmp"  # noqa: S108
     mock.config = mock_config
     return mock
@@ -187,15 +187,14 @@ def mock_recorder(hass: HomeAssistant):
 
 
 @pytest.fixture
-def mock_config_entry() -> MockConfigEntry:
+def mock_config_entry() -> Mock:
     """Create a mock config entry for testing."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        data=TEST_CONFIG,
-        title="Test Area",
-        unique_id=TEST_UNIQUE_ID,
-        entry_id=TEST_ENTRY_ID,
-    )
+    mock = Mock()
+    mock.entry_id = TEST_ENTRY_ID
+    mock.data = TEST_CONFIG
+    mock.title = "Test Area"
+    mock.unique_id = TEST_UNIQUE_ID
+    return mock
 
 
 @pytest.fixture
@@ -258,6 +257,44 @@ def mock_coordinator(
     coordinator.async_request_refresh = AsyncMock()
     coordinator.update_learned_priors = AsyncMock()
     coordinator.async_refresh = AsyncMock()
+    
+    # Add properties for the new test structure
+    coordinator.entry_id = TEST_ENTRY_ID
+    coordinator.name = "Test Area"
+    coordinator.probability = 0.5
+    coordinator.prior = 0.3
+    coordinator.decay = 1.0
+    coordinator.threshold = 0.5
+    coordinator.occupied = False
+    coordinator.last_updated = datetime.now()
+    coordinator.last_changed = datetime.now()
+    coordinator.available = True
+    coordinator.last_update_success = True
+    
+    # Mock binary sensor entity IDs
+    coordinator.binary_sensor_entity_ids = {
+        "occupancy": "binary_sensor.test_occupancy",
+        "wasp": "binary_sensor.test_wasp"
+    }
+    
+    # Add additional mock methods for new tests
+    coordinator.request_update = Mock()
+    coordinator._async_setup = AsyncMock()
+    coordinator.async_shutdown = AsyncMock()
+    coordinator.async_update_options = AsyncMock()
+    coordinator.async_load_stored_data = AsyncMock()
+    coordinator._schedule_next_prior_update = AsyncMock()
+    coordinator._handle_prior_update = AsyncMock()
+    coordinator._async_refresh_finished = Mock()
+    coordinator.async_set_updated_data = Mock()
+    coordinator.async_add_listener = Mock(return_value=Mock())
+    coordinator.setup = AsyncMock()
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+    
+    # Mock store
+    coordinator.store = Mock()
+    coordinator.store.async_save_data = Mock()
+    
     return coordinator
 
 
@@ -345,10 +382,10 @@ async def setup_test_entities(hass: HomeAssistant) -> None:
 @pytest.fixture
 async def init_integration(
     hass: HomeAssistant,
-    mock_config_entry: MockConfigEntry,
+    mock_config_entry: Mock,
     mock_recorder: MagicMock,
     setup_test_entities,
-) -> MockConfigEntry:
+) -> Mock:
     """Set up the area occupancy integration for testing."""
     # Set up recorder component first
     await hass.async_add_executor_job(lambda: None)  # Ensure executor is running
@@ -361,15 +398,88 @@ async def init_integration(
     return mock_config_entry
 
 
+@pytest.fixture
+def mock_entity_manager() -> Mock:
+    """Create a mock entity manager."""
+    mock = Mock()
+    mock.entities = {}
+    mock.to_dict = Mock(return_value={"entities": {}})
+    return mock
+
+
+@pytest.fixture 
+def mock_coordinator_with_threshold() -> Mock:
+    """Create a mock coordinator with specific threshold for testing."""
+    coordinator = Mock()
+    coordinator.threshold = 0.6
+    coordinator.probability = 0.5  
+    coordinator.occupied = False  # 0.5 < 0.6
+    return coordinator
+
+
+@pytest.fixture
+def mock_coordinator_with_sensors() -> Mock:
+    """Create a mock coordinator with sensor entities."""
+    coordinator = Mock()
+    coordinator.probability = 0.7
+    coordinator.prior = 0.4
+    coordinator.decay = 0.8
+    return coordinator
+
+
+@pytest.fixture
+def valid_storage_data() -> dict:
+    """Create valid storage data structure."""
+    return {
+        "name": "Test Area",
+        "probability": 0.6,
+        "prior": 0.4,
+        "threshold": 0.5,
+        "last_updated": "2024-01-01T00:00:00",
+        "entities": {
+            "binary_sensor.test": {
+                "entity_id": "binary_sensor.test",
+                "probability": 0.6,
+                "type": {
+                    "input_type": "motion",
+                    "weight": 1.0,
+                    "prob_true": 0.8,
+                    "prob_false": 0.1,
+                    "prior": 0.5,
+                    "active_states": ["on"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.8,
+                    "prob_given_false": 0.1,
+                    "last_updated": "2024-01-01T00:00:00",
+                },
+                "decay": {
+                    "is_decaying": False,
+                    "last_trigger_ts": 1704067200.0,
+                    "half_life": 60.0,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            }
+        },
+    }
+
+
 @pytest.fixture(autouse=True)
 def cleanup_debouncer():
     """Clean up any debouncer timers after each test."""
     yield
 
     # Get all active timers from the event loop
-    loop = asyncio.get_event_loop()
-    for handle in getattr(loop, "_scheduled", []):
-        if isinstance(handle, asyncio.TimerHandle) and "Debouncer._on_debounce" in str(
-            handle
-        ):
-            handle.cancel()
+    try:
+        loop = asyncio.get_event_loop()
+        for handle in getattr(loop, "_scheduled", []):
+            if isinstance(handle, asyncio.TimerHandle) and "Debouncer._on_debounce" in str(
+                handle
+            ):
+                handle.cancel()
+    except RuntimeError:
+        # Event loop may not exist in some test scenarios
+        pass
