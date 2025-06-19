@@ -45,13 +45,11 @@ class TestPrior:
         """Test Prior initialization with valid parameters."""
         now = dt_util.utcnow()
         prior = Prior(
-            prior=0.3,
             prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=now,
         )
 
-        assert prior.prior == 0.3
         assert prior.prob_given_true == 0.8
         assert prior.prob_given_false == 0.1
         assert prior.last_updated == now
@@ -59,13 +57,11 @@ class TestPrior:
     def test_initialization_with_validation(self) -> None:
         """Test initialization with invalid values that should be validated."""
         prior = Prior(
-            prior=0.0,  # Invalid for prior, should be clamped
             prob_given_true=1.5,  # Invalid, should be clamped
             prob_given_false=-0.1,  # Invalid, should be clamped
             last_updated=dt_util.utcnow(),
         )
 
-        assert prior.prior == 0.001  # Clamped to minimum for priors (0.001, not 0.0001)
         assert prior.prob_given_true == 1.0  # Clamped to maximum
         assert prior.prob_given_false == 0.001  # Clamped to minimum (0.001, not 0.0)
 
@@ -74,7 +70,6 @@ class TestPrior:
         # Test with a timestamp from the past, not None
         # The validate_datetime function handles None by returning current time
         prior = Prior(
-            prior=0.3,
             prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=dt_util.utcnow() - timedelta(seconds=30),
@@ -88,7 +83,6 @@ class TestPrior:
         """Test converting Prior to dictionary."""
         now = dt_util.utcnow()
         prior = Prior(
-            prior=0.3,
             prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=now,
@@ -96,7 +90,6 @@ class TestPrior:
 
         result = prior.to_dict()
         expected = {
-            "prior": 0.3,
             "prob_given_true": 0.8,
             "prob_given_false": 0.1,
             "last_updated": now.isoformat(),
@@ -108,7 +101,6 @@ class TestPrior:
         """Test creating Prior from dictionary."""
         now = dt_util.utcnow()
         data = {
-            "prior": 0.3,
             "prob_given_true": 0.8,
             "prob_given_false": 0.1,
             "last_updated": now.isoformat(),
@@ -116,7 +108,6 @@ class TestPrior:
 
         prior = Prior.from_dict(data)
 
-        assert prior.prior == 0.3
         assert prior.prob_given_true == 0.8
         assert prior.prob_given_false == 0.1
         assert prior.last_updated == now
@@ -124,7 +115,6 @@ class TestPrior:
     def test_from_dict_with_invalid_datetime(self) -> None:
         """Test creating Prior from dictionary with invalid datetime."""
         data = {
-            "prior": 0.3,
             "prob_given_true": 0.8,
             "prob_given_false": 0.1,
             "last_updated": "invalid_datetime",
@@ -154,7 +144,7 @@ class TestPriorManager:
         assert manager.priors == {}
 
         # Add a prior
-        prior = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
+        prior = Prior(0.8, 0.1, dt_util.utcnow())
         manager._priors["test_entity"] = prior
 
         assert "test_entity" in manager.priors
@@ -168,7 +158,7 @@ class TestPriorManager:
         assert manager.get_prior("nonexistent") is None
 
         # Existing entity
-        prior = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
+        prior = Prior(0.8, 0.1, dt_util.utcnow())
         manager._priors["test_entity"] = prior
 
         assert manager.get_prior("test_entity") == prior
@@ -177,7 +167,7 @@ class TestPriorManager:
         """Test updating prior for entity."""
         manager = PriorManager(mock_coordinator)
 
-        prior = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
+        prior = Prior(0.8, 0.1, dt_util.utcnow())
         manager.update_prior("test_entity", prior)
 
         assert manager.get_prior("test_entity") == prior
@@ -187,7 +177,7 @@ class TestPriorManager:
         manager = PriorManager(mock_coordinator)
 
         # Add a prior
-        prior = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
+        prior = Prior(0.8, 0.1, dt_util.utcnow())
         manager._priors["test_entity"] = prior
 
         # Remove it
@@ -200,8 +190,8 @@ class TestPriorManager:
         manager = PriorManager(mock_coordinator)
 
         # Add some priors
-        prior1 = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
-        prior2 = Prior(0.4, 0.7, 0.2, dt_util.utcnow())
+        prior1 = Prior(0.8, 0.1, dt_util.utcnow())
+        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
         manager._priors["entity1"] = prior1
         manager._priors["entity2"] = prior2
 
@@ -216,9 +206,19 @@ class TestPriorManager:
     ) -> None:
         """Test updating all entity priors."""
         # Setup mock calculate responses
-        prior1 = Prior(0.3, 0.8, 0.1, dt_util.utcnow())
-        prior2 = Prior(0.4, 0.7, 0.2, dt_util.utcnow())
+        prior1 = Prior(0.8, 0.1, dt_util.utcnow())
+        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
         mock_calculate.side_effect = [prior1, prior2]
+
+        # Mock the coordinator to have entities
+        mock_entity1 = Mock()
+        mock_entity1.entity_id = "entity1"
+        mock_entity2 = Mock()
+        mock_entity2.entity_id = "entity2"
+        mock_coordinator.entities.entities = {
+            "entity1": mock_entity1,
+            "entity2": mock_entity2,
+        }
 
         manager = PriorManager(mock_coordinator)
 
@@ -236,8 +236,18 @@ class TestPriorManager:
         from homeassistant.exceptions import HomeAssistantError
 
         # Setup mock calculate to fail for first entity, succeed for second
-        prior2 = Prior(0.4, 0.7, 0.2, dt_util.utcnow())
+        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
         mock_calculate.side_effect = [HomeAssistantError("Calculation failed"), prior2]
+
+        # Mock the coordinator to have entities
+        mock_entity1 = Mock()
+        mock_entity1.entity_id = "entity1"
+        mock_entity2 = Mock()
+        mock_entity2.entity_id = "entity2"
+        mock_coordinator.entities.entities = {
+            "entity1": mock_entity1,
+            "entity2": mock_entity2,
+        }
 
         manager = PriorManager(mock_coordinator)
 
@@ -275,7 +285,6 @@ class TestPriorCalculation:
         result = await manager.calculate(mock_entity_for_prior_tests)
 
         assert isinstance(result, Prior)
-        assert 0 <= result.prior <= 1
         assert 0 <= result.prob_given_true <= 1
         assert 0 <= result.prob_given_false <= 1
         assert isinstance(result.last_updated, datetime)
@@ -300,7 +309,6 @@ class TestPriorCalculation:
 
         assert isinstance(result, Prior)
         # Should return default values
-        assert result.prior == mock_entity_for_prior_tests.type.prior
         assert result.prob_given_true == mock_entity_for_prior_tests.type.prob_true
         assert result.prob_given_false == mock_entity_for_prior_tests.type.prob_false
 
@@ -324,7 +332,6 @@ class TestPriorCalculation:
 
         assert isinstance(result, Prior)
         # Should return default values without calling recorder
-        assert result.prior == mock_entity_for_prior_tests.type.prior
         assert result.prob_given_true == mock_entity_for_prior_tests.type.prob_true
         assert result.prob_given_false == mock_entity_for_prior_tests.type.prob_false
 
@@ -434,7 +441,6 @@ class TestPriorCalculation:
         """Test prior probability calculation with empty intervals."""
         prior = PriorManager._calculate_prior_probability([])
 
-        # Should return default prior (0.5, not 0.35)
         assert prior == 0.5
 
 
@@ -540,8 +546,7 @@ class TestPriorManagerAdditional:
     ) -> None:
         manager = PriorManager(mock_coordinator)
         cached = Prior(
-            prior=0.2,
-            prob_given_true=0.3,
+            prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=dt_util.utcnow(),
         )

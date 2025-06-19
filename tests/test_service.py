@@ -74,7 +74,8 @@ class TestUpdatePriors:
         mock_coordinator.config.history.period = (
             30  # Set as real number instead of Mock
         )
-        mock_coordinator.update_learned_priors = AsyncMock(return_value=5)
+        mock_coordinator.priors = Mock()
+        mock_coordinator.priors.update_all_entity_priors = AsyncMock(return_value=5)
         mock_coordinator.async_refresh = AsyncMock()
 
         # Mock entities with proper structure for return data
@@ -116,7 +117,7 @@ class TestUpdatePriors:
         assert prior_data["entity_type"] == "motion"
 
         # Verify the coordinator was called correctly with the configured history period
-        mock_coordinator.update_learned_priors.assert_called_once_with(30)
+        mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
         mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_priors_missing_entry_id(self, mock_hass: Mock) -> None:
@@ -134,7 +135,8 @@ class TestUpdatePriors:
         """Test prior update with coordinator error."""
         mock_coordinator = Mock()
         mock_coordinator.config.history.period = 30  # Set as real number
-        mock_coordinator.update_learned_priors = AsyncMock(
+        mock_coordinator.priors = Mock()
+        mock_coordinator.priors.update_all_entity_priors = AsyncMock(
             side_effect=RuntimeError("Update failed")
         )
 
@@ -150,7 +152,7 @@ class TestUpdatePriors:
             await _update_priors(mock_hass, mock_service_call)
 
         # Verify the coordinator was called with the correct history period
-        mock_coordinator.update_learned_priors.assert_called_once_with(30)
+        mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
 
 
 class TestResetEntities:

@@ -79,7 +79,7 @@ class TestEntity:
 
         data = entity.to_dict()
         assert data["entity_id"] == "binary_sensor.test_motion"
-        assert data["type"] == mock_entity_type.input_type.value
+        assert data["type"] == mock_entity_type.to_dict.return_value
         assert data["probability"] == 0.5
         assert data["prior"] == mock_prior.to_dict.return_value
         assert data["decay"] == mock_decay.to_dict.return_value
@@ -89,13 +89,16 @@ class TestEntity:
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
     @patch("custom_components.area_occupancy.data.entity.Prior")
+    @patch("custom_components.area_occupancy.data.entity.EntityType")
     def test_from_dict(
-        self, mock_prior_class: Mock, mock_decay_class: Mock, mock_coordinator: Mock
+        self,
+        mock_entity_type_class: Mock,
+        mock_prior_class: Mock,
+        mock_decay_class: Mock,
     ) -> None:
         """Test creating entity from dictionary."""
         mock_entity_type = Mock()
-        mock_entity_type.input_type = InputType.MOTION
-        mock_coordinator.entity_types.get_entity_type.return_value = mock_entity_type
+        mock_entity_type_class.from_dict.return_value = mock_entity_type
 
         mock_prior = Mock()
         mock_prior_class.from_dict.return_value = mock_prior
@@ -106,10 +109,16 @@ class TestEntity:
         current_time = dt_util.utcnow()
         data = {
             "entity_id": "binary_sensor.test_motion",
-            "type": "motion",
+            "type": {
+                "input_type": InputType.MOTION,
+                "weight": 0.8,
+                "prob_true": 0.2,
+                "prob_false": 0.03,
+                "prior": 0.3,
+                "active_states": [STATE_ON],
+            },
             "probability": 0.5,
             "prior": {
-                "prior": 0.3,
                 "prob_given_true": 0.8,
                 "prob_given_false": 0.1,
                 "last_updated": current_time.isoformat(),
@@ -122,7 +131,7 @@ class TestEntity:
             "last_updated": current_time.isoformat(),
         }
 
-        entity = Entity.from_dict(data, mock_coordinator)
+        entity = Entity.from_dict(data)
 
         assert entity.entity_id == "binary_sensor.test_motion"
         assert entity.type == mock_entity_type
@@ -304,7 +313,6 @@ class TestEntity:
             prior=0.5,
         )
         prior = Prior(
-            prior=0.5,
             prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=dt_util.utcnow(),
@@ -390,7 +398,6 @@ class TestEntity:
         mock_coordinator.priors.calculate.side_effect = ValueError("Test error")
         prior = await manager._calculate_initial_prior("test_entity", mock_entity_type)
 
-        assert prior.prior == mock_entity_type.prior
         assert prior.prob_given_true == mock_entity_type.prob_true
         assert prior.prob_given_false == mock_entity_type.prob_false
         assert isinstance(prior.last_updated, datetime)

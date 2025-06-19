@@ -512,7 +512,7 @@ class TestConfigManager:
         config = manager.config
 
         assert isinstance(config, Config)
-        assert config.name == "Test Area"
+        assert config.name == "Testing"  # Using realistic fixture data
         assert manager._config is not None
 
     def test_config_property_cached(self, mock_coordinator: Mock) -> None:
@@ -533,7 +533,7 @@ class TestConfigManager:
 
         # Create initial config
         initial_config = manager.config
-        assert initial_config.name == "Test Area"
+        assert initial_config.name == "Testing"  # Using realistic fixture data
 
         # Create new config entry with updated data
         new_config_entry = Mock(spec=ConfigEntry)
@@ -558,7 +558,7 @@ class TestConfigManager:
 
         # Test getting existing value
         name = manager.get("name")
-        assert name == "Test Area"
+        assert name == "Testing"  # Using realistic fixture data
 
         # Test getting non-existent value with default
         value = manager.get("nonexistent_key", "default_value")
@@ -643,8 +643,8 @@ class TestConfigIntegration:
 
         # Initial config access
         initial_config = manager.config
-        assert initial_config.name == "Test Area"
-        assert initial_config.threshold == 0.5  # 50 / 100
+        assert initial_config.name == "Testing"  # Using realistic fixture data
+        assert initial_config.threshold == 0.52  # 50 / 100
         assert initial_config.decay.enabled == DEFAULT_DECAY_ENABLED
 
         # Create new config entry with updated data

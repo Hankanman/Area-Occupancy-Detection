@@ -10,7 +10,6 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, DOMAIN
-from .data.entity import EntityManager
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator

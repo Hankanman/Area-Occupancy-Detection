@@ -9,7 +9,7 @@ import tempfile
 import time
 import types
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 
@@ -71,7 +71,15 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.config import Config
+from custom_components.area_occupancy.data.config import (
+    Config,
+    Decay,
+    History,
+    Sensors,
+    SensorStates,
+    WaspInBox,
+    Weights,
+)
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from homeassistant.config_entries import ConfigEntry
@@ -326,98 +334,36 @@ def mock_entity_manager() -> Mock:
 
 @pytest.fixture
 def mock_coordinator(
-    mock_hass: Mock, mock_config_entry: Mock, mock_entity_manager: Mock
+    mock_hass: Mock,
+    mock_realistic_config_entry: Mock,
+    mock_config: Config,
+    mock_entity_manager: Mock,
+    mock_entity_type_manager: Mock,
+    mock_prior_manager: Mock,
 ) -> Mock:
-    """Create a comprehensive mock coordinator."""
-    coordinator = Mock(spec=AreaOccupancyCoordinator)
+    """Create a comprehensive mock coordinator using realistic fixtures."""
 
-    # Basic attributes
+    coordinator = Mock(spec=AreaOccupancyCoordinator)
     coordinator.hass = mock_hass
-    coordinator.config_entry = mock_config_entry
-    coordinator.entry_id = mock_config_entry.entry_id
+    coordinator.config_entry = mock_realistic_config_entry
+    coordinator.entry_id = mock_realistic_config_entry.entry_id
     coordinator.available = True
     coordinator.probability = 0.5
     coordinator.is_occupied = False
     coordinator.threshold = 0.5
     coordinator.prior = 0.3
     coordinator.decay = 1.0
-    coordinator.last_updated = dt_util.utcnow()
-    coordinator.last_changed = dt_util.utcnow()
     coordinator.occupancy_entity_id = None
     coordinator.wasp_entity_id = None
     coordinator.last_update_success = True
 
-    # Mock config
-    coordinator.config = Mock(spec=Config)
-    coordinator.config.name = "Test Area"
-    coordinator.config.threshold = 0.5
-    coordinator.config.decay = Mock()
-    coordinator.config.decay.enabled = True
-    coordinator.config.decay.window = 300
-    coordinator.config.wasp_in_box = Mock()
-    coordinator.config.wasp_in_box.enabled = False
-    coordinator.config.motion_sensors = ["binary_sensor.test_motion"]
-    coordinator.config.primary_occupancy_sensor = "binary_sensor.test_motion"
-
-    # Add history configuration for prior tests
-    coordinator.config.history = Mock()
-    coordinator.config.history.enabled = True
-    coordinator.config.history.period = 30
-    coordinator.config.start_time = dt_util.utcnow() - timedelta(days=30)
-    coordinator.config.end_time = dt_util.utcnow()
-
-    # Add sensors configuration for prior tests
-    coordinator.config.sensors = Mock()
-    coordinator.config.sensors.motion = [
-        "binary_sensor.motion1",
-        "binary_sensor.motion2",
-    ]
-    coordinator.config.sensors.primary_occupancy = "binary_sensor.motion1"
-
-    # Add weights configuration for entity_type tests
-    coordinator.config.weights = Mock()
-    coordinator.config.weights.motion = 0.9
-    coordinator.config.weights.media = 0.7
-    coordinator.config.weights.appliance = 0.6
-    coordinator.config.weights.door = 0.5
-    coordinator.config.weights.window = 0.4
-    coordinator.config.weights.light = 0.1
-    coordinator.config.weights.environmental = 0.3
-
-    # Create a custom sensor_states object that returns None for undefined attributes
-    class SensorStates:
-        def __init__(self):
-            self.door = [STATE_ON]
-
-        def __getattr__(self, name):
-            return None
-
-    coordinator.config.sensor_states = SensorStates()
-
-    # Entity manager with coordinator reference
-    mock_entity_manager.coordinator = coordinator
+    # Use injected fixtures for config, entities, entity_types, priors
+    coordinator.config = mock_config
     coordinator.entities = mock_entity_manager
+    coordinator.entity_types = mock_entity_type_manager
+    coordinator.priors = mock_prior_manager
 
-    # Add mock entities for prior tests
-    coordinator.entities.entities = {
-        "entity1": Mock(
-            entity_id="entity1",
-            prior=Mock(prior=0.35),
-            decay=Mock(decay_factor=1.0, is_decaying=False),
-        ),
-        "entity2": Mock(
-            entity_id="entity2",
-            prior=Mock(prior=0.35),
-            decay=Mock(decay_factor=1.0, is_decaying=False),
-        ),
-    }
-
-    # Entity types
-    coordinator.entity_types = Mock()
-    coordinator.entity_types.to_dict = Mock(return_value={"entity_types": {}})
-    coordinator.entity_types.async_initialize = AsyncMock()
-
-    # Store - Updated for new per-entry storage architecture
+    # Store - keep as a simple mock unless you want to inject a fixture
     coordinator.store = Mock()
     coordinator.store.async_save_coordinator_data = Mock()
     coordinator.store.async_load_coordinator_data = AsyncMock(return_value=None)
@@ -428,62 +374,35 @@ def mock_coordinator(
     coordinator.store.async_save = AsyncMock()
     coordinator.store.async_remove = AsyncMock()
 
-    # Priors manager
-    coordinator.priors = Mock()
-    coordinator.priors.update_all_entity_priors = AsyncMock(return_value=0)
-    coordinator.priors.calculate = AsyncMock()
-
     # Config manager
     coordinator.config_manager = Mock()
     coordinator.config_manager.config = coordinator.config
     coordinator.config_manager.update_config = AsyncMock()
 
-    # Methods
-    coordinator.async_config_entry_first_refresh = AsyncMock()
+    # Only mock real public methods
     coordinator.async_shutdown = AsyncMock()
     coordinator.async_update_options = AsyncMock()
-    coordinator.async_refresh = AsyncMock()
-    coordinator.request_update = Mock()
-    coordinator.async_add_listener = Mock(return_value=Mock())
-    coordinator.async_update_data = AsyncMock()
-    coordinator.async_save_data = AsyncMock()
-    coordinator._async_setup = AsyncMock()
-    coordinator._async_update_data = AsyncMock(
-        return_value={"last_updated": dt_util.utcnow().isoformat()}
-    )
-    coordinator._async_save_data = AsyncMock()
-    coordinator._schedule_next_prior_update = AsyncMock()
-    coordinator._handle_prior_update = AsyncMock()
-    coordinator._async_refresh_finished = Mock()
-    coordinator.async_set_updated_data = Mock()
-    coordinator.update_learned_priors = AsyncMock()
-    coordinator.async_load_stored_data = AsyncMock()
-
-    # Mock the calculation method to return realistic values
-    coordinator._calculate_entity_aggregates = Mock(
-        return_value={
-            "probability": 0.5,
-            "prior": 0.3,
-            "decay": 1.0,
-        }
-    )
+    coordinator.setup = AsyncMock()
+    coordinator.update = AsyncMock()
+    coordinator.track_entity_state_changes = AsyncMock()
 
     # Mock data property
     coordinator.data = {"last_updated": dt_util.utcnow().isoformat()}
 
     # Device info
     coordinator.device_info = {
-        "identifiers": {(DOMAIN, coordinator.entry_id)},
-        "name": "Test Area",
+        "identifiers": {(coordinator.config_entry.domain, coordinator.entry_id)},
+        "name": coordinator.config.name,
         "manufacturer": "Area Occupancy",
         "model": "Area Occupancy Detection",
         "sw_version": "1.0.0",
     }
 
     # Mock timers and trackers
-    coordinator._prior_update_tracker = None
-    coordinator._next_prior_update = None
-    coordinator._last_prior_update = None
+    coordinator._global_prior_timer = None
+    coordinator._global_decay_timer = None
+    coordinator._global_storage_timer = None
+    coordinator._remove_state_listener = None
 
     # Mock binary_sensor_entity_ids property to return a proper dictionary
     coordinator.binary_sensor_entity_ids = {
@@ -531,7 +450,43 @@ def mock_entity_type() -> Mock:
     entity_type.prior = 0.35
     entity_type.active_states = [STATE_ON]
     entity_type.active_range = None
+    entity_type.to_dict.return_value = {
+        "input_type": InputType.MOTION.value,
+        "weight": 0.8,
+        "prob_true": 0.25,
+        "prob_false": 0.05,
+        "prior": 0.35,
+        "active_states": [STATE_ON],
+        "active_range": None,
+    }
     return entity_type
+
+
+@pytest.fixture
+def mock_entity_type_manager(mock_entity_type: Mock) -> Mock:
+    """Create a mock EntityTypeManager."""
+    from custom_components.area_occupancy.data.entity_type import (
+        EntityTypeManager,
+        InputType,
+    )
+
+    manager = Mock(spec=EntityTypeManager)
+    manager.async_initialize = AsyncMock()
+    manager.cleanup = Mock()
+    manager.to_dict = Mock(
+        return_value={
+            "entity_types": {
+                InputType.MOTION.value: mock_entity_type.to_dict.return_value
+            }
+        }
+    )
+    manager.get_entity_type = Mock(return_value=mock_entity_type)
+    manager.learn_from_entities = Mock()
+    # Property for entity_types
+    type(manager).entity_types = property(
+        lambda self: {InputType.MOTION: mock_entity_type}
+    )
+    return manager
 
 
 @pytest.fixture
@@ -561,19 +516,6 @@ def mock_storage() -> Generator[Mock]:
         store_instance.hass = None
         mock_store.return_value = store_instance
         yield store_instance
-
-
-@pytest.fixture
-def mock_area_occupancy_store() -> Mock:
-    """Mock the AreaOccupancyStore class."""
-    store = Mock()
-    store.async_save_coordinator_data = Mock()
-    store.async_load_coordinator_data = AsyncMock(return_value=None)
-    store.async_load = AsyncMock(return_value=None)
-    store.async_save = AsyncMock()
-    store.async_remove = AsyncMock()
-    store.async_delay_save = Mock()
-    return store
 
 
 @pytest.fixture
@@ -802,45 +744,57 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         ),
     }
 
-    # Update the calculation mock to return realistic aggregate values
-    mock_coordinator._calculate_entity_aggregates.return_value = {
-        "probability": 0.65,
-        "prior": 0.35,
-        "decay": 0.8,
-    }
+    # Note: _calculate_entity_aggregates was removed from coordinator
+    # The properties calculate values directly from entities
 
     return mock_coordinator
 
 
 @pytest.fixture
 def mock_prior() -> Mock:
-    """Create a comprehensive mock prior."""
+    """Create a mock Prior instance."""
     from custom_components.area_occupancy.data.prior import Prior
 
     prior = Mock(spec=Prior)
-    prior.prior = 0.35
     prior.prob_given_true = 0.8
     prior.prob_given_false = 0.1
     prior.last_updated = dt_util.utcnow()
     prior.to_dict.return_value = {
-        "prior": 0.35,
         "prob_given_true": 0.8,
         "prob_given_false": 0.1,
-        "last_updated": dt_util.utcnow().isoformat(),
+        "last_updated": prior.last_updated.isoformat(),
     }
     return prior
 
 
 @pytest.fixture
+def mock_prior_manager(mock_prior: Mock) -> Mock:
+    """Create a mock PriorManager instance."""
+    from custom_components.area_occupancy.data.prior import PriorManager
+
+    manager = Mock(spec=PriorManager)
+    # Property for priors
+    type(manager).priors = property(lambda self: {"entity_id": mock_prior})
+    manager.get_prior = Mock(return_value=mock_prior)
+    manager.update_prior = Mock()
+    manager.remove_prior = Mock()
+    manager.clear_priors = Mock()
+    manager.update_all_entity_priors = AsyncMock(return_value=1)
+    manager.calculate = AsyncMock(return_value=mock_prior)
+    return manager
+
+
+@pytest.fixture
 def mock_decay() -> Mock:
-    """Create a comprehensive mock decay."""
+    """Create a mock Decay instance matching the real Decay class."""
     from custom_components.area_occupancy.data.decay import Decay
 
     decay = Mock(spec=Decay)
     decay.is_decaying = False
     decay.last_trigger_ts = time.time()
     decay.half_life = 60.0
-    decay.decay_factor = 1.0
+    # Use PropertyMock for the decay_factor property
+    type(decay).decay_factor = PropertyMock(return_value=1.0)
     decay.should_start_decay.return_value = False
     decay.should_stop_decay.return_value = False
     decay.is_decay_complete.return_value = False
@@ -890,33 +844,24 @@ def mock_comprehensive_entity(
     entity.state = STATE_ON
     entity.evidence = True
     entity.available = True
+    entity.previous_evidence = False
+    entity.previous_probability = 0.5
     entity.last_updated = dt_util.utcnow()
-    entity.last_changed = dt_util.utcnow()
-    entity._coordinator = None
-
-    # Mock methods
     entity.set_coordinator = Mock()
     entity.update_probability = Mock()
-    entity.start_decay_timer = Mock()
-    entity.stop_decay_timer = Mock()
-    entity.handle_decay_timer = AsyncMock()
+    entity.capture_previous_state = Mock()
     entity.stop_decay_completely = Mock()
     entity.cleanup = Mock()
-
-    # Mock serialization
     entity.to_dict.return_value = {
         "entity_id": "binary_sensor.test_motion",
-        "type": InputType.MOTION.value,
+        "type": mock_entity_type.to_dict.return_value,
         "probability": 0.5,
         "state": STATE_ON,
         "evidence": True,
         "available": True,
-        "last_updated": dt_util.utcnow().isoformat(),
-        "last_changed": dt_util.utcnow().isoformat(),
         "prior": mock_prior.to_dict.return_value,
         "decay": mock_decay.to_dict.return_value,
     }
-
     return entity
 
 
@@ -925,34 +870,34 @@ def mock_comprehensive_entity_manager(
     mock_coordinator: Mock, mock_comprehensive_entity: Mock
 ) -> Mock:
     """Create a comprehensive mock entity manager with entities."""
-    manager = Mock(spec=EntityManager)
+    from custom_components.area_occupancy.data.entity import EntityManager
 
-    # Basic attributes
+    manager = Mock(spec=EntityManager)
     manager.coordinator = mock_coordinator
+    manager.config = mock_coordinator.config
+    manager.hass = mock_coordinator.hass
+    manager._entities = {"binary_sensor.test_motion": mock_comprehensive_entity}
     manager.entities = {"binary_sensor.test_motion": mock_comprehensive_entity}
+    manager.entity_ids = ["binary_sensor.test_motion"]
     manager.active_entities = [mock_comprehensive_entity]
     manager.inactive_entities = []
-
-    # Properties
-    manager.entity_ids = ["binary_sensor.test_motion"]
-
-    # Methods
+    manager.to_dict = Mock(
+        return_value={
+            "entities": {
+                "binary_sensor.test_motion": mock_comprehensive_entity.to_dict.return_value
+            }
+        }
+    )
+    manager.async_initialize = AsyncMock()
+    manager.reset_entities = AsyncMock()
+    manager.create_entity = AsyncMock(return_value=mock_comprehensive_entity)
     manager.get_entity = Mock(return_value=mock_comprehensive_entity)
     manager.add_entity = Mock()
     manager.remove_entity = Mock()
     manager.cleanup = Mock()
-    manager.reset_entities = AsyncMock()
-    manager.async_initialize = AsyncMock()
-    manager.setup_entity_tracking = Mock()
-    manager.state_changed_listener = AsyncMock()
-
-    # Serialization
-    manager.to_dict.return_value = {
-        "entities": {
-            "binary_sensor.test_motion": mock_comprehensive_entity.to_dict.return_value
-        }
-    }
-
+    manager.async_state_changed_listener = AsyncMock()
+    manager.is_entity_active = Mock(return_value=True)
+    manager.initialize_states = AsyncMock()
     return manager
 
 
@@ -1066,3 +1011,461 @@ def mock_data_update_coordinator_debouncer():
         patched_init,
     ):
         yield
+
+
+@pytest.fixture
+def mock_area_occupancy_storage_data():
+    """Return a representative AreaOccupancyStorageData dict for testing."""
+    return {
+        "name": "Testing",
+        "probability": 0.18,
+        "prior": 0.18,
+        "threshold": 0.52,
+        "last_updated": "2025-06-19T14:29:30.273647+00:00",
+        "entities": {
+            "binary_sensor.motion_sensor_1": {
+                "entity_id": "binary_sensor.motion_sensor_1",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "motion",
+                    "weight": 0.85,
+                    "prob_true": 0.25,
+                    "prob_false": 0.05,
+                    "prior": 0.35,
+                    "active_states": ["on"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.95,
+                    "prob_given_false": 0.02,
+                    "last_updated": "2025-06-19T12:06:16.365782+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235739,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "media_player.tv_player": {
+                "entity_id": "media_player.tv_player",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "media",
+                    "weight": 0.7,
+                    "prob_true": 0.25,
+                    "prob_false": 0.02,
+                    "prior": 0.3,
+                    "active_states": ["playing", "paused"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.11,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:16.918558+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235851,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "binary_sensor.computer_power_sensor": {
+                "entity_id": "binary_sensor.computer_power_sensor",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "appliance",
+                    "weight": 0.3,
+                    "prob_true": 0.2,
+                    "prob_false": 0.02,
+                    "prior": 0.23,
+                    "active_states": ["on", "standby"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.05,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:17.125742+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235891,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "binary_sensor.door_sensor": {
+                "entity_id": "binary_sensor.door_sensor",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "door",
+                    "weight": 0.3,
+                    "prob_true": 0.2,
+                    "prob_false": 0.02,
+                    "prior": 0.13,
+                    "active_states": ["closed"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.02,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:17.549099+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235931,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "binary_sensor.window_sensor": {
+                "entity_id": "binary_sensor.window_sensor",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "window",
+                    "weight": 0.2,
+                    "prob_true": 0.2,
+                    "prob_false": 0.02,
+                    "prior": 0.15,
+                    "active_states": ["open"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.01,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:17.780468+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.23595,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "light.test_light": {
+                "entity_id": "light.test_light",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "light",
+                    "weight": 0.2,
+                    "prob_true": 0.2,
+                    "prob_false": 0.02,
+                    "prior": 0.13,
+                    "active_states": ["on"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.08,
+                    "prob_given_false": 0.01,
+                    "last_updated": "2025-06-19T12:06:18.158463+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235967,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "off",
+                "evidence": False,
+                "available": True,
+            },
+            "sensor.illuminance_sensor_1": {
+                "entity_id": "sensor.illuminance_sensor_1",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "environmental",
+                    "weight": 0.1,
+                    "prob_true": 0.09,
+                    "prob_false": 0.01,
+                    "prior": 0.07,
+                    "active_states": None,
+                    "active_range": [0.0, 0.2],
+                },
+                "prior": {
+                    "prob_given_true": 0.001,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:18.357392+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.235983,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "100.0",
+                "evidence": False,
+                "available": True,
+            },
+            "sensor.humidity_sensor": {
+                "entity_id": "sensor.humidity_sensor",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "environmental",
+                    "weight": 0.1,
+                    "prob_true": 0.09,
+                    "prob_false": 0.01,
+                    "prior": 0.07,
+                    "active_states": None,
+                    "active_range": [0.0, 0.2],
+                },
+                "prior": {
+                    "prob_given_true": 0.001,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:18.724558+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.236049,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "50.0",
+                "evidence": False,
+                "available": True,
+            },
+            "sensor.temperature_sensor": {
+                "entity_id": "sensor.temperature_sensor",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "environmental",
+                    "weight": 0.1,
+                    "prob_true": 0.09,
+                    "prob_false": 0.01,
+                    "prior": 0.07,
+                    "active_states": None,
+                    "active_range": [0.0, 0.2],
+                },
+                "prior": {
+                    "prob_given_true": 0.001,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:18.982120+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750328374.236094,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": "21.0",
+                "evidence": False,
+                "available": True,
+            },
+            "binary_sensor.testing_wasp_in_box": {
+                "entity_id": "binary_sensor.testing_wasp_in_box",
+                "probability": 0.01,
+                "type": {
+                    "input_type": "motion",
+                    "weight": 0.85,
+                    "prob_true": 0.73,
+                    "prob_false": 0.005,
+                    "prior": 0.73,
+                    "active_states": ["on"],
+                    "active_range": None,
+                },
+                "prior": {
+                    "prob_given_true": 0.02,
+                    "prob_given_false": 0.001,
+                    "last_updated": "2025-06-19T12:06:19.217104+00:00",
+                },
+                "decay": {
+                    "last_trigger_ts": 1750331176.238107,
+                    "half_life": 300,
+                    "is_decaying": False,
+                },
+                "state": None,
+                "evidence": False,
+                "available": False,
+            },
+        },
+    }
+
+
+@pytest.fixture
+def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
+    """Mock AreaOccupancyStore with async methods returning the provided storage data."""
+    from custom_components.area_occupancy.storage import AreaOccupancyStore
+
+    store = Mock(spec=AreaOccupancyStore)
+    store.async_save_data = AsyncMock()
+    store.async_load_data = AsyncMock(return_value=mock_area_occupancy_storage_data)
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(return_value=mock_area_occupancy_storage_data)
+    store.async_remove = AsyncMock()
+    store.async_delay_save = Mock()
+    return store
+
+
+@pytest.fixture
+def mock_config():
+    """Return a representative Config instance for testing."""
+    return Config(
+        name="Test Area",
+        area_id="area_123",
+        threshold=0.5,
+        sensors=Sensors(
+            motion=["binary_sensor.motion1"],
+            primary_occupancy="binary_sensor.motion1",
+            media=["media_player.tv"],
+            appliances=["switch.computer"],
+            lights=["light.test_light"],
+            illuminance=["sensor.illuminance_sensor_1"],
+            humidity=["sensor.humidity_sensor"],
+            temperature=["sensor.temperature_sensor"],
+            doors=["binary_sensor.door_sensor"],
+            windows=["binary_sensor.window_sensor"],
+        ),
+        sensor_states=SensorStates(
+            door=["closed"],
+            window=["open"],
+            appliance=["on", "standby"],
+            media=["playing", "paused"],
+        ),
+        weights=Weights(
+            motion=0.9,
+            media=0.7,
+            appliance=0.6,
+            door=0.5,
+            window=0.4,
+            light=0.1,
+            environmental=0.3,
+            wasp=0.8,
+        ),
+        decay=Decay(
+            enabled=True,
+            window=300,
+        ),
+        history=History(
+            enabled=True,
+            period=30,
+        ),
+        wasp_in_box=WaspInBox(
+            enabled=False,
+            motion_timeout=60,
+            weight=0.8,
+            max_duration=600,
+        ),
+        _raw={},
+    )
+
+
+@pytest.fixture
+def mock_realistic_config_entry():
+    """Return a realistic ConfigEntry for Area Occupancy Detection."""
+    entry = Mock(spec=ConfigEntry)
+    entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
+    entry.domain = "area_occupancy"
+    entry.title = "Testing"
+    entry.source = "user"
+    entry.version = 9
+    entry.minor_version = 2
+    entry.unique_id = None
+    entry.state = None
+    entry.runtime_data = None
+    entry.pref_disable_new_entities = False
+    entry.pref_disable_polling = False
+    entry.subentries = []
+    entry.disabled_by = None
+    entry.discovery_keys = {}
+    entry.created_at = "2025-04-01T10:14:38.590998+00:00"
+    entry.modified_at = "2025-06-19T07:10:40.167187+00:00"
+    entry.data = {
+        "appliance_active_states": ["on", "standby"],
+        "appliances": [
+            "binary_sensor.computer_power_sensor",
+            "binary_sensor.game_console_power_sensor",
+            "binary_sensor.tv_power_sensor",
+        ],
+        "decay_enabled": True,
+        "decay_window": 600.0,
+        "door_active_state": "open",
+        "door_sensors": ["binary_sensor.door_sensor"],
+        "historical_analysis_enabled": True,
+        "history_period": 1.0,
+        "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
+        "illuminance_sensors": [
+            "sensor.illuminance_sensor_1",
+            "sensor.illuminance_sensor_2",
+        ],
+        "lights": [],
+        "media_active_states": ["playing", "paused"],
+        "media_devices": ["media_player.mock_tv_player"],
+        "motion_sensors": [
+            "binary_sensor.motion_sensor_1",
+            "binary_sensor.motion_sensor_2",
+            "binary_sensor.motion_sensor_3",
+        ],
+        "name": "Testing",
+        "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
+        "temperature_sensors": [
+            "sensor.temperature_sensor_1",
+            "sensor.temperature_sensor_2",
+        ],
+        "threshold": 50.0,
+        "weight_appliance": 0.3,
+        "weight_door": 0.3,
+        "weight_environmental": 0.1,
+        "weight_light": 0.2,
+        "weight_media": 0.7,
+        "weight_motion": 0.85,
+        "weight_window": 0.2,
+        "window_active_state": "open",
+        "window_sensors": ["binary_sensor.window_sensor"],
+    }
+    entry.options = {
+        "appliance_active_states": ["on", "standby"],
+        "appliances": [
+            "binary_sensor.computer_power_sensor",
+            "binary_sensor.game_console_power_sensor",
+        ],
+        "decay_enabled": True,
+        "decay_window": 300.0,
+        "door_active_state": "closed",
+        "door_sensors": ["binary_sensor.door_sensor"],
+        "historical_analysis_enabled": True,
+        "history_period": 30.0,
+        "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
+        "illuminance_sensors": [
+            "sensor.illuminance_sensor_1",
+            "sensor.illuminance_sensor_2",
+        ],
+        "lights": ["light.study_bulb_1"],
+        "media_active_states": ["playing", "paused"],
+        "media_devices": ["media_player.mock_tv_player"],
+        "motion_sensors": [
+            "binary_sensor.motion_sensor_1",
+            "binary_sensor.motion_sensor_2",
+            "binary_sensor.motion_sensor_3",
+        ],
+        "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
+        "temperature_sensors": [
+            "sensor.temperature_sensor_1",
+            "sensor.temperature_sensor_2",
+        ],
+        "threshold": 52.0,
+        "wasp_enabled": True,
+        "wasp_motion_timeout": 60.0,
+        "wasp_weight": 0.8,
+        "weight_appliance": 0.3,
+        "weight_door": 0.3,
+        "weight_environmental": 0.1,
+        "weight_light": 0.2,
+        "weight_media": 0.7,
+        "weight_motion": 0.85,
+        "weight_window": 0.2,
+        "window_active_state": "open",
+        "window_sensors": ["binary_sensor.window_sensor"],
+    }
+    entry.add_update_listener = Mock()
+    entry.async_on_unload = Mock()
+    entry.async_setup = AsyncMock()
+    entry.async_unload = AsyncMock()
+    entry.async_remove = AsyncMock()
+    entry.async_update = AsyncMock()
+    return entry
