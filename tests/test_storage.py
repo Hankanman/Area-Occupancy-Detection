@@ -4,186 +4,152 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from custom_components.area_occupancy.const import CONF_VERSION, CONF_VERSION_MINOR
 from custom_components.area_occupancy.storage import AreaOccupancyStore
+from custom_components.area_occupancy.types import PriorState
 
 
 # ruff: noqa: SLF001
 class TestAreaOccupancyStore:
     """Test AreaOccupancyStore class."""
 
-    def test_initialization(self, mock_coordinator: Mock) -> None:
+    def test_initialization(self, mock_hass: Mock) -> None:
         """Test AreaOccupancyStore initialization."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            # Verify instance attributes
-            assert store._coordinator == mock_coordinator
+        store = AreaOccupancyStore(mock_hass)
+        
+        # Verify instance attributes
+        assert store.hass == mock_hass
+        assert store._current_version == CONF_VERSION
+        assert store._current_minor_version == CONF_VERSION_MINOR
 
     async def test_async_migrate_func_major_version_change(
-        self, mock_coordinator: Mock
+        self, mock_hass: Mock
     ) -> None:
         """Test migration with major version change."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            old_data = {"some": "old_data"}
-            result = await store._async_migrate_func(8, 0, old_data)
-
-            # Should return empty storage for major version change
-            assert result.get("entities") == {}
+        store = AreaOccupancyStore(mock_hass)
+        
+        old_data = {"some": "old_data"}
+        result = await store._async_migrate_func(8, 0, old_data)
+        
+        # Should return new structure for major version change
+        assert "instances" in result
+        assert result["instances"] == {}
 
     async def test_async_migrate_func_compatible_version(
-        self, mock_coordinator: Mock
+        self, mock_hass: Mock
     ) -> None:
         """Test migration with compatible version."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            old_data = {
-                "name": "Test Area",
-                "probability": 0.7,
-                "entities": {"sensor.test": {}},
-            }
-            result = await store._async_migrate_func(
-                CONF_VERSION, CONF_VERSION_MINOR, old_data
-            )
-
-            # Should preserve existing data
-            assert result.get("name") == "Test Area"
-            assert result.get("probability") == 0.7
-            assert result.get("entities") == {"sensor.test": {}}
+        store = AreaOccupancyStore(mock_hass)
+        
+        old_data = {"instances": {"test": "data"}}
+        result = await store._async_migrate_func(CONF_VERSION, CONF_VERSION_MINOR, old_data)
+        
+        # Should preserve data for compatible version
+        assert result == old_data
 
     async def test_async_migrate_func_invalid_data(
-        self, mock_coordinator: Mock
+        self, mock_hass: Mock
     ) -> None:
         """Test migration with invalid data format."""
-        with patch("homeassistant.helpers.storage.Store.__init__", return_value=None):
-            store = AreaOccupancyStore(mock_coordinator)
+        store = AreaOccupancyStore(mock_hass)
+        
+        invalid_data = {}  # Use empty dict to test invalid data format
+        result = await store._async_migrate_func(
+            CONF_VERSION, CONF_VERSION_MINOR, invalid_data
+        )
+        
+        # Should return new structure for invalid data
+        assert "instances" in result
+        assert result["instances"] == {}
 
-            invalid_data = {}  # Use empty dict to test invalid data format
-            result = await store._async_migrate_func(
-                CONF_VERSION, CONF_VERSION_MINOR, invalid_data
-            )
-
-            # Should return empty storage for invalid data
-            assert result.get("entities") == {}
-
-    async def test_async_save_data_with_force(
-        self, mock_coordinator: Mock, mock_entity_manager: Mock
+    async def test_async_save_instance_prior_state_success(
+        self, mock_hass: Mock
     ) -> None:
-        """Test saving data with force flag."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch(
-                "homeassistant.helpers.storage.Store.async_save"
-            ) as mock_save,
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
+        """Test saving instance prior state successfully."""
+        store = AreaOccupancyStore(mock_hass)
+        prior_state = PriorState()
+        
+        with patch.object(store, 'async_load', return_value={"instances": {}}), \
+             patch.object(store, 'async_save') as mock_save:
+            
+            await store.async_save_instance_prior_state("test_entry", "Test Area", prior_state)
+            
+            mock_save.assert_called_once()
+            saved_data = mock_save.call_args[0][0]
+            assert "instances" in saved_data
+            assert "test_entry" in saved_data["instances"]
 
-            # Mock entity manager data
-            mock_entity_manager.to_dict.return_value = {
-                "entities": {"sensor.test": {"entity_id": "sensor.test"}}
-            }
-            mock_coordinator.entities = mock_entity_manager
+    async def test_async_load_instance_prior_state_success(
+        self, mock_hass: Mock, valid_storage_data: dict
+    ) -> None:
+        """Test loading instance prior state successfully."""
+        store = AreaOccupancyStore(mock_hass)
+        
+        with patch.object(store, 'async_load', return_value=valid_storage_data):
+            result = await store.async_load_instance_prior_state("test_entry")
+            
+            assert result.name == valid_storage_data["instances"]["test_entry"]["name"]
+            assert result.prior_state is not None
+            assert result.last_updated == valid_storage_data["instances"]["test_entry"]["last_updated"]
 
-            await store.async_save_data(force=True)
+    async def test_async_load_instance_prior_state_no_data(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test loading instance prior state when no data exists."""
+        store = AreaOccupancyStore(mock_hass)
+        
+        with patch.object(store, 'async_load', return_value=None):
+            result = await store.async_load_instance_prior_state("test_entry")
+            
+            assert result.name is None
+            assert result.prior_state is None
+            assert result.last_updated is None
 
-            # Should call async_save directly
+    async def test_async_load_instance_prior_state_error(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test loading instance prior state with storage error."""
+        store = AreaOccupancyStore(mock_hass)
+        
+        with patch.object(store, 'async_load', side_effect=OSError("Storage error")):
+            try:
+                await store.async_load_instance_prior_state("test_entry")
+                assert False, "Should have raised StorageLoadError"
+            except Exception as e:
+                assert "Failed to load prior state" in str(e)
+
+    async def test_async_remove_instance_success(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test removing instance successfully."""
+        store = AreaOccupancyStore(mock_hass)
+        existing_data = {"instances": {"test_entry": {"name": "test"}}}
+        
+        with patch.object(store, 'async_load', return_value=existing_data), \
+             patch.object(store, 'async_save') as mock_save:
+            
+            result = await store.async_remove_instance("test_entry")
+            
+            assert result is True
             mock_save.assert_called_once()
 
-    async def test_async_save_data_without_force(
-        self, mock_coordinator: Mock, mock_entity_manager: Mock
+    async def test_async_cleanup_orphaned_instances(
+        self, mock_hass: Mock
     ) -> None:
-        """Test saving data without force flag (debounced)."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch(
-                "homeassistant.helpers.storage.Store.async_delay_save"
-            ) as mock_delay_save,
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            # Mock entity manager data
-            mock_entity_manager.to_dict.return_value = {
-                "entities": {"sensor.test": {"entity_id": "sensor.test"}}
+        """Test cleanup of orphaned instances."""
+        store = AreaOccupancyStore(mock_hass)
+        existing_data = {
+            "instances": {
+                "active_entry": {"name": "active"},
+                "orphaned_entry": {"name": "orphaned"}
             }
-            mock_coordinator.entities = mock_entity_manager
-
-            await store.async_save_data(force=False)
-
-            # Should call async_delay_save with proper delay
-            mock_delay_save.assert_called_once()
-            call_args = mock_delay_save.call_args
-            assert call_args[1]["delay"] == 30.0
-
-    async def test_async_load_data_success(
-        self, mock_coordinator: Mock, valid_storage_data: dict
-    ) -> None:
-        """Test loading data successfully."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                return_value=valid_storage_data,
-            ),
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            result = await store.async_load_data()
-
-            assert result is not None
-            assert "entities" in result
-            assert "last_updated" in result
-
-    async def test_async_load_data_no_data(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test loading data when no data exists."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch("homeassistant.helpers.storage.Store.async_load", return_value=None),
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            result = await store.async_load_data()
-
-            assert result is None
-
-    async def test_async_load_data_error(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test loading data with storage error."""
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                side_effect=OSError("Storage error"),
-            ),
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
-
-            result = await store.async_load_data()
-
-            # Should return None on error
-            assert result is None
-
-    async def test_async_load_data_invalid_format(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test loading data with invalid format."""
-        invalid_data = {"no_entities": "key"}  # Missing required entities key
-
-        with (
-            patch("homeassistant.helpers.storage.Store.__init__", return_value=None),
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                return_value=invalid_data,
-            ),
-        ):
-            store = AreaOccupancyStore(mock_coordinator)
-            store.async_remove = AsyncMock()
-
-            result = await store.async_load_data()
-
-            # Should return None for invalid format and clean up
-            assert result is None
-            store.async_remove.assert_called_once()
+        }
+        
+        with patch.object(store, 'async_load', return_value=existing_data), \
+             patch.object(store, 'async_save') as mock_save:
+            
+            result = await store.async_cleanup_orphaned_instances({"active_entry"})
+            
+            assert result is True
+            mock_save.assert_called_once()
+            saved_data = mock_save.call_args[0][0]
+            assert "active_entry" in saved_data["instances"]
+            assert "orphaned_entry" not in saved_data["instances"]

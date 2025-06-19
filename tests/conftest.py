@@ -383,19 +383,26 @@ async def setup_test_entities(hass: HomeAssistant) -> None:
 async def init_integration(
     hass: HomeAssistant,
     mock_config_entry: Mock,
+    setup_test_entities: None,
     mock_recorder: MagicMock,
-    setup_test_entities,
-) -> Mock:
-    """Set up the area occupancy integration for testing."""
-    # Set up recorder component first
-    await hass.async_add_executor_job(lambda: None)  # Ensure executor is running
-
-    # Set up the integration
-    mock_config_entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(mock_config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    return mock_config_entry
+) -> None:
+    """Set up the Area Occupancy Detection integration for testing."""
+    # Create a real ConfigEntry instance instead of a Mock
+    real_config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=TEST_CONFIG,
+        options={},
+        entry_id="test_entry_id",
+        title="Test Area",
+        version=1,
+        minor_version=1,
+    )
+    
+    # Add the config entry to hass
+    real_config_entry.add_to_hass(hass)
+    
+    # Now set up the entry
+    await hass.config_entries.async_setup(real_config_entry.entry_id)
 
 
 @pytest.fixture
