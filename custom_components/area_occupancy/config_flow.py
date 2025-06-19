@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant, callback
@@ -927,16 +927,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow."""
-        return AreaOccupancyOptionsFlow(config_entry)
+        return AreaOccupancyOptionsFlow()
 
 
-class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
+class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     """Handle options flow."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        super().__init__(config_entry)
-        self._data = dict(config_entry.options)
+        super().__init__()
+        self._data: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -1010,8 +1010,11 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
         defaults = {
             **self.config_entry.data,
             **self.config_entry.options,
-            **self._data,
         }
+
+        # Ensure purpose field has a default if missing (for older config entries)
+        if CONF_PURPOSE not in defaults:
+            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
 
         return self.async_show_form(
             step_id="init",

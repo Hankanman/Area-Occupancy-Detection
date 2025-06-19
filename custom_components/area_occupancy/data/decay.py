@@ -7,7 +7,7 @@ import math
 import time
 from typing import Any
 
-DEFAULT_HALF_LIFE = 720.0  # seconds - default to social area (12 minutes)
+DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
 
 
 @dataclass

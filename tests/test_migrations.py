@@ -9,9 +9,11 @@ import pytest
 from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
+    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
 )
 from custom_components.area_occupancy.migrations import (
@@ -20,6 +22,7 @@ from custom_components.area_occupancy.migrations import (
     async_migrate_unique_ids,
     migrate_config,
     migrate_primary_occupancy_sensor,
+    migrate_purpose_field,
     validate_threshold,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -122,6 +125,59 @@ class TestMigratePrimaryOccupancySensor:
 
         # Should not add primary sensor if motion sensors list is empty
         assert CONF_PRIMARY_OCCUPANCY_SENSOR not in result
+
+
+class TestMigratePurposeField:
+    """Test migrate_purpose_field function."""
+
+    def test_migrate_purpose_field_needed(self) -> None:
+        """Test migration when purpose is missing and sensors exist."""
+        config = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        }
+
+        result = migrate_purpose_field(config)
+
+        assert CONF_PURPOSE in result
+        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
+
+    def test_migrate_purpose_field_already_exists(self) -> None:
+        """Test migration when purpose already exists."""
+        config = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_PURPOSE: "sleeping",
+        }
+
+        result = migrate_purpose_field(config)
+
+        assert result[CONF_PURPOSE] == "sleeping"
+
+    def test_migrate_purpose_field_no_sensors(self) -> None:
+        """Test migration when no sensors exist."""
+        config = {}
+
+        result = migrate_purpose_field(config)
+
+        # Should not add purpose if no sensors
+        assert CONF_PURPOSE not in result
+
+    def test_migrate_purpose_field_other_sensors(self) -> None:
+        """Test migration with other sensor types."""
+        config = {"lights": ["light.test"]}
+
+        result = migrate_purpose_field(config)
+
+        assert CONF_PURPOSE in result
+        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
+
+    def test_migrate_purpose_field_empty_sensors(self) -> None:
+        """Test migration when sensor lists are empty."""
+        config = {CONF_MOTION_SENSORS: []}
+
+        result = migrate_purpose_field(config)
+
+        # Should not add purpose if sensor lists are empty
+        assert CONF_PURPOSE not in result
 
 
 class TestMigrateConfig:
@@ -404,6 +460,10 @@ class TestMigrationsIntegration:
                 updated_data[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
             )
             assert (
+                CONF_PURPOSE in updated_data
+            )  # Purpose should be added for configs with sensors
+            assert updated_data[CONF_PURPOSE] == DEFAULT_PURPOSE
+            assert (
                 updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
             )  # Fixed invalid threshold
 
@@ -425,3 +485,4 @@ class TestMigrationsIntegration:
         }
         result = migrate_config(config)
         assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion2"
+        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE  # Purpose should be added

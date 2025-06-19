@@ -105,6 +105,16 @@
                         "description": "Configure advanced parameters for occupancy detection",
                         "name": "Advanced Parameters"
                     },
+                    "purpose": {
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        },
+                        "description": "Configure the primary purpose of this area",
+                        "name": "Area Purpose"
+                    },
                     "wasp_in_box": {
                         "data": {
                             "wasp_enabled": "Enable Wasp in Box",
@@ -264,6 +274,16 @@
                         },
                         "description": "Configure advanced parameters for occupancy detection",
                         "name": "Advanced Parameters"
+                    },
+                    "purpose": {
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        },
+                        "description": "Configure the primary purpose of this area",
+                        "name": "Area Purpose"
                     },
                     "wasp_in_box": {
                         "data": {

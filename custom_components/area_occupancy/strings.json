@@ -11,6 +11,16 @@
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
+                    "purpose": {
+                        "name": "Area Purpose",
+                        "description": "Configure the primary purpose of this area",
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        }
+                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
@@ -145,6 +155,16 @@
                 "title": "Area Occupancy Detection Options",
                 "description": "Modify area occupancy detection configuration",
                 "sections": {
+                    "purpose": {
+                        "name": "Area Purpose",
+                        "description": "Configure the primary purpose of this area",
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        }
+                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",

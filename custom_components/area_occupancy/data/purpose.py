@@ -109,51 +109,51 @@ class PurposeManager:
 PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     AreaPurpose.PASSAGEWAY: Purpose(
         purpose=AreaPurpose.PASSAGEWAY,
-        name="Passageway / Landing",
+        name="Passageway",
         description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
-        half_life=45.0,  # 45 seconds
+        half_life=10.0,
     ),
     AreaPurpose.UTILITY: Purpose(
         purpose=AreaPurpose.UTILITY,
-        name="Utility / Service",
+        name="Utility",
         description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
-        half_life=90.0,  # 90 seconds
+        half_life=20.0,
     ),
     AreaPurpose.FOOD_PREP: Purpose(
         purpose=AreaPurpose.FOOD_PREP,
         name="Food-Prep",
         description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
-        half_life=240.0,  # 4 minutes
+        half_life=30.0,
     ),
     AreaPurpose.EATING: Purpose(
         purpose=AreaPurpose.EATING,
         name="Eating",
         description="Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.",
-        half_life=450.0,  # 7.5 minutes
+        half_life=60.0,
     ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
         name="Working / Studying",
         description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
-        half_life=600.0,  # 10 minutes
+        half_life=90.0,
     ),
     AreaPurpose.SOCIAL: Purpose(
         purpose=AreaPurpose.SOCIAL,
-        name="Social / Play",
+        name="Social",
         description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
-        half_life=720.0,  # 12 minutes
+        half_life=100.0,
     ),
     AreaPurpose.RELAXING: Purpose(
         purpose=AreaPurpose.RELAXING,
-        name="Relaxing / Media",
+        name="Relaxing",
         description='TV lounge, reading nook, music corner. People can remain very still while watching or reading; a quarter-hour memory keeps the room "occupied" through stretches of calm.',
-        half_life=900.0,  # 15 minutes
+        half_life=120.0,
     ),
     AreaPurpose.SLEEPING: Purpose(
         purpose=AreaPurpose.SLEEPING,
-        name="Sleeping / Resting",
+        name="Sleeping",
         description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
-        half_life=1800.0,  # 30 minutes
+        half_life=140.0,
     ),
 }
 
@@ -163,7 +163,7 @@ def get_purpose_options() -> list[dict[str, str]]:
     return [
         {
             "value": purpose.purpose.value,
-            "label": f"{purpose.name} ({int(purpose.half_life)}s)",
+            "label": purpose.name,
         }
         for purpose in PURPOSE_DEFINITIONS.values()
     ]
