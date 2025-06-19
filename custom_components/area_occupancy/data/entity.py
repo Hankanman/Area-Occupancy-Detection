@@ -143,7 +143,7 @@ class Entity:
         return {
             "entity_id": self.entity_id,
             "probability": self.probability,
-            "type": self.type.to_dict(),
+            "type": self.type.input_type.value,
             "prior": self.prior.to_dict(),
             "decay": self.decay.to_dict(),
             "state": self.state,
@@ -152,12 +152,16 @@ class Entity:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Entity":
+    def from_dict(cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator") -> "Entity":
         """Create entity from dictionary."""
+        # Get entity type from coordinator based on type string
+        input_type = InputType(data["type"])
+        entity_type = coordinator.entity_types.get_entity_type(input_type)
+        
         entity = cls(
             entity_id=data["entity_id"],
             probability=float(data["probability"]),
-            type=EntityType.from_dict(data["type"]),
+            type=entity_type,
             prior=Prior.from_dict(data["prior"]),
             decay=Decay.from_dict(data["decay"]),
             state=data["state"],
@@ -167,7 +171,7 @@ class Entity:
 
         # Initialize the previous state fields to current values for restored entities
         entity.previous_probability = entity.probability
-        entity.previous_evidence = entity.previous_evidence
+        entity.previous_evidence = entity.evidence
 
         return entity
 
@@ -244,7 +248,7 @@ class EntityManager:
 
         try:
             manager._entities = {
-                entity_id: Entity.from_dict(entity)
+                entity_id: Entity.from_dict(entity, coordinator)
                 for entity_id, entity in entities_data.items()
             }
         except (KeyError, ValueError, TypeError) as err:
@@ -440,6 +444,7 @@ class EntityManager:
             )
             # Return default prior
             return Prior(
+                prior=entity_type.prior,
                 prob_given_true=entity_type.prob_true,
                 prob_given_false=entity_type.prob_false,
                 last_updated=dt_util.utcnow(),
@@ -551,6 +556,7 @@ class EntityManager:
             return provided_prior
 
         return Prior(
+            prior=entity_type.prior,
             prob_given_true=entity_type.prob_true,
             prob_given_false=entity_type.prob_false,
             last_updated=dt_util.utcnow(),
@@ -775,6 +781,7 @@ class EntityManager:
             for input_entity_id in inputs:
                 # Create entity with default priors from entity type
                 default_prior = Prior(
+                    prior=entity_type.prior,
                     prob_given_true=entity_type.prob_true,
                     prob_given_false=entity_type.prob_false,
                     last_updated=dt_util.utcnow(),

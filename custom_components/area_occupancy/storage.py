@@ -27,6 +27,7 @@ class AreaOccupancyStorageData(TypedDict, total=False):
     threshold: float | None
     last_updated: str | None
     entities: dict[str, Any]
+    entity_types: dict[str, Any]
 
 
 class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
@@ -67,6 +68,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
             )
             return AreaOccupancyStorageData(
                 entities={},
+                entity_types={},
             )
 
         # Handle migration from various data formats
@@ -78,6 +80,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 threshold=old_data.get("threshold"),
                 last_updated=old_data.get("last_updated"),
                 entities=old_data.get("entities", {}),
+                entity_types=old_data.get("entity_types", {}),
             )
 
         # Fallback for unexpected data format
@@ -104,6 +107,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 threshold=self._coordinator.threshold,
                 last_updated=dt_util.utcnow().isoformat(),
                 entities=entity_data.get("entities", {}),
+                entity_types={},  # Add entity_types for compatibility
             )
 
         # Use native Store debounced saving
@@ -157,4 +161,77 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 threshold=data.get("threshold"),
                 last_updated=data.get("last_updated"),
                 entities=data.get("entities", {}),
+                entity_types=data.get("entity_types", {}),
             )
+
+    # Add the methods that tests expect
+    def async_save_coordinator_data(self, entity_manager: EntityManager) -> None:
+        """Save coordinator data (test-expected method)."""
+        # Map to the actual implementation
+        def get_storage_data() -> AreaOccupancyStorageData:
+            entity_data = entity_manager.to_dict()
+
+            return AreaOccupancyStorageData(
+                name=self._coordinator.config.name,
+                probability=self._coordinator.probability,
+                prior=self._coordinator.prior,
+                threshold=self._coordinator.threshold,
+                last_updated=dt_util.utcnow().isoformat(),
+                entities=entity_data.get("entities", {}),
+                entity_types={},  # Add entity_types for compatibility
+            )
+
+        self.async_delay_save(get_storage_data, delay=30.0)
+
+    async def async_load_coordinator_data(self) -> AreaOccupancyStorageData | None:
+        """Load coordinator data (test-expected method)."""
+        # Map to the actual implementation
+        return await self.async_load_data()
+
+    async def async_load_with_compatibility_check(
+        self, entry_id: str, config_version: int
+    ) -> tuple[AreaOccupancyStorageData | None, bool]:
+        """Load with compatibility check (test-expected method).
+        
+        Returns:
+            Tuple of (data, was_reset) where was_reset indicates if storage was reset.
+        """
+        # Check if version is too old and reset if needed
+        if config_version < CONF_VERSION:
+            _LOGGER.info(
+                "Old config version %d detected for entry %s, resetting storage",
+                config_version,
+                entry_id,
+            )
+            await self.async_remove()
+            return None, True
+
+        try:
+            data = await self.async_load_coordinator_data()
+            
+            # Validate data format
+            if data is not None and not isinstance(data, dict):
+                _LOGGER.warning(
+                    "Invalid storage format for entry %s, resetting",
+                    entry_id,
+                )
+                await self.async_remove()
+                return None, True
+                
+            if data is not None and "entities" not in data:
+                _LOGGER.warning(
+                    "Missing entities key in storage for entry %s, resetting",
+                    entry_id,
+                )
+                await self.async_remove()
+                return None, True
+
+            return data, False
+
+        except (HomeAssistantError, OSError, ValueError) as err:
+            _LOGGER.warning(
+                "Storage error for entry %s: %s",
+                entry_id,
+                err,
+            )
+            return None, False

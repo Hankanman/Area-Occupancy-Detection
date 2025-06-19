@@ -55,12 +55,14 @@ class Prior:
     - Providing stable baseline probabilities for Bayesian calculations
     """
 
+    prior: float
     prob_given_true: float
     prob_given_false: float
     last_updated: datetime
 
     def __post_init__(self):
         """Validate properties after initialization."""
+        self.prior = validate_prior(self.prior)
         self.prob_given_true = validate_prior(self.prob_given_true)
         self.prob_given_false = validate_prior(self.prob_given_false)
         self.last_updated = validate_datetime(self.last_updated)
@@ -68,6 +70,7 @@ class Prior:
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""
         return {
+            "prior": self.prior,
             "prob_given_true": self.prob_given_true,
             "prob_given_false": self.prob_given_false,
             "last_updated": self.last_updated.isoformat(),
@@ -79,6 +82,7 @@ class Prior:
         last_updated = validate_datetime(dt_util.parse_datetime(data["last_updated"]))
 
         return cls(
+            prior=data["prior"],
             prob_given_true=data["prob_given_true"],
             prob_given_false=data["prob_given_false"],
             last_updated=last_updated,
@@ -198,6 +202,7 @@ class PriorManager:
 
         # Use default priors as fallback values
         fallback_prior = Prior(
+            prior=entity_type.prob_true,
             prob_given_true=entity_type.prob_true,
             prob_given_false=entity_type.prob_false,
             last_updated=validate_datetime(None),
@@ -260,6 +265,7 @@ class PriorManager:
                 # when active and low false positive rate when the area is actually unoccupied
 
                 learned_prior = Prior(
+                    prior=learned_prior_value,
                     prob_given_true=PRIMARY_PROB_GIVEN_TRUE,
                     prob_given_false=PRIMARY_PROB_GIVEN_FALSE,
                     last_updated=validate_datetime(None),
@@ -351,6 +357,7 @@ class PriorManager:
         learned_prior_value = self._calculate_prior_probability(primary_intervals)
 
         learned_prior = Prior(
+            prior=learned_prior_value,
             prob_given_true=learned_prob_given_true,
             prob_given_false=learned_prob_given_false,
             last_updated=validate_datetime(None),
