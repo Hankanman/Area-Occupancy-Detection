@@ -21,6 +21,7 @@ class AreaOccupancyStorageData(TypedDict, total=False):
     """Typed data structure for area occupancy storage."""
 
     name: str | None
+    purpose: str | None
     probability: float | None
     prior: float | None
     threshold: float | None
@@ -72,6 +73,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
         if isinstance(old_data, dict):
             return AreaOccupancyStorageData(
                 name=old_data.get("name"),
+                purpose=old_data.get("purpose"),
                 probability=old_data.get("probability"),
                 prior=old_data.get("prior"),
                 threshold=old_data.get("threshold"),
@@ -98,6 +100,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
 
             return AreaOccupancyStorageData(
                 name=self._coordinator.config.name,
+                purpose=self._coordinator.config.purpose,
                 probability=self._coordinator.probability,
                 prior=self._coordinator.prior,
                 threshold=self._coordinator.threshold,
@@ -151,6 +154,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
         else:
             return AreaOccupancyStorageData(
                 name=data.get("name"),
+                purpose=data.get("purpose"),
                 probability=data.get("probability"),
                 prior=data.get("prior"),
                 threshold=data.get("threshold"),

@@ -27,6 +27,7 @@ CONF_VERSION_MINOR: Final = 2
 
 # Configuration constants
 CONF_NAME: Final = "name"
+CONF_PURPOSE: Final = "purpose"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
 CONF_MEDIA_DEVICES: Final = "media_devices"
@@ -66,6 +67,7 @@ CACHE_DURATION: Final = timedelta(hours=6)
 
 # Default values
 DEFAULT_THRESHOLD: Final = 50.0
+DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
