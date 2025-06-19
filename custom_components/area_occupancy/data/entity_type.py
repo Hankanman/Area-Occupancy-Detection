@@ -217,7 +217,7 @@ class EntityTypeManager:
     def learn_from_entities(self, entities: dict[str, Any]) -> None:
         """Update each EntityType's prior, prob_true, and prob_false as the average of all entity priors for that type."""
         # Local import to avoid circular dependency
-        from .prior import Prior
+        from .prior import Prior  # noqa: PLC0415
 
         # Group entity priors by input type
         grouped: dict[InputType, list[Prior]] = {k: [] for k in self._entity_types}
@@ -241,7 +241,7 @@ class EntityTypeManager:
         for input_type, priors in grouped.items():
             if not priors:
                 continue
-            avg_prior = sum(p.prior for p in priors) / len(priors)
+            avg_prior = sum(p.prob_given_true for p in priors) / len(priors)
             avg_true = sum(p.prob_given_true for p in priors) / len(priors)
             avg_false = sum(p.prob_given_false for p in priors) / len(priors)
             et = self._entity_types[input_type]

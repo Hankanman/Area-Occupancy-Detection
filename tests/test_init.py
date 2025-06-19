@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: PLC0415
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
@@ -208,7 +208,9 @@ class TestEntryUpdated:
 class TestAsyncRemoveEntry:
     """Tests for async_remove_entry function."""
 
-    async def test_remove_entry_with_runtime_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_remove_entry_with_runtime_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Ensure stored runtime data is used."""
         store = Mock(async_remove=AsyncMock())
         mock_config_entry.runtime_data = Mock(store=store)
@@ -217,7 +219,9 @@ class TestAsyncRemoveEntry:
         await async_remove_entry(mock_hass, mock_config_entry)
         store.async_remove.assert_awaited_once()
 
-    async def test_remove_entry_without_runtime_data(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_remove_entry_without_runtime_data(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Ensure a temporary coordinator is used when runtime_data missing."""
         store = Mock(async_remove=AsyncMock())
         with patch(
@@ -231,7 +235,9 @@ class TestAsyncRemoveEntry:
             mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
             store.async_remove.assert_awaited_once()
 
-    async def test_remove_entry_handles_error(self, mock_hass: Mock, mock_config_entry: Mock) -> None:
+    async def test_remove_entry_handles_error(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
         """Errors from the store should be logged but not raised."""
         store = Mock(async_remove=AsyncMock(side_effect=Exception("fail")))
         mock_config_entry.runtime_data = Mock(store=store)

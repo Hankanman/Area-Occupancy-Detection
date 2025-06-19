@@ -23,17 +23,19 @@ _LOGGER = logging.getLogger(__name__)
 class Entity:
     """Type for sensor state information."""
 
+    # --- Public State ---
     entity_id: str
-    type: EntityType
     probability: float
+    type: EntityType
     prior: Prior
     decay: Decay
     state: str | float | bool | None = None
     evidence: bool = False
-    previous_evidence: bool = False
     available: bool = True
-    last_updated: datetime = field(default_factory=dt_util.utcnow)
+    # --- Internal State ---
+    previous_evidence: bool = False
     previous_probability: float = field(default=0.0, init=False, repr=False)
+    last_updated: datetime = field(default_factory=dt_util.utcnow)
 
     def __post_init__(self):
         """Post init."""
@@ -140,39 +142,32 @@ class Entity:
         """Convert entity to dictionary for storage."""
         return {
             "entity_id": self.entity_id,
-            "type": self.type.input_type.value,
             "probability": self.probability,
+            "type": self.type.to_dict(),
             "prior": self.prior.to_dict(),
             "decay": self.decay.to_dict(),
             "state": self.state,
             "evidence": self.evidence,
-            "previous_evidence": self.previous_evidence,
             "available": self.available,
-            "last_updated": self.last_updated,
         }
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
-    ) -> "Entity":
+    def from_dict(cls, data: dict[str, Any]) -> "Entity":
         """Create entity from dictionary."""
-        input_type = InputType(data["type"])
-
         entity = cls(
             entity_id=data["entity_id"],
-            type=coordinator.entity_types.get_entity_type(input_type),
-            probability=data["probability"],
+            probability=float(data["probability"]),
+            type=EntityType.from_dict(data["type"]),
             prior=Prior.from_dict(data["prior"]),
             decay=Decay.from_dict(data["decay"]),
             state=data["state"],
             evidence=data["evidence"],
-            previous_evidence=data["previous_evidence"],
             available=data["available"],
-            last_updated=data["last_updated"],
         )
 
         # Initialize the previous state fields to current values for restored entities
         entity.previous_probability = entity.probability
+        entity.previous_evidence = entity.previous_evidence
 
         return entity
 
@@ -231,10 +226,13 @@ class EntityManager:
     def from_dict(
         cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
     ) -> "EntityManager":
-        """Create entity manager from dictionary."""
+        """Create entity manager from dictionary.
+
+        Only accepts the format: {"entities": {entity_id: entity_dict, ...}}
+        """
         manager = cls(coordinator=coordinator)
 
-        # Check if data has the expected structure
+        # Only accept new format with 'entities' key
         if "entities" not in data:
             raise ValueError(
                 f"Invalid storage format: missing 'entities' key in data structure. "
@@ -242,10 +240,12 @@ class EntityManager:
                 f"This should have been caught by storage validation."
             )
 
+        entities_data = data["entities"]
+
         try:
             manager._entities = {
-                entity_id: Entity.from_dict(entity, coordinator)
-                for entity_id, entity in data["entities"].items()
+                entity_id: Entity.from_dict(entity)
+                for entity_id, entity in entities_data.items()
             }
         except (KeyError, ValueError, TypeError) as err:
             raise ValueError(
@@ -440,7 +440,6 @@ class EntityManager:
             )
             # Return default prior
             return Prior(
-                prior=entity_type.prior,
                 prob_given_true=entity_type.prob_true,
                 prob_given_false=entity_type.prob_false,
                 last_updated=dt_util.utcnow(),
@@ -552,7 +551,6 @@ class EntityManager:
             return provided_prior
 
         return Prior(
-            prior=entity_type.prior,
             prob_given_true=entity_type.prob_true,
             prob_given_false=entity_type.prob_false,
             last_updated=dt_util.utcnow(),
@@ -777,7 +775,6 @@ class EntityManager:
             for input_entity_id in inputs:
                 # Create entity with default priors from entity type
                 default_prior = Prior(
-                    prior=entity_type.prior,
                     prob_given_true=entity_type.prob_true,
                     prob_given_false=entity_type.prob_false,
                     last_updated=dt_util.utcnow(),

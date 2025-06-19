@@ -9,7 +9,6 @@ from custom_components.area_occupancy.state_mapping import (
 )
 
 
-# ruff: noqa: SLF001
 class TestStateOption:
     """Test StateOption dataclass."""
 

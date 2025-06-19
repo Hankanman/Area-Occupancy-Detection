@@ -39,7 +39,7 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
             entry_id,
             history_period,
         )
-        await coordinator.update_learned_priors(history_period)
+        await coordinator.priors.update_all_entity_priors(history_period)
         await coordinator.async_refresh()
 
         # Collect the updated priors to return

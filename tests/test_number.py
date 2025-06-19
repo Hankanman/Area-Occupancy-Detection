@@ -12,7 +12,6 @@ from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.exceptions import ServiceValidationError
 
 
-# ruff: noqa: SLF001
 class TestThreshold:
     """Test Threshold number entity."""
 

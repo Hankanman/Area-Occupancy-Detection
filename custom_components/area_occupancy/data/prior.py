@@ -24,7 +24,7 @@ from ..const import (
     PRIMARY_PROB_GIVEN_FALSE,
     PRIMARY_PROB_GIVEN_TRUE,
 )
-from ..utils import validate_datetime, validate_prior, validate_prob
+from ..utils import validate_datetime, validate_prior
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -55,22 +55,19 @@ class Prior:
     - Providing stable baseline probabilities for Bayesian calculations
     """
 
-    prior: float
     prob_given_true: float
     prob_given_false: float
     last_updated: datetime
 
     def __post_init__(self):
         """Validate properties after initialization."""
-        self.prior = validate_prior(self.prior)
-        self.prob_given_true = validate_prob(self.prob_given_true)
-        self.prob_given_false = validate_prob(self.prob_given_false)
+        self.prob_given_true = validate_prior(self.prob_given_true)
+        self.prob_given_false = validate_prior(self.prob_given_false)
         self.last_updated = validate_datetime(self.last_updated)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""
         return {
-            "prior": self.prior,
             "prob_given_true": self.prob_given_true,
             "prob_given_false": self.prob_given_false,
             "last_updated": self.last_updated.isoformat(),
@@ -82,7 +79,6 @@ class Prior:
         last_updated = validate_datetime(dt_util.parse_datetime(data["last_updated"]))
 
         return cls(
-            prior=data["prior"],
             prob_given_true=data["prob_given_true"],
             prob_given_false=data["prob_given_false"],
             last_updated=last_updated,
@@ -151,9 +147,8 @@ class PriorManager:
                 updated_count += 1
 
                 _LOGGER.debug(
-                    "Updated prior for %s: prior=%.3f, prob_true=%.3f, prob_false=%.3f",
+                    "Updated prior for %s: prob_true=%.3f, prob_false=%.3f",
                     entity.entity_id,
-                    prior.prior,
                     prior.prob_given_true,
                     prior.prob_given_false,
                 )
@@ -205,7 +200,6 @@ class PriorManager:
         fallback_prior = Prior(
             prob_given_true=entity_type.prob_true,
             prob_given_false=entity_type.prob_false,
-            prior=entity_type.prior,
             last_updated=validate_datetime(None),
         )
 
@@ -266,7 +260,6 @@ class PriorManager:
                 # when active and low false positive rate when the area is actually unoccupied
 
                 learned_prior = Prior(
-                    prior=learned_prior_value,
                     prob_given_true=PRIMARY_PROB_GIVEN_TRUE,
                     prob_given_false=PRIMARY_PROB_GIVEN_FALSE,
                     last_updated=validate_datetime(None),
@@ -276,8 +269,8 @@ class PriorManager:
                 _LOGGER.debug(
                     "Primary sensor prior calculation for %s: learned=%.3f, default=%.3f",
                     entity_id,
-                    learned_prior.prior,
-                    fallback_prior.prior,
+                    learned_prior_value,
+                    fallback_prior.prob_given_true,
                 )
 
                 self.update_prior(entity_id, learned_prior)
@@ -358,7 +351,6 @@ class PriorManager:
         learned_prior_value = self._calculate_prior_probability(primary_intervals)
 
         learned_prior = Prior(
-            prior=learned_prior_value,
             prob_given_true=learned_prob_given_true,
             prob_given_false=learned_prob_given_false,
             last_updated=validate_datetime(None),
@@ -368,8 +360,8 @@ class PriorManager:
         _LOGGER.debug(
             "Prior calculation for %s: learned=%.3f, default=%.3f, prob_true: learned=%.3f/default=%.3f, prob_false: learned=%.3f/default=%.3f",
             entity_id,
-            learned_prior.prior,
-            fallback_prior.prior,
+            learned_prior_value,
+            fallback_prior.prob_given_true,
             learned_prior.prob_given_true,
             fallback_prior.prob_given_true,
             learned_prior.prob_given_false,
@@ -591,6 +583,4 @@ class PriorManager:
         p_occupied = occupied_duration / total_duration
 
         # The prior is simply the historical occupancy rate
-        prior = p_occupied
-
-        return max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
+        return max(MIN_PROBABILITY, min(p_occupied, MAX_PROBABILITY))

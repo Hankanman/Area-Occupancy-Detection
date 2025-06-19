@@ -799,7 +799,6 @@ class BaseOccupancyFlow:
                 )
 
 
-
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection.
 

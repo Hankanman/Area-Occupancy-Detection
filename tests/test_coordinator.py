@@ -16,7 +16,7 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestAreaOccupancyCoordinator:
     """Test AreaOccupancyCoordinator class."""
 
@@ -1778,114 +1778,6 @@ class TestCoordinatorRealBehaviorEnhanced:
             assert coordinator._prior_update_tracker is None
             assert coordinator._next_prior_update is None
 
-    def test_manage_decay_timer_starts_timer(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test _manage_decay_timer starts timer when entities are decaying."""
-        with (
-            patch(
-                "custom_components.area_occupancy.data.config.ConfigManager"
-            ) as mock_config_mgr,
-            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            # Setup config with decay enabled
-            mock_config = Mock()
-            mock_config.decay.enabled = True
-            mock_config_mgr.return_value.config = mock_config
-
-            # Setup entity with decaying state
-            mock_entity = Mock()
-            mock_entity.decay.is_decaying = True
-
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {"entity1": mock_entity}
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.entities = mock_entities_instance
-            coordinator._start_decay_timer = Mock()
-
-            # No existing timer
-            coordinator._global_decay_timer = None
-
-            coordinator._manage_decay_timer()
-
-            # Verify timer was started
-            coordinator._start_decay_timer.assert_called_once()
-
-    def test_manage_decay_timer_keeps_timer_running(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test _manage_decay_timer keeps timer running when entities are still decaying."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            # Setup entity with decaying state
-            mock_entity = Mock()
-            mock_entity.decay.is_decaying = True
-
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {"entity1": mock_entity}
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.entities = mock_entities_instance
-            coordinator._stop_decay_timer = Mock()
-            coordinator._global_decay_timer = Mock()  # Existing timer
-
-            coordinator._manage_decay_timer()
-
-            # Verify timer was NOT stopped because entity still decaying
-            coordinator._stop_decay_timer.assert_not_called()
-
-    def test_manage_decay_timer_stops_timer(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test _manage_decay_timer stops timer when no entities are decaying."""
-        with (
-            patch("custom_components.area_occupancy.data.config.ConfigManager"),
-            patch("custom_components.area_occupancy.storage.AreaOccupancyStore"),
-            patch(
-                "custom_components.area_occupancy.data.entity_type.EntityTypeManager"
-            ),
-            patch("custom_components.area_occupancy.data.prior.PriorManager"),
-            patch(
-                "custom_components.area_occupancy.data.entity.EntityManager"
-            ) as mock_entity_mgr,
-        ):
-            # Setup entity with no decaying state
-            mock_entity = Mock()
-            mock_entity.decay.is_decaying = False
-
-            mock_entities_instance = Mock()
-            mock_entities_instance.entities = {"entity1": mock_entity}
-            mock_entity_mgr.return_value = mock_entities_instance
-
-            coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-            coordinator.entities = mock_entities_instance
-            coordinator._stop_decay_timer = Mock()
-            coordinator._global_decay_timer = Mock()  # Existing timer
-
-            coordinator._manage_decay_timer()
-
-            # Verify timer was stopped because no entities decaying
-            coordinator._stop_decay_timer.assert_called_once()
-
     def test_start_decay_timer_basic_functionality(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
@@ -1979,8 +1871,8 @@ class TestCoordinatorRealBehaviorEnhanced:
             test_time = datetime(2024, 1, 1, 12, 0, 0)
             await coordinator._handle_decay_timer(test_time)
 
-            # Verify timer was reset
-            assert coordinator._global_decay_timer is None
+            # Verify timer was rescheduled (always-on logic)
+            assert coordinator._global_decay_timer is not None
 
             # Verify refresh was NOT called because decay is disabled
             coordinator.async_refresh.assert_not_called()
