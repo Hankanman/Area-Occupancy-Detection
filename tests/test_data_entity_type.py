@@ -135,7 +135,6 @@ class TestEntityType:
             type=entity_type,
             probability=0.5,
             prior=Prior(
-                prior=0.5,
                 prob_given_true=0.25,
                 prob_given_false=0.05,
                 last_updated=dt_util.utcnow(),
@@ -168,7 +167,6 @@ class TestEntityType:
             type=entity_type,
             probability=0.5,
             prior=Prior(
-                prior=0.5,
                 prob_given_true=0.09,
                 prob_given_false=0.01,
                 last_updated=dt_util.utcnow(),
@@ -296,7 +294,6 @@ class TestEntityTypeManager:
         motion_entity = Mock(spec=Entity)
         motion_entity.type = manager._entity_types[InputType.MOTION]
         motion_entity.prior = Prior(
-            prior=0.4,
             prob_given_true=0.3,
             prob_given_false=0.06,
             last_updated=dt_util.utcnow(),
@@ -305,7 +302,6 @@ class TestEntityTypeManager:
         media_entity = Mock(spec=Entity)
         media_entity.type = manager._entity_types[InputType.MEDIA]
         media_entity.prior = Prior(
-            prior=0.35,
             prob_given_true=0.25,
             prob_given_false=0.04,
             last_updated=dt_util.utcnow(),
@@ -321,13 +317,13 @@ class TestEntityTypeManager:
 
         # Verify motion type was updated with averages
         motion_type = manager._entity_types[InputType.MOTION]
-        assert motion_type.prior == 0.4
+        assert motion_type.prior == 0.3
         assert motion_type.prob_true == 0.3
         assert motion_type.prob_false == 0.06
 
         # Verify media type was updated with averages
         media_type = manager._entity_types[InputType.MEDIA]
-        assert media_type.prior == 0.35
+        assert media_type.prior == 0.25
         assert media_type.prob_true == 0.25
         assert media_type.prob_false == 0.04
 
@@ -378,7 +374,6 @@ class TestEntityTypeManager:
             "invalid": {
                 "type": "invalid_type",
                 "prior": {
-                    "prior": 0.4,
                     "prob_given_true": 0.3,
                     "prob_given_false": 0.06,
                 },
