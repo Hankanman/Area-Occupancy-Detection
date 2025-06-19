@@ -5,17 +5,20 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import (
+    DEFAULT_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+)
 from custom_components.area_occupancy.data.prior import (
     Prior,
     PriorManager,
     TimeInterval,
 )
-from custom_components.area_occupancy.const import DEFAULT_PROB_GIVEN_TRUE, DEFAULT_PROB_GIVEN_FALSE
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestTimeInterval:
     """Test TimeInterval TypedDict."""
 
@@ -550,7 +553,10 @@ class TestPriorManagerAdditional:
         "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
     )
     async def test_calculate_non_primary(
-        self, mock_get: AsyncMock, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+        self,
+        mock_get: AsyncMock,
+        mock_coordinator: Mock,
+        mock_entity_for_prior_tests: Mock,
     ) -> None:
         now = dt_util.utcnow()
         primary_states = [
@@ -570,7 +576,10 @@ class TestPriorManagerAdditional:
         "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
     )
     async def test_calculate_primary_sensor(
-        self, mock_get: AsyncMock, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+        self,
+        mock_get: AsyncMock,
+        mock_coordinator: Mock,
+        mock_entity_for_prior_tests: Mock,
     ) -> None:
         mock_entity_for_prior_tests.entity_id = (
             mock_coordinator.config.sensors.primary_occupancy

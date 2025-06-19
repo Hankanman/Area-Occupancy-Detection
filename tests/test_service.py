@@ -22,6 +22,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: PLC0415
 class TestGetCoordinator:
     """Test _get_coordinator helper function."""
 

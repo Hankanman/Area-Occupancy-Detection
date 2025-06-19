@@ -26,7 +26,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
 
 
-# ruff: noqa: SLF001
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
 

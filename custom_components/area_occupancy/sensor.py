@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import AreaOccupancyCoordinator
@@ -194,7 +193,7 @@ class DecaySensor(AreaOccupancySensorBase):
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
+    async_add_entities: Any,
 ) -> None:
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data

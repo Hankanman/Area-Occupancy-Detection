@@ -40,7 +40,10 @@ from .utils import bayesian_probability, validate_prob
 
 _LOGGER = logging.getLogger(__name__)
 
-DECAY_INTERVAL = 5  # seconds
+# Global timer intervals in seconds
+DECAY_INTERVAL = 10
+STORAGE_INTERVAL = 300
+PRIOR_INTERVAL = 3600
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -71,10 +74,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entities = EntityManager(self)
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
-        self._next_prior_update: datetime | None = None
-        self._last_prior_update: datetime | None = None
-        self._prior_update_tracker: CALLBACK_TYPE | None = None
+        self._global_prior_timer: CALLBACK_TYPE | None = None
         self._global_decay_timer: CALLBACK_TYPE | None = None
+        self._global_storage_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
 
     @property
@@ -121,7 +123,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Simple average of all entity priors
         prior_sum = sum(
-            entity.prior.prior for entity in self.entities.entities.values()
+            entity.prior.prob_given_true for entity in self.entities.entities.values()
         )
         return prior_sum / len(self.entities.entities)
 
@@ -175,14 +177,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
 
-            # Initialize components in order
+            # Build Default Entity Types
             await self.entity_types.async_initialize()
-            await self.async_load_stored_data()
+
+            # Load stored data
+            loaded_data = await self.store.async_load_data()
+
+            if loaded_data:
+                # Create entity manager from loaded data
+                self.entities = EntityManager.from_dict(dict(loaded_data), self)
+
+                _LOGGER.debug(
+                    "Successfully restored stored data for instance %s",
+                    self.entry_id,
+                )
+
+            # Build Entities
             await self.entities.async_initialize()
+
+            # Save current state to storage
+            await self.store.async_save_data(force=True)
+
+            # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
 
-            # Schedule periodic prior updates
-            await self._schedule_next_prior_update()
+            # Start the prior update timer
+            self._start_prior_timer()
+
+            # Start the global decay timer
+            self._start_decay_timer()
+
+            # Start the global storage timer
+            self._start_storage_timer()
 
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
@@ -196,11 +222,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
-        # Check and manage decay timer based on current entity states
-        self._manage_decay_timer()
-
         # Save current state to storage
-        self.store.async_save_coordinator_data(self.entities)
+        await self.store.async_save_data()
 
         # Return current state data
         return {
@@ -210,24 +233,31 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "prior": self.prior,
             "decay": self.decay,
             "last_updated": dt_util.utcnow(),
-            "next_prior_update": self._next_prior_update,
-            "last_prior_update": self._last_prior_update,
         }
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
         # Cancel prior update tracker
-        if self._prior_update_tracker is not None:
-            self._prior_update_tracker()
-            self._prior_update_tracker = None
+        if self._global_prior_timer is not None:
+            self._global_prior_timer()
+            self._global_prior_timer = None
 
         # Stop global decay timer
-        self._stop_decay_timer()
+        if self._global_decay_timer is not None:
+            self._global_decay_timer()
+            self._global_decay_timer = None
+
+        # Stop global storage timer
+        if self._global_storage_timer is not None:
+            self._global_storage_timer()
+            self._global_storage_timer = None
 
         # Clean up state change listener
         if self._remove_state_listener is not None:
             self._remove_state_listener()
             self._remove_state_listener = None
+
+        await self.store.async_save_data(force=True)
 
         # Clean up entity manager
         self.entities.cleanup()
@@ -256,70 +286,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Re-establish entity state tracking with new entity list
         await self.track_entity_state_changes(self.entities.entity_ids)
 
-        # Schedule next update and refresh data
-        await self._schedule_next_prior_update()
-
         # Force immediate save after configuration changes
-        self.store.async_save_coordinator_data(self.entities)
+        await self.store.async_save_data(force=True)
 
         await self.async_request_refresh()
-
-    async def async_load_stored_data(self) -> None:
-        """Load and restore data from storage."""
-        try:
-            _LOGGER.debug("Loading stored data from storage")
-
-            # Load data with compatibility checking
-            (
-                loaded_data,
-                was_reset,
-            ) = await self.store.async_load_with_compatibility_check(
-                self.entry_id, self.config_entry.version if self.config_entry else 9
-            )
-
-            if loaded_data:
-                last_updated_str = loaded_data.get("last_updated")
-                _LOGGER.debug(
-                    "Found stored data for instance %s, restoring (last saved: %s)",
-                    self.entry_id,
-                    last_updated_str,
-                )
-
-                # Create entity manager from loaded data
-                self.entities = EntityManager.from_dict(loaded_data, self)
-                if last_updated_str:
-                    self._last_prior_update = dt_util.parse_datetime(last_updated_str)
-                else:
-                    self._last_prior_update = None
-
-                _LOGGER.debug(
-                    "Successfully restored stored data for instance %s",
-                    self.entry_id,
-                )
-
-            else:
-                # No data loaded (either no data exists, was reset, or had errors)
-                if was_reset:
-                    _LOGGER.info(
-                        "Storage was reset for instance %s, will initialize with defaults",
-                        self.entry_id,
-                    )
-                else:
-                    _LOGGER.info(
-                        "No stored data found for instance %s, initializing with defaults",
-                        self.entry_id,
-                    )
-                self._last_prior_update = None
-
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Storage error for instance %s, initializing with defaults: %s",
-                self.entry_id,
-                err,
-            )
-            self._last_prior_update = None
-            # Re-raise as ConfigEntryNotReady if loading fails critically
-            raise ConfigEntryNotReady(f"Failed to load stored data: {err}") from err
 
     # --- Entity State Tracking ---
     async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
@@ -337,131 +307,75 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entities.async_state_changed_listener,
             )
 
-    # --- Prior Update Handling ---
-    async def update_learned_priors(self, history_period: int | None = None) -> None:
-        """Update learned priors using historical data.
-
-        Args:
-            history_period: Optional history period in days to override config value
-
-        """
-        try:
-            # Check if Home Assistant is shutting down
-            if self.hass.is_stopping:
-                _LOGGER.warning(
-                    "Skipping prior update for area %s - Home Assistant is shutting down",
-                    self.config.name,
-                )
-                return
-
-            # Delegate the actual prior updating to the PriorManager
-            await self.priors.update_all_entity_priors(history_period)
-
-            # Save and refresh if priors changed
-            self.store.async_save_coordinator_data(self.entities)
-            await self.async_request_refresh()
-
-        except HomeAssistantError as err:
-            # Handle all errors gracefully
-            if "cannot schedule new futures after shutdown" in str(err):
-                _LOGGER.warning(
-                    "Skipping prior update for area %s - Home Assistant is shutting down",
-                    self.config.name,
-                )
-            else:
-                _LOGGER.warning(
-                    "Error updating priors for area %s: %s", self.config.name, err
-                )
-        finally:
-            # Always reschedule the next update
-            await self._schedule_next_prior_update()
-
-    async def _schedule_next_prior_update(self) -> None:
-        """Schedule the next prior update at the start of the next hour."""
-        if self._prior_update_tracker is not None:
-            self._prior_update_tracker()
-
-        now = dt_util.utcnow()
-        self._next_prior_update = now.replace(
-            minute=0, second=0, microsecond=0
-        ) + timedelta(hours=1)
-
-        self._prior_update_tracker = async_track_point_in_time(
-            self.hass, self._handle_prior_update, self._next_prior_update
-        )
-        _LOGGER.debug(
-            "Scheduled next prior update for %s", self._next_prior_update.isoformat()
-        )
-
-    async def _handle_prior_update(self, _now: datetime) -> None:
-        """Handle the prior update task."""
-        self._prior_update_tracker = None
-        self._next_prior_update = None
-
-        try:
-            _LOGGER.info(
-                "Performing scheduled prior update for area %s", self.config.name
-            )
-            await self.update_learned_priors()
-        except Exception:
-            _LOGGER.exception("Error during scheduled prior update")
-            # Reschedule even if update failed
-            await self._schedule_next_prior_update()
-
-    # --- Decay Timer Handling ---
-    def _manage_decay_timer(self) -> None:
-        """Manage decay timer based on current entity states and config."""
-        # Stop timer if decay is disabled globally
-        if not self.config.decay.enabled:
-            self._stop_decay_timer()
+    # --- Prior Timer Handling ---
+    def _start_prior_timer(self) -> None:
+        """Start the prior update timer."""
+        if self._global_prior_timer is not None or not self.hass:
             return
 
-        decaying_entities = self.decaying_entities
+        next_update = dt_util.utcnow() + timedelta(seconds=PRIOR_INTERVAL)
 
-        # Start timer if we have decaying entities but no timer running
-        if decaying_entities and self._global_decay_timer is None:
-            self._start_decay_timer()
-            _LOGGER.debug("Started global decay timer")
-        # Stop timer if no entities are decaying but timer is running
-        elif not decaying_entities and self._global_decay_timer is not None:
-            self._stop_decay_timer()
-            _LOGGER.debug("Stopped global decay timer - no entities decaying")
+        self._global_prior_timer = async_track_point_in_time(
+            self.hass, self._handle_prior_timer, next_update
+        )
 
+    async def _handle_prior_timer(self, _now: datetime) -> None:
+        """Handle the prior update timer."""
+        self._global_prior_timer = None
+
+        history_period = self.config.history.period
+
+        # Update learned priors if history is enabled
+        if self.config.history.enabled:
+            await self.priors.update_all_entity_priors(history_period)
+
+        # Reschedule the timer
+        self._start_prior_timer()
+
+        # Save current state to storage
+        await self.store.async_save_data(force=True)
+
+    # --- Decay Timer Handling ---
     def _start_decay_timer(self) -> None:
-        """Start the global decay timer (inline implementation)."""
+        """Start the global decay timer (always-on implementation)."""
         if self._global_decay_timer is not None or not self.hass:
             return
 
         next_update = dt_util.utcnow() + timedelta(seconds=DECAY_INTERVAL)
+
         self._global_decay_timer = async_track_point_in_time(
             self.hass, self._handle_decay_timer, next_update
         )
 
-    def _stop_decay_timer(self) -> None:
-        """Stop the global decay timer (inline implementation)."""
-        if self._global_decay_timer is not None:
-            self._global_decay_timer()
-            self._global_decay_timer = None
-
     async def _handle_decay_timer(self, _now: datetime) -> None:
-        """Handle decay timer firing - refresh coordinator and reschedule if needed."""
+        """Handle decay timer firing - refresh coordinator and always reschedule."""
         self._global_decay_timer = None
 
-        # Early exit if decay is disabled globally
-        if not self.config.decay.enabled:
-            _LOGGER.debug("Decay disabled globally, stopping timer")
+        # Refresh the coordinator if decay is enabled
+        if self.config.decay.enabled:
+            await self.async_refresh()
+
+        # Reschedule the timer
+        self._start_decay_timer()
+
+    # --- Storage Timer Handling ---
+    def _start_storage_timer(self) -> None:
+        """Start the global storage timer."""
+        if self._global_storage_timer is not None or not self.hass:
             return
 
-        decaying_entities = self.decaying_entities
+        next_update = dt_util.utcnow() + timedelta(seconds=STORAGE_INTERVAL)
 
-        # Early exit if no entities are decaying
-        if not decaying_entities:
-            _LOGGER.debug("No entities decaying, stopping timer")
-            return
+        self._global_storage_timer = async_track_point_in_time(
+            self.hass, self._handle_storage_timer, next_update
+        )
 
-        # Refresh the coordinator for UI updates
-        await self.async_refresh()
+    async def _handle_storage_timer(self, _now: datetime) -> None:
+        """Handle the storage timer."""
+        self._global_storage_timer = None
 
-        # Reschedule timer if entities are still decaying after refresh
-        if self.decaying_entities:
-            self._start_decay_timer()
+        # Save current state to storage
+        await self.store.async_save_data(force=True)
+
+        # Reschedule the timer
+        self._start_storage_timer()

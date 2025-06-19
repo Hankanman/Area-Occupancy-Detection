@@ -14,7 +14,7 @@ from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestEntity:
     """Test the Entity class."""
 

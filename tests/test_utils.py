@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from custom_components.area_occupancy.data.entity import Entity
 
 
-# ruff: noqa: SLF001
 class TestValidateProb:
     """Test validate_prob function."""
 

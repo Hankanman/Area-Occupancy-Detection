@@ -1,10 +1,10 @@
 """Tests for data.entity_type module."""
 
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from types import SimpleNamespace
-from typing import Any
 
 from custom_components.area_occupancy.data.entity_type import (
     EntityType,
@@ -15,7 +15,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestInputType:
     """Test InputType enum."""
 
