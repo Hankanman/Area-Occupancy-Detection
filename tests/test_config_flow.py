@@ -37,6 +37,7 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
+    CONF_PURPOSE,
 )
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
@@ -379,6 +380,7 @@ class TestHelperFunctions:
             data = schema(
                 {
                     CONF_NAME: "Test Area",
+                    "purpose": {},
                     "motion": {},
                     "doors": {},
                     "windows": {},
@@ -393,6 +395,7 @@ class TestHelperFunctions:
         assert isinstance(schema_dict, dict)
         assert CONF_NAME in schema_dict
         assert data[CONF_NAME] == "Test Area"
+        assert "purpose" in schema_dict
         assert "motion" in schema_dict
         assert "doors" in schema_dict
         assert "windows" in schema_dict
@@ -420,6 +423,7 @@ class TestHelperFunctions:
             schema = create_schema(mock_hass, is_options=True)
         assert isinstance(schema, dict)
         assert CONF_NAME not in schema
+        assert "purpose" in schema
         assert "motion" in schema
         assert "doors" in schema
         assert "windows" in schema
@@ -467,7 +471,8 @@ class TestAreaOccupancyConfigFlow:
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 CONF_THRESHOLD: 60,
-            }
+            },
+            "purpose": {},
         }
 
         with (
@@ -489,6 +494,7 @@ class TestAreaOccupancyConfigFlow:
                 CONF_NAME: "Test Area",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                CONF_PURPOSE: "social",
                 CONF_THRESHOLD: 60,
             }
 
@@ -503,6 +509,7 @@ class TestAreaOccupancyConfigFlow:
                 CONF_MOTION_SENSORS: [],  # Invalid - empty
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "",
             },
+            "purpose": {},
             "doors": {},
             "windows": {},
             "lights": {},
@@ -552,6 +559,7 @@ class TestConfigFlowIntegration:
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             },
+            "purpose": {},
             "doors": {},
             "windows": {},
             "lights": {},
@@ -577,6 +585,7 @@ class TestConfigFlowIntegration:
                 CONF_NAME: "Living Room",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                CONF_PURPOSE: "social",
                 CONF_THRESHOLD: 60,
                 CONF_WASP_ENABLED: False,
             }
@@ -655,6 +664,7 @@ class TestConfigFlowIntegration:
                     ],
                     CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 },
+                "purpose": {},
                 "doors": {},
                 "windows": {},
                 "lights": {},
@@ -731,6 +741,7 @@ class TestConfigFlowIntegration:
                     CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                     CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 },
+                "purpose": {},
                 "doors": {},
                 "windows": {},
                 "lights": {},
@@ -813,6 +824,7 @@ class TestConfigFlowIntegration:
                 CONF_MOTION_SENSORS: [],  # Invalid
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "",
             },
+            "purpose": {},
             "doors": {},
             "windows": {},
             "lights": {},
@@ -841,6 +853,7 @@ class TestConfigFlowIntegration:
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             },
+            "purpose": {},
             "doors": {},
             "windows": {},
             "lights": {},
