@@ -601,7 +601,7 @@ exclude_lines = [
 fail_under = 85 # Enforce 90% coverage minimum
 
 [tool.ruff]
-required-version = ">=0.11.0"
+required-version = ">=0.12.0"
 
 [tool.ruff.lint]
 select = [
