@@ -21,6 +21,7 @@ from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
     CONF_WEIGHT_APPLIANCE,
@@ -37,7 +38,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
-    CONF_PURPOSE,
 )
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 

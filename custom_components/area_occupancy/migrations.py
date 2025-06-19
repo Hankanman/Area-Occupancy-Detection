@@ -19,6 +19,7 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
@@ -26,6 +27,7 @@ from .const import (
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
@@ -131,6 +133,45 @@ def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add purpose field with default value.
+
+    This migration:
+    1. Only adds purpose field if the config has sensors configured
+    2. Adds the purpose field with default value if it doesn't exist
+    3. Preserves any existing purpose setting
+    4. Logs the migration for debugging
+
+    Args:
+        config: The configuration to migrate
+
+    Returns:
+        The migrated configuration
+
+    """
+    # Only add purpose if there are sensors configured (similar to primary sensor logic)
+    has_sensors = (
+        config.get(CONF_MOTION_SENSORS, [])
+        or config.get("media_devices", [])
+        or config.get("appliances", [])
+        or config.get("lights", [])
+        or config.get("illuminance_sensors", [])
+        or config.get("humidity_sensors", [])
+        or config.get("temperature_sensors", [])
+        or config.get("door_sensors", [])
+        or config.get("window_sensors", [])
+    )
+
+    if CONF_PURPOSE not in config and has_sensors:
+        config[CONF_PURPOSE] = DEFAULT_PURPOSE
+        _LOGGER.debug(
+            "Migrated purpose field to default value: %s",
+            DEFAULT_PURPOSE,
+        )
+
+    return config
+
+
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to latest version.
 
@@ -143,7 +184,8 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     """
     # Apply migrations in order
     config = remove_decay_min_delay(config)
-    return migrate_primary_occupancy_sensor(config)
+    config = migrate_primary_occupancy_sensor(config)
+    return migrate_purpose_field(config)
 
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
