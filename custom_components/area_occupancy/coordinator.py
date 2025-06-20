@@ -37,7 +37,7 @@ from .data.entity_type import EntityTypeManager
 from .data.prior import PriorManager
 from .data.purpose import PurposeManager
 from .storage import AreaOccupancyStore
-from .utils import bayesian_probability, validate_prob
+from .utils import overall_probability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,24 +98,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.entities.entities:
             return MIN_PROBABILITY
 
-        # Start with the prior probability (like demo app's prob_occupied)
-        posterior = self.prior
-
-        # Apply Bayesian fusion for each entity (like demo app's room-level fusion)
-        for entity in self.entities.entities.values():
-            # Only apply Bayesian update if sensor has active evidence
-            # (currently ON or decaying from recent activity)
-            if entity.evidence or entity.decay.is_decaying:
-                posterior = bayesian_probability(
-                    prior=posterior,
-                    prob_given_true=entity.prior.prob_given_true,
-                    prob_given_false=entity.prior.prob_given_false,
-                    evidence=True,  # use weight * decay as fractional power
-                    weight=entity.type.weight * entity.decay.decay_factor,
-                    decay_factor=1.0,
-                )
-
-        return validate_prob(posterior)
+        return overall_probability(
+            entities=self.entities.entities,
+            prior=self.prior,
+        )
 
     @property
     def prior(self) -> float:
