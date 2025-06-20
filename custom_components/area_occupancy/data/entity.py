@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
@@ -73,26 +72,23 @@ class Entity:
         self.previous_evidence = self.evidence
 
     def _handle_state_transition(self) -> bool | None:
-        """Handle state transitions and manage decay timing.
+        """Detect edge and (start/stop) decay.
 
         Returns:
-            True for rising edge (OFF->ON)
-            False for falling edge (ON->OFF)
-            None for no change
+            True   → rising edge  (OFF→ON)
+            False  → falling edge (ON→OFF)
+            None   → no change
 
         """
-        # Detect state edge
         if self.evidence == self.previous_evidence:
-            return None
+            return None  # nothing new
 
         state_edge = self.evidence
 
-        # Manage decay based on state transition
-        if state_edge:  # Rising edge (OFF->ON)
+        if state_edge:  # rising edge → stop decay
             self.decay.is_decaying = False
-        else:  # Falling edge (ON->OFF)
-            self.decay.is_decaying = True
-            self.decay.last_trigger_ts = time.time()
+        else:  # first falling edge of burst
+            self.decay.start_decay()  # starts timer only once
 
         return state_edge
 
