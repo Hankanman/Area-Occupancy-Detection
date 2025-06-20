@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 import time
 from typing import Any
 
@@ -18,24 +17,27 @@ class Decay:
     half_life: float = DEFAULT_HALF_LIFE  # purpose-based half-life
     is_decaying: bool = False
 
-    def update_half_life(self, new_half_life: float) -> None:
-        """Update the half-life value."""
-        self.half_life = new_half_life
-
     @property
     def decay_factor(self) -> float:
-        """Freshness of the last motion event in [0,1]."""
+        """Freshness of last motion edge ∈[0,1]; auto-stops below 5 %."""
         if not self.is_decaying:
             return 1.0
         age = time.time() - self.last_trigger_ts
-        if age <= 0:
-            return 1.0
-        factor = math.pow(0.5, age / self.half_life)
-        # Auto-stop decay when factor becomes negligible
-        if factor < 0.05:
+        factor = 0.5 ** (age / self.half_life)
+        if factor < 0.05:  # practical zero
             self.is_decaying = False
             return 0.0
         return factor
+
+    def start_decay(self) -> None:
+        """Begin decay **only if not already running**."""
+        if not self.is_decaying:
+            self.is_decaying = True
+            self.last_trigger_ts = time.time()
+
+    def update_half_life(self, new_half_life: float) -> None:
+        """Update the half-life value."""
+        self.half_life = new_half_life
 
     def to_dict(self) -> dict[str, Any]:
         """Convert decay to dictionary for storage."""

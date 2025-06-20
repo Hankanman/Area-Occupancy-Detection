@@ -798,6 +798,15 @@ def mock_decay() -> Mock:
     decay.should_start_decay.return_value = False
     decay.should_stop_decay.return_value = False
     decay.is_decay_complete.return_value = False
+
+    # Add side effect for start_decay to properly simulate behavior
+    def start_decay_side_effect():
+        if not decay.is_decaying:
+            decay.is_decaying = True
+            decay.last_trigger_ts = time.time()
+
+    decay.start_decay.side_effect = start_decay_side_effect
+
     decay.to_dict.return_value = {
         "last_trigger_ts": time.time(),
         "half_life": 60.0,
