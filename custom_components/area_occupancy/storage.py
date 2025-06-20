@@ -161,3 +161,11 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 last_updated=data.get("last_updated"),
                 entities=data.get("entities", {}),
             )
+
+    async def async_reset(self) -> None:
+        """Reset storage by removing all stored data."""
+        _LOGGER.info(
+            "Resetting storage for entry %s",
+            self._coordinator.entry_id,
+        )
+        await self.async_remove()

@@ -1,7 +1,7 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
@@ -11,10 +11,13 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 
+if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_coordinator(hass: HomeAssistant, entry_id: str):
+def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordinator":
     """Get coordinator from entry_id with error handling."""
     for entry in hass.config_entries.async_entries(DOMAIN):
         if entry.entry_id == entry_id:
@@ -46,7 +49,6 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
         priors_data = {}
         for entity_id, entity in coordinator.entities.entities.items():
             priors_data[entity_id] = {
-                "prior": entity.prior.prior,
                 "prob_given_true": entity.prior.prob_given_true,
                 "prob_given_false": entity.prior.prob_given_false,
                 "entity_type": entity.type.input_type.value,
@@ -81,7 +83,7 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall):
 
         # Clear storage if requested
         if call.data.get("clear_storage", False):
-            await coordinator.storage.async_reset()
+            await coordinator.store.async_reset()
 
         await coordinator.async_refresh()
 
@@ -178,9 +180,6 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
                     "probability": entity.probability,
                     "decay_factor": entity.decay.decay_factor,
                     "is_decaying": entity.decay.is_decaying,
-                    "decay_start_time": entity.decay.decay_start_time.isoformat()
-                    if entity.decay.decay_start_time
-                    else None,
                     "entity_type": {
                         "input_type": entity.type.input_type.value,
                         "weight": entity.type.weight,
@@ -191,10 +190,8 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
                         "active_range": entity.type.active_range,
                     },
                     "prior": {
-                        "prior": entity.prior.prior,
                         "prob_given_true": entity.prior.prob_given_true,
                         "prob_given_false": entity.prior.prob_given_false,
-                        "last_updated": entity.prior.last_updated.isoformat(),
                     },
                 }
             except ValueError:
@@ -227,7 +224,7 @@ async def _force_entity_update(hass: HomeAssistant, call: ServiceCall):
         for entity_id in entity_ids:
             try:
                 entity = entities.get_entity(entity_id)
-                await entity.async_update()
+                entity.update_probability()
                 updated_count += 1
             except ValueError:
                 _LOGGER.warning("Entity %s not found for forced update", entity_id)
