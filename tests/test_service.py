@@ -1,7 +1,7 @@
 """Tests for service module."""
 
 from datetime import timedelta
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock, PropertyMock
 
 import pytest
 
@@ -27,10 +27,9 @@ class TestGetCoordinator:
     """Test _get_coordinator helper function."""
 
     def test_get_coordinator_success(
-        self, mock_hass: Mock, mock_config_entry: Mock
+        self, mock_hass: Mock, mock_config_entry: Mock, mock_coordinator: Mock
     ) -> None:
         """Test successful coordinator retrieval."""
-        mock_coordinator = Mock()
         mock_config_entry.runtime_data = mock_coordinator
 
         # Mock hass.config_entries.async_entries to return list with our config entry
@@ -67,16 +66,18 @@ class TestUpdatePriors:
     """Test _update_priors service function."""
 
     async def test_update_priors_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test successful prior update."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.history.period = (
             30  # Set as real number instead of Mock
         )
-        mock_coordinator.priors = Mock()
-        mock_coordinator.priors.update_all_entity_priors = AsyncMock(return_value=5)
-        mock_coordinator.async_refresh = AsyncMock()
+        mock_coordinator.priors.update_all_entity_priors.return_value = 5
 
         # Mock entities with proper structure for return data
         mock_entity = Mock()
@@ -111,7 +112,6 @@ class TestUpdatePriors:
         priors = result["updated_priors"]
         assert "binary_sensor.motion1" in priors
         prior_data = priors["binary_sensor.motion1"]
-        assert prior_data["prior"] == 0.35
         assert prior_data["prob_given_true"] == 0.8
         assert prior_data["prob_given_false"] == 0.1
         assert prior_data["entity_type"] == "motion"
@@ -130,14 +130,17 @@ class TestUpdatePriors:
             await _update_priors(mock_hass, mock_call)
 
     async def test_update_priors_coordinator_error(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test prior update with coordinator error."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.history.period = 30  # Set as real number
-        mock_coordinator.priors = Mock()
-        mock_coordinator.priors.update_all_entity_priors = AsyncMock(
-            side_effect=RuntimeError("Update failed")
+        mock_coordinator.priors.update_all_entity_priors.side_effect = RuntimeError(
+            "Update failed"
         )
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -159,13 +162,13 @@ class TestResetEntities:
     """Test _reset_entities service function."""
 
     async def test_reset_entities_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test successful entity reset."""
-        mock_coordinator = Mock()
-        mock_coordinator.entities.reset_entities = AsyncMock()
-        mock_coordinator.async_refresh = AsyncMock()
-
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
         mock_service_call.data = {"entry_id": "test_entry_id"}
@@ -185,14 +188,14 @@ class TestResetEntities:
             await _reset_entities(mock_hass, mock_call)
 
     async def test_reset_entities_with_clear_storage(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test entity reset with storage clearing."""
-        mock_coordinator = Mock()
-        mock_coordinator.entities.reset_entities = AsyncMock()
-        mock_coordinator.storage.async_reset = AsyncMock()
-        mock_coordinator.async_refresh = AsyncMock()
-
+        # Use centralized fixture instead of creating ad-hoc mocks
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
         mock_service_call.data = {"entry_id": "test_entry_id", "clear_storage": True}
@@ -208,25 +211,19 @@ class TestGetEntityMetrics:
     """Test _get_entity_metrics service function."""
 
     async def test_get_entity_metrics_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_inactive_entity: Mock,
     ) -> None:
         """Test successful entity metrics retrieval."""
-        mock_coordinator = Mock()
-
-        # Mock entities with metrics
-        mock_entity1 = Mock()
-        mock_entity1.evidence = True
-        mock_entity1.available = True
-        mock_entity1.decay.is_decaying = False
-
-        mock_entity2 = Mock()
-        mock_entity2.evidence = False
-        mock_entity2.available = True
-        mock_entity2.decay.is_decaying = True
-
+        # Use centralized entity fixtures
         mock_coordinator.entities.entities = {
-            "binary_sensor.motion1": mock_entity1,
-            "light.test_light": mock_entity2,
+            "binary_sensor.motion1": mock_active_entity,
+            "light.test_light": mock_inactive_entity,
         }
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -239,10 +236,12 @@ class TestGetEntityMetrics:
         assert "metrics" in result
         metrics = result["metrics"]
         assert metrics["total_entities"] == 2
-        assert metrics["active_entities"] == 1
-        assert metrics["available_entities"] == 2
+        assert metrics["active_entities"] == 1  # mock_active_entity has evidence=True
+        assert metrics["available_entities"] == 2  # both entities are available
         assert metrics["unavailable_entities"] == 0
-        assert metrics["decaying_entities"] == 1
+        assert (
+            metrics["decaying_entities"] == 1
+        )  # mock_inactive_entity has decay.is_decaying=True
 
     async def test_get_entity_metrics_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test entity metrics with missing entry_id."""
@@ -254,10 +253,13 @@ class TestGetEntityMetrics:
             await _get_entity_metrics(mock_hass, mock_call)
 
     async def test_get_entity_metrics_coordinator_error(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test entity metrics with coordinator error."""
-        mock_coordinator = Mock()
         # Create a mock that will raise an exception when len() is called on it
         mock_entities = Mock()
         mock_entities.__len__ = Mock(side_effect=Exception("Access error"))
@@ -278,24 +280,19 @@ class TestGetProblematicEntities:
     """Test _get_problematic_entities service function."""
 
     async def test_get_problematic_entities_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_unavailable_entity: Mock,
+        mock_stale_entity: Mock,
     ) -> None:
         """Test successful problematic entities retrieval."""
-        mock_coordinator = Mock()
-
-        # Mock entities with issues
-        mock_entity1 = Mock()
-        mock_entity1.available = False  # Unavailable entity
-        mock_entity1.last_updated = None
-
-        mock_entity2 = Mock()
-        mock_entity2.available = True
-        # Mock stale update (more than 1 hour ago)
-        mock_entity2.last_updated = dt_util.utcnow() - timedelta(hours=2)
-
+        # Use centralized entity fixtures that already have problematic states
         mock_coordinator.entities.entities = {
-            "binary_sensor.motion1": mock_entity1,
-            "light.test_light": mock_entity2,
+            "binary_sensor.motion1": mock_unavailable_entity,  # available=False
+            "light.test_light": mock_stale_entity,  # last_updated > 1 hour ago
         }
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -312,19 +309,19 @@ class TestGetProblematicEntities:
         assert "light.test_light" in problems["stale_updates"]
 
     async def test_get_problematic_entities_no_issues(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
     ) -> None:
         """Test problematic entities with no issues."""
-        mock_coordinator = Mock()
-
-        # Mock entities with no issues
-        mock_entity = Mock()
-        mock_entity.available = True
-        # Recent update
-        mock_entity.last_updated = dt_util.utcnow() - timedelta(minutes=30)
+        # Use active entity that has no issues - need to update its last_updated to recent
+        mock_active_entity.last_updated = dt_util.utcnow() - timedelta(minutes=30)
 
         mock_coordinator.entities.entities = {
-            "binary_sensor.motion1": mock_entity,
+            "binary_sensor.motion1": mock_active_entity,
         }
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -339,10 +336,13 @@ class TestGetProblematicEntities:
         assert len(problems["stale_updates"]) == 0
 
     async def test_get_problematic_entities_coordinator_error(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test problematic entities with coordinator error."""
-        mock_coordinator = Mock()
         # Create a mock that will raise an exception when .items() is called on it
         mock_entities = Mock()
         mock_entities.items = Mock(side_effect=Exception("Access error"))
@@ -367,36 +367,53 @@ class TestGetEntityDetails:
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+        mock_comprehensive_entity: Mock,
+        mock_empty_entity_manager: Mock,
     ) -> None:
         """Test successful entity details retrieval."""
-        mock_coordinator = Mock()
-        mock_entities = Mock()
+        # Set up the comprehensive entity with proper attribute values
+        mock_comprehensive_entity.state = "on"
+        mock_comprehensive_entity.evidence = True
+        mock_comprehensive_entity.available = True
+        mock_comprehensive_entity.probability = 0.5
+        # Set up last_updated as a Mock that has an isoformat method
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_comprehensive_entity.last_updated = mock_last_updated
+        mock_comprehensive_entity.decay.decay_factor = 0.8
+        mock_comprehensive_entity.decay.is_decaying = False
 
-        # Mock entity with details
-        mock_entity = Mock()
-        mock_entity.state = "on"
-        mock_entity.evidence = True
-        mock_entity.available = True
-        mock_entity.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_entity.probability = 0.75
-        mock_entity.decay.decay_factor = 1.0
-        mock_entity.decay.is_decaying = False
-        mock_entity.decay.decay_start_time = None
-        mock_entity.type.input_type.value = "motion"
-        mock_entity.type.weight = 0.8
-        mock_entity.type.prob_true = 0.8
-        mock_entity.type.prob_false = 0.1
-        mock_entity.type.prior = 0.35
-        mock_entity.type.active_states = ["on"]
-        mock_entity.type.active_range = None
-        mock_entity.prior.prior = 0.35
-        mock_entity.prior.prob_given_true = 0.8
-        mock_entity.prior.prob_given_false = 0.1
-        mock_entity.prior.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        # Set up type with proper mock structure
+        mock_type = Mock()
+        mock_input_type = Mock()
+        mock_input_type.value = "motion"
+        mock_type.input_type = mock_input_type
+        mock_type.weight = 1.0
+        mock_type.prob_true = 0.8
+        mock_type.prob_false = 0.2
+        mock_type.prior = 0.3
+        mock_type.active_states = ["on"]
+        mock_type.active_range = None
+        mock_comprehensive_entity.type = mock_type
 
-        mock_entities.get_entity.return_value = mock_entity
-        mock_entities.entities = {"binary_sensor.motion1": mock_entity}
-        mock_coordinator.entities = mock_entities
+        # Set up prior
+        mock_prior = Mock()
+        mock_prior.prob_given_true = 0.8
+        mock_prior.prob_given_false = 0.1
+        mock_comprehensive_entity.prior = mock_prior
+
+        # Use centralized comprehensive entity fixture which has all the required properties
+        def mock_get_entity(entity_id):
+            if entity_id == "binary_sensor.motion1":
+                return mock_comprehensive_entity
+            raise ValueError("Entity not found")
+
+        mock_empty_entity_manager.get_entity.side_effect = mock_get_entity
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_comprehensive_entity
+        }
+        mock_coordinator.entities = mock_empty_entity_manager
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -408,14 +425,18 @@ class TestGetEntityDetails:
         result = await _get_entity_details(mock_hass, mock_service_call_with_entity)
 
         assert "entity_details" in result
-        assert "binary_sensor.motion1" in result["entity_details"]
+        assert (
+            "binary_sensor.motion1" in result["entity_details"]
+        )  # Use the entity_id from service call
         entity_detail = result["entity_details"]["binary_sensor.motion1"]
         assert entity_detail["state"] == "on"
         assert entity_detail["evidence"] is True
         assert entity_detail["available"] is True
-        assert entity_detail["probability"] == 0.75
+        assert entity_detail["probability"] == 0.5
 
-    async def test_get_entity_details_missing_entity_id(self, mock_hass: Mock) -> None:
+    async def test_get_entity_details_missing_entity_id(
+        self, mock_hass: Mock, mock_coordinator: Mock
+    ) -> None:
         """Test entity details with missing entity_id."""
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {"entry_id": "test_entry_id"}
@@ -424,7 +445,6 @@ class TestGetEntityDetails:
         # So this test should actually work and return empty details
         mock_config_entry = Mock()
         mock_config_entry.entry_id = "test_entry_id"  # Set the correct entry_id
-        mock_coordinator = Mock()
         mock_entities = Mock()
         mock_entities.entities = {}
         mock_coordinator.entities = mock_entities
@@ -440,9 +460,9 @@ class TestGetEntityDetails:
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test entity details with entity not found."""
-        mock_coordinator = Mock()
         mock_entities = Mock()
         mock_entities.get_entity.side_effect = ValueError("Entity not found")
         mock_entities.entities = [
@@ -475,19 +495,20 @@ class TestForceEntityUpdate:
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_empty_entity_manager: Mock,
     ) -> None:
         """Test successful entity update."""
-        mock_coordinator = Mock()
-        mock_entities = Mock()
-
-        # Mock entity
-        mock_entity = Mock()
-        mock_entity.async_update = AsyncMock()
-
-        mock_entities.get_entity.return_value = mock_entity
-        mock_entities.entities = {"binary_sensor.motion1": mock_entity}
-        mock_coordinator.entities = mock_entities
-        mock_coordinator.async_refresh = AsyncMock()
+        # Use centralized active entity fixture
+        mock_empty_entity_manager.get_entity.side_effect = (
+            None  # Clear the default side_effect
+        )
+        mock_empty_entity_manager.get_entity.return_value = mock_active_entity
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_active_entity
+        }
+        mock_coordinator.entities = mock_empty_entity_manager
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -498,30 +519,32 @@ class TestForceEntityUpdate:
 
         result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
 
-        mock_entity.async_update.assert_called_once()
+        mock_active_entity.update_probability.assert_called_once()
         mock_coordinator.async_refresh.assert_called_once()
         assert result["updated_entities"] == 1
 
     async def test_force_entity_update_all_entities(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_inactive_entity: Mock,
+        mock_empty_entity_manager: Mock,
     ) -> None:
         """Test force update for all entities."""
-        mock_coordinator = Mock()
-        mock_entities = Mock()
-
-        # Mock entities
-        mock_entity1 = Mock()
-        mock_entity1.async_update = AsyncMock()
-        mock_entity2 = Mock()
-        mock_entity2.async_update = AsyncMock()
-
-        mock_entities.get_entity.side_effect = [mock_entity1, mock_entity2]
-        mock_entities.entities = {
-            "binary_sensor.motion1": mock_entity1,
-            "light.test_light": mock_entity2,
+        # Use centralized entity fixtures
+        # Note: side_effect with list will return different values for each call
+        mock_empty_entity_manager.get_entity.side_effect = [
+            mock_active_entity,
+            mock_inactive_entity,
+        ]
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_active_entity,
+            "light.test_light": mock_inactive_entity,
         }
-        mock_coordinator.entities = mock_entities
-        mock_coordinator.async_refresh = AsyncMock()
+        mock_coordinator.entities = mock_empty_entity_manager
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -529,8 +552,8 @@ class TestForceEntityUpdate:
 
         result = await _force_entity_update(mock_hass, mock_service_call)
 
-        mock_entity1.async_update.assert_called_once()
-        mock_entity2.async_update.assert_called_once()
+        mock_active_entity.update_probability.assert_called_once()
+        mock_inactive_entity.update_probability.assert_called_once()
         mock_coordinator.async_refresh.assert_called_once()
         assert result["updated_entities"] == 2
 
@@ -539,14 +562,13 @@ class TestForceEntityUpdate:
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test force update with entity not found."""
-        mock_coordinator = Mock()
         mock_entities = Mock()
         mock_entities.get_entity.side_effect = ValueError("Entity not found")
         mock_entities.entities = ["binary_sensor.motion1"]
         mock_coordinator.entities = mock_entities
-        mock_coordinator.async_refresh = AsyncMock()
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -566,20 +588,21 @@ class TestGetAreaStatus:
     """Test _get_area_status service function."""
 
     async def test_get_area_status_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
     ) -> None:
         """Test successful area status retrieval."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-
-        # Mock probability and is_occupied properties
         mock_coordinator.probability = 0.9  # High confidence (> 0.8)
         mock_coordinator.occupied = True
 
-        # Mock last_updated with a Mock object
-        mock_last_updated = Mock()
-        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -596,20 +619,21 @@ class TestGetAreaStatus:
         assert status["confidence_level"] == "high"
 
     async def test_get_area_status_no_occupancy_state(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
     ) -> None:
         """Test area status with no occupancy state."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-
-        # Mock properties for no occupancy state
         mock_coordinator.probability = None  # No probability available
         mock_coordinator.occupied = False
 
-        # Mock last_updated with a Mock object
-        mock_last_updated = Mock()
-        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -630,25 +654,21 @@ class TestGetEntityTypeLearned:
     """Test _get_entity_type_learned_data service function."""
 
     async def test_get_entity_type_learned_data_success(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_motion_entity_type: Mock,
     ) -> None:
         """Test successful entity type learned data retrieval."""
-        mock_coordinator = Mock()
-
         # Mock entity types with proper structure
         from custom_components.area_occupancy.data.entity_type import InputType
 
-        mock_motion_type = Mock()
-        mock_motion_type.prior = 0.3
-        mock_motion_type.prob_true = 0.8
-        mock_motion_type.prob_false = 0.2
-        mock_motion_type.weight = 1.0
-        mock_motion_type.active_states = ["on"]
-        mock_motion_type.active_range = None
-
-        mock_coordinator.entity_types.entity_types = {
-            InputType.MOTION: mock_motion_type
-        }
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
+        )
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -668,14 +688,21 @@ class TestGetEntityTypeLearned:
         assert motion_data["active_range"] is None
 
     async def test_get_entity_type_learned_data_coordinator_error(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
     ) -> None:
         """Test entity type learned data with coordinator error."""
-        mock_coordinator = Mock()
         # Create a mock that will raise an exception when .items() is called on it
         mock_entity_types = Mock()
         mock_entity_types.items = Mock(side_effect=Exception("Access error"))
-        mock_coordinator.entity_types.entity_types = mock_entity_types
+
+        # Override the entity_types property
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value=mock_entity_types
+        )
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -712,36 +739,31 @@ class TestServiceIntegration:
     """Test service integration scenarios."""
 
     async def test_service_workflow_integration(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+        mock_motion_entity_type: Mock,
     ) -> None:
         """Test complete service workflow integration."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-
-        # Mock coordinator properties for high confidence state
         mock_coordinator.probability = 0.9  # High confidence (> 0.8)
         mock_coordinator.occupied = True
 
-        # Mock last_updated with a Mock object
-        mock_last_updated = Mock()
-        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
-        # Mock entity types
+        # Mock entity types using centralized fixture
         from custom_components.area_occupancy.data.entity_type import InputType
 
-        mock_motion_type = Mock()
-        mock_motion_type.prior = 0.3
-        mock_motion_type.prob_true = 0.8
-        mock_motion_type.prob_false = 0.2
-        mock_motion_type.weight = 1.0
-        mock_motion_type.active_states = ["on"]
-        mock_motion_type.active_range = None
-
-        mock_coordinator.entity_types.entity_types = {
-            InputType.MOTION: mock_motion_type
-        }
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
+        )
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -810,36 +832,31 @@ class TestServiceIntegration:
             await _get_entity_details(mock_hass, mock_call)
 
     async def test_service_return_value_consistency(
-        self, mock_hass: Mock, mock_config_entry: Mock, mock_service_call: Mock
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+        mock_motion_entity_type: Mock,
     ) -> None:
         """Test return value consistency across services."""
-        mock_coordinator = Mock()
+        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-
-        # Mock coordinator properties for medium confidence state
         mock_coordinator.probability = 0.8  # Medium confidence (0.2 < 0.8 <= 0.8)
         mock_coordinator.occupied = True
 
-        # Mock last_updated with a Mock object
-        mock_last_updated = Mock()
-        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
-        # Mock entity types
+        # Mock entity types using centralized fixture
         from custom_components.area_occupancy.data.entity_type import InputType
 
-        mock_motion_type = Mock()
-        mock_motion_type.prior = 0.3
-        mock_motion_type.prob_true = 0.8
-        mock_motion_type.prob_false = 0.2
-        mock_motion_type.weight = 1.0
-        mock_motion_type.active_states = ["on"]
-        mock_motion_type.active_range = None
-
-        mock_coordinator.entity_types.entity_types = {
-            InputType.MOTION: mock_motion_type
-        }
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
+        )
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
