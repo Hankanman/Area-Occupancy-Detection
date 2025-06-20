@@ -1,4 +1,6 @@
-"""Utility functions for the area occupancy component."""
+"""Utility functions for the Area Occupancy component."""
+
+from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -16,143 +18,104 @@ from .const import (
 if TYPE_CHECKING:
     from .data.entity import Entity
 
-#################################
-# Validation Methods
-#################################
 
-
+# ───────────────────────────────────────── Validation ────────────────────────
 def validate_prob(value: float) -> float:
-    """Validate a probability value."""
+    """Validate probability value."""
     return max(0.001, min(value, 1.0))
 
 
 def validate_prior(value: float) -> float:
-    """Validate a prior value."""
+    """Validate prior probability value."""
     return max(0.001, min(value, 1.0))
 
 
 def validate_datetime(value: datetime | None) -> datetime:
-    """Validate a datetime value."""
-    if not isinstance(value, datetime):
-        return dt_util.utcnow()
-    return value
+    """Validate datetime value."""
+    return value if isinstance(value, datetime) else dt_util.utcnow()
 
 
 def validate_weight(value: float) -> float:
-    """Validate a weight value."""
+    """Validate weight value."""
     return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
 
 
 def validate_decay_factor(value: float) -> float:
-    """Validate a decay factor value."""
+    """Validate decay factor value."""
     return max(MIN_PROBABILITY, min(value, MAX_PROBABILITY))
 
 
 def format_float(value: float) -> float:
-    """Format float to consistently show 2 decimal places."""
+    """Format float value."""
     return round(float(value), ROUNDING_PRECISION)
 
 
 EPS = 1e-12
 
 
+# ────────────────────────────────────── Core Bayes ───────────────────────────
 def bayesian_probability(
+    *,  # keyword-only → prevents accidental positional mix-ups
     prior: float,
     prob_given_true: float,
     prob_given_false: float,
     evidence: bool | None,
-    weight: float = 1.0,
-    decay_factor: float = 1.0,
+    weight: float,
+    decay_factor: float,
 ) -> float:
-    """Calculate Bayesian posterior probability.
-
-    This function computes the posterior probability using Bayes' theorem with
-    weighted evidence and decay factors.
+    """Fractional-power odds-space Bayesian update.
 
     Args:
-        prior: Prior probability [0,1]
-        prob_given_true: P(sensor=ON | area=occupied) [0,1]
-        prob_given_false: P(sensor=ON | area=unoccupied) [0,1]
-        evidence: Current sensor state (True=ON, False=OFF, None=no change)
-        weight: Evidence weight multiplier [0,1] (default: 1.0)
-        decay_factor: Time-based decay factor [0,1] (default: 1.0)
+        prior: Prior probability
+        prob_given_true: Probability of evidence given true
+        prob_given_false: Probability of evidence given false
+        evidence: Evidence
+        weight: Weight
+        decay_factor: Decay factor
 
     Returns:
-        Posterior probability [0,1]
+        Posterior probability
 
     """
-    # Validate all inputs to ensure they're in valid ranges
-    prior = max(MIN_PROBABILITY, min(prior, MAX_PROBABILITY))
-    prob_given_true = max(MIN_PROBABILITY, min(prob_given_true, MAX_PROBABILITY))
-    prob_given_false = max(MIN_PROBABILITY, min(prob_given_false, MAX_PROBABILITY))
-    weight = max(0.0, min(weight, 1.0))
-    decay_factor = max(0.0, min(decay_factor, 1.0))
-
-    # No update if no evidence, zero weight, or zero decay
-    if evidence is None or weight == 0.0 or decay_factor == 0.0:
+    if evidence is None or weight == 0 or decay_factor == 0:
         return prior
 
-    # Apply weight and decay to the evidence strength
-    effective_weight = weight * decay_factor
+    # Calculate Bayes factor
+    bayes_factor = (
+        (prob_given_true + EPS) / (prob_given_false + EPS)
+        if evidence
+        else (1 - prob_given_true + EPS) / (1 - prob_given_false + EPS)
+    )
 
-    # Choose likelihood based on evidence
-    if evidence:
-        # P(sensor=ON | area=occupied)
-        likelihood = prob_given_true
-        # P(sensor=ON | area=unoccupied)
-        likelihood_complement = prob_given_false
-    else:
-        # P(sensor=OFF | area=occupied) = 1 - P(sensor=ON | area=occupied)
-        likelihood = 1.0 - prob_given_true
-        # P(sensor=OFF | area=unoccupied) = 1 - P(sensor=ON | area=unoccupied)
-        likelihood_complement = 1.0 - prob_given_false
+    # Apply weight and decay factor
+    bayes_factor **= weight * decay_factor
 
-    # Calculate marginal probability P(evidence)
-    evidence_prob = likelihood * prior + likelihood_complement * (1.0 - prior)
+    # Calculate posterior odds
+    odds = prior / (1.0 - prior + EPS)
+    posterior_odds = odds * bayes_factor
 
-    # Avoid division by zero
-    if evidence_prob <= EPS:
-        return prior
-
-    # Standard Bayesian update: P(occupied | evidence) = P(evidence | occupied) * P(occupied) / P(evidence)
-    posterior_full = (likelihood * prior) / evidence_prob
-
-    # Apply weighting: interpolate between prior and full Bayesian update
-    if effective_weight < 1.0:
-        posterior = prior + effective_weight * (posterior_full - prior)
-    else:
-        posterior = posterior_full
-
-    # Ensure result is in valid probability range
-    return max(MIN_PROBABILITY, min(posterior, MAX_PROBABILITY))
+    # Return posterior probability
+    return posterior_odds / (1.0 + posterior_odds)
 
 
-def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
-    """Calculate new probability using Bayesian inference based on current observations.
-
-    This method implements Bayes' theorem to update probabilities based on observations.
-    For each observation, it:
-    1. Checks if the observation is True/False/None
-    2. Updates the prior probability using the observation's conditional probabilities
-    3. Handles None cases by skipping the update
-
-    The calculation uses:
-    - Prior probability (initial belief)
-    - P(Data|Hypothesis) - probability of observation given hypothesis is true
-    - P(Data|~Hypothesis) - probability of observation given hypothesis is false
+# ─────────────────────────────── Area-level fusion ───────────────────────────
+def overall_probability(
+    entities: dict[str, Entity],
+    prior: float,
+) -> float:
+    """Combine current beliefs of all entities into one room posterior.
 
     Args:
-        entities: Dictionary of entities with observations
+        entities: Dictionary of entities
         prior: Prior probability
 
     Returns:
-        float: The updated probability (posterior) after considering all observations
+        Posterior probability
 
     """
     posterior = prior
-
     for e in entities.values():
-        # Observation state --------------------------------------------------
+        # Calculate observed evidence
         observed = (
             True
             if e.evidence or e.decay.is_decaying
@@ -161,18 +124,13 @@ def overall_probability(entities: dict[str, "Entity"], prior: float) -> float:
             else None
         )
 
-        # Effective parameters ----------------------------------------------
-        w = e.type.weight  # static sensor importance
-        df = e.decay.decay_factor if e.decay.is_decaying else 1.0
-
-        # Bayesian fusion ----------------------------------------------------
+        # Update posterior probability
         posterior = bayesian_probability(
             prior=posterior,
             prob_given_true=e.prior.prob_given_true,
             prob_given_false=e.prior.prob_given_false,
             evidence=observed,
-            weight=w,
-            decay_factor=df,
+            weight=e.type.weight,
+            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
         )
-
-    return posterior
+    return validate_prob(posterior)
