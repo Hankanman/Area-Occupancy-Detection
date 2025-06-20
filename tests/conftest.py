@@ -296,7 +296,7 @@ def mock_entity_manager() -> Mock:
     manager.add_entity = Mock()
     manager.remove_entity = Mock()
     manager.cleanup = Mock()
-    manager.reset_entities = Mock()
+    manager.reset_entities = AsyncMock()
     manager.async_initialize = AsyncMock()
 
     # Serialization method with comprehensive entity data
@@ -373,6 +373,12 @@ def mock_coordinator(
     coordinator.store.async_load = AsyncMock(return_value=None)
     coordinator.store.async_save = AsyncMock()
     coordinator.store.async_remove = AsyncMock()
+    coordinator.store.async_save_data = AsyncMock()
+    coordinator.store.async_load_data = AsyncMock(return_value=None)
+    coordinator.store.async_reset = AsyncMock()
+
+    # Add storage alias for compatibility with service calls
+    coordinator.storage = coordinator.store
 
     # Config manager
     coordinator.config_manager = Mock()
@@ -385,6 +391,7 @@ def mock_coordinator(
     coordinator.setup = AsyncMock()
     coordinator.update = AsyncMock()
     coordinator.track_entity_state_changes = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
 
     # Mock data property
     coordinator.data = {"last_updated": dt_util.utcnow().isoformat()}
@@ -510,6 +517,7 @@ def mock_storage() -> Generator[Mock]:
         store_instance.async_save = AsyncMock()
         store_instance.async_remove = AsyncMock()
         store_instance.async_delay_save = Mock()
+        store_instance.async_reset = AsyncMock()
         # Add required Store attributes
         store_instance._load_future = None
         store_instance._data = None
@@ -685,6 +693,132 @@ def create_storage_data_with_entities(entry_id: str, entities: dict) -> dict[str
 
 
 # Additional centralized fixtures for common patterns across test files
+
+
+@pytest.fixture
+def mock_active_entity() -> Mock:
+    """Create a mock entity in active state (evidence=True, available=True)."""
+    entity = Mock()
+    entity.evidence = True
+    entity.available = True
+    entity.decay = Mock()
+    entity.decay.is_decaying = False
+    entity.state = STATE_ON
+    entity.probability = 0.75
+    entity.entity_id = "binary_sensor.active_entity"
+    entity.update_probability = Mock(return_value=True)
+    entity.async_update = AsyncMock()
+    return entity
+
+
+@pytest.fixture
+def mock_inactive_entity() -> Mock:
+    """Create a mock entity in inactive state (evidence=False, available=True)."""
+    entity = Mock()
+    entity.evidence = False
+    entity.available = True
+    entity.decay = Mock()
+    entity.decay.is_decaying = True
+    entity.state = STATE_OFF
+    entity.probability = 0.25
+    entity.entity_id = "binary_sensor.inactive_entity"
+    entity.update_probability = Mock(return_value=True)
+    entity.async_update = AsyncMock()
+    return entity
+
+
+@pytest.fixture
+def mock_unavailable_entity() -> Mock:
+    """Create a mock entity in unavailable state (available=False)."""
+    entity = Mock()
+    entity.evidence = False
+    entity.available = False
+    entity.decay = Mock()
+    entity.decay.is_decaying = False
+    entity.state = None
+    entity.probability = 0.15
+    entity.entity_id = "binary_sensor.unavailable_entity"
+    entity.async_update = AsyncMock()
+    entity.last_updated = None
+    return entity
+
+
+@pytest.fixture
+def mock_stale_entity() -> Mock:
+    """Create a mock entity with stale update (> 1 hour ago)."""
+    entity = Mock()
+    entity.evidence = False
+    entity.available = True
+    entity.decay = Mock()
+    entity.decay.is_decaying = False
+    entity.state = STATE_OFF
+    entity.probability = 0.30
+    entity.entity_id = "binary_sensor.stale_entity"
+    entity.async_update = AsyncMock()
+    # Mock stale update (more than 1 hour ago)
+    entity.last_updated = dt_util.utcnow() - timedelta(hours=2)
+    return entity
+
+
+@pytest.fixture
+def mock_last_updated() -> Mock:
+    """Create a mock last_updated object with isoformat method."""
+    mock_timestamp = Mock()
+    mock_timestamp.isoformat.return_value = "2024-01-01T00:00:00"
+    return mock_timestamp
+
+
+@pytest.fixture
+def mock_motion_entity_type() -> Mock:
+    """Create a mock motion entity type with typical motion sensor properties."""
+    entity_type = Mock()
+    entity_type.prior = 0.3
+    entity_type.prob_true = 0.8
+    entity_type.prob_false = 0.2
+    entity_type.weight = 1.0
+    entity_type.active_states = ["on"]
+    entity_type.active_range = None
+    entity_type.input_type = Mock()
+    entity_type.input_type.value = "motion"
+    return entity_type
+
+
+@pytest.fixture
+def mock_entity_manager_with_states(
+    mock_active_entity: Mock,
+    mock_inactive_entity: Mock,
+    mock_unavailable_entity: Mock,
+    mock_stale_entity: Mock,
+) -> Mock:
+    """Create a mock entity manager with entities in different states."""
+    manager = Mock()
+    manager.entities = {
+        "binary_sensor.active_entity": mock_active_entity,
+        "binary_sensor.inactive_entity": mock_inactive_entity,
+        "binary_sensor.unavailable_entity": mock_unavailable_entity,
+        "binary_sensor.stale_entity": mock_stale_entity,
+    }
+    manager.get_entity = Mock(return_value=mock_active_entity)
+    return manager
+
+
+@pytest.fixture
+def mock_empty_entity_manager() -> Mock:
+    """Create a mock entity manager with no entities."""
+    manager = Mock()
+    manager.entities = {}
+    manager.get_entity = Mock(side_effect=ValueError("Entity not found"))
+    return manager
+
+
+@pytest.fixture
+def mock_entities_container() -> Mock:
+    """Create a mock entities container that can be used for coordinator.entities attribute."""
+    container = Mock()
+    container.entities = {}
+    container.get_entity = Mock(side_effect=ValueError("Entity not found"))
+    container.reset_entities = AsyncMock()
+    return container
 
 
 @pytest.fixture
@@ -1002,6 +1136,7 @@ def mock_area_occupancy_store_globally():
         mock_store.async_save = AsyncMock()
         mock_store.async_remove = AsyncMock()
         mock_store.async_delay_save = Mock()
+        mock_store.async_reset = AsyncMock()
         mock_store_class.return_value = mock_store
         yield mock_store
 
@@ -1308,6 +1443,7 @@ def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
     store.async_load = AsyncMock(return_value=mock_area_occupancy_storage_data)
     store.async_remove = AsyncMock()
     store.async_delay_save = Mock()
+    store.async_reset = AsyncMock()
     return store
 
 
