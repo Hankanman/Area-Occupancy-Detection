@@ -91,7 +91,7 @@ MOTION_STATES: Final[PlatformStates] = {
 }
 
 
-def get_state_options(platform_type: str) -> PlatformStates:
+async def get_state_options(platform_type: str) -> PlatformStates:
     """Get state options for a given platform type."""
     platform_map = {
         "door": DOOR_STATES,
@@ -104,25 +104,25 @@ def get_state_options(platform_type: str) -> PlatformStates:
     return platform_map.get(platform_type, MOTION_STATES)
 
 
-def get_friendly_state_name(platform_type: str, state: str) -> str:
+async def get_friendly_state_name(platform_type: str, state: str) -> str:
     """Get the friendly name for a state in a given platform type."""
-    states = get_state_options(platform_type)
+    states = await get_state_options(platform_type)
     for option in states["options"]:
         if option.value == state:
             return option.name
     return state
 
 
-def get_state_icon(platform_type: str, state: str) -> str | None:
+async def get_state_icon(platform_type: str, state: str) -> str | None:
     """Get the icon for a state in a given platform type."""
-    states = get_state_options(platform_type)
+    states = await get_state_options(platform_type)
     for option in states["options"]:
         if option.value == state:
             return option.icon
     return None
 
 
-def get_default_state(platform_type: str) -> str:
+async def get_default_state(platform_type: str) -> str:
     """Get the default state for a given platform type."""
-    states = get_state_options(platform_type)
+    states = await get_state_options(platform_type)
     return states["default"]

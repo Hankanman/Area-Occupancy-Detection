@@ -235,37 +235,38 @@ class TestBaseOccupancyFlow:
             flow._validate_config(invalid_config)
 
 
+@pytest.mark.asyncio
 class TestHelperFunctions:
     """Test helper functions."""
 
-    def test_get_state_select_options(self) -> None:
+    async def test_get_state_select_options(self) -> None:
         """Test _get_state_select_options function."""
         # Test door states
-        door_options = _get_state_select_options("door")
+        door_options = await _get_state_select_options("door")
         assert len(door_options) > 0
         assert all("value" in option and "label" in option for option in door_options)
 
         # Test window states
-        window_options = _get_state_select_options("window")
+        window_options = await _get_state_select_options("window")
         assert len(window_options) > 0
 
         # Test media states
-        media_options = _get_state_select_options("media")
+        media_options = await _get_state_select_options("media")
         assert len(media_options) > 0
 
         # Test appliance states
-        appliance_options = _get_state_select_options("appliance")
+        appliance_options = await _get_state_select_options("appliance")
         assert len(appliance_options) > 0
 
         # Test unknown state type
-        unknown_options = _get_state_select_options("unknown")
+        unknown_options = await _get_state_select_options("unknown")
         # Accept any non-empty list, as the implementation returns default options
         assert isinstance(unknown_options, list)
         assert all(
             "value" in option and "label" in option for option in unknown_options
         )
 
-    def test_get_include_entities(self, mock_hass, mock_entity_registry):
+    async def test_get_include_entities(self, mock_hass, mock_entity_registry):
         """Test getting include entities."""
         # Setup mock entity registry
         mock_hass.helpers.entity_registry.async_get.return_value = mock_entity_registry
@@ -323,7 +324,7 @@ class TestHelperFunctions:
         assert "binary_sensor.window_1" in result["window"]
         assert "switch.appliance_1" in result["appliance"]
 
-    def test_create_schema_defaults(self, mock_hass):
+    async def test_create_schema_defaults(self, mock_hass):
         """Test creating schema with defaults."""
         # Setup mock states
         mock_hass.states = Mock()
@@ -337,7 +338,7 @@ class TestHelperFunctions:
             mock_registry = Mock()
             mock_registry.entities = {}
             mock_er_get.return_value = mock_registry
-            schema = create_schema(mock_hass)
+            schema = await create_schema(mock_hass)
         assert isinstance(schema, dict)
         assert CONF_NAME in schema
         assert "motion" in schema
@@ -350,7 +351,7 @@ class TestHelperFunctions:
         assert "wasp_in_box" in schema
         assert "parameters" in schema
 
-    def test_create_schema_with_defaults(self, mock_hass):
+    async def test_create_schema_with_defaults(self, mock_hass):
         """Test creating schema with provided defaults."""
         # Setup mock states
         mock_hass.states = Mock()
@@ -374,7 +375,7 @@ class TestHelperFunctions:
 
             mock_registry.entities = EntitiesObj()
             mock_er_get.return_value = mock_registry
-            schema_dict = create_schema(mock_hass, defaults)
+            schema_dict = await create_schema(mock_hass, defaults)
             schema = vol.Schema(schema_dict)
             # The default value is set in the voluptuous marker, so we check by instantiating
             data = schema(
@@ -406,7 +407,7 @@ class TestHelperFunctions:
         assert "wasp_in_box" in schema_dict
         assert "parameters" in schema_dict
 
-    def test_create_schema_options_mode(self, mock_hass):
+    async def test_create_schema_options_mode(self, mock_hass):
         """Test creating schema in options mode."""
         # Setup mock states
         mock_hass.states = Mock()
@@ -420,7 +421,7 @@ class TestHelperFunctions:
             mock_registry = Mock()
             mock_registry.entities = {}
             mock_er_get.return_value = mock_registry
-            schema = create_schema(mock_hass, is_options=True)
+            schema = await create_schema(mock_hass, is_options=True)
         assert isinstance(schema, dict)
         assert CONF_NAME not in schema
         assert "purpose" in schema
@@ -435,10 +436,11 @@ class TestHelperFunctions:
         assert "parameters" in schema
 
 
+@pytest.mark.asyncio
 class TestAreaOccupancyConfigFlow:
     """Test AreaOccupancyConfigFlow class."""
 
-    def test_initialization(self) -> None:
+    async def test_initialization(self) -> None:
         """Test ConfigFlow initialization."""
         flow = AreaOccupancyConfigFlow()
 
@@ -451,7 +453,8 @@ class TestAreaOccupancyConfigFlow:
         flow.hass = mock_hass
 
         with patch(
-            "custom_components.area_occupancy.config_flow.create_schema"
+            "custom_components.area_occupancy.config_flow.create_schema",
+            new_callable=AsyncMock,
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
@@ -523,7 +526,8 @@ class TestAreaOccupancyConfigFlow:
         }
 
         with patch(
-            "custom_components.area_occupancy.config_flow.create_schema"
+            "custom_components.area_occupancy.config_flow.create_schema",
+            new_callable=AsyncMock,
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
@@ -537,6 +541,7 @@ class TestAreaOccupancyConfigFlow:
             }
 
 
+@pytest.mark.asyncio
 class TestConfigFlowIntegration:
     """Test config flow integration scenarios."""
 
@@ -547,7 +552,8 @@ class TestConfigFlowIntegration:
 
         # Step 1: Show form
         with patch(
-            "custom_components.area_occupancy.config_flow.create_schema"
+            "custom_components.area_occupancy.config_flow.create_schema",
+            new_callable=AsyncMock,
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
@@ -650,7 +656,8 @@ class TestConfigFlowIntegration:
 
             # Step 1: Show form with current values
             with patch(
-                "custom_components.area_occupancy.config_flow.create_schema"
+                "custom_components.area_occupancy.config_flow.create_schema",
+                new_callable=AsyncMock,
             ) as mock_create_schema:
                 mock_create_schema.return_value = {"test": vol.Required("test")}
 
@@ -840,7 +847,8 @@ class TestConfigFlowIntegration:
         }
 
         with patch(
-            "custom_components.area_occupancy.config_flow.create_schema"
+            "custom_components.area_occupancy.config_flow.create_schema",
+            new_callable=AsyncMock,
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
 
@@ -887,19 +895,19 @@ class TestConfigFlowIntegration:
                 "door": ["binary_sensor.door1"],
             }
 
-            schema_dict = create_schema(mock_hass)
+            schema_dict = await create_schema(mock_hass)
 
             # Verify schema was created successfully
             assert isinstance(schema_dict, dict)
             assert len(schema_dict) > 0
 
-    def test_state_options_generation(self) -> None:
+    async def test_state_options_generation(self) -> None:
         """Test state options generation for different platforms."""
         # Test all supported platforms
         platforms = ["door", "window", "media", "appliance"]
 
         for platform in platforms:
-            options = _get_state_select_options(platform)
+            options = await _get_state_select_options(platform)
             assert isinstance(options, list)
             assert len(options) > 0
 

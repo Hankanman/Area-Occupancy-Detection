@@ -115,9 +115,9 @@ DECAY_WINDOW_MIN = 60
 DECAY_WINDOW_MAX = 3600
 
 
-def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
+async def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     """Get state options for SelectSelector."""
-    states = get_state_options(state_type)
+    states = await get_state_options(state_type)
     return [
         {"value": option.value, "label": option.name} for option in states["options"]
     ]
@@ -268,12 +268,15 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_doors_section_schema(
+async def _create_doors_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
     state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the doors section."""
+    door_active_default = defaults.get(
+        CONF_DOOR_ACTIVE_STATE, await get_default_state("door")
+    )
     return vol.Schema(
         {
             vol.Optional(
@@ -287,7 +290,7 @@ def _create_doors_section_schema(
             ),
             vol.Optional(
                 CONF_DOOR_ACTIVE_STATE,
-                default=defaults.get(CONF_DOOR_ACTIVE_STATE, get_default_state("door")),
+                default=door_active_default,
             ): SelectSelector(
                 SelectSelectorConfig(
                     options=state_options,
@@ -642,7 +645,7 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def create_schema(
+async def create_schema(
     hass: HomeAssistant,
     defaults: dict[str, Any] | None = None,
     is_options: bool = False,
@@ -653,10 +656,10 @@ def create_schema(
 
     # Pre-calculate expensive lookups
     include_entities = _get_include_entities(hass)
-    door_state_options = _get_state_select_options("door")
-    media_state_options = _get_state_select_options("media")
-    window_state_options = _get_state_select_options("window")
-    appliance_state_options = _get_state_select_options("appliance")
+    door_state_options = await _get_state_select_options("door")
+    media_state_options = await _get_state_select_options("media")
+    window_state_options = await _get_state_select_options("window")
+    appliance_state_options = await _get_state_select_options("appliance")
 
     # Initialize the dictionary for the schema
     schema_dict: dict[vol.Marker, Any] = {}
@@ -680,7 +683,7 @@ def create_schema(
         {"collapsed": True},
     )
     schema_dict[vol.Required("doors")] = section(
-        _create_doors_section_schema(
+        await _create_doors_section_schema(
             defaults,
             include_entities["door"],
             cast("list[SelectOptionDict]", door_state_options),
@@ -956,9 +959,10 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
+        schema = await create_schema(self.hass, self._data)
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(create_schema(self.hass, self._data)),
+            data_schema=vol.Schema(schema),
             errors=errors,
         )
 
@@ -1079,8 +1083,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if CONF_PURPOSE not in defaults:
             defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
 
+        schema = await create_schema(self.hass, defaults, True)
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(create_schema(self.hass, defaults, True)),
+            data_schema=vol.Schema(schema),
             errors=errors,
         )
