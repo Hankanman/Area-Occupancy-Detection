@@ -87,14 +87,14 @@ class TestPurposeDefinitions:
 
     def test_purpose_half_lives(self):
         """Test that purpose half-lives match the expected values."""
-        assert PURPOSE_DEFINITIONS[AreaPurpose.PASSAGEWAY].half_life == 10.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.UTILITY].half_life == 20.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.FOOD_PREP].half_life == 30.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.EATING].half_life == 60.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.WORKING].half_life == 90.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life == 100.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life == 120.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life == 140.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.PASSAGEWAY].half_life == 60.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.UTILITY].half_life == 120.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.FOOD_PREP].half_life == 300.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.EATING].half_life == 600.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.WORKING].half_life == 600.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life == 720.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life == 900.0
+        assert PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life == 1800.0
 
     def test_get_purpose_options(self):
         """Test getting purpose options for UI."""
@@ -131,7 +131,7 @@ class TestPurposeManager:
         """Test initialization with valid purpose."""
         await purpose_manager.async_initialize()
         assert purpose_manager.current_purpose.purpose == AreaPurpose.SOCIAL
-        assert purpose_manager.half_life == 100.0
+        assert purpose_manager.half_life == 720.0
 
     @pytest.mark.asyncio
     async def test_async_initialize_with_invalid_purpose(self, mock_coordinator):
@@ -155,7 +155,7 @@ class TestPurposeManager:
         """Test getting specific purpose."""
         purpose = purpose_manager.get_purpose(AreaPurpose.WORKING)
         assert purpose.purpose == AreaPurpose.WORKING
-        assert purpose.half_life == 90.0
+        assert purpose.half_life == 600.0
 
     def test_get_all_purposes(self, purpose_manager):
         """Test getting all purposes."""
@@ -167,7 +167,7 @@ class TestPurposeManager:
         """Test setting purpose."""
         purpose_manager.set_purpose(AreaPurpose.SLEEPING)
         assert purpose_manager.current_purpose.purpose == AreaPurpose.SLEEPING
-        assert purpose_manager.half_life == 140.0
+        assert purpose_manager.half_life == 1800.0
 
     def test_cleanup(self, purpose_manager):
         """Test cleanup."""
