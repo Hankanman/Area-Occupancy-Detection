@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import AreaOccupancyCoordinator
-from .utils import format_float
+from .utils import format_float, format_percentage
 
 NAME_PRIORS_SENSOR = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
@@ -128,20 +128,30 @@ class EntitiesSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            active_entities = self.coordinator.entities.active_entities
-            inactive_entities = self.coordinator.entities.inactive_entities
             return {
                 "active": [
                     {
-                        "id": f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.probability)}",
+                        "id": {entity.entity_id},
+                        "name": {entity.name},
+                        "state": {entity.state},
+                        "effective_probability": {
+                            format_percentage(entity.effective_probability)
+                        },
+                        "probability": {format_percentage(entity.probability)},
                     }
-                    for entity in active_entities
+                    for entity in self.coordinator.entities.active_entities
                 ],
                 "inactive": [
                     {
-                        "id": f"{entity.entity_id.split('.')[1]} | {entity.state} | {format_float(entity.probability)}",
+                        "id": {entity.entity_id},
+                        "name": {entity.name},
+                        "state": {entity.state},
+                        "effective_probability": {
+                            format_percentage(entity.effective_probability)
+                        },
+                        "probability": {format_percentage(entity.probability)},
                     }
-                    for entity in inactive_entities
+                    for entity in self.coordinator.entities.inactive_entities
                 ],
             }
         except (TypeError, AttributeError, KeyError):
@@ -177,13 +187,13 @@ class DecaySensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         try:
-            active_entities = self.coordinator.entities.active_entities
             return {
-                "active": [
+                "decaying": [
                     {
-                        "id": f"{entity.entity_id.split('.')[1]} | {format_float(entity.decay.decay_factor)}",
+                        "id": {entity.entity_id},
+                        "decay": {format_percentage(entity.decay.decay_factor)},
                     }
-                    for entity in active_entities
+                    for entity in self.coordinator.entities.decaying_entities
                 ]
             }
         except (TypeError, AttributeError, KeyError):

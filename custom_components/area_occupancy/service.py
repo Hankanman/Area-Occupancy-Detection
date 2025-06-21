@@ -79,7 +79,7 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall):
         _LOGGER.info("Resetting entities for entry %s", entry_id)
 
         # Reset entities to fresh state
-        await coordinator.entities.reset_entities()
+        await coordinator.entities.cleanup()
 
         # Clear storage if requested
         if call.data.get("clear_storage", False):
@@ -220,14 +220,7 @@ async def _force_entity_update(hass: HomeAssistant, call: ServiceCall):
         if not entity_ids:
             entity_ids = list(entities.entities.keys())
 
-        updated_count = 0
-        for entity_id in entity_ids:
-            try:
-                entity = entities.get_entity(entity_id)
-                entity.update_probability()
-                updated_count += 1
-            except ValueError:
-                _LOGGER.warning("Entity %s not found for forced update", entity_id)
+        updated_count = len(entity_ids)
 
         await coordinator.async_refresh()
 
