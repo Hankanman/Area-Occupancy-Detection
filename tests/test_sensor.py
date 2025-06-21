@@ -232,26 +232,26 @@ class TestDecaySensor:
 
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
-        # Set up mock active entities with decay information
+        # Set up mock decaying entities with decay information
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
         mock_entity1.decay.decay_factor = 0.8
 
-        mock_coordinator_with_sensors.entities.active_entities = [mock_entity1]
+        mock_coordinator_with_sensors.entities.decaying_entities = [mock_entity1]
 
         sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
         attributes = sensor.extra_state_attributes
 
         # Should return the expected structure from implementation
-        assert "active" in attributes
-        assert len(attributes["active"]) == 1
+        assert "decaying" in attributes
+        assert len(attributes["decaying"]) == 1
 
     def test_extra_state_attributes_no_entity_manager(
         self, mock_coordinator: Mock
     ) -> None:
         """Test extra_state_attributes when no entity manager."""
-        # Make active_entities raise an exception to trigger the except block
-        mock_coordinator.entities.active_entities = Mock(
+        # Make decaying_entities raise an exception to trigger the except block
+        mock_coordinator.entities.decaying_entities = Mock(
             side_effect=AttributeError("No entities")
         )
         sensor = DecaySensor(mock_coordinator, "test_entry")
@@ -264,11 +264,11 @@ class TestDecaySensor:
         self, mock_coordinator: Mock
     ) -> None:
         """Test extra_state_attributes with empty entities."""
-        mock_coordinator.entities.active_entities = []
+        mock_coordinator.entities.decaying_entities = []
         sensor = DecaySensor(mock_coordinator, "test_entry")
 
         attributes = sensor.extra_state_attributes
-        assert attributes == {"active": []}
+        assert attributes == {"decaying": []}
 
 
 class TestAsyncSetupEntry:
@@ -419,32 +419,32 @@ class TestSensorIntegration:
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
         """Test decay sensor with dynamic decay state updates."""
-        # Set up mock active entities
+        # Set up mock decaying entities
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
         mock_entity1.decay.decay_factor = 0.8
 
-        mock_coordinator_with_sensors.entities.active_entities = [mock_entity1]
+        mock_coordinator_with_sensors.entities.decaying_entities = [mock_entity1]
 
         decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
 
         # Initial state
         attrs = decay_sensor.extra_state_attributes
-        assert "active" in attrs
-        assert len(attrs["active"]) == 1
+        assert "decaying" in attrs
+        assert len(attrs["decaying"]) == 1
 
         # Add another decaying entity
         mock_entity2 = Mock()
         mock_entity2.entity_id = "binary_sensor.motion2"
         mock_entity2.decay.decay_factor = 0.6
 
-        mock_coordinator_with_sensors.entities.active_entities = [
+        mock_coordinator_with_sensors.entities.decaying_entities = [
             mock_entity1,
             mock_entity2,
         ]
 
         attrs = decay_sensor.extra_state_attributes
-        assert len(attrs["active"]) == 2
+        assert len(attrs["decaying"]) == 2
 
     def test_sensor_error_handling(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test sensor error handling scenarios."""
@@ -465,7 +465,7 @@ class TestSensorIntegration:
             pass
 
         # Test decay sensor error handling
-        mock_coordinator_with_sensors.entities.active_entities = Mock(
+        mock_coordinator_with_sensors.entities.decaying_entities = Mock(
             side_effect=Exception("Test error")
         )
         attrs = decay_sensor.extra_state_attributes

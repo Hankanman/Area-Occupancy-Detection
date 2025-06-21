@@ -646,17 +646,29 @@ class TestCoordinatorAdvancedTimerManagement:
         """Test complete timer lifecycle from start to cancellation."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        # Test all timers are None initially
-        assert coordinator._global_prior_timer is None
-        assert coordinator._global_decay_timer is None
-        assert coordinator._global_storage_timer is None
-
-        # Mock timers
-        mock_timer = Mock()
-        with patch(
-            "homeassistant.helpers.event.async_track_point_in_time",
-            return_value=mock_timer,
+        # Mock entity types to prevent KeyError during shutdown
+        with (
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
+            patch(
+                "homeassistant.helpers.event.async_track_point_in_time",
+                return_value=Mock(),
+            ),
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
+            # Test all timers are None initially
+            assert coordinator._global_prior_timer is None
+            assert coordinator._global_decay_timer is None
+            assert coordinator._global_storage_timer is None
+
             # Start timers
             coordinator._start_prior_timer()
             coordinator._start_decay_timer()
@@ -667,8 +679,8 @@ class TestCoordinatorAdvancedTimerManagement:
             assert coordinator._global_decay_timer is not None
             assert coordinator._global_storage_timer is not None
 
-        # Test shutdown cancels all timers
-        await coordinator.async_shutdown()
+            # Test shutdown cancels all timers
+            await coordinator.async_shutdown()
 
         assert coordinator._global_prior_timer is None
         assert coordinator._global_decay_timer is None
@@ -727,7 +739,7 @@ class TestCoordinatorSetupScenarios:
         # Mock no stored data
         coordinator.store.async_load_data = AsyncMock(return_value=None)
         coordinator.entity_types.async_initialize = AsyncMock()
-        coordinator.entities.async_initialize = AsyncMock()
+        # EntityManager doesn't have async_initialize - __post_init__ is called automatically during creation
         coordinator.store.async_save_data = AsyncMock()
 
         with (
@@ -740,7 +752,7 @@ class TestCoordinatorSetupScenarios:
 
         # Verify initialization sequence
         coordinator.entity_types.async_initialize.assert_called_once()
-        coordinator.entities.async_initialize.assert_called_once()
+        # EntityManager.__post_init__ is called automatically during object creation, not by setup
         coordinator.store.async_save_data.assert_called_once_with(force=True)
 
     async def test_setup_with_stored_data_restoration(
@@ -777,12 +789,15 @@ class TestCoordinatorSetupScenarios:
         # Mock storage to avoid unpacking issues
         coordinator.store.async_load_data = AsyncMock(return_value=None)
 
-        # Mock entity initialization failure
-        coordinator.entities.async_initialize = AsyncMock(
-            side_effect=HomeAssistantError("Entity init failed")
-        )
-
-        with pytest.raises(ConfigEntryNotReady, match="Failed to set up coordinator"):
+        # Mock entity initialization failure - patch the actual method that can fail
+        with (
+            patch.object(
+                coordinator.entity_types,
+                "async_initialize",
+                side_effect=HomeAssistantError("Entity init failed"),
+            ),
+            pytest.raises(ConfigEntryNotReady, match="Failed to set up coordinator"),
+        ):
             await coordinator.setup()
 
     async def test_setup_storage_failure_recovery(
@@ -803,7 +818,6 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "_start_storage_timer"),
             pytest.raises(ConfigEntryNotReady),
         ):
-            # Should still raise ConfigEntryNotReady
             await coordinator.setup()
 
 
@@ -915,18 +929,32 @@ class TestCoordinatorResourceManagement:
         coordinator._global_storage_timer = Mock()
         coordinator._remove_state_listener = Mock()
 
-        # Mock super class shutdown to avoid complications
-        with patch(
-            "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
-            new=AsyncMock(),
+        # Mock entity types to prevent KeyError during shutdown
+        with (
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
+            # Mock super class shutdown to avoid complications
             await coordinator.async_shutdown()
 
-        # Verify resources were cleaned up
-        assert coordinator._global_prior_timer is None
-        assert coordinator._global_decay_timer is None
-        assert coordinator._global_storage_timer is None
-        assert coordinator._remove_state_listener is None
+            # Verify resources were cleaned up
+            assert coordinator._global_prior_timer is None
+            assert coordinator._global_decay_timer is None
+            assert coordinator._global_storage_timer is None
+            assert coordinator._remove_state_listener is None
 
     async def test_shutdown_with_none_resources(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -940,18 +968,32 @@ class TestCoordinatorResourceManagement:
         coordinator._global_storage_timer = None
         coordinator._remove_state_listener = None
 
-        with patch(
-            "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
-            new=AsyncMock(),
+        # Mock entity types to prevent KeyError during shutdown
+        with (
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
             # Should complete without errors
             await coordinator.async_shutdown()
 
-        # Verify they remain None
-        assert coordinator._global_prior_timer is None
-        assert coordinator._global_decay_timer is None
-        assert coordinator._global_storage_timer is None
-        assert coordinator._remove_state_listener is None
+            # Verify they remain None
+            assert coordinator._global_prior_timer is None
+            assert coordinator._global_decay_timer is None
+            assert coordinator._global_storage_timer is None
+            assert coordinator._remove_state_listener is None
 
 
 class TestCoordinatorIntegrationFlows:
@@ -963,19 +1005,33 @@ class TestCoordinatorIntegrationFlows:
         """Test complete coordinator lifecycle with realistic configuration."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        # Mock all required methods for setup
+        # Mock entity types to prevent KeyError during async_update_options
         with (
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
             patch.object(coordinator.entity_types, "async_initialize", new=AsyncMock()),
             patch.object(
                 coordinator.store, "async_load_data", new=AsyncMock(return_value=None)
             ),
-            patch.object(coordinator.entities, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.store, "async_save_data", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_storage_timer"),
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
             # Setup
             await coordinator.setup()
 
@@ -993,35 +1049,8 @@ class TestCoordinatorIntegrationFlows:
             # Option update
             await coordinator.async_update_options({"threshold": 0.8})
 
-        # Shutdown
-        with patch(
-            "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
-            new=AsyncMock(),
-        ):
+            # Shutdown
             await coordinator.async_shutdown()
-
-    async def test_entity_configuration_workflow_structure(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test entity configuration workflow structure."""
-        # Test that the coordinator has the necessary methods for configuration updates
-        assert hasattr(mock_coordinator, "async_update_options")
-        assert hasattr(mock_coordinator, "entities")
-        assert hasattr(mock_coordinator, "track_entity_state_changes")
-
-        # Test calling the methods doesn't raise errors
-        await mock_coordinator.async_update_options({"threshold": 0.7})
-        await mock_coordinator.track_entity_state_changes(["binary_sensor.test"])
-
-    async def test_error_handling_structure(self, mock_coordinator: Mock) -> None:
-        """Test error handling structure exists."""
-        # Test that error-prone methods exist and can be called
-        assert hasattr(mock_coordinator, "update")
-        assert hasattr(mock_coordinator, "async_update_options")
-
-        # Test methods can be called without raising errors
-        await mock_coordinator.update()
-        await mock_coordinator.async_update_options({"threshold": 0.7})
 
 
 class TestCoordinatorPerformanceScenarios:

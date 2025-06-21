@@ -113,8 +113,8 @@ class TestEntityType:
                 prior=0.35,
             )
 
-    def test_is_entity_active_with_states(self) -> None:
-        """Test EntityManager.is_entity_active method with active_states."""
+    def test_has_evidence_with_states(self) -> None:
+        """Test Entity evidence detection with active_states."""
         from custom_components.area_occupancy.data.decay import Decay
         from custom_components.area_occupancy.data.entity import Entity
         from custom_components.area_occupancy.data.prior import Prior
@@ -129,6 +129,13 @@ class TestEntityType:
             active_states=[STATE_ON],
         )
 
+        # Create mock coordinator with proper state mocking
+        mock_coordinator = Mock()
+        mock_state = Mock()
+        mock_state.state = STATE_ON
+        mock_state.attributes = {"friendly_name": "Test Sensor"}
+        mock_coordinator.hass.states.get.return_value = mock_state
+
         # Create a test entity
         test_entity = Entity(
             entity_id="binary_sensor.test",
@@ -139,14 +146,18 @@ class TestEntityType:
                 last_updated=dt_util.utcnow(),
             ),
             decay=Decay(),
-            coordinator=Mock(),
+            coordinator=mock_coordinator,
         )
 
+        # Should have evidence when state is "on"
         assert test_entity.evidence
+
+        # Change state to "off" and test again
+        mock_state.state = "off"
         assert not test_entity.evidence
 
-    def test_is_entity_active_with_range(self) -> None:
-        """Test EntityManager.is_entity_active method with active_range."""
+    def test_has_evidence_with_range(self) -> None:
+        """Test Entity evidence detection with active_range."""
         from custom_components.area_occupancy.data.decay import Decay
         from custom_components.area_occupancy.data.entity import Entity
         from custom_components.area_occupancy.data.prior import Prior
@@ -161,6 +172,13 @@ class TestEntityType:
             active_range=(0.0, 1.0),
         )
 
+        # Create mock coordinator with proper state mocking
+        mock_coordinator = Mock()
+        mock_state = Mock()
+        mock_state.state = "0.5"  # Within range
+        mock_state.attributes = {"friendly_name": "Test Sensor"}
+        mock_coordinator.hass.states.get.return_value = mock_state
+
         # Create a test entity
         test_entity = Entity(
             entity_id="sensor.test",
@@ -171,11 +189,18 @@ class TestEntityType:
                 last_updated=dt_util.utcnow(),
             ),
             decay=Decay(),
-            coordinator=Mock(),
+            coordinator=mock_coordinator,
         )
 
+        # Should have evidence when value is within range (0.0, 1.0)
         assert test_entity.evidence
+
+        # Change state to outside range
+        mock_state.state = "2.0"
         assert not test_entity.evidence
+
+        # Change state to invalid value
+        mock_state.state = "invalid"
         assert not test_entity.evidence
 
     def test_to_dict(self) -> None:

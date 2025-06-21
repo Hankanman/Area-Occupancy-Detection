@@ -290,6 +290,7 @@ def mock_entity_manager() -> Mock:
     manager.entities = {}
     manager.active_entities = []
     manager.inactive_entities = []
+    manager.decaying_entities = []
 
     # Methods
     manager.get_entity = Mock(return_value=None)
@@ -416,6 +417,25 @@ def mock_coordinator(
         "occupancy": "binary_sensor.test_area_occupancy",
         "wasp": "binary_sensor.test_area_wasp",
     }
+
+    # Mock entities manager with async methods for service tests
+    coordinator.entities.cleanup = AsyncMock()
+    coordinator.entities.reset_entities = AsyncMock()
+    coordinator.entities.async_initialize = AsyncMock()
+    coordinator.entities.async_state_changed_listener = AsyncMock()
+    coordinator.entities.initialize_states = AsyncMock()
+    coordinator.entities.create_entity = AsyncMock()
+    coordinator.entities.get_entity = Mock(
+        return_value=mock_entity_manager.get_entity.return_value
+    )
+    coordinator.entities.add_entity = Mock()
+    coordinator.entities.remove_entity = Mock()
+    coordinator.entities.is_entity_active = Mock(return_value=True)
+    coordinator.entities.entities = {}
+    coordinator.entities.active_entities = []
+    coordinator.entities.inactive_entities = []
+    coordinator.entities.decaying_entities = []
+    coordinator.entities.to_dict = Mock(return_value={"entities": {}})
 
     return coordinator
 
@@ -878,6 +898,15 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
         ),
     }
 
+    # Set up decaying entities based on is_decaying status
+    decaying_entities = [
+        entity
+        for entity in mock_coordinator.entities.entities.values()
+        if entity.decay.is_decaying
+    ]
+    mock_coordinator.entities.decaying_entities = decaying_entities
+    mock_coordinator.decaying_entities = decaying_entities  # Add both for compatibility
+
     # Note: _calculate_entity_aggregates was removed from coordinator
     # The properties calculate values directly from entities
 
@@ -1021,6 +1050,7 @@ def mock_comprehensive_entity_manager(
     manager.entity_ids = ["binary_sensor.test_motion"]
     manager.active_entities = [mock_comprehensive_entity]
     manager.inactive_entities = []
+    manager.decaying_entities = []
     manager.to_dict = Mock(
         return_value={
             "entities": {
