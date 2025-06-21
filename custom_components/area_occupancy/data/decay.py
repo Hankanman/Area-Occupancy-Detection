@@ -40,10 +40,6 @@ class Decay:
         if self.is_decaying:
             self.is_decaying = False
 
-    def update_half_life(self, new_half_life: float) -> None:
-        """Update the half-life value."""
-        self.half_life = new_half_life
-
     def to_dict(self) -> dict[str, Any]:
         """Convert decay to dictionary for storage."""
         return {

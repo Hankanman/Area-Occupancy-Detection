@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Final
 
 from homeassistant.const import (
@@ -44,7 +43,7 @@ CONF_LIGHTS: Final = "lights"
 CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
-CONF_DECAY_WINDOW: Final = "decay_window"
+CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
 CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
@@ -62,15 +61,12 @@ CONF_WEIGHT_LIGHT: Final = "weight_light"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
-# File paths and configuration
-CACHE_DURATION: Final = timedelta(hours=6)
-
 # Default values
 DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
-DEFAULT_DECAY_WINDOW: Final = 300  # seconds (5 minutes)
+DEFAULT_DECAY_HALF_LIFE: Final = 120  # seconds (2 minutes)
 DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
@@ -87,11 +83,6 @@ DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_LIGHT: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
-
-# Decay lambda - A higher value results in faster decay.
-# Original value (0.866) resulted in ~65% remaining at half decay_window.
-# Doubled value (1.733) results in ~42% remaining at half decay_window.
-DECAY_LAMBDA = 1.732867952
 
 # Safety bounds
 MIN_PROBABILITY: Final = 0.0
@@ -154,11 +145,6 @@ WASP_DEFAULT_PRIOR: Final[float] = 0.60
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
-
-# Storage constants - per-entry storage format
-# Individual storage files will be created as: {DOMAIN}.{entry_id}
-# Legacy storage key for cleanup
-LEGACY_STORAGE_KEY: Final = "area_occupancy.storage"
 
 ########################################################
 # Virtual sensor constants

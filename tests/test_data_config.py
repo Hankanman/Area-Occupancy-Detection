@@ -8,7 +8,7 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
+    CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
@@ -38,7 +38,7 @@ from custom_components.area_occupancy.const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
@@ -229,17 +229,17 @@ class TestDecay:
         decay = Decay()
 
         assert decay.enabled == DEFAULT_DECAY_ENABLED
-        assert decay.window == DEFAULT_DECAY_WINDOW
+        assert decay.half_life == DEFAULT_DECAY_HALF_LIFE
 
     def test_initialization_with_values(self) -> None:
         """Test Decay initialization with specific values."""
         decay = Decay(
             enabled=False,
-            window=600,
+            half_life=600,
         )
 
         assert decay.enabled is False
-        assert decay.window == 600
+        assert decay.half_life == 600
 
 
 class TestHistory:
@@ -390,7 +390,7 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.85,
             CONF_DECAY_ENABLED: False,
-            CONF_DECAY_WINDOW: 600,
+            CONF_DECAY_HALF_LIFE: 600,
             CONF_HISTORICAL_ANALYSIS_ENABLED: False,
             CONF_HISTORY_PERIOD: 60,
             CONF_WASP_ENABLED: True,
@@ -430,7 +430,7 @@ class TestConfig:
         assert config.weights.environmental == 0.3
         assert config.weights.wasp == 0.85
         assert config.decay.enabled is False
-        assert config.decay.window == 600
+        assert config.decay.half_life == 600
         assert config.history.enabled is False
         assert config.history.period == 60
         assert config.wasp_in_box.enabled is True

@@ -352,7 +352,7 @@ class EntityManager:
         # Create required components
         decay = Decay(
             last_trigger_ts=dt_util.utcnow().timestamp(),
-            half_life=self.config.decay.window,
+            half_life=self.config.decay.half_life,
         )
         prior = Prior(
             prob_given_true=entity_type.prob_true,

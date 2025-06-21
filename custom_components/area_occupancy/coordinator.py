@@ -174,9 +174,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.entry_id,
                 )
 
-            # Update entity decay half-lives based on purpose
-            self._update_entity_decay_half_lives()
-
             # Save current state to storage
             await self.store.async_save_data(force=True)
 
@@ -269,9 +266,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Clean up existing entity tracking and re-initialize
         await self.entities.cleanup()
-
-        # Update entity decay half-lives with new purpose
-        self._update_entity_decay_half_lives()
 
         # Re-establish entity state tracking with new entity list
         await self.track_entity_state_changes(self.entities.entity_ids)
@@ -369,9 +363,3 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Reschedule the timer
         self._start_storage_timer()
-
-    def _update_entity_decay_half_lives(self) -> None:
-        """Update entity decay half-lives based on purpose."""
-        purpose_half_life = self.purpose.half_life
-        for entity in self.entities.entities.values():
-            entity.decay.update_half_life(purpose_half_life)

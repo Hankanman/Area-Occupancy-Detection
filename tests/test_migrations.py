@@ -158,8 +158,9 @@ class TestMigratePurposeField:
 
         result = migrate_purpose_field(config)
 
-        # Should not add purpose if no sensors
-        assert CONF_PURPOSE not in result
+        # Should add default purpose even if no sensors
+        assert CONF_PURPOSE in result
+        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
 
     def test_migrate_purpose_field_other_sensors(self) -> None:
         """Test migration with other sensor types."""
@@ -176,8 +177,9 @@ class TestMigratePurposeField:
 
         result = migrate_purpose_field(config)
 
-        # Should not add purpose if sensor lists are empty
-        assert CONF_PURPOSE not in result
+        # Should add default purpose even if sensor lists are empty
+        assert CONF_PURPOSE in result
+        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
 
 
 class TestMigrateConfig:
@@ -469,14 +471,23 @@ class TestMigrationsIntegration:
 
     def test_config_migration_edge_cases(self) -> None:
         """Test config migration with various edge cases."""
-        # Empty config
+        # Empty config - now adds purpose and decay_half_life defaults
         result = migrate_config({})
-        assert result == {}
+        expected = {
+            CONF_PURPOSE: DEFAULT_PURPOSE,
+            "decay_half_life": 120,  # DEFAULT_DECAY_HALF_LIFE
+        }
+        assert result == expected
 
         # Config with only non-motion sensor data
         config = {"other_key": "value"}
         result = migrate_config(config)
-        assert result == {"other_key": "value"}
+        expected = {
+            "other_key": "value",
+            CONF_PURPOSE: DEFAULT_PURPOSE,
+            "decay_half_life": 120,  # DEFAULT_DECAY_HALF_LIFE
+        }
+        assert result == expected
 
         # Config with motion sensors but already has primary
         config = {

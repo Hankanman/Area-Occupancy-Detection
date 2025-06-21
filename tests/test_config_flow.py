@@ -17,7 +17,7 @@ from custom_components.area_occupancy.config_flow import (
 )
 from custom_components.area_occupancy.const import (
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
+    CONF_DECAY_HALF_LIFE,
     CONF_MOTION_SENSORS,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
@@ -170,10 +170,10 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
             CONF_DECAY_ENABLED: True,
-            CONF_DECAY_WINDOW: 0,  # Invalid decay window
+            CONF_DECAY_HALF_LIFE: 0,  # Invalid decay half life
         }
 
-        with pytest.raises(vol.Invalid, match="Decay window must be between"):
+        with pytest.raises(vol.Invalid, match="Decay half life must be between"):
             flow._validate_config(config)
 
     @pytest.mark.asyncio
@@ -186,10 +186,10 @@ class TestBaseOccupancyFlow:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             CONF_THRESHOLD: 60,
             CONF_DECAY_ENABLED: True,
-            CONF_DECAY_WINDOW: 0,  # Invalid decay window
+            CONF_DECAY_HALF_LIFE: 0,  # Invalid decay half life
         }
 
-        with pytest.raises(vol.Invalid, match="Decay window must be between"):
+        with pytest.raises(vol.Invalid, match="Decay half life must be between"):
             flow._validate_config(config)
 
     def test_validate_config_invalid_threshold_low(self) -> None:
@@ -490,13 +490,15 @@ class TestAreaOccupancyConfigFlow:
 
             assert result.get("type") == FlowResultType.CREATE_ENTRY
             assert result.get("title") == "Test Area"
-            assert result.get("data") == {
+            expected_data = {
                 CONF_NAME: "Test Area",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 CONF_PURPOSE: "social",
                 CONF_THRESHOLD: 60,
+                CONF_DECAY_HALF_LIFE: 720.0,  # Auto-set based on social purpose
             }
+            assert result.get("data") == expected_data
 
     async def test_async_step_user_with_invalid_input(self, mock_hass: Mock) -> None:
         """Test async_step_user with invalid user input."""
