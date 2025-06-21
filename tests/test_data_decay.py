@@ -1,6 +1,5 @@
 """Tests for the decay module."""
 
-import time
 from unittest.mock import patch
 
 from custom_components.area_occupancy.data.decay import DEFAULT_HALF_LIFE, Decay
@@ -78,68 +77,3 @@ class TestDecay:
         with patch("time.time", return_value=freeze_time.timestamp() + 1000.0):
             assert decay.decay_factor == 0.0
             assert decay.is_decaying is False
-
-    def test_should_start_decay(self) -> None:
-        """Test should_start_decay logic."""
-        decay = Decay(is_decaying=False)
-
-        # Should start decay on falling edge
-        assert decay.should_start_decay(True, False) is True
-
-        # Should not start if already decaying
-        decay.is_decaying = True
-        assert decay.should_start_decay(True, False) is False
-
-        # Should not start on rising edge
-        decay.is_decaying = False
-        assert decay.should_start_decay(False, True) is False
-
-    def test_should_stop_decay(self) -> None:
-        """Test should_stop_decay logic."""
-        decay = Decay(is_decaying=True)
-
-        # Should stop decay on rising edge
-        assert decay.should_stop_decay(False, True) is True
-
-        # Should not stop if not decaying
-        decay.is_decaying = False
-        assert decay.should_stop_decay(False, True) is False
-
-        # Should not stop on falling edge
-        decay.is_decaying = True
-        assert decay.should_stop_decay(True, False) is False
-
-    def test_is_decay_complete(self, freeze_time) -> None:
-        """Test is_decay_complete logic."""
-        decay = Decay(is_decaying=True)
-
-        # Not decaying
-        decay.is_decaying = False
-        assert decay.is_decay_complete(0.5) is True
-
-        # No trigger time
-        decay.is_decaying = True
-        decay.last_trigger_ts = 0
-        assert decay.is_decay_complete(0.5) is True
-
-        # Probability at minimum
-        decay.last_trigger_ts = time.time()
-        assert decay.is_decay_complete(0.0) is True
-
-        # Probability at practical threshold
-        assert decay.is_decay_complete(0.02) is True
-
-        # Decay factor negligible - use much longer time for new half-life
-        decay.last_trigger_ts = freeze_time.timestamp()
-        # Use 10 half-lives (720 * 10 = 7200 seconds) to ensure negligible factor
-        with patch("time.time", return_value=freeze_time.timestamp() + 7200.0):
-            assert decay.is_decay_complete(0.5) is True
-
-        # Not complete - use shorter time
-        decay.last_trigger_ts = freeze_time.timestamp()
-        decay.is_decaying = True  # Ensure decay is still active
-        # Use 0.1 half-life (72 seconds) to ensure decay is not complete
-        with patch("time.time", return_value=freeze_time.timestamp() + 72.0):
-            # Check decay factor first to ensure it's not auto-stopping
-            assert decay.decay_factor > 0.05  # Should be well above auto-stop threshold
-            assert decay.is_decay_complete(0.5) is False

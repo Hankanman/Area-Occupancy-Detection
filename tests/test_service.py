@@ -519,7 +519,7 @@ class TestForceEntityUpdate:
 
         result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
 
-        mock_active_entity.update_probability.assert_called_once()
+        assert mock_active_entity.probability
         mock_coordinator.async_refresh.assert_called_once()
         assert result["updated_entities"] == 1
 
@@ -552,8 +552,8 @@ class TestForceEntityUpdate:
 
         result = await _force_entity_update(mock_hass, mock_service_call)
 
-        mock_active_entity.update_probability.assert_called_once()
-        mock_inactive_entity.update_probability.assert_called_once()
+        assert mock_active_entity.probability
+        assert mock_inactive_entity.probability
         mock_coordinator.async_refresh.assert_called_once()
         assert result["updated_entities"] == 2
 

@@ -929,9 +929,6 @@ def mock_decay() -> Mock:
     decay.half_life = 60.0
     # Use PropertyMock for the decay_factor property
     type(decay).decay_factor = PropertyMock(return_value=1.0)
-    decay.should_start_decay.return_value = False
-    decay.should_stop_decay.return_value = False
-    decay.is_decay_complete.return_value = False
 
     # Add side effect for start_decay to properly simulate behavior
     def start_decay_side_effect():

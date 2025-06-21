@@ -11,7 +11,7 @@ from custom_components.area_occupancy.data.entity_type import (
     EntityTypeManager,
     InputType,
 )
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
 
@@ -116,7 +116,7 @@ class TestEntityType:
     def test_is_entity_active_with_states(self) -> None:
         """Test EntityManager.is_entity_active method with active_states."""
         from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity, EntityManager
+        from custom_components.area_occupancy.data.entity import Entity
         from custom_components.area_occupancy.data.prior import Prior
         from homeassistant.util import dt as dt_util
 
@@ -133,22 +133,22 @@ class TestEntityType:
         test_entity = Entity(
             entity_id="binary_sensor.test",
             type=entity_type,
-            probability=0.5,
             prior=Prior(
                 prob_given_true=0.25,
                 prob_given_false=0.05,
                 last_updated=dt_util.utcnow(),
             ),
             decay=Decay(),
+            coordinator=Mock(),
         )
 
-        assert EntityManager.is_entity_active(test_entity, STATE_ON)
-        assert not EntityManager.is_entity_active(test_entity, STATE_OFF)
+        assert test_entity.evidence
+        assert not test_entity.evidence
 
     def test_is_entity_active_with_range(self) -> None:
         """Test EntityManager.is_entity_active method with active_range."""
         from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity, EntityManager
+        from custom_components.area_occupancy.data.entity import Entity
         from custom_components.area_occupancy.data.prior import Prior
         from homeassistant.util import dt as dt_util
 
@@ -165,18 +165,18 @@ class TestEntityType:
         test_entity = Entity(
             entity_id="sensor.test",
             type=entity_type,
-            probability=0.5,
             prior=Prior(
                 prob_given_true=0.09,
                 prob_given_false=0.01,
                 last_updated=dt_util.utcnow(),
             ),
             decay=Decay(),
+            coordinator=Mock(),
         )
 
-        assert EntityManager.is_entity_active(test_entity, "0.5")
-        assert not EntityManager.is_entity_active(test_entity, "1.5")
-        assert not EntityManager.is_entity_active(test_entity, "invalid")
+        assert test_entity.evidence
+        assert not test_entity.evidence
+        assert not test_entity.evidence
 
     def test_to_dict(self) -> None:
         """Test converting EntityType to dictionary."""
