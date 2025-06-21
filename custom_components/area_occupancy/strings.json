@@ -134,14 +134,14 @@
                             "threshold": "Occupancy Threshold (%)",
                             "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_window": "Decay Window (seconds)",
+                            "decay_half_life": "Decay Half Life (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_window": "Time window over which occupancy probability decays.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }
@@ -278,14 +278,14 @@
                             "threshold": "Occupancy Threshold (%)",
                             "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_window": "Decay Window (seconds)",
+                            "decay_half_life": "Decay Half Life (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_window": "Time window over which occupancy probability decays.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }

@@ -15,6 +15,7 @@ from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
+    CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
@@ -25,13 +26,13 @@ from .const import (
     CONF_VERSION_MINOR,
     CONF_WINDOW_ACTIVE_STATE,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
-    LEGACY_STORAGE_KEY,
     PLATFORMS,
 )
 from .number import NAME_THRESHOLD_NUMBER
@@ -102,6 +103,27 @@ def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+CONF_DECAY_WINDOW_KEY = "decay_window"
+
+
+def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add decay half life."""
+    if CONF_DECAY_HALF_LIFE not in config:
+        if CONF_DECAY_WINDOW_KEY in config:
+            config[CONF_DECAY_HALF_LIFE] = config[CONF_DECAY_WINDOW_KEY]
+            config.pop(CONF_DECAY_WINDOW_KEY)
+            _LOGGER.debug(
+                "Migrated decay window to decay half life: %s",
+                config[CONF_DECAY_WINDOW_KEY],
+            )
+        else:
+            config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
+            _LOGGER.debug(
+                "Migrated decay half life to default value: %s", DEFAULT_DECAY_HALF_LIFE
+            )
+    return config
+
+
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add primary occupancy sensor.
 
@@ -137,10 +159,9 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add purpose field with default value.
 
     This migration:
-    1. Only adds purpose field if the config has sensors configured
-    2. Adds the purpose field with default value if it doesn't exist
-    3. Preserves any existing purpose setting
-    4. Logs the migration for debugging
+    1. Adds the purpose field with default value if it doesn't exist
+    2. Preserves any existing purpose setting
+    3. Logs the migration for debugging
 
     Args:
         config: The configuration to migrate
@@ -149,20 +170,8 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
         The migrated configuration
 
     """
-    # Only add purpose if there are sensors configured (similar to primary sensor logic)
-    has_sensors = (
-        config.get(CONF_MOTION_SENSORS, [])
-        or config.get("media_devices", [])
-        or config.get("appliances", [])
-        or config.get("lights", [])
-        or config.get("illuminance_sensors", [])
-        or config.get("humidity_sensors", [])
-        or config.get("temperature_sensors", [])
-        or config.get("door_sensors", [])
-        or config.get("window_sensors", [])
-    )
 
-    if CONF_PURPOSE not in config and has_sensors:
+    if CONF_PURPOSE not in config:
         config[CONF_PURPOSE] = DEFAULT_PURPOSE
         _LOGGER.debug(
             "Migrated purpose field to default value: %s",
@@ -185,7 +194,11 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     # Apply migrations in order
     config = remove_decay_min_delay(config)
     config = migrate_primary_occupancy_sensor(config)
+    config = migrate_decay_half_life(config)
     return migrate_purpose_field(config)
+
+
+LEGACY_STORAGE_KEY = "area_occupancy.storage"
 
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
@@ -208,22 +221,6 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
             except OSError as err:
                 _LOGGER.warning(
                     "Error removing legacy storage file %s: %s", legacy_file, err
-                )
-
-        # Remove any old per-entry storage files from previous versions
-        old_per_entry_file = storage_dir / f"{DOMAIN}.{entry_id}"
-        if old_per_entry_file.exists():
-            try:
-                _LOGGER.debug(
-                    "Removing old per-entry storage file: %s", old_per_entry_file
-                )
-                old_per_entry_file.unlink()
-                _LOGGER.info("Successfully removed old per-entry storage file")
-            except OSError as err:
-                _LOGGER.warning(
-                    "Error removing old per-entry storage file %s: %s",
-                    old_per_entry_file,
-                    err,
                 )
 
         _LOGGER.debug("Storage migration completed for entry %s", entry_id)

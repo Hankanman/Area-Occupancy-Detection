@@ -42,7 +42,7 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_WINDOW,
+    CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
@@ -72,7 +72,7 @@ from .const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
@@ -92,7 +92,7 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
 )
-from .data.purpose import get_purpose_options
+from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,6 +121,18 @@ def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     return [
         {"value": option.value, "label": option.name} for option in states["options"]
     ]
+
+
+def _get_default_decay_half_life(purpose: str | None = None) -> float:
+    """Get the default decay half-life based on the selected purpose."""
+    if purpose is not None:
+        try:
+            purpose_enum = AreaPurpose(purpose)
+            return PURPOSE_DEFINITIONS[purpose_enum].half_life
+        except (ValueError, KeyError):
+            pass
+    # Fallback to default purpose half-life
+    return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life
 
 
 def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
@@ -523,6 +535,13 @@ def _create_purpose_section_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the parameters section."""
+    # Get the purpose-based default for decay half-life
+    purpose = defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    purpose_based_default = _get_default_decay_half_life(purpose)
+
+    # Use the purpose-based default if no explicit value is already set
+    decay_half_life_default = defaults.get(CONF_DECAY_HALF_LIFE, purpose_based_default)
+
     return vol.Schema(
         {
             vol.Optional(
@@ -553,14 +572,14 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
             ): BooleanSelector(),
             vol.Optional(
-                CONF_DECAY_WINDOW,
-                default=defaults.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+                CONF_DECAY_HALF_LIFE,
+                default=decay_half_life_default,
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=DECAY_WINDOW_MIN,
-                    max=DECAY_WINDOW_MAX,
-                    step=DECAY_WINDOW_STEP,
-                    mode=NumberSelectorMode.SLIDER,
+                    min=10,
+                    max=3600,
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
                 ),
             ),
@@ -822,15 +841,13 @@ class BaseOccupancyFlow:
         # Validate decay settings
         decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         if decay_enabled:
-            decay_window = data.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW)
+            decay_window = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
             if (
                 not isinstance(decay_window, (int, float))
-                or decay_window < DECAY_WINDOW_MIN
-                or decay_window > DECAY_WINDOW_MAX
+                or decay_window < 10
+                or decay_window > 3600
             ):
-                raise vol.Invalid(
-                    f"Decay window must be between {DECAY_WINDOW_MIN} and {DECAY_WINDOW_MAX} seconds"
-                )
+                raise vol.Invalid("Decay half life must be between 10 and 3600 seconds")
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -888,6 +905,9 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                            flattened_input[CONF_WASP_MAX_DURATION] = value.get(
+                                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                            )
                         elif key == "purpose":
                             # Flatten purpose settings
                             flattened_input[CONF_PURPOSE] = value.get(
@@ -899,6 +919,25 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     else:
                         # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
+
+                # Auto-set decay half-life based on purpose selection
+                selected_purpose = flattened_input.get(CONF_PURPOSE)
+                if selected_purpose:
+                    # Check if user has explicitly set a decay half-life
+                    user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
+                    purpose_default = _get_default_decay_half_life(selected_purpose)
+
+                    # If no explicit decay half-life or it matches the default, use purpose-based default
+                    if (
+                        user_set_decay is None
+                        or user_set_decay == DEFAULT_DECAY_HALF_LIFE
+                    ):
+                        flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
+                        _LOGGER.debug(
+                            "Auto-setting decay half-life to %s seconds for purpose %s",
+                            purpose_default,
+                            selected_purpose,
+                        )
 
                 self._validate_config(flattened_input)
                 await self.async_set_unique_id(flattened_input.get(CONF_NAME, ""))
@@ -978,6 +1017,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                            flattened_input[CONF_WASP_MAX_DURATION] = value.get(
+                                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                            )
                         elif key == "purpose":
                             # Flatten purpose settings
                             flattened_input[CONF_PURPOSE] = value.get(
@@ -989,6 +1031,27 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                     else:
                         # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
+
+                # Auto-set decay half-life based on purpose selection
+                selected_purpose = flattened_input.get(CONF_PURPOSE)
+                if selected_purpose:
+                    # Check if user has explicitly set a decay half-life
+                    user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
+                    purpose_default = _get_default_decay_half_life(selected_purpose)
+
+                    # For options flow, also check against current config values
+                    current_decay = self.config_entry.data.get(
+                        CONF_DECAY_HALF_LIFE
+                    ) or self.config_entry.options.get(CONF_DECAY_HALF_LIFE)
+
+                    # If no explicit decay half-life or it matches the default, use purpose-based default
+                    if user_set_decay in (DEFAULT_DECAY_HALF_LIFE, current_decay):
+                        flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
+                        _LOGGER.debug(
+                            "Auto-setting decay half-life to %s seconds for purpose %s (options flow)",
+                            purpose_default,
+                            selected_purpose,
+                        )
 
                 # Add the name from existing config entry for validation
                 # (name is not changeable in options flow but needed for validation)
