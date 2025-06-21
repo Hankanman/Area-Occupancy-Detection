@@ -181,11 +181,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             # Let the coordinator know our entity_id
             self._coordinator.wasp_entity_id = self.entity_id
 
-            # Re-initialize entity manager to include wasp sensor in probability calculation
-            if self._coordinator.config.wasp_in_box.enabled:
-                _LOGGER.debug("Wasp sensor registered, re-initializing entity manager")
-                await self._coordinator.entities.async_initialize()
-
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
             _LOGGER.exception(
@@ -228,10 +223,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Clear the entity_id from coordinator and re-initialize entity manager
         if self._coordinator.wasp_entity_id == self.entity_id:
             self._coordinator.wasp_entity_id = None
-            # Re-initialize entity manager to remove wasp sensor from probability calculation
-            if self._coordinator.config.wasp_in_box.enabled:
-                _LOGGER.debug("Wasp sensor removed, re-initializing entity manager")
-                await self._coordinator.entities.async_initialize()
 
         if self._remove_state_listener is not None:
             self._remove_state_listener()
