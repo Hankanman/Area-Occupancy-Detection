@@ -91,6 +91,16 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         """
         return self.coordinator.occupied
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        active_entity_names = [
+            entity.name
+            for entity in self.coordinator.entities.active_entities
+            if entity.name
+        ]
+        return {"evidence": ", ".join(active_entity_names)}
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""

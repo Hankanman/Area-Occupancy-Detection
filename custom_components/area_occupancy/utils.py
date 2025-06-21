@@ -50,6 +50,11 @@ def format_float(value: float) -> float:
     return round(float(value), ROUNDING_PRECISION)
 
 
+def format_percentage(value: float) -> str:
+    """Format float value as percentage."""
+    return f"{value * 100:.2f}%"
+
+
 EPS = 1e-12
 
 

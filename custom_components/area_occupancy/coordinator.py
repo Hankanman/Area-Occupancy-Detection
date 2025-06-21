@@ -150,15 +150,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "wasp": self.wasp_entity_id,
         }
 
-    @property
-    def decaying_entities(self) -> list:
-        """Get list of entities currently decaying."""
-        return [
-            entity
-            for entity in self.entities.entities.values()
-            if entity.decay.is_decaying
-        ]
-
     # --- Public Methods ---
     async def setup(self) -> None:
         """Initialize the coordinator and its components."""
@@ -182,9 +173,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Successfully restored stored data for instance %s",
                     self.entry_id,
                 )
-
-            # Build Entities
-            await self.entities.async_initialize()
 
             # Update entity decay half-lives based on purpose
             self._update_entity_decay_half_lives()
@@ -254,7 +242,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.store.async_save_data(force=True)
 
         # Clean up entity manager
-        self.entities.cleanup()
+        await self.entities.cleanup()
 
         # Clean up purpose manager
         self.purpose.cleanup()
@@ -280,8 +268,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.entity_types.async_initialize()
 
         # Clean up existing entity tracking and re-initialize
-        self.entities.cleanup()
-        await self.entities.async_initialize()
+        await self.entities.cleanup()
 
         # Update entity decay half-lives with new purpose
         self._update_entity_decay_half_lives()
