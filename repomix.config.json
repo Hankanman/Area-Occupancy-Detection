@@ -22,7 +22,7 @@
       "includeDiffs": false
     }
   },
-  "include": ["custom_components/area_occupancy/**","tests/**"],
+  "include": ["custom_components/area_occupancy/**"],
   "ignore": {
     "useGitignore": true,
     "useDefaultPatterns": true,
