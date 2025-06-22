@@ -1,636 +1,544 @@
-"""Tests for data.prior module."""
+"""Tests for data.prior module - Area baseline prior calculations."""
 
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import (
-    DEFAULT_PROB_GIVEN_FALSE,
-    DEFAULT_PROB_GIVEN_TRUE,
-)
-from custom_components.area_occupancy.data.prior import (
-    Prior,
-    PriorManager,
-    TimeInterval,
-)
+from custom_components.area_occupancy.data.prior import Prior
 from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001, PLC0415
-class TestTimeInterval:
-    """Test TimeInterval TypedDict."""
-
-    def test_time_interval_structure(self) -> None:
-        """Test TimeInterval has correct structure."""
-        interval: TimeInterval = {
-            "start": dt_util.utcnow(),
-            "end": dt_util.utcnow() + timedelta(hours=1),
-            "state": STATE_ON,
-        }
-
-        assert "start" in interval
-        assert "end" in interval
-        assert "state" in interval
-        assert isinstance(interval["start"], datetime)
-        assert isinstance(interval["end"], datetime)
-        assert isinstance(interval["state"], str)
-
-
 class TestPrior:
-    """Test Prior dataclass."""
-
-    def test_initialization(self) -> None:
-        """Test Prior initialization with valid parameters."""
-        now = dt_util.utcnow()
-        prior = Prior(
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            last_updated=now,
-        )
-
-        assert prior.prob_given_true == 0.8
-        assert prior.prob_given_false == 0.1
-        assert prior.last_updated == now
-
-    def test_initialization_with_validation(self) -> None:
-        """Test initialization with invalid values that should be validated."""
-        prior = Prior(
-            prob_given_true=1.5,  # Invalid, should be clamped
-            prob_given_false=-0.1,  # Invalid, should be clamped
-            last_updated=dt_util.utcnow(),
-        )
-
-        assert prior.prob_given_true == 1.0  # Clamped to maximum
-        assert prior.prob_given_false == 0.001  # Clamped to minimum (0.001, not 0.0)
-
-    def test_initialization_with_none_datetime(self) -> None:
-        """Test initialization with None datetime."""
-        # Test with a timestamp from the past, not None
-        # The validate_datetime function handles None by returning current time
-        prior = Prior(
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            last_updated=dt_util.utcnow() - timedelta(seconds=30),
-        )
-
-        assert isinstance(prior.last_updated, datetime)
-        # Should be recent (within last minute)
-        assert (dt_util.utcnow() - prior.last_updated).total_seconds() < 60
-
-    def test_to_dict(self) -> None:
-        """Test converting Prior to dictionary."""
-        now = dt_util.utcnow()
-        prior = Prior(
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            last_updated=now,
-        )
-
-        result = prior.to_dict()
-        expected = {
-            "prob_given_true": 0.8,
-            "prob_given_false": 0.1,
-            "last_updated": now.isoformat(),
-        }
-
-        assert result == expected
-
-    def test_from_dict(self) -> None:
-        """Test creating Prior from dictionary."""
-        now = dt_util.utcnow()
-        data = {
-            "prob_given_true": 0.8,
-            "prob_given_false": 0.1,
-            "last_updated": now.isoformat(),
-        }
-
-        prior = Prior.from_dict(data)
-
-        assert prior.prob_given_true == 0.8
-        assert prior.prob_given_false == 0.1
-        assert prior.last_updated == now
-
-    def test_from_dict_with_invalid_datetime(self) -> None:
-        """Test creating Prior from dictionary with invalid datetime."""
-        data = {
-            "prob_given_true": 0.8,
-            "prob_given_false": 0.1,
-            "last_updated": "invalid_datetime",
-        }
-
-        prior = Prior.from_dict(data)
-
-        # Should handle invalid datetime gracefully
-        assert isinstance(prior.last_updated, datetime)
-
-
-class TestPriorManager:
-    """Test PriorManager class."""
+    """Test Prior class for area baseline prior calculations."""
 
     def test_initialization(self, mock_coordinator: Mock) -> None:
-        """Test PriorManager initialization."""
-        manager = PriorManager(mock_coordinator)
+        """Test Prior initialization."""
+        prior = Prior(mock_coordinator)
 
-        assert manager.coordinator == mock_coordinator
-        assert manager._priors == {}
+        assert prior.coordinator == mock_coordinator
+        assert prior.config == mock_coordinator.config
+        assert prior._area_baseline_prior is None
+        assert prior._method_used is None
 
-    def test_priors_property(self, mock_coordinator: Mock) -> None:
-        """Test priors property."""
-        manager = PriorManager(mock_coordinator)
-
-        # Initially empty
-        assert manager.priors == {}
-
-        # Add a prior
-        prior = Prior(0.8, 0.1, dt_util.utcnow())
-        manager._priors["test_entity"] = prior
-
-        assert "test_entity" in manager.priors
-        assert manager.priors["test_entity"] == prior
-
-    def test_get_prior(self, mock_coordinator: Mock) -> None:
-        """Test getting prior for entity."""
-        manager = PriorManager(mock_coordinator)
-
-        # Non-existent entity
-        assert manager.get_prior("nonexistent") is None
-
-        # Existing entity
-        prior = Prior(0.8, 0.1, dt_util.utcnow())
-        manager._priors["test_entity"] = prior
-
-        assert manager.get_prior("test_entity") == prior
-
-    def test_update_prior(self, mock_coordinator: Mock) -> None:
-        """Test updating prior for entity."""
-        manager = PriorManager(mock_coordinator)
-
-        prior = Prior(0.8, 0.1, dt_util.utcnow())
-        manager.update_prior("test_entity", prior)
-
-        assert manager.get_prior("test_entity") == prior
-
-    def test_remove_prior(self, mock_coordinator: Mock) -> None:
-        """Test removing prior for entity."""
-        manager = PriorManager(mock_coordinator)
-
-        # Add a prior
-        prior = Prior(0.8, 0.1, dt_util.utcnow())
-        manager._priors["test_entity"] = prior
-
-        # Remove it
-        manager.remove_prior("test_entity")
-
-        assert manager.get_prior("test_entity") is None
-
-    def test_clear_priors(self, mock_coordinator: Mock) -> None:
-        """Test clearing all priors."""
-        manager = PriorManager(mock_coordinator)
-
-        # Add some priors
-        prior1 = Prior(0.8, 0.1, dt_util.utcnow())
-        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
-        manager._priors["entity1"] = prior1
-        manager._priors["entity2"] = prior2
-
-        # Clear all
-        manager.clear_priors()
-
-        assert len(manager._priors) == 0
-
-    @patch("custom_components.area_occupancy.data.prior.PriorManager.calculate")
-    async def test_update_all_entity_priors(
-        self, mock_calculate: AsyncMock, mock_coordinator: Mock
+    def test_area_baseline_prior_property_no_cache(
+        self, mock_coordinator: Mock
     ) -> None:
-        """Test updating all entity priors."""
-        # Setup mock calculate responses
-        prior1 = Prior(0.8, 0.1, dt_util.utcnow())
-        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
-        mock_calculate.side_effect = [prior1, prior2]
+        """Test area_baseline_prior property returns default when no cache."""
+        from custom_components.area_occupancy.const import DEFAULT_PRIOR
 
-        # Mock the coordinator to have entities
-        mock_entity1 = Mock()
-        mock_entity1.entity_id = "entity1"
-        mock_entity2 = Mock()
-        mock_entity2.entity_id = "entity2"
-        mock_coordinator.entities.entities = {
-            "entity1": mock_entity1,
-            "entity2": mock_entity2,
-        }
+        prior = Prior(mock_coordinator)
+        result = prior.area_baseline_prior
 
-        manager = PriorManager(mock_coordinator)
+        assert result == DEFAULT_PRIOR
 
-        # Update all priors
-        updated_count = await manager.update_all_entity_priors()
-
-        assert updated_count == 2
-        assert mock_calculate.call_count == 2
-
-    @patch("custom_components.area_occupancy.data.prior.PriorManager.calculate")
-    async def test_update_all_entity_priors_with_calculation_error(
-        self, mock_calculate: AsyncMock, mock_coordinator: Mock
+    def test_area_baseline_prior_property_with_cache(
+        self, mock_coordinator: Mock
     ) -> None:
-        """Test updating all entity priors with calculation error."""
-        from homeassistant.exceptions import HomeAssistantError
+        """Test area_baseline_prior property returns cached value."""
+        prior = Prior(mock_coordinator)
+        prior._area_baseline_prior = 0.25
 
-        # Setup mock calculate to fail for first entity, succeed for second
-        prior2 = Prior(0.7, 0.2, dt_util.utcnow())
-        mock_calculate.side_effect = [HomeAssistantError("Calculation failed"), prior2]
+        result = prior.area_baseline_prior
 
-        # Mock the coordinator to have entities
-        mock_entity1 = Mock()
-        mock_entity1.entity_id = "entity1"
-        mock_entity2 = Mock()
-        mock_entity2.entity_id = "entity2"
-        mock_coordinator.entities.entities = {
-            "entity1": mock_entity1,
-            "entity2": mock_entity2,
-        }
+        assert result == 0.25
 
-        manager = PriorManager(mock_coordinator)
+    def test_method_used_property(self, mock_coordinator: Mock) -> None:
+        """Test method_used property."""
+        prior = Prior(mock_coordinator)
+        assert prior.method_used is None
 
-        # Update all priors
-        updated_count = await manager.update_all_entity_priors()
+        prior._method_used = "multi_motion_consensus"
+        assert prior.method_used == "multi_motion_consensus"
 
-        assert updated_count == 1  # Only second entity succeeded
-        assert mock_calculate.call_count == 2
+    def test_clear_cache(self, mock_coordinator: Mock) -> None:
+        """Test cache clearing."""
+        prior = Prior(mock_coordinator)
+        prior._area_baseline_prior = 0.25
+        prior._method_used = "test_method"
+
+        prior.clear_cache()
+
+        assert prior._area_baseline_prior is None
+        assert prior._method_used is None
+
+    async def test_post_init_history_enabled(self, mock_coordinator: Mock) -> None:
+        """Test __post_init__ when history is enabled."""
+        mock_coordinator.config.history.enabled = True
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "calculate_area_baseline_prior", new_callable=AsyncMock
+        ) as mock_calc:
+            await prior.__post_init__()
+            mock_calc.assert_called_once()
+
+    async def test_post_init_history_disabled(self, mock_coordinator: Mock) -> None:
+        """Test __post_init__ when history is disabled."""
+        mock_coordinator.config.history.enabled = False
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "calculate_area_baseline_prior", new_callable=AsyncMock
+        ) as mock_calc:
+            await prior.__post_init__()
+            mock_calc.assert_not_called()
+
+    async def test_default_fallback_method(self, mock_coordinator: Mock) -> None:
+        """Test default fallback when no viable method found."""
+        from custom_components.area_occupancy.const import DEFAULT_PRIOR
+
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.history.period = 7
+        mock_coordinator.config.sensors.motion = []
+        mock_coordinator.config.sensors.media = []
+        mock_coordinator.config.sensors.appliances = []
+        mock_coordinator.config.sensors.doors = []
+        mock_coordinator.config.sensors.windows = []
+        mock_coordinator.config.sensors.lights = []
+        mock_coordinator.config.sensors.illuminance = []
+        mock_coordinator.config.sensors.humidity = []
+        mock_coordinator.config.sensors.temperature = []
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+
+        result = await prior.calculate_area_baseline_prior()
+
+        assert result == DEFAULT_PRIOR
+        assert prior._method_used == "default_fallback"
 
 
-class TestPriorCalculation:
-    """Test prior calculation methods."""
+class TestAreaBaselinePriorCalculation:
+    """Test area baseline prior calculation methods."""
 
-    @patch(
-        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
-    )
-    async def test_calculate_with_valid_data(
+    async def test_calculate_history_disabled(self, mock_coordinator: Mock) -> None:
+        """Test calculation when history is disabled."""
+        from custom_components.area_occupancy.const import DEFAULT_PRIOR
+
+        mock_coordinator.config.history.enabled = False
+        prior = Prior(mock_coordinator)
+
+        result = await prior.calculate_area_baseline_prior()
+
+        assert result == DEFAULT_PRIOR
+        assert prior._method_used == "disabled"
+
+    async def test_calculate_with_cached_result(self, mock_coordinator: Mock) -> None:
+        """Test calculation returns cached result when valid."""
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.history.period = 7
+        prior = Prior(mock_coordinator)
+
+        # Set up cached result
+        now = dt_util.utcnow()
+        prior._area_baseline_prior = 0.35
+        prior._area_prior_last_updated = now - timedelta(hours=1)
+        prior._method_used = "cached"
+
+        result = await prior.calculate_area_baseline_prior()
+
+        assert result == 0.35
+
+    async def test_calculate_with_exception_fallback(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test calculation falls back to default when exception occurs."""
+        from custom_components.area_occupancy.const import DEFAULT_PRIOR
+
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.sensors.motion = ["sensor.motion1", "sensor.motion2"]
+
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "_get_all_motion_sensors", side_effect=Exception("Test error")
+        ):
+            result = await prior.calculate_area_baseline_prior()
+
+            assert result == DEFAULT_PRIOR
+            assert prior._method_used == "error_fallback"
+
+
+class TestHelperMethods:
+    """Test helper methods."""
+
+    def test_get_all_motion_sensors_basic(self, mock_coordinator: Mock) -> None:
+        """Test _get_all_motion_sensors with basic configuration."""
+        mock_coordinator.config.sensors.motion = ["sensor.motion1", "sensor.motion2"]
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+        result = prior._get_all_motion_sensors()
+
+        assert result == ["sensor.motion1", "sensor.motion2"]
+
+    def test_get_all_motion_sensors_with_primary(self, mock_coordinator: Mock) -> None:
+        """Test _get_all_motion_sensors includes primary sensor."""
+        mock_coordinator.config.sensors.motion = ["sensor.motion1"]
+        mock_coordinator.config.sensors.primary_occupancy = "binary_sensor.primary"
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+        result = prior._get_all_motion_sensors()
+
+        assert "sensor.motion1" in result
+        assert "binary_sensor.primary" in result
+        assert len(result) == 2
+
+    def test_get_all_motion_sensors_with_wasp(self, mock_coordinator: Mock) -> None:
+        """Test _get_all_motion_sensors includes wasp sensor."""
+        mock_coordinator.config.sensors.motion = ["sensor.motion1"]
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = True
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+
+        prior = Prior(mock_coordinator)
+        result = prior._get_all_motion_sensors()
+
+        assert "sensor.motion1" in result
+        assert "binary_sensor.wasp" in result
+        assert len(result) == 2
+
+    def test_get_all_motion_sensors_no_duplicates(self, mock_coordinator: Mock) -> None:
+        """Test _get_all_motion_sensors avoids duplicates."""
+        mock_coordinator.config.sensors.motion = [
+            "sensor.motion1",
+            "binary_sensor.primary",
+        ]
+        mock_coordinator.config.sensors.primary_occupancy = "binary_sensor.primary"
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+        result = prior._get_all_motion_sensors()
+
+        assert result.count("binary_sensor.primary") == 1
+        assert len(result) == 2
+
+    def test_has_multiple_sensor_types(self, mock_coordinator: Mock) -> None:
+        """Test _has_multiple_sensor_types detection."""
+        prior = Prior(mock_coordinator)
+
+        # Single type
+        assert not prior._has_multiple_sensor_types(["motion1"], [], [])
+        assert not prior._has_multiple_sensor_types([], ["media1"], [])
+        assert not prior._has_multiple_sensor_types([], [], ["appliance1"])
+
+        # Multiple types
+        assert prior._has_multiple_sensor_types(["motion1"], ["media1"], [])
+        assert prior._has_multiple_sensor_types(["motion1"], [], ["appliance1"])
+        assert prior._has_multiple_sensor_types([], ["media1"], ["appliance1"])
+        assert prior._has_multiple_sensor_types(["motion1"], ["media1"], ["appliance1"])
+
+        # No sensors
+        assert not prior._has_multiple_sensor_types([], [], [])
+
+
+class TestMethodFallbackLogic:
+    """Test the fallback method selection logic."""
+
+    async def test_method_selection_multi_motion_consensus(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test multi-motion consensus method is selected with ≥2 motion sensors."""
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.sensors.motion = ["sensor.motion1", "sensor.motion2"]
+        mock_coordinator.config.sensors.media = []
+        mock_coordinator.config.sensors.appliances = []
+        mock_coordinator.config.sensors.doors = []
+        mock_coordinator.config.sensors.windows = []
+        mock_coordinator.config.sensors.lights = []
+        mock_coordinator.config.sensors.illuminance = []
+        mock_coordinator.config.sensors.humidity = []
+        mock_coordinator.config.sensors.temperature = []
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "_multi_motion_consensus", return_value=0.35
+        ) as mock_method:
+            result = await prior.calculate_area_baseline_prior()
+
+            assert result == 0.35
+            assert prior._method_used == "multi_motion_consensus"
+            mock_method.assert_called_once()
+
+    async def test_method_selection_confidence_weighted_fusion(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test confidence-weighted fusion method is selected with multiple sensor types."""
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.sensors.motion = [
+            "sensor.motion1"
+        ]  # Only 1 motion sensor
+        mock_coordinator.config.sensors.media = ["media_player.tv"]
+        mock_coordinator.config.sensors.appliances = []
+        mock_coordinator.config.sensors.doors = []
+        mock_coordinator.config.sensors.windows = []
+        mock_coordinator.config.sensors.lights = []
+        mock_coordinator.config.sensors.illuminance = []
+        mock_coordinator.config.sensors.humidity = []
+        mock_coordinator.config.sensors.temperature = []
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "_confidence_weighted_fusion", return_value=0.40
+        ) as mock_method:
+            result = await prior.calculate_area_baseline_prior()
+
+            assert result == 0.40
+            assert prior._method_used == "confidence_weighted_fusion"
+            mock_method.assert_called_once()
+
+    async def test_method_selection_time_pattern_analysis(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test time pattern analysis method is selected with ≥2 total sensors."""
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.sensors.motion = ["sensor.motion1"]
+        mock_coordinator.config.sensors.media = []
+        mock_coordinator.config.sensors.appliances = []
+        mock_coordinator.config.sensors.doors = [
+            "binary_sensor.door"
+        ]  # Total 2 sensors
+        mock_coordinator.config.sensors.windows = []
+        mock_coordinator.config.sensors.lights = []
+        mock_coordinator.config.sensors.illuminance = []
+        mock_coordinator.config.sensors.humidity = []
+        mock_coordinator.config.sensors.temperature = []
+        mock_coordinator.config.sensors.primary_occupancy = None
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "_time_pattern_analysis", return_value=0.30
+        ) as mock_method:
+            result = await prior.calculate_area_baseline_prior()
+
+            assert result == 0.30
+            assert prior._method_used == "time_pattern_analysis"
+            mock_method.assert_called_once()
+
+    async def test_method_selection_primary_with_margin(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test primary sensor with margin method is selected with single sensor."""
+        mock_coordinator.config.history.enabled = True
+        mock_coordinator.config.sensors.motion = []
+        mock_coordinator.config.sensors.media = []
+        mock_coordinator.config.sensors.appliances = []
+        mock_coordinator.config.sensors.doors = []
+        mock_coordinator.config.sensors.windows = []
+        mock_coordinator.config.sensors.lights = []
+        mock_coordinator.config.sensors.illuminance = []
+        mock_coordinator.config.sensors.humidity = []
+        mock_coordinator.config.sensors.temperature = []
+        mock_coordinator.config.sensors.primary_occupancy = "binary_sensor.primary"
+        mock_coordinator.config.wasp_in_box.enabled = False
+
+        prior = Prior(mock_coordinator)
+
+        with patch.object(
+            prior, "_primary_sensor_with_margin", return_value=0.28
+        ) as mock_method:
+            result = await prior.calculate_area_baseline_prior()
+
+            assert result == 0.28
+            assert prior._method_used == "primary_with_margin"
+            mock_method.assert_called_once()
+
+
+class TestIndividualMethods:
+    """Test individual calculation methods."""
+
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
+    async def test_multi_motion_consensus_success(
         self,
+        mock_intervals: AsyncMock,
         mock_get_states: AsyncMock,
         mock_coordinator: Mock,
-        mock_entity_for_prior_tests: Mock,
     ) -> None:
-        """Test prior calculation with valid historical data."""
-        # Setup mock states
+        """Test successful multi-motion consensus calculation."""
         now = dt_util.utcnow()
+        start_time = now - timedelta(hours=2)
+        end_time = now
+
+        # Mock states
         mock_states = [
-            Mock(state=STATE_ON, last_changed=now - timedelta(hours=2)),
-            Mock(state=STATE_OFF, last_changed=now - timedelta(hours=1)),
+            State("sensor.motion1", STATE_ON, last_changed=now - timedelta(hours=2)),
+            State("sensor.motion1", STATE_OFF, last_changed=now - timedelta(hours=1)),
         ]
         mock_get_states.return_value = mock_states
 
-        manager = PriorManager(mock_coordinator)
-
-        # Test calculation
-        result = await manager.calculate(mock_entity_for_prior_tests)
-
-        assert isinstance(result, Prior)
-        assert 0 <= result.prob_given_true <= 1
-        assert 0 <= result.prob_given_false <= 1
-        assert isinstance(result.last_updated, datetime)
-
-    @patch(
-        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
-    )
-    async def test_calculate_with_no_data(
-        self,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-        mock_entity_for_prior_tests: Mock,
-    ) -> None:
-        """Test prior calculation with no historical data."""
-        # Setup mock to return None (no data)
-        mock_get_states.return_value = None
-
-        manager = PriorManager(mock_coordinator)
-
-        # Test calculation
-        result = await manager.calculate(mock_entity_for_prior_tests)
-
-        assert isinstance(result, Prior)
-        # Should return default values
-        assert result.prob_given_true == mock_entity_for_prior_tests.type.prob_true
-        assert result.prob_given_false == mock_entity_for_prior_tests.type.prob_false
-
-    @patch(
-        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
-    )
-    async def test_calculate_with_history_disabled(
-        self,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-        mock_entity_for_prior_tests: Mock,
-    ) -> None:
-        """Test prior calculation with history disabled."""
-        # Disable history
-        mock_coordinator.config.history.enabled = False
-
-        manager = PriorManager(mock_coordinator)
-
-        # Test calculation
-        result = await manager.calculate(mock_entity_for_prior_tests)
-
-        assert isinstance(result, Prior)
-        # Should return default values without calling recorder
-        assert result.prob_given_true == mock_entity_for_prior_tests.type.prob_true
-        assert result.prob_given_false == mock_entity_for_prior_tests.type.prob_false
-
-        # Should not have called recorder
-        mock_get_states.assert_not_called()
-
-    async def test_states_to_intervals(self) -> None:
-        """Test converting states to time intervals."""
-        now = dt_util.utcnow()
-        start = now - timedelta(hours=2)
-        end = now
-
-        # Create mock states
-        states = [
-            Mock(state=STATE_ON, last_changed=start),
-            Mock(state=STATE_OFF, last_changed=start + timedelta(hours=1)),
-            Mock(state=STATE_ON, last_changed=start + timedelta(hours=1.5)),
+        # Mock intervals
+        mock_intervals.return_value = [
+            {
+                "start": start_time,
+                "end": start_time + timedelta(hours=1),
+                "state": STATE_ON,
+            },
+            {
+                "start": start_time + timedelta(hours=1),
+                "end": end_time,
+                "state": STATE_OFF,
+            },
         ]
 
-        # Test conversion (this is an async method)
-        intervals = await PriorManager._states_to_intervals(states, start, end)
-
-        assert len(intervals) == 3
-        assert intervals[0]["state"] == STATE_ON
-        assert intervals[0]["start"] == start
-        assert intervals[0]["end"] == start + timedelta(hours=1)
-
-        assert intervals[1]["state"] == STATE_OFF
-        assert intervals[1]["start"] == start + timedelta(hours=1)
-        assert intervals[1]["end"] == start + timedelta(hours=1.5)
-
-        assert intervals[2]["state"] == STATE_ON
-        assert intervals[2]["start"] == start + timedelta(hours=1.5)
-        assert intervals[2]["end"] == end
-
-    def test_calculate_conditional_probability(self) -> None:
-        """Test conditional probability calculation."""
-        now = dt_util.utcnow()
-
-        # Create entity intervals using proper TimeInterval type
-        entity_intervals: list[TimeInterval] = [
-            TimeInterval(
-                start=now - timedelta(hours=2),
-                end=now - timedelta(hours=1),
-                state=STATE_ON,
-            ),
-            TimeInterval(
-                start=now - timedelta(hours=1),
-                end=now,
-                state=STATE_OFF,
-            ),
-        ]
-
-        # Create motion intervals using proper TimeInterval type
-        motion_intervals: dict[str, list[TimeInterval]] = {
-            "binary_sensor.motion1": [
-                TimeInterval(
-                    start=now - timedelta(hours=2),
-                    end=now - timedelta(hours=1.5),
-                    state=STATE_ON,
-                ),
-                TimeInterval(
-                    start=now - timedelta(hours=1.5),
-                    end=now,
-                    state=STATE_OFF,
-                ),
-            ]
-        }
-
-        # Test calculation
-        prob = PriorManager._calculate_conditional_probability_with_intervals(
-            entity_id="light.test",
-            entity_intervals=entity_intervals,
-            motion_intervals_by_sensor=motion_intervals,
-            motion_state_filter=STATE_ON,
-            entity_active_states=[STATE_ON],
+        prior = Prior(mock_coordinator)
+        result = await prior._multi_motion_consensus(
+            ["sensor.motion1", "sensor.motion2"], start_time, end_time
         )
 
-        assert isinstance(prob, float)
-        assert 0 <= prob <= 1
+        assert isinstance(result, float)
+        assert 0 <= result <= 1
 
-    def test_calculate_prior_probability(self) -> None:
-        """Test prior probability calculation."""
-        now = dt_util.utcnow()
-
-        # Create primary motion intervals using proper TimeInterval type
-        primary_intervals: list[TimeInterval] = [
-            TimeInterval(
-                start=now - timedelta(hours=2),
-                end=now - timedelta(hours=1),
-                state=STATE_ON,
-            ),
-            TimeInterval(
-                start=now - timedelta(hours=1),
-                end=now,
-                state=STATE_OFF,
-            ),
-        ]
-
-        # Test calculation
-        prior = PriorManager._calculate_prior_probability(primary_intervals)
-
-        assert isinstance(prior, float)
-        assert 0 <= prior <= 1
-
-    def test_calculate_prior_probability_empty_intervals(self) -> None:
-        """Test prior probability calculation with empty intervals."""
-        prior = PriorManager._calculate_prior_probability([])
-
-        assert prior == 0.5
-
-
-class TestRecorderIntegration:
-    """Test recorder integration methods."""
-
-    @patch("custom_components.area_occupancy.data.prior.get_instance")
-    @patch("custom_components.area_occupancy.data.prior.get_significant_states")
-    async def test_get_states_from_recorder_success(
-        self,
-        mock_get_states: AsyncMock,
-        mock_get_instance: Mock,
-        mock_coordinator: Mock,
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    async def test_multi_motion_consensus_insufficient_data(
+        self, mock_get_states: AsyncMock, mock_coordinator: Mock
     ) -> None:
-        """Test successful state retrieval from recorder."""
-        # Setup mocks
-        mock_recorder = Mock()
-        mock_recorder.async_add_executor_job = AsyncMock()
-        mock_get_instance.return_value = mock_recorder
+        """Test multi-motion consensus with insufficient sensor data."""
+        mock_get_states.return_value = []  # No states
 
-        # Mock states
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_state.last_changed = dt_util.utcnow()
-        mock_get_states.return_value = {"test_entity": [mock_state]}
-
-        # Mock the executor job to return the mocked states
-        mock_recorder.async_add_executor_job.return_value = {
-            "test_entity": [mock_state]
-        }
-
-        manager = PriorManager(mock_coordinator)
-
-        # Test retrieval
-        start = dt_util.utcnow() - timedelta(hours=1)
-        end = dt_util.utcnow()
-
-        result = await manager._get_states_from_recorder(
-            mock_coordinator.hass, "test_entity", start, end
-        )
-
-        assert result == [mock_state]
-
-    @patch("custom_components.area_occupancy.data.prior.get_instance")
-    async def test_get_states_from_recorder_no_recorder(
-        self, mock_get_instance: Mock, mock_coordinator: Mock
-    ) -> None:
-        """Test state retrieval when recorder is not available."""
-        # Setup mock to return None (no recorder)
-        mock_get_instance.return_value = None
-
-        manager = PriorManager(mock_coordinator)
-
-        # Test retrieval
-        start = dt_util.utcnow() - timedelta(hours=1)
-        end = dt_util.utcnow()
-
-        result = await manager._get_states_from_recorder(
-            mock_coordinator.hass, "test_entity", start, end
+        prior = Prior(mock_coordinator)
+        result = await prior._multi_motion_consensus(
+            ["sensor.motion1", "sensor.motion2"],
+            dt_util.utcnow() - timedelta(hours=2),
+            dt_util.utcnow(),
         )
 
         assert result is None
 
-    @patch("custom_components.area_occupancy.data.prior.get_instance")
-    @patch("custom_components.area_occupancy.data.prior.get_significant_states")
-    async def test_get_states_from_recorder_exception(
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
+    async def test_primary_sensor_with_margin_success(
         self,
+        mock_intervals: AsyncMock,
         mock_get_states: AsyncMock,
-        mock_get_instance: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test state retrieval with exception."""
-        # Setup mocks
-        mock_recorder = Mock()
-        mock_recorder.async_add_executor_job = AsyncMock()
-        mock_get_instance.return_value = mock_recorder
+        """Test successful primary sensor with margin calculation."""
+        now = dt_util.utcnow()
+        start_time = now - timedelta(hours=2)
+        end_time = now
 
-        # Mock to raise a HomeAssistantError (one of the documented exceptions)
-        from homeassistant.exceptions import HomeAssistantError
+        # Mock states
+        mock_states = [
+            State(
+                "binary_sensor.primary", STATE_ON, last_changed=now - timedelta(hours=2)
+            ),
+            State(
+                "binary_sensor.primary",
+                STATE_OFF,
+                last_changed=now - timedelta(hours=1),
+            ),
+        ]
+        mock_get_states.return_value = mock_states
 
-        mock_recorder.async_add_executor_job.side_effect = HomeAssistantError(
-            "Database error"
+        # Mock intervals - 50% occupancy
+        mock_intervals.return_value = [
+            {
+                "start": start_time,
+                "end": start_time + timedelta(hours=1),
+                "state": STATE_ON,
+            },
+            {
+                "start": start_time + timedelta(hours=1),
+                "end": end_time,
+                "state": STATE_OFF,
+            },
+        ]
+
+        prior = Prior(mock_coordinator)
+        result = await prior._primary_sensor_with_margin(
+            "binary_sensor.primary", start_time, end_time
         )
 
-        manager = PriorManager(mock_coordinator)
+        assert isinstance(result, float)
+        assert 0 <= result <= 1
+        # Should be adjusted from raw 0.5 toward 0.5 with 5% uncertainty
+        # 0.5 * 0.95 + 0.5 * 0.05 = 0.5 (no change when raw rate is already 0.5)
+        assert result == 0.5
 
-        # Test retrieval
-        start = dt_util.utcnow() - timedelta(hours=1)
-        end = dt_util.utcnow()
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    async def test_primary_sensor_with_margin_no_data(
+        self, mock_get_states: AsyncMock, mock_coordinator: Mock
+    ) -> None:
+        """Test primary sensor with margin when no data available."""
+        mock_get_states.return_value = []  # No states
 
-        # Test that the exception is raised (not swallowed)
-        with pytest.raises(HomeAssistantError, match="Database error"):
-            await manager._get_states_from_recorder(
-                mock_coordinator.hass, "test_entity", start, end
+        prior = Prior(mock_coordinator)
+        result = await prior._primary_sensor_with_margin(
+            "binary_sensor.primary",
+            dt_util.utcnow() - timedelta(hours=2),
+            dt_util.utcnow(),
+        )
+
+        assert result is None
+
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    async def test_time_pattern_analysis_success(
+        self, mock_get_states: AsyncMock, mock_coordinator: Mock
+    ) -> None:
+        """Test successful time pattern analysis calculation."""
+        now = dt_util.utcnow()
+        start_time = now - timedelta(hours=2)
+        end_time = now
+
+        # Mock states
+        mock_states = [
+            State("sensor.motion1", STATE_ON, last_changed=now - timedelta(hours=2)),
+            State("sensor.motion1", STATE_OFF, last_changed=now - timedelta(hours=1)),
+        ]
+        mock_get_states.return_value = mock_states
+
+        with patch(
+            "custom_components.area_occupancy.data.prior.states_to_intervals"
+        ) as mock_intervals:
+            mock_intervals.return_value = [
+                {
+                    "start": start_time,
+                    "end": start_time + timedelta(hours=1),
+                    "state": STATE_ON,
+                },
+                {
+                    "start": start_time + timedelta(hours=1),
+                    "end": end_time,
+                    "state": STATE_OFF,
+                },
+            ]
+
+            prior = Prior(mock_coordinator)
+            result = await prior._time_pattern_analysis(
+                ["sensor.motion1", "binary_sensor.door"], start_time, end_time
             )
 
+            assert isinstance(result, float)
+            assert 0 <= result <= 1
 
-class TestPriorManagerAdditional:
-    """Additional tests for PriorManager methods."""
-
-    async def test_calculate_uses_cached_prior(
-        self, mock_coordinator: Mock, mock_entity_for_prior_tests: Mock
+    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    async def test_time_pattern_analysis_no_data(
+        self, mock_get_states: AsyncMock, mock_coordinator: Mock
     ) -> None:
-        manager = PriorManager(mock_coordinator)
-        cached = Prior(
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            last_updated=dt_util.utcnow(),
+        """Test time pattern analysis with no sensor data."""
+        mock_get_states.return_value = []  # No states
+
+        prior = Prior(mock_coordinator)
+        result = await prior._time_pattern_analysis(
+            ["sensor.motion1", "binary_sensor.door"],
+            dt_util.utcnow() - timedelta(hours=2),
+            dt_util.utcnow(),
         )
-        manager.update_prior(mock_entity_for_prior_tests.entity_id, cached)
-        result = await manager.calculate(mock_entity_for_prior_tests)
-        assert result is cached
 
-    @patch(
-        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
-    )
-    async def test_calculate_non_primary(
-        self,
-        mock_get: AsyncMock,
-        mock_coordinator: Mock,
-        mock_entity_for_prior_tests: Mock,
-    ) -> None:
-        now = dt_util.utcnow()
-        primary_states = [
-            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=10)),
-            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=5)),
-        ]
-        entity_states = [
-            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=9)),
-            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=4)),
-        ]
-        mock_get.side_effect = [primary_states, entity_states]
-        manager = PriorManager(mock_coordinator)
-        result = await manager.calculate(mock_entity_for_prior_tests)
-        assert isinstance(result, Prior)
-
-    @patch(
-        "custom_components.area_occupancy.data.prior.PriorManager._get_states_from_recorder"
-    )
-    async def test_calculate_primary_sensor(
-        self,
-        mock_get: AsyncMock,
-        mock_coordinator: Mock,
-        mock_entity_for_prior_tests: Mock,
-    ) -> None:
-        mock_entity_for_prior_tests.entity_id = (
-            mock_coordinator.config.sensors.primary_occupancy
-        )
-        now = dt_util.utcnow()
-        states = [
-            Mock(state=STATE_ON, last_changed=now - timedelta(minutes=2)),
-            Mock(state=STATE_OFF, last_changed=now - timedelta(minutes=1)),
-        ]
-        mock_get.return_value = states
-        manager = PriorManager(mock_coordinator)
-        result = await manager.calculate(mock_entity_for_prior_tests)
-        assert isinstance(result, Prior)
-
-
-class TestConditionalProbabilityEdgeCases:
-    """Tests for _calculate_conditional_probability_with_intervals edge cases."""
-
-    def test_no_filtered_motion_intervals(self) -> None:
-        now = dt_util.utcnow()
-        motion_intervals = {
-            "sensor": [
-                TimeInterval(start=now, end=now + timedelta(seconds=10), state=STATE_ON)
-            ]
-        }
-
-        prob = PriorManager._calculate_conditional_probability_with_intervals(
-            entity_id="entity",
-            entity_intervals=[],
-            motion_intervals_by_sensor=motion_intervals,
-            motion_state_filter=STATE_OFF,
-            entity_active_states=[STATE_ON],
-        )
-        assert prob == DEFAULT_PROB_GIVEN_FALSE
-
-    def test_zero_motion_duration(self) -> None:
-        now = dt_util.utcnow()
-        motion_intervals = {
-            "sensor": [TimeInterval(start=now, end=now, state=STATE_ON)]
-        }
-
-        prob = PriorManager._calculate_conditional_probability_with_intervals(
-            entity_id="entity",
-            entity_intervals=[],
-            motion_intervals_by_sensor=motion_intervals,
-            motion_state_filter=STATE_ON,
-            entity_active_states=[STATE_ON],
-        )
-        assert prob == DEFAULT_PROB_GIVEN_TRUE
+        assert result is None

@@ -8,7 +8,7 @@ import pytest
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
-from custom_components.area_occupancy.data.prior import Prior
+from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -90,7 +90,7 @@ class TestEntity:
         # as they are calculated properties
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
-    @patch("custom_components.area_occupancy.data.entity.Prior")
+    @patch("custom_components.area_occupancy.data.entity.Likelihood")
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     def test_from_dict(
         self,
@@ -166,7 +166,7 @@ class TestEntity:
             prob_false=0.1,
             prior=0.5,
         )
-        prior = Prior(
+        prior = Likelihood(
             prob_given_true=0.8,
             prob_given_false=0.1,
             last_updated=dt_util.utcnow(),
@@ -242,18 +242,18 @@ class TestEntity:
         mock_prior.prob_given_true = 0.25
         mock_prior.prob_given_false = 0.05
         mock_prior.last_updated = dt_util.utcnow()
-        mock_coordinator.priors.calculate.return_value = mock_prior
+        mock_coordinator.likelihoods.calculate.return_value = mock_prior
 
-        prior = await manager.coordinator.priors.calculate(entity=mock_entity)
+        prior = await manager.coordinator.likelihoods.calculate(entity=mock_entity)
         assert prior == mock_prior
-        mock_coordinator.priors.calculate.assert_called_once()
+        mock_coordinator.likelihoods.calculate.assert_called_once()
 
         # Test fallback to defaults on error
-        mock_coordinator.priors.calculate.side_effect = ValueError("Test error")
+        mock_coordinator.likelihoods.calculate.side_effect = ValueError("Test error")
 
         # The test should expect the error to be raised, not handled
         with pytest.raises(ValueError, match="Test error"):
-            await manager.coordinator.priors.calculate(entity=mock_entity)
+            await manager.coordinator.likelihoods.calculate(entity=mock_entity)
 
 
 class TestEntityManager:
@@ -973,7 +973,7 @@ class TestEntityManagerAdvanced:
 
         # Mock prior calculation
         mock_prior = Mock()
-        mock_coordinator.priors.calculate.return_value = mock_prior
+        mock_coordinator.likelihoods.calculate.return_value = mock_prior
 
         # Mock create_entity
         mock_new_entity = Mock()
@@ -1019,39 +1019,6 @@ class TestEntityManagerAdvanced:
             "media_player.tv": media_type,
         }
 
-    def test_add_primary_sensor_to_mapping(self, mock_coordinator: Mock) -> None:
-        """Test _add_primary_sensor_to_mapping method."""
-        manager = EntityManager(mock_coordinator)
-
-        # Mock config with primary sensor
-        mock_config = Mock()
-        mock_config.sensors.primary_occupancy = "binary_sensor.main_motion"
-        manager.config = mock_config
-
-        # Mock motion entity type
-        motion_type = Mock()
-        mock_coordinator.entity_types.get_entity_type.return_value = motion_type
-
-        entity_mapping = {
-            "other_sensor": Mock(),
-        }
-
-        manager._add_primary_sensor_to_mapping(entity_mapping)  # type: ignore[arg-type]
-
-        # Check that primary sensor was added with motion type
-        assert "binary_sensor.main_motion" in entity_mapping
-        assert entity_mapping["binary_sensor.main_motion"] == motion_type
-        mock_coordinator.entity_types.get_entity_type.assert_called_with(
-            InputType.MOTION
-        )
-
-        # Test error when no primary sensor configured
-        mock_config.sensors.primary_occupancy = None
-        with pytest.raises(
-            ValueError, match="Primary occupancy sensor must be configured"
-        ):
-            manager._add_primary_sensor_to_mapping({})
-
     async def test_get_config_entity_mapping(self, mock_coordinator: Mock) -> None:
         """Test _get_config_entity_mapping method."""
         manager = EntityManager(mock_coordinator)
@@ -1062,14 +1029,12 @@ class TestEntityManagerAdvanced:
 
         entity_mapping = {"binary_sensor.motion": Mock()}
         manager._build_entity_mapping_from_types = Mock(return_value=entity_mapping)
-        manager._add_primary_sensor_to_mapping = Mock()
 
         result = await manager._get_config_entity_mapping()
 
         assert result == entity_mapping
         manager.build_sensor_type_mappings.assert_called_once()
         manager._build_entity_mapping_from_types.assert_called_once_with(type_mappings)
-        manager._add_primary_sensor_to_mapping.assert_called_once_with(entity_mapping)
 
     async def test_create_entities_from_config(self, mock_coordinator: Mock) -> None:
         """Test _create_entities_from_config method."""
@@ -1093,7 +1058,7 @@ class TestEntityManagerAdvanced:
 
         # Mock prior calculation
         mock_learned_prior = Mock()
-        mock_coordinator.priors.calculate.return_value = mock_learned_prior
+        mock_coordinator.likelihoods.calculate.return_value = mock_learned_prior
 
         result = await manager._create_entities_from_config()
 
@@ -1102,5 +1067,5 @@ class TestEntityManagerAdvanced:
 
         # Check that entity was created with default prior, then updated with learned prior
         manager.create_entity.assert_called_once()
-        mock_coordinator.priors.calculate.assert_called_once_with(mock_entity)
+        mock_coordinator.likelihoods.calculate.assert_called_once_with(mock_entity)
         assert mock_entity.prior == mock_learned_prior
