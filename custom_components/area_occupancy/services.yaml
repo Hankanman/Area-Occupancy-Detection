@@ -1,10 +1,31 @@
-update_priors:
-  name: Update Priors
-  description: "Manually trigger an update of the learned prior probabilities for all configured sensors."
+update_area_prior:
+  name: Update Area Prior
+  description: "Update the area's baseline occupancy prior from historical data."
   fields:
     entry_id:
       name: Entry ID
-      description: "Select the Area Occupancy instance to update priors for."
+      description: "Select the Area Occupancy instance to update area prior for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    history_period:
+      name: History Period
+      description: "Number of days of history to analyze (defaults to configured history period)"
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 90
+          step: 1
+
+update_likelihoods:
+  name: Update Sensor Likelihoods
+  description: "Update the learned conditional probabilities for all configured sensors."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to update sensor likelihoods for."
       required: true
       selector:
         config_entry:
