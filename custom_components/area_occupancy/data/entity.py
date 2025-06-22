@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 from ..utils import bayesian_probability
 from .decay import Decay
 from .entity_type import EntityType, InputType
-from .prior import Prior
+from .likelihood import Likelihood
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -26,7 +26,7 @@ class Entity:
     # --- Core Data ---
     entity_id: str
     type: EntityType
-    prior: Prior
+    likelihood: Likelihood
     decay: Decay
     coordinator: "AreaOccupancyCoordinator"
     name: str | None = None
@@ -46,7 +46,9 @@ class Entity:
 
         # Initialize working probability based on current evidence
         self._effective_probability = (
-            self.prior.prob_given_true if self.evidence else self.prior.prob_given_false
+            self.likelihood.prob_given_true
+            if self.evidence
+            else self.likelihood.prob_given_false
         )
 
         _LOGGER.debug(
@@ -65,7 +67,7 @@ class Entity:
         # If currently decaying, apply decay factor to working probability
         if self.decay.is_decaying:
             # Apply decay towards prob_given_false
-            target = self.prior.prob_given_false
+            target = self.likelihood.prob_given_false
             decay_factor = self.decay.decay_factor
 
             # Decay working probability towards target
@@ -137,6 +139,11 @@ class Entity:
 
         return False
 
+    @property
+    def active_states(self) -> list[str]:
+        """Get the active states for the entity."""
+        return self.type.active_states or []
+
     def has_new_evidence(self) -> bool:
         """Update decay and probability on actual evidence transitions.
 
@@ -152,8 +159,8 @@ class Entity:
                 old_prob = self._effective_probability
                 self._effective_probability = bayesian_probability(
                     prior=self._effective_probability,
-                    prob_given_true=self.prior.prob_given_true,
-                    prob_given_false=self.prior.prob_given_false,
+                    prob_given_true=self.likelihood.prob_given_true,
+                    prob_given_false=self.likelihood.prob_given_false,
                     evidence=True,
                     weight=self.type.weight,
                     decay_factor=1.0,  # No decay on evidence appearance
@@ -186,7 +193,7 @@ class Entity:
         return {
             "entity_id": self.entity_id,
             "type": self.type.to_dict(),
-            "prior": self.prior.to_dict(),
+            "likelihood": self.likelihood.to_dict(),
             "decay": self.decay.to_dict(),
         }
 
@@ -198,7 +205,7 @@ class Entity:
         return cls(
             entity_id=data["entity_id"],
             type=EntityType.from_dict(data["type"]),
-            prior=Prior.from_dict(data["prior"]),
+            likelihood=Likelihood.from_dict(data["likelihood"]),
             decay=Decay.from_dict(data["decay"]),
             coordinator=coordinator,
         )
@@ -336,7 +343,6 @@ class EntityManager:
         self,
         entity_id: str,
         entity_type: EntityType,
-        prior: Prior | None = None,
     ) -> Entity:
         """Create a new entity.
 
@@ -354,7 +360,7 @@ class EntityManager:
             last_trigger_ts=dt_util.utcnow().timestamp(),
             half_life=self.config.decay.half_life,
         )
-        prior = Prior(
+        likelihood = Likelihood(
             prob_given_true=entity_type.prob_true,
             prob_given_false=entity_type.prob_false,
             last_updated=dt_util.utcnow(),
@@ -363,7 +369,7 @@ class EntityManager:
         return Entity(
             entity_id=entity_id,
             type=entity_type,
-            prior=prior,
+            likelihood=likelihood,
             decay=decay,
             coordinator=self.coordinator,
         )
@@ -412,6 +418,44 @@ class EntityManager:
 
         except Exception:
             _LOGGER.exception("Error processing state change for entity %s", entity_id)
+
+    async def update_all_entity_likelihoods(
+        self, history_period: int | None = None
+    ) -> int:
+        """Update all entity likelihoods.
+
+        Returns:
+            int: Number of entities updated
+
+        """
+        # Ensure area baseline prior is calculated first since likelihood calculations depend on it
+        if self.coordinator.config.history.enabled:
+            await self.coordinator.prior.calculate_area_baseline_prior(history_period)
+
+        updated_count = 0
+        for entity in self._entities.values():
+            try:
+                await entity.likelihood.update(self.coordinator, entity, history_period)
+                updated_count += 1
+                _LOGGER.debug(
+                    "Updated likelihood for entity %s: prob_given_true=%.3f, prob_given_false=%.3f",
+                    entity.entity_id,
+                    entity.likelihood.prob_given_true,
+                    entity.likelihood.prob_given_false,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to update likelihood for entity %s: %s",
+                    entity.entity_id,
+                    err,
+                )
+
+        _LOGGER.info(
+            "Updated likelihoods for %d out of %d entities",
+            updated_count,
+            len(self._entities),
+        )
+        return updated_count
 
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
@@ -470,16 +514,20 @@ class EntityManager:
             updated_entities: Collection to add new entities to
 
         """
+        # First pass: Create all new entities with default priors
+        new_entities: dict[str, Entity] = {}
         for entity_id, entity_type in config_entities.items():
             _LOGGER.info("Creating new entity %s", entity_id)
-            prior = await self.coordinator.priors.calculate(
-                entity=self.get_entity(entity_id)
-            )
-            updated_entities[entity_id] = await self.create_entity(
+            # Create entity with default priors from entity type
+            new_entity = await self.create_entity(
                 entity_id=entity_id,
                 entity_type=entity_type,
-                prior=prior,
             )
+            new_entities[entity_id] = new_entity
+            updated_entities[entity_id] = new_entity
+
+        # Note: Likelihood updates will be performed separately after all entities are created
+        # This avoids initialization issues during entity creation
 
     async def _get_config_entity_mapping(self) -> dict[str, EntityType]:
         """Get mapping of entity_id -> EntityType from current configuration."""
@@ -487,12 +535,8 @@ class EntityManager:
         type_mappings = self.build_sensor_type_mappings()
 
         # Create initial entity mapping from type mappings
-        entity_mapping = self._build_entity_mapping_from_types(type_mappings)
 
-        # Add primary sensor with special handling
-        self._add_primary_sensor_to_mapping(entity_mapping)
-
-        return entity_mapping
+        return self._build_entity_mapping_from_types(type_mappings)
 
     def _build_entity_mapping_from_types(
         self, type_mappings: dict[InputType, list[str]]
@@ -515,32 +559,6 @@ class EntityManager:
 
         return entity_mapping
 
-    def _add_primary_sensor_to_mapping(
-        self, entity_mapping: dict[str, EntityType]
-    ) -> None:
-        """Add primary sensor to entity mapping with special motion-type handling.
-
-        Args:
-            entity_mapping: Entity mapping to modify in place
-
-        Raises:
-            ValueError: If primary occupancy sensor is not configured
-
-        """
-        primary_sensor = self.config.sensors.primary_occupancy
-        if not primary_sensor:
-            raise ValueError("Primary occupancy sensor must be configured")
-
-        # Primary sensor always gets motion-type treatment (highest reliability)
-        primary_entity_type = self.coordinator.entity_types.get_entity_type(
-            InputType.MOTION
-        )
-
-        # Override any existing mapping (primary sensor takes precedence)
-        entity_mapping[primary_sensor] = primary_entity_type
-
-        _LOGGER.debug("Added primary sensor %s as motion-type entity", primary_sensor)
-
     async def _create_entities_from_config(self) -> dict[str, Entity]:
         """Create entities from current configuration."""
         # Use shared sensor mapping logic instead of duplicating it
@@ -553,20 +571,12 @@ class EntityManager:
             entity_type = self.coordinator.entity_types.get_entity_type(input_type)
             for input_entity_id in inputs:
                 # Create entity with default priors from entity type
-                default_prior = Prior(
-                    prob_given_true=entity_type.prob_true,
-                    prob_given_false=entity_type.prob_false,
-                    last_updated=dt_util.utcnow(),
-                )
                 entities[input_entity_id] = await self.create_entity(
                     entity_id=input_entity_id,
                     entity_type=entity_type,
-                    prior=default_prior,
                 )
 
-        # Second pass: Update priors for all entities now that they exist
-        for entity in entities.values():
-            learned_prior = await self.coordinator.priors.calculate(entity)
-            entity.prior = learned_prior
+        # Note: Likelihood calculations will be performed later in the coordinator setup
+        # This avoids initialization issues during entity creation
 
         return entities

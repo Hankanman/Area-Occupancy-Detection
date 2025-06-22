@@ -216,11 +216,11 @@ class EntityTypeManager:
 
     def learn_from_entities(self, entities: dict[str, Any]) -> None:
         """Update each EntityType's prior, prob_true, and prob_false as the average of all entity priors for that type."""
-        # Local import to avoid circular dependency
-        from .prior import Prior  # noqa: PLC0415
+        # Delayed import to avoid circular import
+        from .likelihood import Likelihood  # noqa: PLC0415
 
         # Group entity priors by input type
-        grouped: dict[InputType, list[Prior]] = {k: [] for k in self._entity_types}
+        grouped: dict[InputType, list[Likelihood]] = {k: [] for k in self._entity_types}
         for entity in entities.values():
             # entity can be Entity or dict, handle both
             if hasattr(entity, "type") and hasattr(entity, "prior"):
@@ -229,7 +229,7 @@ class EntityTypeManager:
             elif isinstance(entity, dict):
                 try:
                     input_type = InputType(entity["type"])
-                    prior = Prior.from_dict(entity["prior"])
+                    prior = Likelihood.from_dict(entity["prior"])
                 except (ValueError, KeyError):
                     # Skip invalid entity types or missing data
                     continue

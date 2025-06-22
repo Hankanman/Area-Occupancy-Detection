@@ -1,586 +1,794 @@
-"""Prior probability calculations for Area Occupancy Detection."""
+"""Area baseline prior calculations for Area Occupancy Detection."""
 
-import asyncio
-from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+import statistics
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from homeassistant.components.recorder.history import get_significant_states
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant, State
+from homeassistant.const import STATE_ON
+from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
-from ..const import (
-    DEFAULT_PROB_GIVEN_FALSE,
-    DEFAULT_PROB_GIVEN_TRUE,
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
-    PRIMARY_PROB_GIVEN_FALSE,
-    PRIMARY_PROB_GIVEN_TRUE,
-)
-from ..utils import validate_datetime, validate_prior
+from ..const import DEFAULT_PRIOR, MAX_PROBABILITY, MIN_PROBABILITY
+from ..utils import TimeInterval, get_states_from_recorder, states_to_intervals
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
-    from .entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class TimeInterval(TypedDict):
-    """Time interval with state information."""
+def _calculate_overlap_duration(
+    interval: TimeInterval, start: datetime, end: datetime
+) -> float:
+    """Calculate overlap duration between an interval and a time window in seconds.
 
-    start: datetime
-    end: datetime
-    state: str
+    Args:
+        interval: The interval to check for overlap
+        start: Start of the time window
+        end: End of the time window
 
-
-@dataclass
-class Prior:
-    """Holds learned prior probability data for an entity or type.
-
-    This class stores historically learned probabilities but does not update
-    them based on real-time sensor data. All probability calculations should
-    be handled by the Probability class using Bayesian inference.
-
-    The Prior class is responsible for:
-    - Storing learned historical probabilities
-    - Calculating priors from historical sensor data
-    - Providing stable baseline probabilities for Bayesian calculations
+    Returns:
+        Overlap duration in seconds (0 if no overlap)
     """
+    # Find the overlap period
+    overlap_start = max(interval["start"], start)
+    overlap_end = min(interval["end"], end)
 
-    prob_given_true: float
-    prob_given_false: float
-    last_updated: datetime
-
-    def __post_init__(self):
-        """Validate properties after initialization."""
-        self.prob_given_true = validate_prior(self.prob_given_true)
-        self.prob_given_false = validate_prior(self.prob_given_false)
-        self.last_updated = validate_datetime(self.last_updated)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert prior to dictionary for storage."""
-        return {
-            "prob_given_true": self.prob_given_true,
-            "prob_given_false": self.prob_given_false,
-            "last_updated": self.last_updated.isoformat(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Prior":
-        """Create prior from dictionary."""
-        last_updated = validate_datetime(dt_util.parse_datetime(data["last_updated"]))
-
-        return cls(
-            prob_given_true=data["prob_given_true"],
-            prob_given_false=data["prob_given_false"],
-            last_updated=last_updated,
-        )
+    # Return overlap duration (0 if no overlap)
+    if overlap_start < overlap_end:
+        return (overlap_end - overlap_start).total_seconds()
+    return 0.0
 
 
-class PriorManager:
-    """Manages prior probability calculations."""
+class Prior:
+    """Manages area baseline prior calculations."""
 
     def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the prior manager."""
         self.coordinator = coordinator
         self.config = coordinator.config
-        self._priors: dict[str, Prior] = {}
+        self._last_updated: datetime | None = None
+        self._area_baseline_prior: float | None = None
+        self._method_used: str | None = None
 
-    @property
-    def priors(self) -> dict[str, Prior]:
-        """Get all stored priors."""
-        return self._priors
+    async def __post_init__(self) -> None:
+        """Post init - initialize area baseline prior."""
+        if self.coordinator.config.history.enabled:
+            await self.calculate_area_baseline_prior()
 
-    def get_prior(self, entity_id: str) -> Prior | None:
-        """Get the prior for an entity."""
-        return self._priors.get(entity_id)
-
-    def update_prior(self, entity_id: str, prior: Prior) -> None:
-        """Update the prior for an entity."""
-        self._priors[entity_id] = prior
-
-    def remove_prior(self, entity_id: str) -> None:
-        """Remove the prior for an entity."""
-        self._priors.pop(entity_id, None)
-
-    def clear_priors(self) -> None:
-        """Clear all stored priors."""
-        self._priors.clear()
-
-    async def update_all_entity_priors(self, history_period: int | None = None) -> int:
-        """Update learned priors for all entities in the coordinator.
-
-        Args:
-            history_period: Number of days of history to analyze (defaults to config value)
-
-        Returns:
-            Number of entities successfully updated
-
-        Raises:
-            ValueError: If no primary occupancy sensor is configured
-
-        """
-
+    def time_active(self, history_period: int | None = None) -> float:
+        """Calculate the time the area was active in the given history period."""
         effective_period = history_period or self.coordinator.config.history.period
-        _LOGGER.info(
-            "Updating learned priors for area %s: analyzing %d days of history",
-            self.coordinator.config.name,
-            effective_period,
+        start_time = dt_util.utcnow() - timedelta(days=effective_period)
+        end_time = dt_util.utcnow()
+        total_seconds = (end_time - start_time).total_seconds()
+
+        # Calculate expected active time based on baseline prior
+        # This gives an estimate of how much time the area should be occupied
+        # based on historical patterns
+        expected_active_seconds = total_seconds * self.area_baseline_prior
+
+        _LOGGER.debug(
+            "Time active calculation: %.1f hours out of %.1f hours (%.1f%% baseline prior)",
+            expected_active_seconds / 3600,
+            total_seconds / 3600,
+            self.area_baseline_prior * 100,
         )
 
-        # Update priors for all entities
-        updated_count = 0
-        for entity in self.coordinator.entities.entities.values():
-            try:
-                prior = await self.calculate(entity, history_period)
+        return expected_active_seconds
 
-                # Update the entity's prior
-                entity.prior = prior
-                updated_count += 1
+    async def calculate_area_baseline_prior(
+        self, history_period: int | None = None
+    ) -> float:
+        """Calculate the area's baseline occupancy rate using robust multi-method approach.
 
-                _LOGGER.debug(
-                    "Updated prior for %s: prob_true=%.3f, prob_false=%.3f",
-                    entity.entity_id,
-                    prior.prob_given_true,
-                    prior.prob_given_false,
-                )
-
-            except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
-                _LOGGER.warning(
-                    "Failed to update prior for %s: %s", entity.entity_id, err
-                )
-                continue
-
-        # Learn and update entity type priors from all entities
-        self.coordinator.entity_types.learn_from_entities(
-            self.coordinator.entities.entities
-        )
-
-        _LOGGER.info(
-            "Completed learned priors update for area %s: updated %d/%d entities",
-            self.coordinator.config.name,
-            updated_count,
-            len(self.coordinator.entities.entities),
-        )
-
-        return updated_count
-
-    async def calculate(
-        self,
-        entity: "Entity",
-        history_period: int | None = None,
-    ) -> "Prior":
-        """Calculate learned priors for a given entity."""
-
-        hass: HomeAssistant = self.coordinator.hass
-        entity_id = entity.entity_id
-        entity_type = entity.type
-        if self.coordinator.config.sensors.primary_occupancy:
-            primary_sensor = self.coordinator.config.sensors.primary_occupancy
-
-        # Use provided history period or default from config
+        This is the true Bayesian prior - P(area occupied) before considering current evidence.
+        Uses a comprehensive fallback strategy to handle various sensor configurations.
+        """
         effective_period = history_period or self.coordinator.config.history.period
         start_time = dt_util.utcnow() - timedelta(days=effective_period)
         end_time = dt_util.utcnow()
 
         _LOGGER.debug(
-            "Calculating prior for entity: %s",
-            entity_id,
-        )
-
-        # Use default priors as fallback values
-        fallback_prior = Prior(
-            prob_given_true=entity_type.prob_true,
-            prob_given_false=entity_type.prob_false,
-            last_updated=validate_datetime(None),
+            "Calculating area baseline prior over %d days using fallback strategy",
+            effective_period,
         )
 
         # Check if history analysis is disabled
-        if (
-            hasattr(self.coordinator.config, "history")
-            and not self.coordinator.config.history.enabled
-        ):
-            return fallback_prior
+        if not self.coordinator.config.history.enabled:
+            self._area_baseline_prior = DEFAULT_PRIOR
+            self._last_updated = dt_util.utcnow()
+            self._method_used = "disabled"
+            return DEFAULT_PRIOR
 
         # Check if we have a cached prior that's still valid
-        cached_prior = self.get_prior(entity_id)
-        if cached_prior and cached_prior.last_updated > start_time:
-            _LOGGER.debug("Using cached prior for %s", entity_id)
-            return cached_prior
-
-        is_primary = entity_id == primary_sensor
-
-        # For the primary sensor, we can only calculate the prior (occupancy rate),
-        # but not meaningful conditional probabilities since P(sensor|sensor) doesn't make sense
-        if is_primary:
-            try:
-                primary_states = await self._get_states_from_recorder(
-                    hass, entity_id, start_time, end_time
-                )
-                if not primary_states:
-                    return fallback_prior
-
-                primary_state_objects = [
-                    state for state in primary_states if isinstance(state, State)
-                ]
-
-                primary_intervals = await self._states_to_intervals(
-                    primary_state_objects, start_time, end_time
-                )
-
-                # For primary sensor, just calculate the occupancy rate as prior
-                occupied_duration = sum(
-                    (interval["end"] - interval["start"]).total_seconds()
-                    for interval in primary_intervals
-                    if interval["state"] == STATE_ON
-                )
-                total_duration = sum(
-                    (interval["end"] - interval["start"]).total_seconds()
-                    for interval in primary_intervals
-                )
-
-                if total_duration == 0:
-                    return fallback_prior
-
-                learned_prior_value = max(
-                    MIN_PROBABILITY,
-                    min(occupied_duration / total_duration, MAX_PROBABILITY),
-                )
-
-                # Create learned prior with optimized conditional probabilities for primary sensor
-                # Since this is the primary sensor (ground truth), it should have high confidence
-                # when active and low false positive rate when the area is actually unoccupied
-
-                learned_prior = Prior(
-                    prob_given_true=PRIMARY_PROB_GIVEN_TRUE,
-                    prob_given_false=PRIMARY_PROB_GIVEN_FALSE,
-                    last_updated=validate_datetime(None),
-                )
-
-                # Validate learned prior and log comparison
-                _LOGGER.debug(
-                    "Primary sensor prior calculation for %s: learned=%.3f, default=%.3f",
-                    entity_id,
-                    learned_prior_value,
-                    fallback_prior.prob_given_true,
-                )
-
-                self.update_prior(entity_id, learned_prior)
-
-            except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
-                _LOGGER.warning(
-                    "Could not fetch states for primary sensor (%s): %s. Using defaults",
-                    entity_id,
-                    err,
-                )
-                return fallback_prior
-            else:
-                return learned_prior
-
-        # For non-primary sensors, calculate conditional probabilities
-        try:
-            primary_states, entity_states = await asyncio.gather(
-                self._get_states_from_recorder(
-                    hass, primary_sensor, start_time, end_time
-                ),
-                self._get_states_from_recorder(hass, entity_id, start_time, end_time),
+        if (
+            self._area_baseline_prior is not None
+            and self._last_updated is not None
+            and self._last_updated > start_time
+        ):
+            _LOGGER.debug(
+                "Using cached area baseline prior: %.3f (method: %s)",
+                self._area_baseline_prior,
+                self._method_used,
             )
-        except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
-            _LOGGER.warning(
-                "Could not fetch states for prior calculation (%s): %s. Using defaults",
-                entity_id,
-                err,
-            )
-            return fallback_prior
-
-        if not primary_states or not entity_states:
-            _LOGGER.warning(
-                "No states found for prior calculation (%s). Using defaults",
-                entity_id,
-            )
-            return fallback_prior
-
-        primary_state_objects = [
-            state for state in primary_states if isinstance(state, State)
-        ]
-        entity_state_objects = [
-            state for state in entity_states if isinstance(state, State)
-        ]
-
-        if not primary_state_objects or not entity_state_objects:
-            _LOGGER.warning(
-                "No valid states found for prior calculation (%s). Using defaults",
-                entity_id,
-            )
-            return fallback_prior
-
-        primary_intervals = await self._states_to_intervals(
-            primary_state_objects, start_time, end_time
-        )
-        entity_intervals = await self._states_to_intervals(
-            entity_state_objects, start_time, end_time
-        )
-
-        learned_prob_given_true = (
-            self._calculate_conditional_probability_with_intervals(
-                entity_id,
-                entity_intervals,
-                {primary_sensor: primary_intervals},
-                STATE_ON,
-                entity_type.active_states or [],
-            )
-        )
-        learned_prob_given_false = (
-            self._calculate_conditional_probability_with_intervals(
-                entity_id,
-                entity_intervals,
-                {primary_sensor: primary_intervals},
-                STATE_OFF,
-                entity_type.active_states or [],
-            )
-        )
-
-        learned_prior_value = self._calculate_prior_probability(primary_intervals)
-
-        learned_prior = Prior(
-            prob_given_true=learned_prob_given_true,
-            prob_given_false=learned_prob_given_false,
-            last_updated=validate_datetime(None),
-        )
-
-        # Log the learned vs default values for debugging
-        _LOGGER.debug(
-            "Prior calculation for %s: learned=%.3f, default=%.3f, prob_true: learned=%.3f/default=%.3f, prob_false: learned=%.3f/default=%.3f",
-            entity_id,
-            learned_prior_value,
-            fallback_prior.prob_given_true,
-            learned_prior.prob_given_true,
-            fallback_prior.prob_given_true,
-            learned_prior.prob_given_false,
-            fallback_prior.prob_given_false,
-        )
-
-        # Store the calculated prior
-        self.update_prior(entity_id, learned_prior)
-
-        return learned_prior
-
-    async def _get_states_from_recorder(
-        self,
-        hass: HomeAssistant,
-        entity_id: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> list[State | dict[str, Any]] | None:
-        """Fetch states history from recorder.
-
-        Args:
-            hass: Home Assistant instance
-            entity_id: Entity ID to fetch history for
-            start_time: Start time window
-            end_time: End time window
-
-        Returns:
-            List of states or minimal state dicts if successful, None if error occurred
-
-        Raises:
-            HomeAssistantError: If recorder access fails
-            SQLAlchemyError: If database query fails
-
-        """
-        _LOGGER.debug(
-            "Fetching states: %s [%s -> %s]",
-            entity_id,
-            start_time,
-            end_time,
-        )
-
-        # Check if recorder is available
-        recorder = get_instance(hass)
-        if recorder is None:
-            _LOGGER.debug("Recorder not available for %s", entity_id)
-            return None
+            return self._area_baseline_prior
 
         try:
-            states = await recorder.async_add_executor_job(
-                lambda: get_significant_states(
-                    hass,
+            # Gather all available sensors
+            motion_sensors = self._get_all_motion_sensors()
+            media_sensors = self.coordinator.config.sensors.media
+            appliance_sensors = self.coordinator.config.sensors.appliances
+            other_sensors = (
+                self.coordinator.config.sensors.doors
+                + self.coordinator.config.sensors.windows
+                + self.coordinator.config.sensors.lights
+                + self.coordinator.config.sensors.illuminance
+                + self.coordinator.config.sensors.humidity
+                + self.coordinator.config.sensors.temperature
+            )
+
+            total_sensors = (
+                len(motion_sensors)
+                + len(media_sensors)
+                + len(appliance_sensors)
+                + len(other_sensors)
+            )
+
+            _LOGGER.debug(
+                "Available sensors - Motion: %d, Media: %d, Appliance: %d, Other: %d, Total: %d",
+                len(motion_sensors),
+                len(media_sensors),
+                len(appliance_sensors),
+                len(other_sensors),
+                total_sensors,
+            )
+
+            # Apply fallback strategy
+            baseline_prior = None
+            method_used = None
+
+            # Method 1: Multi-Motion Sensor Consensus (≥2 motion sensors)
+            if len(motion_sensors) >= 2:
+                baseline_prior = await self._multi_motion_consensus(
+                    motion_sensors, start_time, end_time
+                )
+                method_used = "multi_motion_consensus"
+                _LOGGER.debug("Trying multi-motion sensor consensus")
+
+            # Method 2: Confidence-Weighted Sensor Fusion (multiple sensor types)
+            elif self._has_multiple_sensor_types(
+                motion_sensors, media_sensors, appliance_sensors
+            ):
+                baseline_prior = await self._confidence_weighted_fusion(
+                    motion_sensors,
+                    media_sensors,
+                    appliance_sensors,
                     start_time,
                     end_time,
-                    [entity_id],
-                    minimal_response=False,  # Must be false to include last_changed attribute
                 )
+                method_used = "confidence_weighted_fusion"
+                _LOGGER.debug("Trying confidence-weighted sensor fusion")
+
+            # Method 3: Time Pattern Analysis (≥2 total sensors)
+            elif total_sensors >= 2:
+                all_sensors = (
+                    motion_sensors + media_sensors + appliance_sensors + other_sensors
+                )
+                baseline_prior = await self._time_pattern_analysis(
+                    all_sensors, start_time, end_time
+                )
+                method_used = "time_pattern_analysis"
+                _LOGGER.debug("Trying time pattern analysis")
+
+            # Method 4: Primary Sensor + Margin (single sensor fallback)
+            elif self.coordinator.config.sensors.primary_occupancy:
+                baseline_prior = await self._primary_sensor_with_margin(
+                    self.coordinator.config.sensors.primary_occupancy,
+                    start_time,
+                    end_time,
+                )
+                method_used = "primary_with_margin"
+                _LOGGER.debug("Falling back to primary sensor with margin")
+
+            # Final fallback to default
+            if baseline_prior is None:
+                _LOGGER.warning(
+                    "No viable method found for baseline prior calculation, using default"
+                )
+                baseline_prior = DEFAULT_PRIOR
+                method_used = "default_fallback"
+
+            # Debug logging for suspicious values
+            if baseline_prior is not None:
+                _LOGGER.debug(
+                    "Raw baseline prior calculation: %.6f using method: %s",
+                    baseline_prior,
+                    method_used,
+                )
+
+                # Check for impossible values
+                if baseline_prior > 0.75:
+                    _LOGGER.warning(
+                        "Suspiciously high baseline prior %.6f from method %s. "
+                        "This suggests limited historical data or overly permissive thresholds. "
+                        "Period: %d days, sensors: motion=%d, media=%d, appliance=%d, other=%d",
+                        baseline_prior,
+                        method_used,
+                        effective_period,
+                        len(motion_sensors),
+                        len(media_sensors),
+                        len(appliance_sensors),
+                        len(other_sensors),
+                    )
+                    # Cap at a more reasonable maximum for baseline prior
+                    baseline_prior = min(baseline_prior, 0.75)
+                    _LOGGER.info(
+                        "Capped baseline prior to %.3f to prevent saturation",
+                        baseline_prior,
+                    )
+
+                elif baseline_prior < 0.01:
+                    _LOGGER.warning(
+                        "Suspiciously low baseline prior %.6f from method %s. "
+                        "This suggests very limited activity or sensor issues.",
+                        baseline_prior,
+                        method_used,
+                    )
+                    # Ensure minimum reasonable baseline
+                    baseline_prior = max(baseline_prior, 0.05)
+                    _LOGGER.info(
+                        "Raised baseline prior to %.3f to prevent underflow",
+                        baseline_prior,
+                    )
+
+            # Apply bounds and cache results
+            baseline_prior = max(MIN_PROBABILITY, min(baseline_prior, MAX_PROBABILITY))
+            self._area_baseline_prior = baseline_prior
+            self._last_updated = dt_util.utcnow()
+            self._method_used = method_used
+
+            _LOGGER.info(
+                "Calculated area baseline prior: %.3f using method: %s",
+                baseline_prior,
+                method_used,
             )
 
-            entity_states = states.get(entity_id) if states else None
-
-            if entity_states:
-                _LOGGER.debug(
-                    "Found %d states for %s",
-                    len(entity_states),
-                    entity_id,
-                )
-            else:
-                _LOGGER.debug("No states found for %s", entity_id)
+            return baseline_prior
 
         except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
-            _LOGGER.error("Error getting states for %s: %s", entity_id, err)
-            # Re-raise the exception as documented, let the caller handle fallback
-            raise
-
-        else:
-            return entity_states
-
-    @staticmethod
-    async def _states_to_intervals(
-        states: Sequence[State],
-        start: datetime,
-        end: datetime,
-    ) -> list[TimeInterval]:
-        """Convert state history to time intervals.
-
-        Args:
-            states: List of State objects
-            start: Start time for analysis
-            end: End time for analysis
-
-        Returns:
-            List of TimeInterval objects
-
-        """
-        intervals: list[TimeInterval] = []
-        if not states:
-            return intervals
-
-        # Sort states by last_changed
-        sorted_states = sorted(states, key=lambda x: x.last_changed)
-
-        # Create intervals from states
-        for i, state in enumerate(sorted_states):
-            interval_start = state.last_changed
-            interval_end = (
-                sorted_states[i + 1].last_changed if i < len(sorted_states) - 1 else end
+            _LOGGER.warning(
+                "Could not calculate area baseline prior: %s. Using default", err
             )
-            intervals.append(
-                TimeInterval(
-                    start=interval_start,
-                    end=interval_end,
-                    state=state.state,
+            self._area_baseline_prior = DEFAULT_PRIOR
+            self._last_updated = dt_util.utcnow()
+            self._method_used = "error_fallback"
+            return DEFAULT_PRIOR
+
+    def _get_all_motion_sensors(self) -> list[str]:
+        """Get all motion sensors including primary and wasp sensors."""
+        motion_sensors = self.coordinator.config.sensors.motion.copy()
+
+        # Add primary occupancy if it's not already in motion sensors
+        primary = self.coordinator.config.sensors.primary_occupancy
+        if primary and primary not in motion_sensors:
+            motion_sensors.append(primary)
+
+        # Add wasp sensor if enabled
+        if (
+            self.coordinator.config.wasp_in_box.enabled
+            and self.coordinator.wasp_entity_id
+            and self.coordinator.wasp_entity_id not in motion_sensors
+        ):
+            motion_sensors.append(self.coordinator.wasp_entity_id)
+
+        return motion_sensors
+
+    def _has_multiple_sensor_types(
+        self,
+        motion_sensors: list[str],
+        media_sensors: list[str],
+        appliance_sensors: list[str],
+    ) -> bool:
+        """Check if we have multiple sensor types for fusion method."""
+        sensor_types = 0
+        if motion_sensors:
+            sensor_types += 1
+        if media_sensors:
+            sensor_types += 1
+        if appliance_sensors:
+            sensor_types += 1
+        return sensor_types >= 2
+
+    async def _multi_motion_consensus(
+        self, motion_sensors: list[str], start_time: datetime, end_time: datetime
+    ) -> float | None:
+        """Method 1: Multi-Motion Sensor Consensus with 60% threshold."""
+        try:
+            _LOGGER.debug(
+                "Starting multi-motion consensus with %d sensors", len(motion_sensors)
+            )
+
+            # Get states for all motion sensors
+            all_sensor_intervals = {}
+            for sensor in motion_sensors:
+                states = await get_states_from_recorder(
+                    self.coordinator.hass, sensor, start_time, end_time
                 )
+                if states:
+                    state_objects = [s for s in states if isinstance(s, State)]
+                    if state_objects:
+                        intervals = await states_to_intervals(
+                            state_objects, start_time, end_time
+                        )
+                        all_sensor_intervals[sensor] = intervals
+
+            if len(all_sensor_intervals) < 2:
+                _LOGGER.debug("Insufficient motion sensor data for consensus")
+                return None
+
+            # Create time buckets (5-minute intervals) for proportional analysis
+            bucket_size = timedelta(minutes=5)
+            current_time = start_time
+            consensus_periods = []
+
+            while current_time < end_time:
+                bucket_end = min(current_time + bucket_size, end_time)
+                bucket_duration = (bucket_end - current_time).total_seconds()
+
+                # Calculate weighted active time for each sensor in this bucket
+                sensor_active_times = {}
+                for sensor, intervals in all_sensor_intervals.items():
+                    active_time = 0.0
+                    for interval in intervals:
+                        if interval["state"] == STATE_ON:
+                            overlap = _calculate_overlap_duration(
+                                interval, current_time, bucket_end
+                            )
+                            active_time += overlap
+
+                    # Convert to proportion of bucket duration
+                    sensor_active_times[sensor] = (
+                        active_time / bucket_duration if bucket_duration > 0 else 0.0
+                    )
+
+                # Calculate consensus based on average sensor activity (60% threshold)
+                avg_activity = (
+                    sum(sensor_active_times.values()) / len(sensor_active_times)
+                    if sensor_active_times
+                    else 0.0
+                )
+                is_occupied = avg_activity >= 0.6
+
+                consensus_periods.append(
+                    {
+                        "start": current_time,
+                        "end": bucket_end,
+                        "occupied": is_occupied,
+                        "consensus": avg_activity,
+                    }
+                )
+
+                current_time = bucket_end
+
+            # Calculate occupancy rate from consensus periods
+            occupied_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in consensus_periods
+                if period["occupied"]
+            )
+            total_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in consensus_periods
             )
 
-        return intervals
+            if total_time == 0:
+                return None
 
-    @staticmethod
-    def _calculate_conditional_probability_with_intervals(
-        entity_id: str,
-        entity_intervals: list[TimeInterval],
-        motion_intervals_by_sensor: dict[str, list[TimeInterval]],
-        motion_state_filter: str,  # Should be STATE_ON or STATE_OFF
-        entity_active_states: list[str],
-    ) -> float:
-        """Calculate conditional probability using time intervals.
+            occupancy_rate = occupied_time / total_time
 
-        Args:
-            entity_id: Entity ID being analyzed
-            entity_intervals: List of time intervals for the entity
-            motion_intervals_by_sensor: Dict of motion sensor intervals
-            motion_state_filter: State to filter motion intervals by
-            entity_active_states: Set of active entity states
-
-        Returns:
-            Conditional probability value
-
-        """
-        # Get motion intervals for the primary sensor (first key in the dict)
-        motion_intervals = next(iter(motion_intervals_by_sensor.values()), [])
-
-        # Filter motion intervals by state
-        filtered_motion_intervals = [
-            interval
-            for interval in motion_intervals
-            if interval["state"] == motion_state_filter
-        ]
-
-        if not filtered_motion_intervals:
-            return (
-                DEFAULT_PROB_GIVEN_TRUE
-                if motion_state_filter == STATE_ON
-                else DEFAULT_PROB_GIVEN_FALSE
+            # Debug logging for suspicious values
+            occupied_periods = sum(1 for p in consensus_periods if p["occupied"])
+            _LOGGER.debug(
+                "Multi-motion consensus: %.3f occupancy rate from %d periods "
+                "(occupied: %d, total: %d, occupied_time: %.1f hours, total_time: %.1f hours)",
+                occupancy_rate,
+                len(consensus_periods),
+                occupied_periods,
+                len(consensus_periods),
+                occupied_time / 3600,
+                total_time / 3600,
             )
 
-        # Calculate total duration of filtered motion intervals
-        total_motion_duration = sum(
-            (interval["end"] - interval["start"]).total_seconds()
-            for interval in filtered_motion_intervals
-        )
+            if occupancy_rate > 0.75:
+                _LOGGER.warning(
+                    "Multi-motion consensus produced suspiciously high rate %.3f. "
+                    "Occupied periods: %d/%d, this may indicate limited data or sensor issues.",
+                    occupancy_rate,
+                    occupied_periods,
+                    len(consensus_periods),
+                )
 
-        if total_motion_duration == 0:
-            return (
-                DEFAULT_PROB_GIVEN_TRUE
-                if motion_state_filter == STATE_ON
-                else DEFAULT_PROB_GIVEN_FALSE
+            return occupancy_rate
+
+        except Exception as err:
+            _LOGGER.warning("Multi-motion consensus failed: %s", err)
+            return None
+
+    async def _confidence_weighted_fusion(
+        self,
+        motion_sensors: list[str],
+        media_sensors: list[str],
+        appliance_sensors: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> float | None:
+        """Method 2: Confidence-Weighted Sensor Fusion."""
+        try:
+            _LOGGER.debug("Starting confidence-weighted fusion")
+
+            # Define sensor type weights
+            type_weights = {"motion": 0.7, "media": 0.2, "appliance": 0.1}
+
+            # Gather intervals for each sensor type
+            type_intervals = {}
+
+            # Motion sensors
+            if motion_sensors:
+                motion_intervals = []
+                for sensor in motion_sensors:
+                    states = await get_states_from_recorder(
+                        self.coordinator.hass, sensor, start_time, end_time
+                    )
+                    if states:
+                        state_objects = [s for s in states if isinstance(s, State)]
+                        if state_objects:
+                            intervals = await states_to_intervals(
+                                state_objects, start_time, end_time
+                            )
+                            motion_intervals.extend(intervals)
+                if motion_intervals:
+                    type_intervals["motion"] = motion_intervals
+
+            # Media sensors
+            if media_sensors:
+                media_intervals = []
+                for sensor in media_sensors:
+                    states = await get_states_from_recorder(
+                        self.coordinator.hass, sensor, start_time, end_time
+                    )
+                    if states:
+                        state_objects = [s for s in states if isinstance(s, State)]
+                        if state_objects:
+                            intervals = await states_to_intervals(
+                                state_objects, start_time, end_time
+                            )
+                            media_intervals.extend(intervals)
+                if media_intervals:
+                    type_intervals["media"] = media_intervals
+
+            # Appliance sensors
+            if appliance_sensors:
+                appliance_intervals = []
+                for sensor in appliance_sensors:
+                    states = await get_states_from_recorder(
+                        self.coordinator.hass, sensor, start_time, end_time
+                    )
+                    if states:
+                        state_objects = [s for s in states if isinstance(s, State)]
+                        if state_objects:
+                            intervals = await states_to_intervals(
+                                state_objects, start_time, end_time
+                            )
+                            appliance_intervals.extend(intervals)
+                if appliance_intervals:
+                    type_intervals["appliance"] = appliance_intervals
+
+            if len(type_intervals) < 2:
+                _LOGGER.debug("Insufficient sensor types for weighted fusion")
+                return None
+
+            # Create time buckets and calculate weighted confidence using proportional overlap
+            bucket_size = timedelta(minutes=10)
+            current_time = start_time
+            confidence_periods = []
+
+            while current_time < end_time:
+                bucket_end = min(current_time + bucket_size, end_time)
+                bucket_duration = (bucket_end - current_time).total_seconds()
+                weighted_score = 0.0
+                total_weight = 0.0
+
+                # Calculate weighted activity score for this time bucket using proportional overlap
+                for sensor_type, intervals in type_intervals.items():
+                    # Calculate total active time for this sensor type in this bucket
+                    type_active_time = 0.0
+                    for interval in intervals:
+                        if interval["state"] == STATE_ON:
+                            overlap = _calculate_overlap_duration(
+                                interval, current_time, bucket_end
+                            )
+                            type_active_time += overlap
+
+                    # Convert to proportion of bucket duration
+                    type_activity_ratio = (
+                        type_active_time / bucket_duration
+                        if bucket_duration > 0
+                        else 0.0
+                    )
+
+                    # Weight the activity ratio by sensor type weight
+                    weighted_score += type_weights[sensor_type] * type_activity_ratio
+                    total_weight += type_weights[sensor_type]
+
+                # Calculate confidence (0.0 to 1.0)
+                confidence = weighted_score / total_weight if total_weight > 0 else 0.0
+
+                # Only use high-confidence periods (>= 0.5)
+                is_occupied = confidence >= 0.5
+
+                confidence_periods.append(
+                    {
+                        "start": current_time,
+                        "end": bucket_end,
+                        "occupied": is_occupied,
+                        "confidence": confidence,
+                    }
+                )
+
+                current_time = bucket_end
+
+            # Calculate occupancy rate from high-confidence periods only
+            high_confidence_periods = [
+                p for p in confidence_periods if p["confidence"] >= 0.3
+            ]
+
+            if not high_confidence_periods:
+                _LOGGER.debug("No high-confidence periods found")
+                return None
+
+            occupied_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in high_confidence_periods
+                if period["occupied"]
+            )
+            total_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in high_confidence_periods
             )
 
-        # Calculate entity state durations during filtered motion intervals
-        entity_active_duration = 0.0
-        for motion_interval in filtered_motion_intervals:
-            for entity_interval in entity_intervals:
-                # Calculate overlap between intervals
-                overlap_start = max(motion_interval["start"], entity_interval["start"])
-                overlap_end = min(motion_interval["end"], entity_interval["end"])
-                if overlap_end > overlap_start:
-                    # Check if entity state is considered active
-                    if entity_interval["state"] in set(entity_active_states):
-                        entity_active_duration += (
-                            overlap_end - overlap_start
-                        ).total_seconds()
+            if total_time == 0:
+                return None
 
-        # Calculate conditional probability
-        probability = entity_active_duration / total_motion_duration
-        return max(MIN_PROBABILITY, min(probability, MAX_PROBABILITY))
+            occupancy_rate = occupied_time / total_time
 
-    @staticmethod
-    def _calculate_prior_probability(
-        primary_intervals: list[TimeInterval],
-    ) -> float:
-        """Calculate prior probability from historical occupancy rate.
+            # Debug logging for suspicious values
+            occupied_periods = sum(1 for p in high_confidence_periods if p["occupied"])
+            _LOGGER.debug(
+                "Confidence-weighted fusion: %.3f occupancy rate from %d high-confidence periods "
+                "(occupied: %d, total: %d, occupied_time: %.1f hours, total_time: %.1f hours)",
+                occupancy_rate,
+                len(high_confidence_periods),
+                occupied_periods,
+                len(high_confidence_periods),
+                occupied_time / 3600,
+                total_time / 3600,
+            )
 
-        This calculates the simple historical prior probability (occupancy rate)
-        from the primary sensor intervals. This is NOT a Bayesian calculation
-        but rather a straightforward frequency calculation.
+            if occupancy_rate > 0.75:
+                _LOGGER.warning(
+                    "Confidence-weighted fusion produced suspiciously high rate %.3f. "
+                    "Occupied periods: %d/%d, this may indicate limited data or sensor issues.",
+                    occupancy_rate,
+                    occupied_periods,
+                    len(high_confidence_periods),
+                )
 
-        Args:
-            primary_intervals: List of time intervals for primary sensor
+            return occupancy_rate
 
-        Returns:
-            Prior probability value (historical occupancy rate)
+        except Exception as err:
+            _LOGGER.warning("Confidence-weighted fusion failed: %s", err)
+            return None
 
-        """
-        # Calculate total duration of occupied and unoccupied states
-        occupied_duration = sum(
-            (interval["end"] - interval["start"]).total_seconds()
-            for interval in primary_intervals
-            if interval["state"] == STATE_ON
-        )
-        total_duration = sum(
-            (interval["end"] - interval["start"]).total_seconds()
-            for interval in primary_intervals
-        )
+    async def _time_pattern_analysis(
+        self, all_sensors: list[str], start_time: datetime, end_time: datetime
+    ) -> float | None:
+        """Method 3: Time Pattern Analysis across all sensors."""
+        try:
+            _LOGGER.debug(
+                "Starting time pattern analysis with %d sensors", len(all_sensors)
+            )
 
-        if total_duration == 0:
-            return 0.5  # Default to 0.5 if no data
+            # Collect all sensor activity intervals
+            all_intervals = []
+            for sensor in all_sensors:
+                states = await get_states_from_recorder(
+                    self.coordinator.hass, sensor, start_time, end_time
+                )
+                if states:
+                    state_objects = [s for s in states if isinstance(s, State)]
+                    if state_objects:
+                        intervals = await states_to_intervals(
+                            state_objects, start_time, end_time
+                        )
+                        all_intervals.extend(intervals)
 
-        # Calculate P(area occupied) - this IS the prior
-        p_occupied = occupied_duration / total_duration
+            if not all_intervals:
+                _LOGGER.debug("No sensor activity found for pattern analysis")
+                return None
 
-        # The prior is simply the historical occupancy rate
-        return max(MIN_PROBABILITY, min(p_occupied, MAX_PROBABILITY))
+            # Create larger time buckets for pattern analysis (15 minutes) using proportional overlap
+            bucket_size = timedelta(minutes=15)
+            current_time = start_time
+            activity_periods = []
+
+            while current_time < end_time:
+                bucket_end = min(current_time + bucket_size, end_time)
+                bucket_duration = (bucket_end - current_time).total_seconds()
+
+                # Calculate total active duration for all sensors in this time bucket
+                total_active_time = 0.0
+                for interval in all_intervals:
+                    if interval["state"] == STATE_ON:
+                        overlap = _calculate_overlap_duration(
+                            interval, current_time, bucket_end
+                        )
+                        total_active_time += overlap
+
+                # Calculate activity ratio as proportion of total possible active time
+                # Total possible = bucket_duration * number_of_sensors
+                max_possible_active_time = (
+                    bucket_duration * len(all_sensors) if all_sensors else 1.0
+                )
+                activity_ratio = (
+                    total_active_time / max_possible_active_time
+                    if max_possible_active_time > 0
+                    else 0.0
+                )
+
+                # Use adaptive threshold based on total sensors
+                if len(all_sensors) >= 5:
+                    threshold = 0.15  # 15% for many sensors (reduced from 30% to account for proportional calculation)
+                elif len(all_sensors) >= 3:
+                    threshold = 0.20  # 20% for moderate sensors (reduced from 40%)
+                else:
+                    threshold = 0.25  # 25% for few sensors (reduced from 50%)
+
+                is_occupied = activity_ratio >= threshold
+
+                activity_periods.append(
+                    {
+                        "start": current_time,
+                        "end": bucket_end,
+                        "occupied": is_occupied,
+                        "activity_ratio": activity_ratio,
+                    }
+                )
+
+                current_time = bucket_end
+
+            # Calculate occupancy rate from activity patterns
+            occupied_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in activity_periods
+                if period["occupied"]
+            )
+            total_time = sum(
+                (period["end"] - period["start"]).total_seconds()
+                for period in activity_periods
+            )
+
+            if total_time == 0:
+                return None
+
+            occupancy_rate = occupied_time / total_time
+
+            # Debug logging for suspicious values
+            occupied_periods = sum(1 for p in activity_periods if p["occupied"])
+            _LOGGER.debug(
+                "Time pattern analysis: %.3f occupancy rate from %d periods "
+                "(occupied: %d, total: %d, occupied_time: %.1f hours, total_time: %.1f hours)",
+                occupancy_rate,
+                len(activity_periods),
+                occupied_periods,
+                len(activity_periods),
+                occupied_time / 3600,
+                total_time / 3600,
+            )
+
+            if occupancy_rate > 0.75:
+                _LOGGER.warning(
+                    "Time pattern analysis produced suspiciously high rate %.3f. "
+                    "Occupied periods: %d/%d, this may indicate limited data or sensor issues.",
+                    occupancy_rate,
+                    occupied_periods,
+                    len(activity_periods),
+                )
+
+            return occupancy_rate
+
+        except Exception as err:
+            _LOGGER.warning("Time pattern analysis failed: %s", err)
+            return None
+
+    async def _primary_sensor_with_margin(
+        self, primary_sensor: str, start_time: datetime, end_time: datetime
+    ) -> float | None:
+        """Method 4: Primary Sensor + Uncertainty Margin (fallback for single sensor)."""
+        try:
+            _LOGGER.debug("Using primary sensor with margin: %s", primary_sensor)
+
+            states = await get_states_from_recorder(
+                self.coordinator.hass, primary_sensor, start_time, end_time
+            )
+
+            if not states:
+                _LOGGER.debug("No states found for primary sensor")
+                return None
+
+            state_objects = [s for s in states if isinstance(s, State)]
+            if not state_objects:
+                _LOGGER.debug("No valid states found for primary sensor")
+                return None
+
+            intervals = await states_to_intervals(state_objects, start_time, end_time)
+
+            # Calculate basic occupancy rate
+            occupied_duration = sum(
+                (interval["end"] - interval["start"]).total_seconds()
+                for interval in intervals
+                if interval["state"] == STATE_ON
+            )
+            total_duration = sum(
+                (interval["end"] - interval["start"]).total_seconds()
+                for interval in intervals
+            )
+
+            if total_duration == 0:
+                return None
+
+            raw_occupancy_rate = occupied_duration / total_duration
+
+            # Add uncertainty margin to break circular logic
+            # Reduce confidence by adding 5% uncertainty toward 0.5 (maximum entropy)
+            uncertainty_factor = 0.05
+            adjusted_rate = (
+                raw_occupancy_rate * (1 - uncertainty_factor) + 0.5 * uncertainty_factor
+            )
+
+            _LOGGER.debug(
+                "Primary sensor with margin: %.3f -> %.3f (added %.1f%% uncertainty)",
+                raw_occupancy_rate,
+                adjusted_rate,
+                uncertainty_factor * 100,
+            )
+
+            return adjusted_rate
+
+        except Exception as err:
+            _LOGGER.warning("Primary sensor with margin failed: %s", err)
+            return None
+
+    @property
+    def area_baseline_prior(self) -> float:
+        """Get the cached area baseline prior or calculate it if not available."""
+        if self._area_baseline_prior is not None:
+            return self._area_baseline_prior
+
+        # No cached value, return default (async calculation will be triggered by coordinator)
+        return DEFAULT_PRIOR
+
+    @property
+    def method_used(self) -> str | None:
+        """Get the method used for the last calculation."""
+        return self._method_used
+
+    def clear_cache(self) -> None:
+        """Clear the cached area baseline prior."""
+        self._area_baseline_prior = None
+        self._last_updated = None
+        self._method_used = None
