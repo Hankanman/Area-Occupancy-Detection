@@ -14,7 +14,9 @@ from custom_components.area_occupancy.service import (
     _get_entity_type_learned_data,
     _get_problematic_entities,
     _reset_entities,
-    _update_priors,
+    _update_area_prior,
+    _update_all_priors_and_likelihoods,
+    _update_likelihoods,
     async_setup_services,
 )
 from homeassistant.core import ServiceCall
@@ -62,10 +64,10 @@ class TestGetCoordinator:
             _get_coordinator(mock_hass, "test_entry_id")
 
 
-class TestUpdatePriors:
-    """Test _update_priors service function."""
+class TestUpdateAllPriorsAndLikelihoods:
+    """Test _update_all_priors_and_likelihoods service function."""
 
-    async def test_update_priors_success(
+    async def test_update_all_priors_and_likelihoods_success(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
@@ -95,7 +97,7 @@ class TestUpdatePriors:
         # The service expects the service call to have entry_id
         mock_service_call.data = {"entry_id": "test_entry_id"}
 
-        result = await _update_priors(mock_hass, mock_service_call)
+        result = await _update_all_priors_and_likelihoods(mock_hass, mock_service_call)
 
         # Verify the result structure
         assert "updated_priors" in result
@@ -120,16 +122,18 @@ class TestUpdatePriors:
         mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
         mock_coordinator.async_refresh.assert_called_once()
 
-    async def test_update_priors_missing_entry_id(self, mock_hass: Mock) -> None:
+    async def test_update_all_priors_and_likelihoods_missing_entry_id(
+        self, mock_hass: Mock
+    ) -> None:
         """Test prior update with missing entry_id."""
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {}
 
         # The actual service implementation will raise KeyError for missing entry_id
         with pytest.raises(KeyError):
-            await _update_priors(mock_hass, mock_call)
+            await _update_all_priors_and_likelihoods(mock_hass, mock_call)
 
-    async def test_update_priors_coordinator_error(
+    async def test_update_all_priors_and_likelihoods_coordinator_error(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
@@ -152,7 +156,7 @@ class TestUpdatePriors:
             HomeAssistantError,
             match="Failed to update priors for test_entry_id: Update failed",
         ):
-            await _update_priors(mock_hass, mock_service_call)
+            await _update_all_priors_and_likelihoods(mock_hass, mock_service_call)
 
         # Verify the coordinator was called with the correct history period
         mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
