@@ -34,7 +34,7 @@ from .const import (
 from .data.config import ConfigManager
 from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
-from .data.prior import PriorManager
+from .data.prior import Prior
 from .data.purpose import PurposeManager
 from .storage import AreaOccupancyStore
 from .utils import overall_probability
@@ -71,9 +71,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config = self.config_manager.config
         self.store = AreaOccupancyStore(self)
         self.entity_types = EntityTypeManager(self)
-        self.priors = PriorManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
+        self.prior = Prior(self)
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
         self._global_prior_timer: CALLBACK_TYPE | None = None
@@ -100,20 +100,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return overall_probability(
             entities=self.entities.entities,
-            prior=self.prior,
+            prior=self.area_prior,
         )
 
     @property
-    def prior(self) -> float:
-        """Calculate overall area prior from entity priors."""
+    def area_prior(self) -> float:
+        """Get the area's baseline occupancy prior from historical data.
+
+        This returns the pure P(area occupied) without any sensor weighting.
+        """
         if not self.entities.entities:
             return DEFAULT_PRIOR
 
-        # Simple average of all entity priors
-        prior_sum = sum(
-            entity.prior.prob_given_true for entity in self.entities.entities.values()
-        )
-        return prior_sum / len(self.entities.entities)
+        # Use the dedicated area baseline prior calculation
+        return self.prior.area_baseline_prior
 
     @property
     def decay(self) -> float:
@@ -168,11 +168,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if loaded_data:
                 # Create entity manager from loaded data
                 self.entities = EntityManager.from_dict(dict(loaded_data), self)
+                # Update restored entities with current configuration
+                await self.entities.__post_init__()
 
                 _LOGGER.debug(
                     "Successfully restored stored data for instance %s",
                     self.entry_id,
                 )
+            else:
+                # No stored data - initialize entities from configuration
+                self.entities = EntityManager(self)
+                await self.entities.__post_init__()
+
+                _LOGGER.debug(
+                    "No stored data found, created fresh entities from configuration for %s",
+                    self.entry_id,
+                )
+
+            # Calculate initial area baseline prior
+            if self.config.history.enabled:
+                await self.prior.calculate_area_baseline_prior()
+                await self.entities.update_all_entity_likelihoods()
 
             # Save current state to storage
             await self.store.async_save_data(force=True)
@@ -311,7 +327,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Update learned priors if history is enabled
         if self.config.history.enabled:
-            await self.priors.update_all_entity_priors(history_period)
+            # Update area baseline prior separately (unweighted)
+            await self.prior.calculate_area_baseline_prior(history_period)
+
+            # Update individual sensor likelihoods
+            await self.entities.update_all_entity_likelihoods(history_period)
 
         # Reschedule the timer
         self._start_prior_timer()
