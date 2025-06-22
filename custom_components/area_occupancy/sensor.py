@@ -68,7 +68,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        return format_float(self.coordinator.prior * 100)
+        return format_float(self.coordinator.area_prior * 100)
 
 
 class ProbabilitySensor(AreaOccupancySensorBase):
