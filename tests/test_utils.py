@@ -55,10 +55,10 @@ class TestValidatePrior:
 
     def test_clamp_invalid_priors(self) -> None:
         """Test clamping of invalid prior values."""
-        assert validate_prior(0.0) == 0.001  # Minimum enforced
-        assert validate_prior(-0.1) == 0.001  # Minimum enforced
-        assert validate_prior(1.0) == 1.0
-        assert validate_prior(1.1) == 1.0
+        assert validate_prior(0.0) == 0.000001  # Minimum enforced
+        assert validate_prior(-0.1) == 0.000001  # Minimum enforced
+        assert validate_prior(1.0) == 0.999999
+        assert validate_prior(1.1) == 0.999999
 
 
 class TestValidateWeight:
@@ -136,7 +136,6 @@ class TestBayesianProbability:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             evidence=True,
-            weight=1.0,
             decay_factor=1.0,
         )
         assert abs(result - 0.774) < 0.001
@@ -158,7 +157,6 @@ class TestBayesianProbability:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             evidence=False,
-            weight=1.0,
             decay_factor=1.0,
         )
         # Correct calculation:
@@ -175,7 +173,6 @@ class TestBayesianProbability:
             prob_given_true=0.99,
             prob_given_false=0.01,
             evidence=True,
-            weight=1.0,
             decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
@@ -185,7 +182,6 @@ class TestBayesianProbability:
             prob_given_true=0.99,
             prob_given_false=0.01,
             evidence=False,
-            weight=1.0,
             decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
@@ -198,7 +194,6 @@ class TestBayesianProbability:
             prob_given_true=1.1,
             prob_given_false=-0.1,
             evidence=True,
-            weight=1.0,
             decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
@@ -208,32 +203,23 @@ class TestBayesianProbability:
             prob_given_true=-0.1,
             prob_given_false=1.1,
             evidence=False,
-            weight=1.0,
             decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
 
     def test_bayesian_probability_fractional_weight(self) -> None:
-        """Test Bayesian probability with fractional weight."""
+        """Test Bayesian probability with fractional weight (now handled in likelihood)."""
+        # Weight is now applied in likelihood calculation, not in bayesian_probability
         result = bayesian_probability(
             prior=0.5,
             prob_given_true=0.8,
             prob_given_false=0.2,
             evidence=True,
-            weight=0.5,
             decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
-        # With fractional weight, result should be between prior and full update
-        full_result = bayesian_probability(
-            prior=0.5,
-            prob_given_true=0.8,
-            prob_given_false=0.2,
-            evidence=True,
-            weight=1.0,
-            decay_factor=1.0,
-        )
-        assert 0.5 <= result <= full_result
+        # Just test that it returns a valid probability
+        assert 0.5 <= result <= 1.0
 
     def test_bayesian_probability_fractional_decay(self) -> None:
         """Test Bayesian probability with fractional decay factor."""
@@ -242,7 +228,6 @@ class TestBayesianProbability:
             prob_given_true=0.8,
             prob_given_false=0.2,
             evidence=False,
-            weight=1.0,
             decay_factor=0.5,
         )
         assert 0.0 <= result <= 1.0
@@ -258,8 +243,8 @@ class TestOverallProbability:
         mock_entity.evidence = True
         mock_entity.decay.is_decaying = False
         mock_entity.type.weight = 1.0
-        mock_entity.prior.prob_given_true = 0.8
-        mock_entity.prior.prob_given_false = 0.1
+        mock_entity.likelihood.prob_given_true = 0.8
+        mock_entity.likelihood.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -275,15 +260,15 @@ class TestOverallProbability:
         mock_entity1.evidence = True
         mock_entity1.decay.is_decaying = False
         mock_entity1.type.weight = 0.8
-        mock_entity1.prior.prob_given_true = 0.8
-        mock_entity1.prior.prob_given_false = 0.1
+        mock_entity1.likelihood.prob_given_true = 0.8
+        mock_entity1.likelihood.prob_given_false = 0.1
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
         mock_entity2.type.weight = 0.6
-        mock_entity2.prior.prob_given_true = 0.7
-        mock_entity2.prior.prob_given_false = 0.2
+        mock_entity2.likelihood.prob_given_true = 0.7
+        mock_entity2.likelihood.prob_given_false = 0.2
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -302,8 +287,8 @@ class TestOverallProbability:
         mock_entity.decay.is_decaying = True
         mock_entity.decay.decay_factor = 0.5  # Half decay
         mock_entity.type.weight = 1.0
-        mock_entity.prior.prob_given_true = 0.8
-        mock_entity.prior.prob_given_false = 0.1
+        mock_entity.likelihood.prob_given_true = 0.8
+        mock_entity.likelihood.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -330,23 +315,23 @@ class TestOverallProbability:
         mock_active.evidence = True
         mock_active.decay.is_decaying = False
         mock_active.type.weight = 1.0
-        mock_active.prior.prob_given_true = 0.8
-        mock_active.prior.prob_given_false = 0.1
+        mock_active.likelihood.prob_given_true = 0.8
+        mock_active.likelihood.prob_given_false = 0.1
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
         mock_inactive.type.weight = 1.0
-        mock_inactive.prior.prob_given_true = 0.8
-        mock_inactive.prior.prob_given_false = 0.1
+        mock_inactive.likelihood.prob_given_true = 0.8
+        mock_inactive.likelihood.prob_given_false = 0.1
 
         mock_decaying = Mock()
         mock_decaying.evidence = False
         mock_decaying.decay.is_decaying = True
         mock_decaying.decay.decay_factor = 0.5
         mock_decaying.type.weight = 1.0
-        mock_decaying.prior.prob_given_true = 0.8
-        mock_decaying.prior.prob_given_false = 0.1
+        mock_decaying.likelihood.prob_given_true = 0.8
+        mock_decaying.likelihood.prob_given_false = 0.1
 
         entities = {
             "active": cast("Entity", mock_active),

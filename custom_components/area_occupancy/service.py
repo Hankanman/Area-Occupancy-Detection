@@ -25,8 +25,8 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
-async def _update_priors(hass: HomeAssistant, call: ServiceCall):
-    """Manually trigger an update of learned priors."""
+async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Manually trigger an update of the area baseline prior."""
     entry_id = call.data["entry_id"]
 
     try:
@@ -38,38 +38,84 @@ async def _update_priors(hass: HomeAssistant, call: ServiceCall):
         )
 
         _LOGGER.info(
-            "Updating priors for entry %s with %d days history",
+            "Updating area baseline prior for entry %s with %d days history",
             entry_id,
             history_period,
         )
-        await coordinator.priors.update_all_entity_priors(history_period)
+
+        # Update area baseline prior
+        area_baseline_prior = await coordinator.prior.update()
+
         await coordinator.async_refresh()
 
-        # Collect the updated priors to return
-        priors_data = {}
-        for entity_id, entity in coordinator.entities.entities.items():
-            priors_data[entity_id] = {
-                "prob_given_true": entity.prior.prob_given_true,
-                "prob_given_false": entity.prior.prob_given_false,
-                "entity_type": entity.type.input_type.value,
-            }
-
-        _LOGGER.info("Prior update completed successfully for entry %s", entry_id)
+        _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
 
         return {
-            "updated_priors": priors_data,
+            "area_prior": area_baseline_prior,
             "history_period": history_period,
-            "total_entities": len(priors_data),
             "update_timestamp": dt_util.utcnow().isoformat(),
         }
 
     except (HomeAssistantError, ValueError, RuntimeError) as err:
-        error_msg = f"Failed to update priors for {entry_id}: {err}"
+        error_msg = f"Failed to update area prior for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
 
 
-async def _reset_entities(hass: HomeAssistant, call: ServiceCall):
+async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Manually trigger an update of sensor likelihoods."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        # Get history period from service call or use coordinator default
+        history_period = (
+            call.data.get("history_period") or coordinator.config.history.period
+        )
+
+        _LOGGER.info(
+            "Updating sensor likelihoods for entry %s with %d days history",
+            entry_id,
+            history_period,
+        )
+
+        # Update individual sensor likelihoods
+        updated_count = await coordinator.entities.update_all_entity_likelihoods(
+            history_period
+        )
+        await coordinator.async_refresh()
+
+        # Collect the updated likelihoods to return
+        likelihood_data = {}
+        for entity_id, entity in coordinator.entities.entities.items():
+            likelihood_data[entity_id] = {
+                "type": entity.type.input_type.value,
+                "weight": entity.type.weight,
+                "prob_given_true": entity.likelihood.prob_given_true,
+                "prob_given_false": entity.likelihood.prob_given_false,
+                "prob_given_true_raw": entity.likelihood.prob_given_true_raw,
+                "prob_given_false_raw": entity.likelihood.prob_given_false_raw,
+            }
+
+        _LOGGER.info("Likelihood update completed successfully for entry %s", entry_id)
+
+        return {
+            "updated_entities": updated_count,
+            "history_period": history_period,
+            "total_entities": len(coordinator.entities.entities),
+            "update_timestamp": dt_util.utcnow().isoformat(),
+            "prior": coordinator.area_prior,
+            "likelihoods": likelihood_data,
+        }
+
+    except (HomeAssistantError, ValueError, RuntimeError) as err:
+        error_msg = f"Failed to update likelihoods for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
+async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
     """Reset all entity probabilities and learned data."""
     entry_id = call.data["entry_id"]
 
@@ -95,7 +141,7 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall):
         raise HomeAssistantError(error_msg) from err
 
 
-async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall):
+async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Get basic entity metrics for diagnostics."""
     entry_id = call.data["entry_id"]
 
@@ -126,7 +172,9 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall):
         return {"metrics": metrics}
 
 
-async def _get_problematic_entities(hass: HomeAssistant, call: ServiceCall):
+async def _get_problematic_entities(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
     """Get entities that may need attention."""
     entry_id = call.data["entry_id"]
 
@@ -155,7 +203,7 @@ async def _get_problematic_entities(hass: HomeAssistant, call: ServiceCall):
         return {"problems": problems}
 
 
-async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
+async def _get_entity_details(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Get detailed information about specific entities."""
     entry_id = call.data["entry_id"]
     entity_ids = call.data.get("entity_ids", [])
@@ -190,8 +238,8 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
                         "active_range": entity.type.active_range,
                     },
                     "prior": {
-                        "prob_given_true": entity.prior.prob_given_true,
-                        "prob_given_false": entity.prior.prob_given_false,
+                        "prob_given_true": entity.likelihood.prob_given_true,
+                        "prob_given_false": entity.likelihood.prob_given_false,
                     },
                 }
             except ValueError:
@@ -208,7 +256,9 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall):
         return {"entity_details": details}
 
 
-async def _force_entity_update(hass: HomeAssistant, call: ServiceCall):
+async def _force_entity_update(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
     """Force immediate update of specific entities."""
     entry_id = call.data["entry_id"]
     entity_ids = call.data.get("entity_ids", [])
@@ -234,7 +284,7 @@ async def _force_entity_update(hass: HomeAssistant, call: ServiceCall):
         return {"updated_entities": updated_count}
 
 
-async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
+async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Get current area occupancy status and confidence."""
     entry_id = call.data["entry_id"]
 
@@ -263,6 +313,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
             "area_name": area_name,
             "occupied": coordinator.occupied,
             "occupancy_probability": occupancy_probability,
+            "area_baseline_prior": coordinator.prior,
             "confidence_level": (
                 "high"
                 if occupancy_probability and occupancy_probability > 0.8
@@ -289,7 +340,9 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall):
         return {"area_status": status}
 
 
-async def _get_entity_type_learned_data(hass: HomeAssistant, call: ServiceCall):
+async def _get_entity_type_learned_data(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
     """Return the learned entity_type data for an entry_id."""
     entry_id = call.data["entry_id"]
     try:
@@ -320,7 +373,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
 
-    update_priors_schema = vol.Schema(
+    update_area_prior_schema = vol.Schema(
+        {
+            vol.Required("entry_id"): str,
+            vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=90)),
+        }
+    )
+
+    update_likelihoods_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,
             vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=90)),
@@ -351,8 +411,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
 
     # Create async wrapper functions to properly handle the service calls
-    async def handle_update_priors(call: ServiceCall) -> dict[str, Any]:
-        return await _update_priors(hass, call)
+    async def handle_update_area_prior(call: ServiceCall) -> dict[str, Any]:
+        return await _update_area_prior(hass, call)
+
+    async def handle_update_likelihoods(call: ServiceCall) -> dict[str, Any]:
+        return await _update_likelihoods(hass, call)
 
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
@@ -378,9 +441,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Register services with async wrapper functions
     hass.services.async_register(
         DOMAIN,
-        "update_priors",
-        handle_update_priors,
-        schema=update_priors_schema,
+        "update_area_prior",
+        handle_update_area_prior,
+        schema=update_area_prior_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "update_likelihoods",
+        handle_update_likelihoods,
+        schema=update_likelihoods_schema,
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -439,4 +510,4 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 7, DOMAIN)
+    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)

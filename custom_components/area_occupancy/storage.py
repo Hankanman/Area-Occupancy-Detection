@@ -102,7 +102,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 name=self._coordinator.config.name,
                 purpose=self._coordinator.config.purpose,
                 probability=self._coordinator.probability,
-                prior=self._coordinator.prior,
+                prior=self._coordinator.area_prior,
                 threshold=self._coordinator.threshold,
                 last_updated=dt_util.utcnow().isoformat(),
                 entities=entity_data.get("entities", {}),
