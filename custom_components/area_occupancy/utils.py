@@ -254,24 +254,24 @@ def overall_probability(
     entities: dict[str, Entity],
     prior: float,
 ) -> float:
-    """Combine current beliefs of all entities into one room posterior."""
-    posterior = prior
-    for e in entities.values():
-        # Calculate observed evidence
-        observed = (
-            True
-            if e.evidence or e.decay.is_decaying
-            else False
-            if not e.evidence and not e.decay.is_decaying
-            else None
-        )
+    """Combine weighted posteriors from active/decaying sensors."""
 
-        # Update posterior probability (no weight parameter needed)
+    contributing_entities = [
+        e for e in entities.values() if e.evidence or e.decay.is_decaying
+    ]
+
+    if not contributing_entities:
+        return validate_prob(prior)
+
+    product = 1.0
+    for e in contributing_entities:
         posterior = bayesian_probability(
-            prior=posterior,
-            prob_given_true=e.likelihood.prob_given_true,  # Already weighted
-            prob_given_false=e.likelihood.prob_given_false,  # Already weighted
-            evidence=observed,
+            prior=prior,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
+            evidence=True,
             decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
         )
-    return validate_prob(posterior)
+        product *= 1 - posterior
+
+    return validate_prob(1 - product)
