@@ -124,22 +124,35 @@ async def states_to_intervals(
     if not states:
         return intervals
 
-    # Sort states by last_changed
+    # Sort states chronologically
     sorted_states = sorted(states, key=lambda x: x.last_changed)
 
-    # Create intervals from states
-    for i, state in enumerate(sorted_states):
-        interval_start = state.last_changed
-        interval_end = (
-            sorted_states[i + 1].last_changed if i < len(sorted_states) - 1 else end
-        )
+    # Determine the state that was active at the start time
+    current_state = sorted_states[0].state
+    for state in sorted_states:
+        if state.last_changed <= start:
+            current_state = state.state
+        else:
+            break
+
+    current_time = start
+
+    # Build intervals between state changes
+    for state in sorted_states:
+        if state.last_changed <= start:
+            continue
+        if state.last_changed > end:
+            break
         intervals.append(
             TimeInterval(
-                start=interval_start,
-                end=interval_end,
-                state=state.state,
+                start=current_time, end=state.last_changed, state=current_state
             )
         )
+        current_state = state.state
+        current_time = state.last_changed
+
+    # Final interval until end
+    intervals.append(TimeInterval(start=current_time, end=end, state=current_state))
 
     return intervals
 
