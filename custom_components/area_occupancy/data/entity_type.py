@@ -214,41 +214,6 @@ class EntityTypeManager:
             params["active_range"] = range_attr
             params["active_states"] = None  # Clear states when range is set
 
-    def learn_from_entities(self, entities: dict[str, Any]) -> None:
-        """Update each EntityType's prior, prob_true, and prob_false as the average of all entity priors for that type."""
-        # Delayed import to avoid circular import
-        from .likelihood import Likelihood  # noqa: PLC0415
-
-        # Group entity priors by input type
-        grouped: dict[InputType, list[Likelihood]] = {k: [] for k in self._entity_types}
-        for entity in entities.values():
-            # entity can be Entity or dict, handle both
-            if hasattr(entity, "type") and hasattr(entity, "prior"):
-                input_type = entity.type.input_type
-                prior = entity.prior
-            elif isinstance(entity, dict):
-                try:
-                    input_type = InputType(entity["type"])
-                    prior = Likelihood.from_dict(entity["prior"])
-                except (ValueError, KeyError):
-                    # Skip invalid entity types or missing data
-                    continue
-            else:
-                continue
-            grouped[input_type].append(prior)
-
-        # For each type, compute averages and update
-        for input_type, priors in grouped.items():
-            if not priors:
-                continue
-            avg_prior = sum(p.prob_given_true for p in priors) / len(priors)
-            avg_true = sum(p.prob_given_true for p in priors) / len(priors)
-            avg_false = sum(p.prob_given_false for p in priors) / len(priors)
-            et = self._entity_types[input_type]
-            et.prior = avg_prior
-            et.prob_true = avg_true
-            et.prob_false = avg_false
-
 
 # Central definition of types—add or change defaults here.
 _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
