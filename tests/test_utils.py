@@ -293,11 +293,9 @@ class TestOverallProbability:
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
 
-        # With decay factor of 0.5, the evidence weight is reduced
+        # With decay factor of 0.5 the negative update should be softened
         result = overall_probability(entities, prior)
-        assert 0.0 <= result <= 1.0
-        # Result should be between the prior and what it would be with full weight
-        # but closer to prior due to decay
+        assert abs(result - 0.168) < 0.01
 
     def test_no_entities(self) -> None:
         """Test probability calculation with no entities."""
@@ -340,6 +338,6 @@ class TestOverallProbability:
         }
         prior = 0.3
 
-        # Should combine all evidence appropriately and return valid probability
+        # Should combine all evidence appropriately
         result = overall_probability(entities, prior)
-        assert 0.0 <= result <= 1.0
+        assert abs(result - 0.264) < 0.01
