@@ -14,9 +14,7 @@ from custom_components.area_occupancy.service import (
     _get_entity_type_learned_data,
     _get_problematic_entities,
     _reset_entities,
-    _update_area_prior,
     _update_all_priors_and_likelihoods,
-    _update_likelihoods,
     async_setup_services,
 )
 from homeassistant.core import ServiceCall

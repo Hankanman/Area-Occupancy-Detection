@@ -1,9 +1,7 @@
 """Tests for data.prior module - Area baseline prior calculations."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
-
-import pytest
 
 from custom_components.area_occupancy.data.prior import Prior
 from homeassistant.const import STATE_OFF, STATE_ON
