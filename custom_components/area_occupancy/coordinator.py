@@ -73,7 +73,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
-        self.prior = Prior(self)
+        self.prior = Prior(
+            self.hass, self.entities.entity_ids, self.config.history.period
+        )
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
         self._global_prior_timer: CALLBACK_TYPE | None = None
@@ -113,7 +115,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return DEFAULT_PRIOR
 
         # Use the dedicated area baseline prior calculation
-        return self.prior.area_baseline_prior
+        return self.prior.current_value
 
     @property
     def decay(self) -> float:
@@ -187,7 +189,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Calculate initial area baseline prior
             if self.config.history.enabled:
-                await self.prior.calculate_area_baseline_prior()
+                await self.prior.update()
                 await self.entities.update_all_entity_likelihoods()
 
             # Save current state to storage
@@ -328,7 +330,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Update learned priors if history is enabled
         if self.config.history.enabled:
             # Update area baseline prior separately (unweighted)
-            await self.prior.calculate_area_baseline_prior(history_period)
+            await self.prior.update()
 
             # Update individual sensor likelihoods
             await self.entities.update_all_entity_likelihoods(history_period)

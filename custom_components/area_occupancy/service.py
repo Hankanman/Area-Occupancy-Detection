@@ -44,9 +44,7 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         )
 
         # Update area baseline prior
-        area_baseline_prior = await coordinator.prior.calculate_area_baseline_prior(
-            history_period
-        )
+        area_baseline_prior = await coordinator.prior.update()
 
         await coordinator.async_refresh()
 

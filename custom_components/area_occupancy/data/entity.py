@@ -430,7 +430,7 @@ class EntityManager:
         """
         # Ensure area baseline prior is calculated first since likelihood calculations depend on it
         if self.coordinator.config.history.enabled:
-            await self.coordinator.prior.calculate_area_baseline_prior(history_period)
+            await self.coordinator.prior.update()
 
         updated_count = 0
         for entity in self._entities.values():
