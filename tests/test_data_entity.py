@@ -8,7 +8,6 @@ import pytest
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
-from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -20,7 +19,7 @@ class TestEntity:
     def test_initialization(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -28,14 +27,14 @@ class TestEntity:
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
 
         assert entity.entity_id == "binary_sensor.test_motion"
         assert entity.type == mock_entity_type
-        assert entity.prior == mock_prior
+        assert entity.likelihood == mock_likelihood
         assert entity.decay == mock_decay
         assert entity.coordinator == mock_coordinator
 
@@ -49,7 +48,7 @@ class TestEntity:
     def test_set_coordinator(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -57,7 +56,7 @@ class TestEntity:
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -68,7 +67,7 @@ class TestEntity:
     def test_to_dict(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -76,7 +75,7 @@ class TestEntity:
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -84,7 +83,7 @@ class TestEntity:
         data = entity.to_dict()
         assert data["entity_id"] == "binary_sensor.test_motion"
         assert data["type"] == mock_entity_type.to_dict.return_value
-        assert data["prior"] == mock_prior.to_dict.return_value
+        assert data["likelihood"] == mock_likelihood.to_dict.return_value
         assert data["decay"] == mock_decay.to_dict.return_value
         # Note: state, evidence, available, probability are no longer stored
         # as they are calculated properties
@@ -105,10 +104,10 @@ class TestEntity:
         mock_entity_type.active_range = None
         mock_entity_type_class.from_dict.return_value = mock_entity_type
 
-        mock_prior = Mock()
-        mock_prior.prob_given_true = 0.8
-        mock_prior.prob_given_false = 0.1
-        mock_prior_class.from_dict.return_value = mock_prior
+        mock_likelihood = Mock()
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.1
+        mock_prior_class.from_dict.return_value = mock_likelihood
 
         mock_decay = Mock()
         mock_decay_class.from_dict.return_value = mock_decay
@@ -130,7 +129,7 @@ class TestEntity:
                 "prior": 0.3,
                 "active_states": [STATE_ON],
             },
-            "prior": {
+            "likelihood": {
                 "prob_given_true": 0.8,
                 "prob_given_false": 0.1,
                 "last_updated": current_time.isoformat(),
@@ -142,11 +141,13 @@ class TestEntity:
 
         assert entity.entity_id == "binary_sensor.test_motion"
         assert entity.type == mock_entity_type
-        assert entity.prior == mock_prior
+        assert entity.likelihood == mock_likelihood
         assert entity.decay == mock_decay
         assert entity.coordinator == mock_coordinator
 
-    async def test_async_state_changed_listener(self, mock_coordinator: Mock) -> None:
+    async def test_async_state_changed_listener(
+        self, mock_coordinator: Mock, mock_likelihood: Mock
+    ) -> None:
         """Test state change listener with various scenarios."""
         manager = EntityManager(mock_coordinator)
 
@@ -166,11 +167,10 @@ class TestEntity:
             prob_false=0.1,
             prior=0.5,
         )
-        prior = Likelihood(
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            last_updated=dt_util.utcnow(),
-        )
+        # Use the mock likelihood fixture instead of creating real one
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.1
+
         decay = Decay(last_trigger_ts=time.time(), half_life=60.0)
 
         # Set up coordinator hass.states to return ON state for evidence calculation
@@ -183,7 +183,7 @@ class TestEntity:
         entity = Entity(
             entity_id="test_entity",
             type=entity_type,
-            prior=prior,
+            likelihood=mock_likelihood,
             decay=decay,
             coordinator=mock_coordinator,
         )
@@ -236,24 +236,23 @@ class TestEntity:
         mock_entity.entity_id = "test_entity"
         manager._entities = {"test_entity": mock_entity}
 
-        # Test successful prior calculation
-        mock_prior = Mock()
-        mock_prior.prior = 0.35
-        mock_prior.prob_given_true = 0.25
-        mock_prior.prob_given_false = 0.05
-        mock_prior.last_updated = dt_util.utcnow()
-        mock_coordinator.likelihoods.calculate.return_value = mock_prior
+        # Test successful likelihood update
+        mock_likelihood = Mock()
+        mock_likelihood.prob_given_true = 0.25
+        mock_likelihood.prob_given_false = 0.05
+        mock_likelihood.last_updated = dt_util.utcnow()
+        mock_entity.likelihood = mock_likelihood
+        mock_entity.likelihood.update = AsyncMock()
 
-        prior = await manager.coordinator.likelihoods.calculate(entity=mock_entity)
-        assert prior == mock_prior
-        mock_coordinator.likelihoods.calculate.assert_called_once()
+        await mock_entity.likelihood.update()
+        mock_entity.likelihood.update.assert_called_once()
 
-        # Test fallback to defaults on error
-        mock_coordinator.likelihoods.calculate.side_effect = ValueError("Test error")
+        # Test error handling during likelihood update
+        mock_entity.likelihood.update.side_effect = ValueError("Test error")
 
         # The test should expect the error to be raised, not handled
         with pytest.raises(ValueError, match="Test error"):
-            await manager.coordinator.likelihoods.calculate(entity=mock_entity)
+            await mock_entity.likelihood.update()
 
 
 class TestEntityManager:
@@ -530,7 +529,7 @@ class TestEntityPropertiesAndMethods:
     def test_post_init_behavior(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -542,20 +541,20 @@ class TestEntityPropertiesAndMethods:
         mock_coordinator.hass.states.get.return_value = mock_state
         mock_entity_type.active_states = [STATE_ON]
         mock_entity_type.active_range = None
-        mock_prior.prob_given_true = 0.8
-        mock_prior.prob_given_false = 0.2
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.2
 
         entity = Entity(
             entity_id="binary_sensor.test_motion",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
 
         assert entity.name == "Test Motion Sensor"
         assert entity._previous_evidence == entity.evidence
-        assert entity._effective_probability == mock_prior.prob_given_true
+        assert entity._effective_probability == mock_likelihood.prob_given_true
 
         # Test without friendly name
         mock_state.attributes = {}
@@ -564,7 +563,7 @@ class TestEntityPropertiesAndMethods:
         entity2 = Entity(
             entity_id="binary_sensor.test_motion2",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -574,7 +573,7 @@ class TestEntityPropertiesAndMethods:
     def test_state_property_edge_cases(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -585,7 +584,7 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="binary_sensor.test",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -609,7 +608,7 @@ class TestEntityPropertiesAndMethods:
     def test_available_property(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -618,7 +617,7 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="binary_sensor.test",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -636,7 +635,7 @@ class TestEntityPropertiesAndMethods:
     def test_evidence_with_active_range(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -647,7 +646,7 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="sensor.temperature",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -679,7 +678,7 @@ class TestEntityPropertiesAndMethods:
     def test_has_new_evidence_transitions(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -687,13 +686,13 @@ class TestEntityPropertiesAndMethods:
         mock_entity_type.active_states = [STATE_ON]
         mock_entity_type.active_range = None
         mock_entity_type.weight = 0.8
-        mock_prior.prob_given_true = 0.8
-        mock_prior.prob_given_false = 0.2
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.2
 
         entity = Entity(
             entity_id="binary_sensor.motion",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -736,18 +735,18 @@ class TestEntityPropertiesAndMethods:
     def test_probability_with_decay(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test probability calculation with decay."""
         mock_entity_type.active_states = [STATE_ON]
-        mock_prior.prob_given_false = 0.1
+        mock_likelihood.prob_given_false = 0.1
 
         entity = Entity(
             entity_id="binary_sensor.test",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -776,7 +775,7 @@ class TestEntityPropertiesAndMethods:
     def test_effective_probability_property(
         self,
         mock_entity_type: Mock,
-        mock_prior: Mock,
+        mock_likelihood: Mock,
         mock_decay: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -784,7 +783,7 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="binary_sensor.test",
             type=mock_entity_type,
-            prior=mock_prior,
+            likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
         )
@@ -971,12 +970,10 @@ class TestEntityManagerAdvanced:
         mock_existing_entity.entity_id = "new_entity1"
         manager._entities = {"new_entity1": mock_existing_entity}
 
-        # Mock prior calculation
-        mock_prior = Mock()
-        mock_coordinator.likelihoods.calculate.return_value = mock_prior
-
         # Mock create_entity
         mock_new_entity = Mock()
+        mock_likelihood = Mock()
+        mock_new_entity.likelihood = mock_likelihood
         manager.create_entity = AsyncMock(return_value=mock_new_entity)
 
         # Create config entities to add
@@ -992,7 +989,6 @@ class TestEntityManagerAdvanced:
         manager.create_entity.assert_called_once_with(
             entity_id="new_entity1",
             entity_type=mock_entity_type,
-            prior=mock_prior,
         )
 
     def test_build_entity_mapping_from_types(self, mock_coordinator: Mock) -> None:
@@ -1056,16 +1052,15 @@ class TestEntityManagerAdvanced:
         mock_entity = Mock()
         manager.create_entity = AsyncMock(return_value=mock_entity)
 
-        # Mock prior calculation
-        mock_learned_prior = Mock()
-        mock_coordinator.likelihoods.calculate.return_value = mock_learned_prior
+        # Mock likelihood update
+        mock_likelihood = Mock()
+        mock_entity.likelihood = mock_likelihood
+        mock_entity.likelihood.update = AsyncMock()
 
         result = await manager._create_entities_from_config()
 
         assert "binary_sensor.motion" in result
         assert result["binary_sensor.motion"] == mock_entity
 
-        # Check that entity was created with default prior, then updated with learned prior
+        # Check that entity was created (likelihood update happens later in coordinator setup)
         manager.create_entity.assert_called_once()
-        mock_coordinator.likelihoods.calculate.assert_called_once_with(mock_entity)
-        assert mock_entity.prior == mock_learned_prior
