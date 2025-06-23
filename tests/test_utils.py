@@ -343,3 +343,32 @@ class TestOverallProbability:
         # Should combine all evidence appropriately and return valid probability
         result = overall_probability(entities, prior)
         assert 0.0 <= result <= 1.0
+
+    def test_unavailable_entity_ignored(self) -> None:
+        """Unavailable sensor should not alter probability."""
+        mock_active = Mock()
+        mock_active.evidence = True
+        mock_active.decay.is_decaying = False
+        mock_active.type.weight = 1.0
+        mock_active.likelihood.prob_given_true = 0.8
+        mock_active.likelihood.prob_given_false = 0.1
+
+        mock_unavailable = Mock()
+        mock_unavailable.evidence = None
+        mock_unavailable.decay.is_decaying = False
+        mock_unavailable.type.weight = 1.0
+        mock_unavailable.likelihood.prob_given_true = 0.8
+        mock_unavailable.likelihood.prob_given_false = 0.1
+
+        prior = 0.3
+
+        entities_base = {"active": cast("Entity", mock_active)}
+        entities_with_unavail = {
+            "active": cast("Entity", mock_active),
+            "unavail": cast("Entity", mock_unavailable),
+        }
+
+        result_base = overall_probability(entities_base, prior)
+        result_unavail = overall_probability(entities_with_unavail, prior)
+
+        assert result_base == result_unavail

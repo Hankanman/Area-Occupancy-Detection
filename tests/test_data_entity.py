@@ -673,7 +673,7 @@ class TestEntityPropertiesAndMethods:
 
         # Test None state
         mock_state.state = None
-        assert entity.evidence is False
+        assert entity.evidence is None
 
     def test_has_new_evidence_transitions(
         self,

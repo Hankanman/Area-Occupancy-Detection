@@ -257,14 +257,12 @@ def overall_probability(
     """Combine current beliefs of all entities into one room posterior."""
     posterior = prior
     for e in entities.values():
+        evidence = e.evidence
+        if evidence is None:
+            continue
+
         # Calculate observed evidence
-        observed = (
-            True
-            if e.evidence or e.decay.is_decaying
-            else False
-            if not e.evidence and not e.decay.is_decaying
-            else None
-        )
+        observed = bool(evidence or e.decay.is_decaying)
 
         # Update posterior probability (no weight parameter needed)
         posterior = bayesian_probability(
