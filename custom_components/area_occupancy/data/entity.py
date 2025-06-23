@@ -162,7 +162,6 @@ class Entity:
                     prob_given_true=self.likelihood.prob_given_true,
                     prob_given_false=self.likelihood.prob_given_false,
                     evidence=True,
-                    weight=self.type.weight,
                     decay_factor=1.0,  # No decay on evidence appearance
                 )
                 self.decay.stop_decay()
@@ -202,11 +201,25 @@ class Entity:
         cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
     ) -> "Entity":
         """Create entity from dictionary."""
+        entity_type = EntityType.from_dict(data["type"])
+        decay = Decay.from_dict(data["decay"])
+
+        # Create likelihood with specific values instead of entity reference
+        likelihood = Likelihood.from_dict(
+            data["likelihood"],
+            coordinator,
+            entity_id=data["entity_id"],
+            active_states=entity_type.active_states or [],
+            default_prob_true=entity_type.prob_true,
+            default_prob_false=entity_type.prob_false,
+            weight=entity_type.weight,
+        )
+
         return cls(
             entity_id=data["entity_id"],
-            type=EntityType.from_dict(data["type"]),
-            likelihood=Likelihood.from_dict(data["likelihood"]),
-            decay=Decay.from_dict(data["decay"]),
+            type=entity_type,
+            likelihood=likelihood,
+            decay=decay,
             coordinator=coordinator,
         )
 
@@ -349,7 +362,6 @@ class EntityManager:
         Args:
             entity_id: The unique identifier for the entity
             entity_type: The type of entity
-            prior: The prior probability information
 
         Returns:
             The created Entity instance
@@ -361,9 +373,12 @@ class EntityManager:
             half_life=self.config.decay.half_life,
         )
         likelihood = Likelihood(
-            prob_given_true=entity_type.prob_true,
-            prob_given_false=entity_type.prob_false,
-            last_updated=dt_util.utcnow(),
+            coordinator=self.coordinator,
+            entity_id=entity_id,
+            active_states=entity_type.active_states or [],
+            default_prob_true=entity_type.prob_true,
+            default_prob_false=entity_type.prob_false,
+            weight=entity_type.weight,
         )
 
         return Entity(
@@ -435,7 +450,7 @@ class EntityManager:
         updated_count = 0
         for entity in self._entities.values():
             try:
-                await entity.likelihood.update(self.coordinator, entity, history_period)
+                await entity.likelihood.update()
                 updated_count += 1
                 _LOGGER.debug(
                     "Updated likelihood for entity %s: prob_given_true=%.3f, prob_given_false=%.3f",
@@ -443,7 +458,7 @@ class EntityManager:
                     entity.likelihood.prob_given_true,
                     entity.likelihood.prob_given_false,
                 )
-            except Exception as err:
+            except (ValueError, TypeError) as err:
                 _LOGGER.warning(
                     "Failed to update likelihood for entity %s: %s",
                     entity.entity_id,

@@ -69,13 +69,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry_id = config_entry.entry_id
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
+        self.prior = Prior(self)
         self.store = AreaOccupancyStore(self)
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
-        self.prior = Prior(
-            self.hass, self.entities.entity_ids, self.config.history.period
-        )
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
         self._global_prior_timer: CALLBACK_TYPE | None = None

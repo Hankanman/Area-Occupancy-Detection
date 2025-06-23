@@ -90,8 +90,12 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
         likelihood_data = {}
         for entity_id, entity in coordinator.entities.entities.items():
             likelihood_data[entity_id] = {
+                "type": entity.type.input_type.value,
+                "weight": entity.type.weight,
                 "prob_given_true": entity.likelihood.prob_given_true,
                 "prob_given_false": entity.likelihood.prob_given_false,
+                "prob_given_true_raw": entity.likelihood.prob_given_true_raw,
+                "prob_given_false_raw": entity.likelihood.prob_given_false_raw,
             }
 
         _LOGGER.info("Likelihood update completed successfully for entry %s", entry_id)
@@ -101,6 +105,7 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             "history_period": history_period,
             "total_entities": len(coordinator.entities.entities),
             "update_timestamp": dt_util.utcnow().isoformat(),
+            "prior": coordinator.area_prior,
             "likelihoods": likelihood_data,
         }
 
