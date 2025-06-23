@@ -50,7 +50,7 @@ class TestAreaOccupancyCoordinator:
 
     def test_prior_property(self, mock_coordinator: Mock) -> None:
         """Test prior property using centralized mock."""
-        assert mock_coordinator.prior == 0.3
+        assert mock_coordinator.area_prior == 0.3
 
     def test_decay_property(self, mock_coordinator: Mock) -> None:
         """Test decay property using centralized mock."""
@@ -293,17 +293,17 @@ class TestCoordinatorPropertyCalculations:
     def test_prior_with_empty_entities(self, mock_coordinator: Mock) -> None:
         """Test prior calculation with no entities using centralized mock."""
         mock_coordinator.entities.entities = {}
-        mock_coordinator.prior = DEFAULT_PRIOR
+        mock_coordinator.area_prior = DEFAULT_PRIOR
 
-        assert mock_coordinator.prior == DEFAULT_PRIOR
+        assert mock_coordinator.area_prior == DEFAULT_PRIOR
 
     def test_prior_with_multiple_entities(
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
         """Test prior calculation with multiple entities using centralized mock."""
         # Should average all entity priors
-        assert 0.0 <= mock_coordinator_with_sensors.prior <= 1.0
-        assert mock_coordinator_with_sensors.prior == 0.35
+        assert 0.0 <= mock_coordinator_with_sensors.area_prior <= 1.0
+        assert mock_coordinator_with_sensors.area_prior == 0.35
 
     def test_decay_with_empty_entities(self, mock_coordinator: Mock) -> None:
         """Test decay calculation with no entities using centralized mock."""
@@ -611,8 +611,8 @@ class TestCoordinatorEdgeCasesUsingCentralizedMocks:
         """Test prior property with edge values using centralized mock."""
         # Test with no entities (should use DEFAULT_PRIOR)
         mock_coordinator.entities.entities = {}
-        mock_coordinator.prior = DEFAULT_PRIOR
-        assert mock_coordinator.prior == DEFAULT_PRIOR
+        mock_coordinator.area_prior = DEFAULT_PRIOR
+        assert mock_coordinator.area_prior == DEFAULT_PRIOR
 
     def test_decay_edge_values(self, mock_coordinator: Mock) -> None:
         """Test decay property with edge values using centralized mock."""
@@ -710,8 +710,8 @@ class TestCoordinatorAdvancedTimerManagement:
         test_time = dt_util.utcnow()
 
         # Test prior timer error handling
-        mock_coordinator.priors.update_all_entity_priors.side_effect = (
-            HomeAssistantError("Prior update failed")
+        mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
+            HomeAssistantError("Likelihood update failed")
         )
 
         # Should not raise exception, but handle gracefully
@@ -742,12 +742,24 @@ class TestCoordinatorSetupScenarios:
         # EntityManager doesn't have async_initialize - __post_init__ is called automatically during creation
         coordinator.store.async_save_data = AsyncMock()
 
+        # Mock entity types to prevent KeyError during entity creation
         with (
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_storage_timer"),
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
             await coordinator.setup()
 
         # Verify initialization sequence
@@ -773,7 +785,18 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_storage_timer"),
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
         ):
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
             mock_from_dict.return_value = coordinator.entities
             await coordinator.setup()
 
@@ -796,9 +819,22 @@ class TestCoordinatorSetupScenarios:
                 "async_initialize",
                 side_effect=HomeAssistantError("Entity init failed"),
             ),
-            pytest.raises(ConfigEntryNotReady, match="Failed to set up coordinator"),
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
         ):
-            await coordinator.setup()
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
+            with pytest.raises(
+                ConfigEntryNotReady, match="Failed to set up coordinator"
+            ):
+                await coordinator.setup()
 
     async def test_setup_storage_failure_recovery(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -816,9 +852,20 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_storage_timer"),
-            pytest.raises(ConfigEntryNotReady),
+            patch.object(
+                coordinator.entity_types, "get_entity_type"
+            ) as mock_get_entity_type,
         ):
-            await coordinator.setup()
+            mock_entity_type = Mock()
+            mock_entity_type.prob_true = 0.25
+            mock_entity_type.prob_false = 0.05
+            mock_entity_type.weight = 0.8  # Real float value for math operations
+            mock_entity_type.active_states = ["on"]  # Make iterable
+            mock_entity_type.active_range = None
+            mock_get_entity_type.return_value = mock_entity_type
+
+            with pytest.raises(ConfigEntryNotReady):
+                await coordinator.setup()
 
 
 class TestCoordinatorProbabilityCalculationEdgeCases:
@@ -877,17 +924,17 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         """Test prior calculation with entities having different prior values."""
         entities = mock_coordinator_with_sensors.entities.entities
 
-        # Set different prior values
-        entities["binary_sensor.motion1"].prior.prob_given_true = 0.9
-        entities["binary_sensor.motion2"].prior.prob_given_true = 0.3
-        entities["light.test_light"].prior.prob_given_true = 0.1
-        entities["media_player.tv"].prior.prob_given_true = 0.7
+        # Set different likelihood values
+        entities["binary_sensor.motion1"].likelihood.prob_given_true = 0.9
+        entities["binary_sensor.motion2"].likelihood.prob_given_true = 0.3
+        entities["light.test_light"].likelihood.prob_given_true = 0.1
+        entities["media_player.tv"].likelihood.prob_given_true = 0.7
 
-        # Calculate expected prior and set mock to return it
+        # Calculate expected area prior and set mock to return it
         expected_prior = (0.9 + 0.3 + 0.1 + 0.7) / 4
-        mock_coordinator_with_sensors.prior = expected_prior
+        mock_coordinator_with_sensors.area_prior = expected_prior
 
-        prior = mock_coordinator_with_sensors.prior
+        prior = mock_coordinator_with_sensors.area_prior
 
         # Should be average of all entity priors
         assert abs(prior - expected_prior) < 0.01
@@ -1090,7 +1137,7 @@ class TestCoordinatorPerformanceScenarios:
         mock_coordinator.entities.entities = entities
 
         # Should handle calculation efficiently
-        prior = mock_coordinator.prior
+        prior = mock_coordinator.area_prior
         assert 0.0 <= prior <= 1.0
 
     async def test_state_tracking_with_many_entities(

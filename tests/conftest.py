@@ -82,9 +82,11 @@ from custom_components.area_occupancy.data.config import (
 )
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.likelihood import Likelihood
+from custom_components.area_occupancy.data.prior import Prior as PriorClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -296,24 +298,26 @@ def mock_entity_manager() -> Mock:
     manager.get_entity = Mock(return_value=None)
     manager.add_entity = Mock()
     manager.remove_entity = Mock()
-    manager.cleanup = Mock()
+    manager.cleanup = AsyncMock()
     manager.reset_entities = AsyncMock()
     manager.async_initialize = AsyncMock()
+    manager.update_all_entity_likelihoods = AsyncMock(return_value=1)
 
     # Serialization method with comprehensive entity data
     manager.to_dict.return_value = {
         "entities": {
             "binary_sensor.test_motion": {
                 "entity_id": "binary_sensor.test_motion",
-                "type": "motion",
-                "probability": 0.7,
-                "state": "on",
-                "evidence": True,
-                "available": True,
-                "last_updated": dt_util.utcnow().isoformat(),
-                "last_changed": dt_util.utcnow().isoformat(),
-                "prior": {
+                "type": {
+                    "input_type": "motion",
+                    "weight": 0.85,
+                    "prob_true": 0.8,
+                    "prob_false": 0.1,
                     "prior": 0.35,
+                    "active_states": ["on"],
+                    "active_range": None,
+                },
+                "likelihood": {
                     "prob_given_true": 0.8,
                     "prob_given_false": 0.1,
                     "last_updated": dt_util.utcnow().isoformat(),
@@ -340,7 +344,7 @@ def mock_coordinator(
     mock_config: Config,
     mock_entity_manager: Mock,
     mock_entity_type_manager: Mock,
-    mock_prior_manager: Mock,
+    mock_area_prior: Mock,
 ) -> Mock:
     """Create a comprehensive mock coordinator using realistic fixtures."""
 
@@ -352,17 +356,21 @@ def mock_coordinator(
     coordinator.probability = 0.5
     coordinator.is_occupied = False
     coordinator.threshold = 0.5
-    coordinator.prior = 0.3
+    coordinator.area_prior = 0.3
     coordinator.decay = 1.0
     coordinator.occupancy_entity_id = None
     coordinator.wasp_entity_id = None
     coordinator.last_update_success = True
 
-    # Use injected fixtures for config, entities, entity_types, priors
+    # Use injected fixtures for config, entities, entity_types, prior
     coordinator.config = mock_config
     coordinator.entities = mock_entity_manager
     coordinator.entity_types = mock_entity_type_manager
-    coordinator.priors = mock_prior_manager
+    coordinator.prior = mock_area_prior
+
+    # Add likelihoods manager for backward compatibility with some tests
+    coordinator.likelihoods = Mock()
+    coordinator.likelihoods.calculate = AsyncMock(return_value=Mock(prior=0.35))
 
     # Store - keep as a simple mock unless you want to inject a fixture
     coordinator.store = Mock()
@@ -726,8 +734,11 @@ def mock_active_entity() -> Mock:
     entity.state = STATE_ON
     entity.probability = 0.75
     entity.entity_id = "binary_sensor.active_entity"
-    entity.update_probability = Mock(return_value=True)
-    entity.async_update = AsyncMock()
+    entity.has_new_evidence = Mock(return_value=True)
+    entity.likelihood = Mock()
+    entity.likelihood.prob_given_true = 0.8
+    entity.likelihood.prob_given_false = 0.1
+    entity.likelihood.update = AsyncMock()
     return entity
 
 
@@ -742,8 +753,11 @@ def mock_inactive_entity() -> Mock:
     entity.state = STATE_OFF
     entity.probability = 0.25
     entity.entity_id = "binary_sensor.inactive_entity"
-    entity.update_probability = Mock(return_value=True)
-    entity.async_update = AsyncMock()
+    entity.has_new_evidence = Mock(return_value=True)
+    entity.likelihood = Mock()
+    entity.likelihood.prob_given_true = 0.8
+    entity.likelihood.prob_given_false = 0.1
+    entity.likelihood.update = AsyncMock()
     return entity
 
 
@@ -758,7 +772,10 @@ def mock_unavailable_entity() -> Mock:
     entity.state = None
     entity.probability = 0.15
     entity.entity_id = "binary_sensor.unavailable_entity"
-    entity.async_update = AsyncMock()
+    entity.likelihood = Mock()
+    entity.likelihood.prob_given_true = 0.8
+    entity.likelihood.prob_given_false = 0.1
+    entity.likelihood.update = AsyncMock()
     entity.last_updated = None
     return entity
 
@@ -774,7 +791,10 @@ def mock_stale_entity() -> Mock:
     entity.state = STATE_OFF
     entity.probability = 0.30
     entity.entity_id = "binary_sensor.stale_entity"
-    entity.async_update = AsyncMock()
+    entity.likelihood = Mock()
+    entity.likelihood.prob_given_true = 0.8
+    entity.likelihood.prob_given_false = 0.1
+    entity.likelihood.update = AsyncMock()
     # Mock stale update (more than 1 hour ago)
     entity.last_updated = dt_util.utcnow() - timedelta(hours=2)
     return entity
@@ -854,7 +874,7 @@ def mock_coordinator_with_threshold(mock_coordinator: Mock) -> Mock:
 @pytest.fixture
 def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
     """Create a coordinator mock with sensor-specific attributes."""
-    mock_coordinator.prior = 0.35
+    mock_coordinator.area_prior = 0.35
     mock_coordinator.probability = 0.65
     mock_coordinator.decay = 0.8
 
@@ -867,7 +887,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             probability=0.75,
             type=Mock(input_type=InputType.MOTION, weight=0.85),
             decay=Mock(is_decaying=False, decay_factor=1.0),
-            prior=Mock(prior=0.35),
+            likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
         "binary_sensor.motion2": Mock(
             entity_id="binary_sensor.motion2",
@@ -876,7 +896,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             probability=0.25,
             type=Mock(input_type=InputType.MOTION, weight=0.85),
             decay=Mock(is_decaying=True, decay_factor=0.8),
-            prior=Mock(prior=0.35),
+            likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
         "light.test_light": Mock(
             entity_id="light.test_light",
@@ -885,7 +905,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             probability=0.15,
             type=Mock(input_type=InputType.LIGHT, weight=0.2),
             decay=Mock(is_decaying=False, decay_factor=1.0),
-            prior=Mock(prior=0.1),
+            likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
         "media_player.tv": Mock(
             entity_id="media_player.tv",
@@ -894,7 +914,7 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             probability=0.85,
             type=Mock(input_type=InputType.MEDIA, weight=0.7),
             decay=Mock(is_decaying=False, decay_factor=1.0),
-            prior=Mock(prior=0.15),
+            likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
     }
 
@@ -914,37 +934,55 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
 
 
 @pytest.fixture
-def mock_prior() -> Mock:
-    """Create a mock Prior instance."""
-    from custom_components.area_occupancy.data.prior import Prior
-
-    prior = Mock(spec=Prior)
-    prior.prob_given_true = 0.8
-    prior.prob_given_false = 0.1
-    prior.last_updated = dt_util.utcnow()
-    prior.to_dict.return_value = {
+def mock_likelihood() -> Mock:
+    """Create a mock Likelihood instance."""
+    likelihood = Mock(spec=Likelihood)
+    likelihood.prob_given_true = 0.8
+    likelihood.prob_given_false = 0.1
+    likelihood.last_updated = dt_util.utcnow()
+    likelihood.update = AsyncMock(return_value=(0.8, 0.1))
+    likelihood.to_dict.return_value = {
         "prob_given_true": 0.8,
         "prob_given_false": 0.1,
+        "last_updated": likelihood.last_updated.isoformat(),
+    }
+    return likelihood
+
+
+@pytest.fixture
+def mock_prior() -> Mock:
+    """Create a mock Prior instance for backward compatibility with tests."""
+    prior = Mock()
+    prior.value = 0.35
+    prior.current_value = 0.35
+    prior.last_updated = dt_util.utcnow()
+    prior.update = AsyncMock(return_value=0.35)
+    prior.calculate = AsyncMock(return_value=0.35)
+    prior.to_dict.return_value = {
+        "value": 0.35,
         "last_updated": prior.last_updated.isoformat(),
+        "sensor_hash": None,
     }
     return prior
 
 
 @pytest.fixture
-def mock_prior_manager(mock_prior: Mock) -> Mock:
-    """Create a mock PriorManager instance."""
-    from custom_components.area_occupancy.data.prior import PriorManager
-
-    manager = Mock(spec=PriorManager)
-    # Property for priors
-    type(manager).priors = property(lambda self: {"entity_id": mock_prior})
-    manager.get_prior = Mock(return_value=mock_prior)
-    manager.update_prior = Mock()
-    manager.remove_prior = Mock()
-    manager.clear_priors = Mock()
-    manager.update_all_entity_priors = AsyncMock(return_value=1)
-    manager.calculate = AsyncMock(return_value=mock_prior)
-    return manager
+def mock_area_prior() -> Mock:
+    """Create a mock Prior instance for area-level prior."""
+    prior = Mock(spec=PriorClass)
+    prior.current_value = 0.3
+    prior.value = 0.3
+    prior.last_updated = dt_util.utcnow()
+    prior.update = AsyncMock(return_value=0.3)
+    prior.calculate = AsyncMock(return_value=0.3)
+    prior.prior_intervals = []
+    prior.prior_total_seconds = 0
+    prior.to_dict.return_value = {
+        "value": 0.3,
+        "last_updated": prior.last_updated.isoformat(),
+        "sensor_hash": None,
+    }
+    return prior
 
 
 @pytest.fixture
@@ -978,7 +1016,6 @@ def mock_decay() -> Mock:
 @pytest.fixture
 def mock_service_call() -> Mock:
     """Create a mock service call with common attributes."""
-    from homeassistant.core import ServiceCall
 
     call = Mock(spec=ServiceCall)
     call.data = {"entry_id": "test_entry_id"}
@@ -989,7 +1026,6 @@ def mock_service_call() -> Mock:
 @pytest.fixture
 def mock_service_call_with_entity() -> Mock:
     """Create a mock service call with entity_id."""
-    from homeassistant.core import ServiceCall
 
     call = Mock(spec=ServiceCall)
     call.data = {"entry_id": "test_entry_id", "entity_id": "binary_sensor.test_motion"}
@@ -999,7 +1035,7 @@ def mock_service_call_with_entity() -> Mock:
 
 @pytest.fixture
 def mock_comprehensive_entity(
-    mock_entity_type: Mock, mock_prior: Mock, mock_decay: Mock
+    mock_entity_type: Mock, mock_likelihood: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a comprehensive mock entity with all components."""
     from custom_components.area_occupancy.data.entity import Entity
@@ -1008,7 +1044,7 @@ def mock_comprehensive_entity(
     entity.entity_id = "binary_sensor.test_motion"
     entity.type = mock_entity_type
     entity.probability = 0.5
-    entity.prior = mock_prior
+    entity.likelihood = mock_likelihood
     entity.decay = mock_decay
     entity.state = STATE_ON
     entity.evidence = True
@@ -1017,18 +1053,13 @@ def mock_comprehensive_entity(
     entity.previous_probability = 0.5
     entity.last_updated = dt_util.utcnow()
     entity.set_coordinator = Mock()
-    entity.update_probability = Mock()
-    entity.capture_previous_state = Mock()
+    entity.has_new_evidence = Mock(return_value=True)
     entity.stop_decay_completely = Mock()
     entity.cleanup = Mock()
     entity.to_dict.return_value = {
         "entity_id": "binary_sensor.test_motion",
         "type": mock_entity_type.to_dict.return_value,
-        "probability": 0.5,
-        "state": STATE_ON,
-        "evidence": True,
-        "available": True,
-        "prior": mock_prior.to_dict.return_value,
+        "likelihood": mock_likelihood.to_dict.return_value,
         "decay": mock_decay.to_dict.return_value,
     }
     return entity
@@ -1064,10 +1095,11 @@ def mock_comprehensive_entity_manager(
     manager.get_entity = Mock(return_value=mock_comprehensive_entity)
     manager.add_entity = Mock()
     manager.remove_entity = Mock()
-    manager.cleanup = Mock()
+    manager.cleanup = AsyncMock()
     manager.async_state_changed_listener = AsyncMock()
     manager.is_entity_active = Mock(return_value=True)
     manager.initialize_states = AsyncMock()
+    manager.update_all_entity_likelihoods = AsyncMock(return_value=1)
     return manager
 
 
@@ -1095,16 +1127,10 @@ def mock_real_coordinator() -> Mock:
 @pytest.fixture(autouse=True)
 def mock_recorder_globally():
     """Automatically mock recorder for all tests."""
-    with (
-        patch("homeassistant.helpers.recorder.get_instance") as mock_get_instance_ha,
-        patch(
-            "custom_components.area_occupancy.data.prior.get_instance"
-        ) as mock_get_instance_local,
-    ):
+    with patch("homeassistant.helpers.recorder.get_instance") as mock_get_instance_ha:
         mock_instance = Mock()
         mock_instance.async_add_executor_job = AsyncMock(return_value={})
         mock_get_instance_ha.return_value = mock_instance
-        mock_get_instance_local.return_value = mock_instance
         yield mock_instance
 
 
@@ -1112,7 +1138,7 @@ def mock_recorder_globally():
 def mock_significant_states_globally():
     """Automatically mock significant states for all tests."""
     with patch(
-        "custom_components.area_occupancy.data.prior.get_significant_states"
+        "homeassistant.components.recorder.history.get_significant_states"
     ) as mock_states:
         mock_states.return_value = {}
         yield mock_states
@@ -1127,8 +1153,8 @@ def mock_track_point_in_time_globally():
 
 
 @pytest.fixture
-def mock_entity_for_prior_tests() -> Mock:
-    """Create a mock entity specifically for prior calculation tests."""
+def mock_entity_for_likelihood_tests() -> Mock:
+    """Create a mock entity specifically for likelihood calculation tests."""
     from custom_components.area_occupancy.data.entity import Entity
 
     entity = Mock(spec=Entity)
@@ -1142,6 +1168,12 @@ def mock_entity_for_prior_tests() -> Mock:
     entity.type.prob_false = 0.1  # Real float value, not Mock
     entity.type.input_type = Mock()
     entity.type.input_type.value = "light"
+
+    # Mock likelihood with proper numeric values
+    entity.likelihood = Mock()
+    entity.likelihood.prob_given_true = 0.8
+    entity.likelihood.prob_given_false = 0.1
+    entity.likelihood.update = AsyncMock(return_value=(0.8, 0.1))
 
     return entity
 
@@ -1190,13 +1222,12 @@ def mock_area_occupancy_storage_data():
     return {
         "name": "Testing",
         "probability": 0.18,
-        "prior": 0.18,
+        "area_prior": 0.18,
         "threshold": 0.52,
         "last_updated": "2025-06-19T14:29:30.273647+00:00",
         "entities": {
             "binary_sensor.motion_sensor_1": {
                 "entity_id": "binary_sensor.motion_sensor_1",
-                "probability": 0.01,
                 "type": {
                     "input_type": "motion",
                     "weight": 0.85,
@@ -1206,7 +1237,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["on"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.95,
                     "prob_given_false": 0.02,
                     "last_updated": "2025-06-19T12:06:16.365782+00:00",
@@ -1216,13 +1247,9 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "media_player.tv_player": {
                 "entity_id": "media_player.tv_player",
-                "probability": 0.01,
                 "type": {
                     "input_type": "media",
                     "weight": 0.7,
@@ -1232,7 +1259,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["playing", "paused"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.11,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:16.918558+00:00",
@@ -1242,9 +1269,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "binary_sensor.computer_power_sensor": {
                 "entity_id": "binary_sensor.computer_power_sensor",
@@ -1258,7 +1282,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["on", "standby"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.05,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:17.125742+00:00",
@@ -1268,9 +1292,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "binary_sensor.door_sensor": {
                 "entity_id": "binary_sensor.door_sensor",
@@ -1284,7 +1305,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["closed"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.02,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:17.549099+00:00",
@@ -1294,9 +1315,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "binary_sensor.window_sensor": {
                 "entity_id": "binary_sensor.window_sensor",
@@ -1310,7 +1328,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["open"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.01,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:17.780468+00:00",
@@ -1320,9 +1338,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "light.test_light": {
                 "entity_id": "light.test_light",
@@ -1336,7 +1351,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["on"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.08,
                     "prob_given_false": 0.01,
                     "last_updated": "2025-06-19T12:06:18.158463+00:00",
@@ -1346,9 +1361,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "off",
-                "evidence": False,
-                "available": True,
             },
             "sensor.illuminance_sensor_1": {
                 "entity_id": "sensor.illuminance_sensor_1",
@@ -1362,7 +1374,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": None,
                     "active_range": [0.0, 0.2],
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.001,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:18.357392+00:00",
@@ -1372,9 +1384,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "100.0",
-                "evidence": False,
-                "available": True,
             },
             "sensor.humidity_sensor": {
                 "entity_id": "sensor.humidity_sensor",
@@ -1388,7 +1397,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": None,
                     "active_range": [0.0, 0.2],
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.001,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:18.724558+00:00",
@@ -1398,9 +1407,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "50.0",
-                "evidence": False,
-                "available": True,
             },
             "sensor.temperature_sensor": {
                 "entity_id": "sensor.temperature_sensor",
@@ -1414,7 +1420,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": None,
                     "active_range": [0.0, 0.2],
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.001,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:18.982120+00:00",
@@ -1424,9 +1430,6 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": "21.0",
-                "evidence": False,
-                "available": True,
             },
             "binary_sensor.testing_wasp_in_box": {
                 "entity_id": "binary_sensor.testing_wasp_in_box",
@@ -1440,7 +1443,7 @@ def mock_area_occupancy_storage_data():
                     "active_states": ["on"],
                     "active_range": None,
                 },
-                "prior": {
+                "likelihood": {
                     "prob_given_true": 0.02,
                     "prob_given_false": 0.001,
                     "last_updated": "2025-06-19T12:06:19.217104+00:00",
@@ -1450,10 +1453,12 @@ def mock_area_occupancy_storage_data():
                     "half_life": 300,
                     "is_decaying": False,
                 },
-                "state": None,
-                "evidence": False,
-                "available": False,
             },
+        },
+        "prior": {
+            "value": 0.18,
+            "last_updated": "2025-06-19T12:06:15.123456+00:00",
+            "sensor_hash": 123456789,
         },
     }
 

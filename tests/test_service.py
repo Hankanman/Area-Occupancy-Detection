@@ -14,7 +14,8 @@ from custom_components.area_occupancy.service import (
     _get_entity_type_learned_data,
     _get_problematic_entities,
     _reset_entities,
-    _update_priors,
+    _update_area_prior,
+    _update_likelihoods,
     async_setup_services,
 )
 from homeassistant.core import ServiceCall
@@ -62,29 +63,105 @@ class TestGetCoordinator:
             _get_coordinator(mock_hass, "test_entry_id")
 
 
-class TestUpdatePriors:
-    """Test _update_priors service function."""
+class TestUpdateAreaPrior:
+    """Test _update_area_prior service function."""
 
-    async def test_update_priors_success(
+    async def test_update_area_prior_success(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test successful prior update."""
+        """Test successful area prior update."""
         # Override specific properties needed for this test
         mock_coordinator.config.history.period = (
             30  # Set as real number instead of Mock
         )
-        mock_coordinator.priors.update_all_entity_priors.return_value = 5
+        mock_coordinator.prior.update.return_value = 0.35
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        # The service expects the service call to have entry_id
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _update_area_prior(mock_hass, mock_service_call)
+
+        # Verify the result structure
+        assert "area_prior" in result
+        assert "history_period" in result
+        assert "update_timestamp" in result
+
+        # Verify the values
+        assert result["area_prior"] == 0.35
+        assert result["history_period"] == 30
+        assert isinstance(result["update_timestamp"], str)
+
+        # Verify the coordinator was called correctly
+        mock_coordinator.prior.update.assert_called_once()
+        mock_coordinator.async_refresh.assert_called_once()
+
+    async def test_update_area_prior_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test area prior update with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        # The actual service implementation will raise KeyError for missing entry_id
+        with pytest.raises(KeyError):
+            await _update_area_prior(mock_hass, mock_call)
+
+    async def test_update_area_prior_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test area prior update with coordinator error."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = 30  # Set as real number
+        mock_coordinator.prior.update.side_effect = RuntimeError("Update failed")
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        # The service catches RuntimeError and wraps it in HomeAssistantError
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to update area prior for test_entry_id: Update failed",
+        ):
+            await _update_area_prior(mock_hass, mock_service_call)
+
+        # Verify the coordinator was called
+        mock_coordinator.prior.update.assert_called_once()
+
+
+class TestUpdateLikelihoods:
+    """Test _update_likelihoods service function."""
+
+    async def test_update_likelihoods_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful likelihood update."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = (
+            30  # Set as real number instead of Mock
+        )
+        mock_coordinator.entities.update_all_entity_likelihoods.return_value = 5
 
         # Mock entities with proper structure for return data
         mock_entity = Mock()
-        mock_entity.prior.prior = 0.35
-        mock_entity.prior.prob_given_true = 0.8
-        mock_entity.prior.prob_given_false = 0.1
-        mock_entity.prior.last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_entity.likelihood.prob_given_true = 0.8
+        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.likelihood.last_updated.isoformat.return_value = (
+            "2024-01-01T00:00:00"
+        )
         mock_entity.type.input_type.value = "motion"
 
         mock_coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
@@ -95,10 +172,10 @@ class TestUpdatePriors:
         # The service expects the service call to have entry_id
         mock_service_call.data = {"entry_id": "test_entry_id"}
 
-        result = await _update_priors(mock_hass, mock_service_call)
+        result = await _update_likelihoods(mock_hass, mock_service_call)
 
         # Verify the result structure
-        assert "updated_priors" in result
+        assert "likelihoods" in result
         assert "history_period" in result
         assert "total_entities" in result
         assert "update_timestamp" in result
@@ -108,39 +185,41 @@ class TestUpdatePriors:
         assert result["total_entities"] == 1
         assert isinstance(result["update_timestamp"], str)
 
-        # Verify the prior data
-        priors = result["updated_priors"]
-        assert "binary_sensor.motion1" in priors
-        prior_data = priors["binary_sensor.motion1"]
-        assert prior_data["prob_given_true"] == 0.8
-        assert prior_data["prob_given_false"] == 0.1
-        assert prior_data["entity_type"] == "motion"
+        # Verify the likelihood data
+        likelihoods = result["likelihoods"]
+        assert "binary_sensor.motion1" in likelihoods
+        likelihood_data = likelihoods["binary_sensor.motion1"]
+        assert likelihood_data["prob_given_true"] == 0.8
+        assert likelihood_data["prob_given_false"] == 0.1
+        assert likelihood_data["type"] == "motion"
 
         # Verify the coordinator was called correctly with the configured history period
-        mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
+            30
+        )
         mock_coordinator.async_refresh.assert_called_once()
 
-    async def test_update_priors_missing_entry_id(self, mock_hass: Mock) -> None:
-        """Test prior update with missing entry_id."""
+    async def test_update_likelihoods_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test likelihood update with missing entry_id."""
         mock_call = Mock(spec=ServiceCall)
         mock_call.data = {}
 
         # The actual service implementation will raise KeyError for missing entry_id
         with pytest.raises(KeyError):
-            await _update_priors(mock_hass, mock_call)
+            await _update_likelihoods(mock_hass, mock_call)
 
-    async def test_update_priors_coordinator_error(
+    async def test_update_likelihoods_coordinator_error(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
         mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
-        """Test prior update with coordinator error."""
+        """Test likelihood update with coordinator error."""
         # Override specific properties needed for this test
         mock_coordinator.config.history.period = 30  # Set as real number
-        mock_coordinator.priors.update_all_entity_priors.side_effect = RuntimeError(
-            "Update failed"
+        mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
+            RuntimeError("Update failed")
         )
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -150,12 +229,14 @@ class TestUpdatePriors:
         # The service catches RuntimeError and wraps it in HomeAssistantError
         with pytest.raises(
             HomeAssistantError,
-            match="Failed to update priors for test_entry_id: Update failed",
+            match="Failed to update likelihoods for test_entry_id: Update failed",
         ):
-            await _update_priors(mock_hass, mock_service_call)
+            await _update_likelihoods(mock_hass, mock_service_call)
 
         # Verify the coordinator was called with the correct history period
-        mock_coordinator.priors.update_all_entity_priors.assert_called_once_with(30)
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
+            30
+        )
 
 
 class TestResetEntities:
@@ -397,11 +478,11 @@ class TestGetEntityDetails:
         mock_type.active_range = None
         mock_comprehensive_entity.type = mock_type
 
-        # Set up prior
-        mock_prior = Mock()
-        mock_prior.prob_given_true = 0.8
-        mock_prior.prob_given_false = 0.1
-        mock_comprehensive_entity.prior = mock_prior
+        # Set up likelihood
+        mock_likelihood = Mock()
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.1
+        mock_comprehensive_entity.likelihood = mock_likelihood
 
         # Use centralized comprehensive entity fixture which has all the required properties
         def mock_get_entity(entity_id):
@@ -723,7 +804,7 @@ class TestAsyncSetupServices:
         await async_setup_services(mock_hass)
 
         # Verify services were registered (8 services total)
-        assert mock_hass.services.async_register.call_count == 8
+        assert mock_hass.services.async_register.call_count == 9
 
     async def test_async_setup_services_registration_error(
         self, mock_hass: Mock

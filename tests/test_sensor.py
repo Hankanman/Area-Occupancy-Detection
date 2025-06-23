@@ -76,19 +76,19 @@ class TestPriorsSensor:
         """Test native_value property."""
         sensor = PriorsSensor(mock_coordinator, "test_entry")
 
-        # Test with coordinator prior
-        mock_coordinator.prior = 0.35
-        assert sensor.native_value == 35.0  # Converted to percentage
+        # Test with coordinator area_prior (default is 0.3 from conftest.py)
+        mock_coordinator.area_prior = 0.3
+        assert sensor.native_value == 30.0  # Converted to percentage
 
         # Test with different prior
-        mock_coordinator.prior = 0.75
+        mock_coordinator.area_prior = 0.75
         assert sensor.native_value == 75.0
 
         # Test with edge values
-        mock_coordinator.prior = 0.0
+        mock_coordinator.area_prior = 0.0
         assert sensor.native_value == 0.0
 
-        mock_coordinator.prior = 1.0
+        mock_coordinator.area_prior = 1.0
         assert sensor.native_value == 100.0
 
 
@@ -330,7 +330,7 @@ class TestSensorIntegration:
     ) -> None:
         """Test all sensors with comprehensive coordinator data."""
         # Set up coordinator with specific values
-        mock_coordinator_with_sensors.prior = 0.35
+        mock_coordinator_with_sensors.area_prior = 0.35
         mock_coordinator_with_sensors.probability = 0.65
         mock_coordinator_with_sensors.decay = 0.15  # Will result in (1-0.15)*100 = 85.0
 
@@ -380,7 +380,7 @@ class TestSensorIntegration:
 
         # Initial values
         mock_coordinator_with_sensors.probability = 0.65
-        mock_coordinator_with_sensors.prior = 0.35
+        mock_coordinator_with_sensors.area_prior = 0.35
         mock_coordinator_with_sensors.decay = 0.15
 
         assert probability_sensor.native_value == 65.0
@@ -389,7 +389,7 @@ class TestSensorIntegration:
 
         # Update coordinator values
         mock_coordinator_with_sensors.probability = 0.8
-        mock_coordinator_with_sensors.prior = 0.4
+        mock_coordinator_with_sensors.area_prior = 0.4
         mock_coordinator_with_sensors.decay = 0.3
 
         # Check updated values
