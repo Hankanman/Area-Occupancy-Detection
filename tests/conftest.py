@@ -82,14 +82,14 @@ from custom_components.area_occupancy.data.config import (
 )
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.likelihood import Likelihood
+from custom_components.area_occupancy.data.prior import Prior as PriorManager
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from custom_components.area_occupancy.data.likelihood import Likelihood
-from custom_components.area_occupancy.data.prior import Prior as PriorManager
 
 # Configure pytest-asyncio to use function scope for event loops
 pytestmark = pytest.mark.asyncio(loop_scope="function")
@@ -918,7 +918,6 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
 @pytest.fixture
 def mock_prior() -> Mock:
     """Create a mock Prior instance."""
-    from custom_components.area_occupancy.data.likelihood import Likelihood
 
     prior = Mock(spec=Likelihood)
     prior.prob_given_true = 0.8
@@ -935,7 +934,6 @@ def mock_prior() -> Mock:
 @pytest.fixture
 def mock_prior_manager(mock_prior: Mock) -> Mock:
     """Create a mock PriorManager instance."""
-    from custom_components.area_occupancy.data.prior import Prior as PriorManager
 
     manager = Mock(spec=PriorManager)
     # Property for priors
