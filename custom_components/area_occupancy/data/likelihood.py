@@ -54,6 +54,7 @@ class Likelihood:
         self.inactive_seconds: int | None = None
         self.active_ratio: float | None = None
         self.inactive_ratio: float | None = None
+        self.cache_ttl = timedelta(hours=2)
 
     def _apply_weight_to_probability(self, prob: float, default_prob: float) -> float:
         """Apply weight to a probability value.
@@ -79,6 +80,28 @@ class Likelihood:
 
         # Final clamping to valid probability range
         return max(0.001, min(weighted_prob, 0.999))
+
+    def _is_cache_valid(self) -> bool:
+        """Check if the cached likelihood values are still valid.
+
+        Returns:
+            bool: True if cache is valid and fresh, False if needs recalculation
+
+        """
+        # If we don't have calculated values or timestamp, cache is invalid
+        if (
+            self.active_ratio is None
+            or self.inactive_ratio is None
+            or self.last_updated is None
+        ):
+            return False
+
+        # Check if cache has expired based on TTL
+        if (dt_util.utcnow() - self.last_updated) > self.cache_ttl:
+            return False
+
+        # Cache is valid
+        return True
 
     @property
     def prob_given_true(self) -> float:
@@ -128,6 +151,19 @@ class Likelihood:
         """Return a likelihood, re-computing if the cache is stale."""
         if not self.history_enabled:
             return self.prob_given_true, self.prob_given_false  # type: ignore[return-value]
+
+        # Check if we can use cached values
+        if self._is_cache_valid():
+            _LOGGER.debug(
+                "Using cached likelihood values for %s (last updated: %s)",
+                self.entity_id,
+                self.last_updated,
+            )
+            return self.prob_given_true, self.prob_given_false
+
+        _LOGGER.debug(
+            "Recalculating likelihood for %s (cache invalid or stale)", self.entity_id
+        )
 
         try:
             active_ratio, inactive_ratio = await self.calculate()
