@@ -164,7 +164,7 @@ class TestMigratePurposeField:
 
     def test_migrate_purpose_field_other_sensors(self) -> None:
         """Test migration with other sensor types."""
-        config = {"lights": ["light.test"]}
+        config = {"appliances": ["binary_sensor.appliance"]}
 
         result = migrate_purpose_field(config)
 

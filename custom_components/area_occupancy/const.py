@@ -22,7 +22,7 @@ DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.6.1-pre4"
 CONF_VERSION: Final = 9
-CONF_VERSION_MINOR: Final = 2
+CONF_VERSION_MINOR: Final = 3
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -39,7 +39,6 @@ CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
 CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
 CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
-CONF_LIGHTS: Final = "lights"
 CONF_THRESHOLD: Final = "threshold"
 CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
@@ -57,7 +56,6 @@ CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
 CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
-CONF_WEIGHT_LIGHT: Final = "weight_light"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
@@ -81,7 +79,6 @@ DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
-DEFAULT_WEIGHT_LIGHT: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 
 # Safety bounds
@@ -117,11 +114,6 @@ DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
 WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
 WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
 WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
-
-# Light sensor defaults
-LIGHT_PROB_GIVEN_TRUE: Final[float] = 0.2
-LIGHT_PROB_GIVEN_FALSE: Final[float] = 0.02
-LIGHT_DEFAULT_PRIOR: Final[float] = 0.3846
 
 # Media device defaults
 MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25

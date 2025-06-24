@@ -25,7 +25,6 @@ class TestInputType:
         assert InputType.APPLIANCE.value == "appliance"
         assert InputType.DOOR.value == "door"
         assert InputType.WINDOW.value == "window"
-        assert InputType.LIGHT.value == "light"
         assert InputType.ENVIRONMENTAL.value == "environmental"
 
 
