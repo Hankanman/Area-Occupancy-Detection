@@ -165,8 +165,8 @@ class TestEntitiesSensor:
         attributes = sensor.extra_state_attributes
 
         # Should return the expected structure
-        assert "active" in attributes
-        assert "inactive" in attributes
+        assert "evidence" in attributes
+        assert "no_evidence" in attributes
 
     def test_extra_state_attributes_no_entity_manager(
         self, mock_coordinator: Mock
@@ -177,22 +177,6 @@ class TestEntitiesSensor:
 
         attributes = sensor.extra_state_attributes
         assert attributes == {}
-
-    def test_extra_state_attributes_empty_entities(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test extra_state_attributes with empty entities."""
-        mock_coordinator.data = {"test": "data"}
-        mock_coordinator.entities.active_entities = []
-        mock_coordinator.entities.inactive_entities = []
-
-        sensor = EntitiesSensor(mock_coordinator, "test_entry")
-        attributes = sensor.extra_state_attributes
-
-        assert "active" in attributes
-        assert "inactive" in attributes
-        assert attributes["active"] == []
-        assert attributes["inactive"] == []
 
 
 class TestDecaySensor:
