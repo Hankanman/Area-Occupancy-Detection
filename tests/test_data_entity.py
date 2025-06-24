@@ -538,6 +538,9 @@ class TestEntityPropertiesAndMethods:
         mock_state = Mock()
         mock_state.state = STATE_ON
         mock_state.attributes = {"friendly_name": "Test Motion Sensor"}
+        mock_state.name = (
+            "Test Motion Sensor"  # Entity.__post_init__ accesses state.name
+        )
         mock_coordinator.hass.states.get.return_value = mock_state
         mock_entity_type.active_states = [STATE_ON]
         mock_entity_type.active_range = None
@@ -557,8 +560,11 @@ class TestEntityPropertiesAndMethods:
         assert entity._effective_probability == mock_likelihood.prob_given_true
 
         # Test without friendly name
-        mock_state.attributes = {}
-        mock_coordinator.hass.states.get.return_value = mock_state
+        mock_state_no_name = Mock()
+        mock_state_no_name.state = STATE_ON
+        mock_state_no_name.attributes = {}
+        mock_state_no_name.name = None  # No name available
+        mock_coordinator.hass.states.get.return_value = mock_state_no_name
 
         entity2 = Entity(
             entity_id="binary_sensor.test_motion2",
