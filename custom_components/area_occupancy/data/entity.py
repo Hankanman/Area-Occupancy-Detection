@@ -1,6 +1,6 @@
 """Entity model."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
@@ -28,67 +28,32 @@ class Entity:
     likelihood: Likelihood
     decay: Decay
     coordinator: "AreaOccupancyCoordinator"
-    name: str | None = None
-    last_updated: datetime = field(default_factory=dt_util.utcnow)
+    last_updated: datetime
+    previous_evidence: bool | None
+    previous_probability: float
 
-    # Minimal state tracking for proper decay behavior
-    _previous_evidence: bool | None = field(default=False, init=False, repr=False)
-    _effective_probability: float = field(default=0.0, init=False, repr=False)
-
-    def __post_init__(self):
-        """Post init - initialize previous evidence and working probability."""
-        # Initialize previous evidence to current evidence to avoid false transitions on startup
-        state = self.coordinator.hass.states.get(self.entity_id)
-        if state:
-            self.name = state.name
-        self._previous_evidence = self.evidence
-
-        # Initialize working probability based on current evidence
-        self._effective_probability = (
-            self.likelihood.prob_given_true
-            if self.evidence
-            else self.likelihood.prob_given_false
-        )
-
-        _LOGGER.debug(
-            "Created entity %s with initial evidence: %s, probability: %.3f",
-            self.entity_id,
-            self.evidence,
-            self._effective_probability,
-        )
+    @property
+    def name(self) -> str | None:
+        """Get the entity name from Home Assistant state."""
+        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        return ha_state.name if ha_state else None
 
     @property
     def probability(self) -> float:
-        """Calculate probability using working probability and decay."""
-        # Update timestamp
-        self.last_updated = dt_util.utcnow()
+        """Calculate this entity's raw contribution to area probability.
 
-        # If currently decaying, apply decay factor to working probability
-        if self.decay.is_decaying:
-            # Apply decay towards prob_given_false
-            target = self.likelihood.prob_given_false
-            decay_factor = self.decay.decay_factor
-
-            # Decay working probability towards target
-            self._effective_probability = (
-                self._effective_probability * decay_factor + target * (1 - decay_factor)
-            )
-
-        return self._effective_probability
-
-    @property
-    def effective_probability(self) -> float:
-        """Get the current effective probability during decay.
-
-        This shows the "live" probability value that's between prob_given_true
-        and prob_given_false when the entity is decaying. When not decaying,
-        it returns the current working probability.
-
-        Returns:
-            Current effective probability considering decay state
-
+        This shows what this entity would contribute if it were fully active,
+        using Bayesian calculation without decay factor applied.
         """
-        return self._effective_probability
+
+        # Calculate effective Bayesian posterior with decay applied
+        return bayesian_probability(
+            prior=self.coordinator.area_prior,
+            prob_given_true=self.likelihood.prob_given_true,
+            prob_given_false=self.likelihood.prob_given_false,
+            evidence=True,
+            decay_factor=self.decay.decay_factor,
+        )
 
     @property
     def available(self) -> bool:
@@ -122,26 +87,26 @@ class Entity:
         if self.state is None:
             return None
 
-        # Convert state to string for comparison
-        state_str = str(self.state)
-
-        if self.type.active_states is not None:
-            return state_str in self.type.active_states
-        if self.type.active_range is not None:
+        if self.active_states:
+            return str(self.state) in self.active_states
+        if self.active_range:
+            min_val, max_val = self.active_range
             try:
-                value = float(self.state)
-                min_val, max_val = self.type.active_range
+                return min_val <= float(self.state) <= max_val
             except (ValueError, TypeError):
                 return False
-            else:
-                return min_val <= value <= max_val
 
-        return False
+        return None
 
     @property
-    def active_states(self) -> list[str]:
+    def active_states(self) -> list[str] | None:
         """Get the active states for the entity."""
-        return self.type.active_states or []
+        return self.type.active_states
+
+    @property
+    def active_range(self) -> tuple[float, float] | None:
+        """Get the active range for the entity."""
+        return self.type.active_range
 
     def has_new_evidence(self) -> bool:
         """Update decay and probability on actual evidence transitions.
@@ -150,17 +115,47 @@ class Entity:
             bool: True if evidence transition occurred, False otherwise
 
         """
-        current_evidence = self.evidence  # Pure calculation from current HA state
+        _LOGGER.debug(
+            "Entity %s: Checking evidence",
+            self.entity_id,
+        )
+        # Pure calculation from current HA state
+        current_evidence = self.evidence
 
-        if current_evidence is None:
+        # Capture previous evidence before updating it
+        previous_evidence = self.previous_evidence
+        _LOGGER.debug(
+            "Entity %s: previous_evidence %s, current_evidence %s",
+            self.entity_id,
+            previous_evidence,
+            current_evidence,
+        )
+
+        # Skip transition logic if current evidence is None (entity unavailable)
+        if current_evidence is None or previous_evidence is None:
+            _LOGGER.debug(
+                "Entity %s: skipping transition logic",
+                self.entity_id,
+            )
+            # Update previous evidence even if skipping to prevent false transitions later
+            self.previous_evidence = current_evidence
             return False
 
-        if current_evidence != self._previous_evidence:
-            if current_evidence:  # OFF→ON transition
+        # Check for evidence transitions
+        transition_occurred = current_evidence != previous_evidence
+        _LOGGER.debug(
+            "Entity %s: transition_occurred %s",
+            self.entity_id,
+            transition_occurred,
+        )
+
+        # Handle evidence transitions
+        if transition_occurred:
+            self.last_updated = dt_util.utcnow()
+            if current_evidence:  # FALSE→TRUE transition
                 # Evidence appeared - jump probability up via Bayesian update
-                old_prob = self._effective_probability
-                self._effective_probability = bayesian_probability(
-                    prior=self._effective_probability,
+                self.previous_probability = bayesian_probability(
+                    prior=self.previous_probability,
                     prob_given_true=self.likelihood.prob_given_true,
                     prob_given_false=self.likelihood.prob_given_false,
                     evidence=True,
@@ -168,26 +163,21 @@ class Entity:
                 )
                 self.decay.stop_decay()
                 _LOGGER.debug(
-                    "Entity %s: evidence transition OFF→ON, probability %.3f→%.3f, stopped decay",
+                    "Entity %s: evidence transition FALSE→TRUE, stopped decay",
                     self.entity_id,
-                    old_prob,
-                    self._effective_probability,
                 )
-            else:  # ON→OFF transition
+            else:  # TRUE→FALSE transition
                 # Evidence lost - start decay from current probability towards prob_given_false
                 # Working probability stays at current level and will decay over time
                 self.decay.start_decay()
                 _LOGGER.debug(
-                    "Entity %s: evidence transition ON→OFF, probability %.3f, started decay",
+                    "Entity %s: evidence transition TRUE→FALSE, started decay",
                     self.entity_id,
-                    self._effective_probability,
                 )
 
-            # Update previous evidence for next comparison
-            self._previous_evidence = current_evidence
-            return True
-
-        return False  # No transition occurred
+        # Update previous evidence for next comparison
+        self.previous_evidence = current_evidence
+        return transition_occurred
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity to dictionary for storage."""
@@ -196,6 +186,9 @@ class Entity:
             "type": self.type.to_dict(),
             "likelihood": self.likelihood.to_dict(),
             "decay": self.decay.to_dict(),
+            "last_updated": self.last_updated.isoformat(),
+            "previous_evidence": self.previous_evidence,
+            "previous_probability": self.previous_probability,
         }
 
     @classmethod
@@ -217,12 +210,16 @@ class Entity:
             weight=entity_type.weight,
         )
 
+        # Create the entity
         return cls(
             entity_id=data["entity_id"],
             type=entity_type,
             likelihood=likelihood,
             decay=decay,
             coordinator=coordinator,
+            last_updated=datetime.fromisoformat(data["last_updated"]),
+            previous_evidence=data["previous_evidence"],
+            previous_probability=data["previous_probability"],
         )
 
 
@@ -389,6 +386,9 @@ class EntityManager:
             likelihood=likelihood,
             decay=decay,
             coordinator=self.coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
     def build_sensor_type_mappings(self) -> dict[InputType, list[str]]:
@@ -404,37 +404,10 @@ class EntityManager:
             InputType.APPLIANCE: self.config.sensors.appliances,
             InputType.DOOR: self.config.sensors.doors,
             InputType.WINDOW: self.config.sensors.windows,
-            InputType.LIGHT: self.config.sensors.lights,
             InputType.ENVIRONMENTAL: self.config.sensors.illuminance
             + self.config.sensors.humidity
             + self.config.sensors.temperature,
         }
-
-    async def async_state_changed_listener(self, event) -> None:
-        """Handle state changes for tracked entities.
-
-        With pure calculations, we check for evidence transitions to manage decay properly.
-        """
-        try:
-            entity_id = event.data.get("entity_id")
-
-            if entity_id not in self._entities:
-                return
-
-            entity = self._entities[entity_id]
-
-            # Check for evidence transitions and update decay accordingly
-            new_evidence = entity.has_new_evidence()
-
-            if new_evidence:
-                _LOGGER.debug(
-                    "Evidence transition detected for %s, triggering refresh",
-                    entity_id,
-                )
-                await self.coordinator.async_refresh()
-
-        except Exception:
-            _LOGGER.exception("Error processing state change for entity %s", entity_id)
 
     async def update_all_entity_likelihoods(
         self, history_period: int | None = None

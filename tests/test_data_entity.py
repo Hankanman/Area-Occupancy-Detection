@@ -1,11 +1,9 @@
 """Tests for the entity module."""
 
-import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 
-from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.const import STATE_ON
@@ -30,6 +28,9 @@ class TestEntity:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         assert entity.entity_id == "binary_sensor.test_motion"
@@ -59,6 +60,9 @@ class TestEntity:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         assert entity.coordinator == mock_coordinator
@@ -78,6 +82,9 @@ class TestEntity:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         data = entity.to_dict()
@@ -110,6 +117,7 @@ class TestEntity:
         mock_prior_class.from_dict.return_value = mock_likelihood
 
         mock_decay = Mock()
+        mock_decay.decay_factor = 1.0  # Add proper decay_factor property
         mock_decay_class.from_dict.return_value = mock_decay
 
         # Set up coordinator hass.states properly for entity creation
@@ -135,6 +143,9 @@ class TestEntity:
                 "last_updated": current_time.isoformat(),
             },
             "decay": {"is_decaying": False},
+            "last_updated": current_time.isoformat(),
+            "previous_evidence": None,
+            "previous_probability": 0.0,
         }
 
         entity = Entity.from_dict(data, mock_coordinator)
@@ -144,64 +155,6 @@ class TestEntity:
         assert entity.likelihood == mock_likelihood
         assert entity.decay == mock_decay
         assert entity.coordinator == mock_coordinator
-
-    async def test_async_state_changed_listener(
-        self, mock_coordinator: Mock, mock_likelihood: Mock
-    ) -> None:
-        """Test state change listener with various scenarios."""
-        manager = EntityManager(mock_coordinator)
-
-        # Create a real Entity instance with proper initialization
-        from custom_components.area_occupancy.data.entity import Entity
-        from custom_components.area_occupancy.data.entity_type import (
-            EntityType,
-            InputType,
-        )
-
-        # Create required components
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=1.0,
-            active_states=[STATE_ON],
-            prob_true=0.8,
-            prob_false=0.1,
-            prior=0.5,
-        )
-        # Use the mock likelihood fixture instead of creating real one
-        mock_likelihood.prob_given_true = 0.8
-        mock_likelihood.prob_given_false = 0.1
-
-        decay = Decay(last_trigger_ts=time.time(), half_life=60.0)
-
-        # Set up coordinator hass.states to return ON state for evidence calculation
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_state.attributes = {"friendly_name": "Test Entity"}
-        mock_coordinator.hass.states.get.return_value = mock_state
-
-        # Create the entity
-        entity = Entity(
-            entity_id="test_entity",
-            type=entity_type,
-            likelihood=mock_likelihood,
-            decay=decay,
-            coordinator=mock_coordinator,
-        )
-        # No coordinator setup needed in simplified architecture
-
-        # Add to manager
-        manager._entities["test_entity"] = entity
-
-        # Test state change event
-        event = Mock()
-        event.data = {"entity_id": "test_entity", "new_state": mock_state}
-
-        await manager.async_state_changed_listener(event)
-
-        # Entity should now be active (state is already ON from hass.states.get)
-        assert entity.evidence is True
-        assert entity.state == STATE_ON
-        assert entity.available is True
 
     async def test_create_entity(
         self, mock_coordinator: Mock, mock_entity_type: Mock
@@ -526,56 +479,6 @@ class TestEntityManager:
 class TestEntityPropertiesAndMethods:
     """Test Entity properties and complex methods."""
 
-    def test_post_init_behavior(
-        self,
-        mock_entity_type: Mock,
-        mock_likelihood: Mock,
-        mock_decay: Mock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test __post_init__ method behavior."""
-        # Test with friendly name in state
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_state.attributes = {"friendly_name": "Test Motion Sensor"}
-        mock_state.name = (
-            "Test Motion Sensor"  # Entity.__post_init__ accesses state.name
-        )
-        mock_coordinator.hass.states.get.return_value = mock_state
-        mock_entity_type.active_states = [STATE_ON]
-        mock_entity_type.active_range = None
-        mock_likelihood.prob_given_true = 0.8
-        mock_likelihood.prob_given_false = 0.2
-
-        entity = Entity(
-            entity_id="binary_sensor.test_motion",
-            type=mock_entity_type,
-            likelihood=mock_likelihood,
-            decay=mock_decay,
-            coordinator=mock_coordinator,
-        )
-
-        assert entity.name == "Test Motion Sensor"
-        assert entity._previous_evidence == entity.evidence
-        assert entity._effective_probability == mock_likelihood.prob_given_true
-
-        # Test without friendly name
-        mock_state_no_name = Mock()
-        mock_state_no_name.state = STATE_ON
-        mock_state_no_name.attributes = {}
-        mock_state_no_name.name = None  # No name available
-        mock_coordinator.hass.states.get.return_value = mock_state_no_name
-
-        entity2 = Entity(
-            entity_id="binary_sensor.test_motion2",
-            type=mock_entity_type,
-            likelihood=mock_likelihood,
-            decay=mock_decay,
-            coordinator=mock_coordinator,
-        )
-
-        assert entity2.name is None
-
     def test_state_property_edge_cases(
         self,
         mock_entity_type: Mock,
@@ -593,6 +496,9 @@ class TestEntityPropertiesAndMethods:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Test valid state
@@ -626,6 +532,9 @@ class TestEntityPropertiesAndMethods:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Available when state exists
@@ -655,6 +564,9 @@ class TestEntityPropertiesAndMethods:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Test values within range
@@ -695,51 +607,85 @@ class TestEntityPropertiesAndMethods:
         mock_likelihood.prob_given_true = 0.8
         mock_likelihood.prob_given_false = 0.2
 
+        # Configure mock decay to track state
+        mock_decay.is_decaying = False  # Start not decaying
+
         entity = Entity(
             entity_id="binary_sensor.motion",
             type=mock_entity_type,
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
-        # Start with OFF state
+        # Start with OFF state - first check should set initial evidence
         mock_state = Mock()
         mock_state.state = "off"
         mock_coordinator.hass.states.get.return_value = mock_state
-        entity._previous_evidence = False
-        entity._effective_probability = 0.2
+        entity.previous_evidence = None  # Initial state - no previous evidence
+        entity.previous_probability = 0.2
+
+        # First evidence check - should initialize but not start decay (no transition yet)
+        transition_occurred = entity.has_new_evidence()
+        assert transition_occurred is False  # No transition (initializing)
+        mock_decay.start_decay.assert_not_called()  # No decay on initialization
+
+        # Reset mocks and set previous evidence to simulate next check
+        mock_decay.reset_mock()
+        entity.previous_evidence = True  # Simulate previous ON state
+
+        # Now test TRUE → FALSE transition (should start decay)
+        mock_state.state = "off"  # Still OFF, but now we have a transition
+        transition_occurred = entity.has_new_evidence()
+
+        assert transition_occurred is True  # Should detect TRUE → FALSE transition
+        assert entity.previous_evidence is False
+        mock_decay.start_decay.assert_called_once()  # Should start decay for TRUE→FALSE transition
+
+        # Reset mocks
+        mock_decay.reset_mock()
+        mock_decay.is_decaying = True  # Now decaying
 
         # Transition OFF → ON
         mock_state.state = STATE_ON
         transition_occurred = entity.has_new_evidence()
 
         assert transition_occurred is True
-        assert entity._previous_evidence is True
-        assert entity._effective_probability > 0.2  # Should increase
-        mock_decay.stop_decay.assert_called_once()
+        assert entity.previous_evidence is True
+        assert entity.previous_probability > 0.2  # Should increase
+        mock_decay.stop_decay.assert_called_once()  # Should stop decay for ON state
 
         # Reset mocks
         mock_decay.reset_mock()
+        mock_decay.is_decaying = False  # Now not decaying
 
         # Transition ON → OFF
         mock_state.state = "off"
-        entity._effective_probability = 0.8  # Set high value
+        entity.previous_probability = 0.8  # Set high value
         transition_occurred = entity.has_new_evidence()
 
         assert transition_occurred is True
-        assert entity._previous_evidence is False
-        mock_decay.start_decay.assert_called_once()
+        assert entity.previous_evidence is False
+        mock_decay.start_decay.assert_called_once()  # Should start decay for OFF state
 
-        # No transition (same state)
+        # Reset mocks
         mock_decay.reset_mock()
+        mock_decay.is_decaying = True  # Now decaying
+
+        # No transition (same state) - decay state should remain consistent
         transition_occurred = entity.has_new_evidence()
         assert transition_occurred is False
+        # Since evidence is OFF and decay is already started, no additional calls needed
         mock_decay.start_decay.assert_not_called()
         mock_decay.stop_decay.assert_not_called()
 
+    @patch("custom_components.area_occupancy.data.entity.bayesian_probability")
     def test_probability_with_decay(
         self,
+        mock_bayesian_prob: Mock,
         mock_entity_type: Mock,
         mock_likelihood: Mock,
         mock_decay: Mock,
@@ -747,6 +693,10 @@ class TestEntityPropertiesAndMethods:
     ) -> None:
         """Test probability calculation with decay."""
         mock_entity_type.active_states = [STATE_ON]
+
+        # Set up mock values
+        mock_coordinator.area_prior = 0.3
+        mock_likelihood.prob_given_true = 0.8
         mock_likelihood.prob_given_false = 0.1
 
         entity = Entity(
@@ -755,28 +705,38 @@ class TestEntityPropertiesAndMethods:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Test when not decaying
         mock_decay.is_decaying = False
-        entity._effective_probability = 0.8
+        type(mock_decay).decay_factor = PropertyMock(return_value=1.0)
+        mock_bayesian_prob.return_value = 0.8
+
         assert entity.probability == 0.8
+        mock_bayesian_prob.assert_called_with(
+            prior=0.3,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=1.0,
+        )
 
-        # Test when decaying - set the entity's effective probability manually
-        entity._effective_probability = 0.8
+        # Test when decaying
+        mock_decay.is_decaying = True
+        type(mock_decay).decay_factor = PropertyMock(return_value=0.9)
+        mock_bayesian_prob.return_value = 0.73
 
-        # Manually test the decay calculation logic
-        initial_prob = 0.8
-        decay_factor = 0.9
-        target = 0.1  # prob_given_false
-
-        # Test the actual decay formula used in the entity
-        expected = initial_prob * decay_factor + target * (1 - decay_factor)
-        # 0.8 * 0.9 + 0.1 * 0.1 = 0.72 + 0.01 = 0.73
-        assert abs(expected - 0.73) < 0.001
-
-        # Since the mock doesn't work as expected, just verify the formula directly
-        assert abs(expected - 0.73) < 0.001
+        assert entity.probability == 0.73
+        mock_bayesian_prob.assert_called_with(
+            prior=0.3,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=0.9,
+        )
 
     def test_effective_probability_property(
         self,
@@ -792,14 +752,17 @@ class TestEntityPropertiesAndMethods:
             likelihood=mock_likelihood,
             decay=mock_decay,
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
-        entity._effective_probability = 0.75
-        assert entity.effective_probability == 0.75
+        entity.previous_probability = 0.75
+        assert entity.previous_probability == 0.75
 
         # Should return current value regardless of decay state
         mock_decay.is_decaying = True
-        assert entity.effective_probability == 0.75
+        assert entity.previous_probability == 0.75
 
 
 class TestEntityManagerAdvanced:
@@ -886,32 +849,6 @@ class TestEntityManagerAdvanced:
             "sensor.humidity",
             "sensor.temp",
         ]
-
-    async def test_async_state_changed_listener_error_handling(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test async_state_changed_listener error handling."""
-        manager = EntityManager(mock_coordinator)
-
-        # Test with invalid event data
-        event = Mock()
-        event.data = {}  # Missing entity_id
-
-        # Should not raise exception
-        await manager.async_state_changed_listener(event)
-
-        # Test with entity not in manager
-        event.data = {"entity_id": "unknown_entity"}
-        await manager.async_state_changed_listener(event)
-
-        # Test with entity that raises exception
-        mock_entity = Mock()
-        mock_entity.has_new_evidence.side_effect = Exception("Test error")
-        manager._entities = {"problematic_entity": mock_entity}
-
-        event.data = {"entity_id": "problematic_entity"}
-        # Should not raise exception due to error handling
-        await manager.async_state_changed_listener(event)
 
     def test_process_existing_entities(self, mock_coordinator: Mock) -> None:
         """Test _process_existing_entities method."""

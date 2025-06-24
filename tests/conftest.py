@@ -412,7 +412,6 @@ def mock_coordinator(
     # Mock timers and trackers
     coordinator._global_prior_timer = None
     coordinator._global_decay_timer = None
-    coordinator._global_storage_timer = None
     coordinator._remove_state_listener = None
 
     # Mock binary_sensor_entity_ids property to return a proper dictionary
@@ -425,7 +424,6 @@ def mock_coordinator(
     coordinator.entities.cleanup = AsyncMock()
     coordinator.entities.reset_entities = AsyncMock()
     coordinator.entities.async_initialize = AsyncMock()
-    coordinator.entities.async_state_changed_listener = AsyncMock()
     coordinator.entities.initialize_states = AsyncMock()
     coordinator.entities.create_entity = AsyncMock()
     coordinator.entities.get_entity = Mock(
@@ -884,6 +882,15 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             decay=Mock(is_decaying=True, decay_factor=0.8),
             likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
+        "binary_sensor.appliance": Mock(
+            entity_id="binary_sensor.appliance",
+            available=True,
+            evidence=False,
+            probability=0.15,
+            type=Mock(input_type=InputType.APPLIANCE, weight=0.3),
+            decay=Mock(is_decaying=False, decay_factor=1.0),
+            likelihood=Mock(prob_given_true=0.6, prob_given_false=0.05),
+        ),
         "media_player.tv": Mock(
             entity_id="media_player.tv",
             available=True,
@@ -1073,7 +1080,6 @@ def mock_comprehensive_entity_manager(
     manager.add_entity = Mock()
     manager.remove_entity = Mock()
     manager.cleanup = AsyncMock()
-    manager.async_state_changed_listener = AsyncMock()
     manager.is_entity_active = Mock(return_value=True)
     manager.initialize_states = AsyncMock()
     manager.update_all_entity_likelihoods = AsyncMock(return_value=1)

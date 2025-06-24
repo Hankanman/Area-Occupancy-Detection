@@ -12,6 +12,7 @@ from custom_components.area_occupancy.data.entity_type import (
     InputType,
 )
 from homeassistant.const import STATE_ON
+from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001, PLC0415
@@ -150,6 +151,9 @@ class TestEntityType:
             likelihood=likelihood,
             decay=Decay(),
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Should have evidence when state is "on"
@@ -198,6 +202,9 @@ class TestEntityType:
             likelihood=likelihood,
             decay=Decay(),
             coordinator=mock_coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            previous_probability=0.0,
         )
 
         # Should have evidence when value is within range (0.0, 1.0)

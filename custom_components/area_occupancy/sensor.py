@@ -104,6 +104,8 @@ class ProbabilitySensor(AreaOccupancySensorBase):
 class EntitiesSensor(AreaOccupancySensorBase):
     """Sensor for all entities."""
 
+    _unrecorded_attributes = frozenset({"evidence", "no_evidence", "total", "details"})
+
     def __init__(
         self,
         coordinator: AreaOccupancyCoordinator,
@@ -128,31 +130,44 @@ class EntitiesSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
+            active_entity_names = [
+                entity.name
+                for entity in self.coordinator.entities.active_entities
+                if entity.name
+            ]
+            inactive_entity_names = [
+                entity.name
+                for entity in self.coordinator.entities.inactive_entities
+                if entity.name
+            ]
             return {
-                "active": [
-                    {
-                        "id": {entity.entity_id},
-                        "name": {entity.name},
-                        "state": {entity.state},
-                        "effective_probability": {
-                            format_percentage(entity.effective_probability)
-                        },
-                        "probability": {format_percentage(entity.probability)},
-                    }
-                    for entity in self.coordinator.entities.active_entities
-                ],
-                "inactive": [
-                    {
-                        "id": {entity.entity_id},
-                        "name": {entity.name},
-                        "state": {entity.state},
-                        "effective_probability": {
-                            format_percentage(entity.effective_probability)
-                        },
-                        "probability": {format_percentage(entity.probability)},
-                    }
-                    for entity in self.coordinator.entities.inactive_entities
-                ],
+                "evidence": ", ".join(active_entity_names),
+                "no_evidence": ", ".join(inactive_entity_names),
+                "total": len(self.coordinator.entities.entities),
+                "details": {
+                    "active": [
+                        {
+                            "id": {entity.entity_id},
+                            "name": {entity.name},
+                            "state": {entity.state},
+                            "decaying": {entity.decay.is_decaying},
+                            "evidence": {entity.evidence},
+                            "probability": {format_percentage(entity.probability)},
+                        }
+                        for entity in self.coordinator.entities.active_entities
+                    ],
+                    "inactive": [
+                        {
+                            "id": {entity.entity_id},
+                            "name": {entity.name},
+                            "state": {entity.state},
+                            "decaying": {entity.decay.is_decaying},
+                            "evidence": {entity.evidence},
+                            "probability": {format_percentage(entity.probability)},
+                        }
+                        for entity in self.coordinator.entities.inactive_entities
+                    ],
+                },
             }
         except (TypeError, AttributeError, KeyError):
             return {}

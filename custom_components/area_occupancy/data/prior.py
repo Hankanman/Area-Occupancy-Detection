@@ -14,13 +14,15 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_PRIOR
 from ..utils import TimeInterval, get_states_from_recorder, states_to_intervals
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+DEFAULT_PRIOR = 0.15
+MIN_PRIOR = 0.1
 
 
 @dataclass
@@ -58,7 +60,9 @@ class Prior:  # exported name must stay identical
     @property
     def current_value(self) -> float:
         """Return the current cached prior value, or default if not yet calculated."""
-        return self.value if self.value is not None else DEFAULT_PRIOR
+        if self.value is None or self.value < MIN_PRIOR:
+            return DEFAULT_PRIOR
+        return self.value
 
     @property
     def prior_intervals(self) -> list[TimeInterval]:

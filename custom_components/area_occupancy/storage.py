@@ -113,7 +113,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
         if force:
             await self.async_save(data)
         else:
-            self.async_delay_save(get_storage_data, delay=30.0)
+            self.async_delay_save(get_storage_data, delay=5)
 
     async def async_load_data(self) -> AreaOccupancyStorageData | None:
         """Load coordinator data from storage with compatibility checking.

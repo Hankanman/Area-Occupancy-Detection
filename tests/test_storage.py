@@ -108,7 +108,7 @@ class TestAreaOccupancyStore:
             # Should call async_delay_save with proper data
             mock_delay_save.assert_called_once()
             call_args = mock_delay_save.call_args
-            assert call_args[1]["delay"] == 30.0
+            assert call_args[1]["delay"] == 5
 
     async def test_async_load_data_success(
         self, mock_coordinator: Mock, valid_storage_data: dict

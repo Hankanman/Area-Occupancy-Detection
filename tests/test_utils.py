@@ -375,21 +375,6 @@ class TestOverallProbability:
             "decaying": cast("Entity", mock_decaying),
         }
         prior = 0.3
-        active_prob = bayesian_probability(
-            prior=prior,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            evidence=True,
-            decay_factor=1.0,
-        )
-        decaying_prob = bayesian_probability(
-            prior=prior,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            evidence=True,
-            decay_factor=0.5,
-        )
-        expected = 1 - (1 - active_prob) * (1 - decaying_prob)
 
         result = overall_probability(entities, prior)
         assert 0.0 <= result <= 1.0
