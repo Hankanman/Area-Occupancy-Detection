@@ -77,17 +77,6 @@
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
-                    "lights": {
-                        "name": "Light Sensors",
-                        "description": "Configure light sensors",
-                        "data": {
-                            "lights": "Lights",
-                            "weight_light": "Light Weight"
-                        },
-                        "data_description": {
-                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
-                        }
-                    },
                     "media": {
                         "name": "Media Players",
                         "description": "Configure media players and their states",
@@ -219,17 +208,6 @@
                         "data_description": {
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
-                        }
-                    },
-                    "lights": {
-                        "name": "Light Sensors",
-                        "description": "Configure light sensors",
-                        "data": {
-                            "lights": "Lights",
-                            "weight_light": "Light Weight"
-                        },
-                        "data_description": {
-                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
                         }
                     },
                     "media": {

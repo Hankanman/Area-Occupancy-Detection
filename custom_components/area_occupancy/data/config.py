@@ -22,7 +22,6 @@ from ..const import (
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
@@ -38,7 +37,6 @@ from ..const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
@@ -59,7 +57,6 @@ from ..const import (
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
@@ -80,7 +77,6 @@ class Sensors:
     primary_occupancy: str | None = None
     media: list[str] = field(default_factory=list)
     appliances: list[str] = field(default_factory=list)
-    lights: list[str] = field(default_factory=list)
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
@@ -136,7 +132,6 @@ class Weights:
     appliance: float = DEFAULT_WEIGHT_APPLIANCE
     door: float = DEFAULT_WEIGHT_DOOR
     window: float = DEFAULT_WEIGHT_WINDOW
-    light: float = DEFAULT_WEIGHT_LIGHT
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
     wasp: float = DEFAULT_WASP_WEIGHT
 
@@ -207,7 +202,6 @@ class Config:
             (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
             (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
             (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
-            (CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
             (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
             (CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
         ]:
@@ -232,7 +226,6 @@ class Config:
                 primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
                 media=data.get(CONF_MEDIA_DEVICES, []),
                 appliances=data.get(CONF_APPLIANCES, []),
-                lights=data.get(CONF_LIGHTS, []),
                 illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
                 humidity=data.get(CONF_HUMIDITY_SENSORS, []),
                 temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
@@ -257,7 +250,6 @@ class Config:
                 appliance=weights_data[CONF_WEIGHT_APPLIANCE],
                 door=weights_data[CONF_WEIGHT_DOOR],
                 window=weights_data[CONF_WEIGHT_WINDOW],
-                light=weights_data[CONF_WEIGHT_LIGHT],
                 environmental=weights_data[CONF_WEIGHT_ENVIRONMENTAL],
                 wasp=weights_data[CONF_WASP_WEIGHT],
             ),

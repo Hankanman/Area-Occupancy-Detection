@@ -27,14 +27,12 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
@@ -59,7 +57,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         }
 
@@ -78,7 +75,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         }
 
@@ -99,7 +95,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         }
 
@@ -120,7 +115,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         }
 
@@ -145,7 +139,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         }
 
@@ -167,7 +160,6 @@ class TestBaseOccupancyFlow:
             CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
             CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
             CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
             CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
             CONF_DECAY_ENABLED: True,
             CONF_DECAY_HALF_LIFE: 0,  # Invalid decay half life
@@ -343,7 +335,6 @@ class TestHelperFunctions:
         assert "motion" in schema
         assert "doors" in schema
         assert "windows" in schema
-        assert "lights" in schema
         assert "media" in schema
         assert "appliances" in schema
         assert "environmental" in schema
@@ -384,7 +375,6 @@ class TestHelperFunctions:
                     "motion": {},
                     "doors": {},
                     "windows": {},
-                    "lights": {},
                     "media": {},
                     "appliances": {},
                     "environmental": {},
@@ -399,7 +389,6 @@ class TestHelperFunctions:
         assert "motion" in schema_dict
         assert "doors" in schema_dict
         assert "windows" in schema_dict
-        assert "lights" in schema_dict
         assert "media" in schema_dict
         assert "appliances" in schema_dict
         assert "environmental" in schema_dict
@@ -427,7 +416,6 @@ class TestHelperFunctions:
         assert "motion" in schema
         assert "doors" in schema
         assert "windows" in schema
-        assert "lights" in schema
         assert "media" in schema
         assert "appliances" in schema
         assert "environmental" in schema
@@ -514,7 +502,6 @@ class TestAreaOccupancyConfigFlow:
             "purpose": {},
             "doors": {},
             "windows": {},
-            "lights": {},
             "media": {},
             "appliances": {},
             "environmental": {},
@@ -564,7 +551,6 @@ class TestConfigFlowIntegration:
             "purpose": {},
             "doors": {},
             "windows": {},
-            "lights": {},
             "media": {},
             "appliances": {},
             "environmental": {},
@@ -669,7 +655,6 @@ class TestConfigFlowIntegration:
                 "purpose": {},
                 "doors": {},
                 "windows": {},
-                "lights": {},
                 "media": {},
                 "appliances": {},
                 "environmental": {},
@@ -746,7 +731,6 @@ class TestConfigFlowIntegration:
                 "purpose": {},
                 "doors": {},
                 "windows": {},
-                "lights": {},
                 "media": {},
                 "appliances": {},
                 "environmental": {},
@@ -829,7 +813,6 @@ class TestConfigFlowIntegration:
             "purpose": {},
             "doors": {},
             "windows": {},
-            "lights": {},
             "media": {},
             "appliances": {},
             "environmental": {},
@@ -858,7 +841,6 @@ class TestConfigFlowIntegration:
             "purpose": {},
             "doors": {},
             "windows": {},
-            "lights": {},
             "media": {},
             "appliances": {},
             "environmental": {},

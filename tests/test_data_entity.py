@@ -861,7 +861,6 @@ class TestEntityManagerAdvanced:
         mock_config.sensors.appliances = ["switch.computer"]
         mock_config.sensors.doors = ["binary_sensor.door"]
         mock_config.sensors.windows = ["binary_sensor.window"]
-        mock_config.sensors.lights = ["light.bulb"]
         mock_config.sensors.illuminance = ["sensor.lux"]
         mock_config.sensors.humidity = ["sensor.humidity"]
         mock_config.sensors.temperature = ["sensor.temp"]
@@ -875,7 +874,6 @@ class TestEntityManagerAdvanced:
         assert InputType.APPLIANCE in mappings
         assert InputType.DOOR in mappings
         assert InputType.WINDOW in mappings
-        assert InputType.LIGHT in mappings
         assert InputType.ENVIRONMENTAL in mappings
 
         assert mappings[InputType.MOTION] == [
