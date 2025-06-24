@@ -27,7 +27,6 @@ class InputType(StrEnum):
     APPLIANCE = "appliance"
     DOOR = "door"
     WINDOW = "window"
-    LIGHT = "light"
     ENVIRONMENTAL = "environmental"
 
 
@@ -255,14 +254,6 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "prob_false": 0.02,
         "prior": 0.1569,
         "active_states": [STATE_OPEN],
-        "active_range": None,
-    },
-    InputType.LIGHT: {
-        "weight": 0.1,
-        "prob_true": 0.2,
-        "prob_false": 0.02,
-        "prior": 0.13846,
-        "active_states": [STATE_ON],
         "active_range": None,
     },
     InputType.ENVIRONMENTAL: {

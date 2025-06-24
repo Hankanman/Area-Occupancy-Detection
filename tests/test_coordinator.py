@@ -457,7 +457,6 @@ class TestCoordinatorIntegrationUsingCentralizedMocks:
         entity_ids = [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
-            "light.test_light",
             "media_player.tv",
         ]
 
@@ -889,8 +888,8 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         entities["binary_sensor.motion2"].decay.decay_factor = 0.5
 
         # Entity 3: No evidence, no decay
-        entities["light.test_light"].evidence = False
-        entities["light.test_light"].decay.is_decaying = False
+        entities["binary_sensor.appliance"].evidence = False
+        entities["binary_sensor.appliance"].decay.is_decaying = False
 
         # Entity 4: Active evidence and decaying
         entities["media_player.tv"].evidence = True
@@ -911,8 +910,8 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         entities["binary_sensor.motion1"].type.weight = 0.9
         entities["binary_sensor.motion1"].evidence = True
 
-        entities["light.test_light"].type.weight = 0.1
-        entities["light.test_light"].evidence = True
+        entities["binary_sensor.appliancet"].type.weight = 0.1
+        entities["binary_sensor.appliance"].evidence = True
 
         # High weight entity should have more impact
         probability = mock_coordinator_with_sensors.probability
@@ -927,7 +926,7 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         # Set different likelihood values
         entities["binary_sensor.motion1"].likelihood.prob_given_true = 0.9
         entities["binary_sensor.motion2"].likelihood.prob_given_true = 0.3
-        entities["light.test_light"].likelihood.prob_given_true = 0.1
+        entities["binary_sensor.appliance"].likelihood.prob_given_true = 0.1
         entities["media_player.tv"].likelihood.prob_given_true = 0.7
 
         # Calculate expected area prior and set mock to return it
@@ -948,8 +947,8 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         # Set different decay factors
         entities["binary_sensor.motion1"].decay.decay_factor = 1.0  # No decay
         entities["binary_sensor.motion2"].decay.decay_factor = 0.5  # Half decay
-        entities["light.test_light"].decay.decay_factor = 0.2  # Strong decay
-        entities["media_player.tv"].decay.decay_factor = 0.8  # Light decay
+        entities["binary_sensor.appliance"].decay.decay_factor = 0.2  # Strong decay
+        entities["media_player.tv"].decay.decay_factor = 0.8  # Appliance decay
 
         # Calculate expected decay and set mock to return it
         expected_decay = (1.0 + 0.5 + 0.2 + 0.8) / 4
@@ -1198,13 +1197,13 @@ class TestCoordinatorDeviceInfoAndProperties:
         # Set up mixed decay states
         entities["binary_sensor.motion1"].decay.is_decaying = True
         entities["binary_sensor.motion2"].decay.is_decaying = False
-        entities["light.test_light"].decay.is_decaying = True
+        entities["binary_sensor.appliance"].decay.is_decaying = True
         entities["media_player.tv"].decay.is_decaying = False
 
         # Create expected decaying entities list
         expected_decaying = [
             entities["binary_sensor.motion1"],
-            entities["light.test_light"],
+            entities["binary_sensor.appliance"],
         ]
         mock_coordinator_with_sensors.decaying_entities = expected_decaying
 
@@ -1212,7 +1211,7 @@ class TestCoordinatorDeviceInfoAndProperties:
 
         assert len(decaying) == 2
         assert entities["binary_sensor.motion1"] in decaying
-        assert entities["light.test_light"] in decaying
+        assert entities["binary_sensor.appliance"] in decaying
         assert entities["binary_sensor.motion2"] not in decaying
         assert entities["media_player.tv"] not in decaying
 
