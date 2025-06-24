@@ -32,7 +32,7 @@ class Entity:
     last_updated: datetime = field(default_factory=dt_util.utcnow)
 
     # Minimal state tracking for proper decay behavior
-    _previous_evidence: bool = field(default=False, init=False, repr=False)
+    _previous_evidence: bool | None = field(default=False, init=False, repr=False)
     _effective_probability: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self):
@@ -112,15 +112,15 @@ class Entity:
         return None
 
     @property
-    def evidence(self) -> bool:
+    def evidence(self) -> bool | None:
         """Determine if entity is active.
 
         Returns:
-            bool: True if entity is active, False otherwise
+            bool | None: True if entity is active, False if inactive, None if state unknown
 
         """
         if self.state is None:
-            return False
+            return None
 
         # Convert state to string for comparison
         state_str = str(self.state)
@@ -151,6 +151,9 @@ class Entity:
 
         """
         current_evidence = self.evidence  # Pure calculation from current HA state
+
+        if current_evidence is None:
+            return False
 
         if current_evidence != self._previous_evidence:
             if current_evidence:  # OFF→ON transition
