@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
-    DEFAULT_PRIOR,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.prior import DEFAULT_PRIOR
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -227,33 +227,6 @@ class TestCoordinatorTimerMethods:
 
         await mock_coordinator._handle_decay_timer(test_time)
         mock_coordinator._handle_decay_timer.assert_called_once_with(test_time)
-
-    def test_start_storage_timer_success(self, mock_coordinator: Mock) -> None:
-        """Test _start_storage_timer method using centralized mock."""
-        mock_coordinator._global_storage_timer = None
-        mock_coordinator._start_storage_timer = Mock()
-
-        mock_coordinator._start_storage_timer()
-        mock_coordinator._start_storage_timer.assert_called_once()
-
-    def test_start_storage_timer_already_exists(self, mock_coordinator: Mock) -> None:
-        """Test _start_storage_timer when timer already exists using centralized mock."""
-        existing_timer = Mock()
-        mock_coordinator._global_storage_timer = existing_timer
-        mock_coordinator._start_storage_timer = Mock()
-
-        mock_coordinator._start_storage_timer()
-        mock_coordinator._start_storage_timer.assert_called_once()
-
-    async def test_handle_storage_timer_success(self, mock_coordinator: Mock) -> None:
-        """Test _handle_storage_timer method using centralized mock."""
-        test_time = dt_util.utcnow()
-
-        mock_coordinator._handle_storage_timer = AsyncMock()
-        mock_coordinator.store.async_save_data = AsyncMock()
-
-        await mock_coordinator._handle_storage_timer(test_time)
-        mock_coordinator._handle_storage_timer.assert_called_once_with(test_time)
 
 
 class TestCoordinatorPropertyCalculations:
@@ -666,24 +639,20 @@ class TestCoordinatorAdvancedTimerManagement:
             # Test all timers are None initially
             assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
-            assert coordinator._global_storage_timer is None
 
             # Start timers
             coordinator._start_prior_timer()
             coordinator._start_decay_timer()
-            coordinator._start_storage_timer()
 
             # Verify timers are set
             assert coordinator._global_prior_timer is not None
             assert coordinator._global_decay_timer is not None
-            assert coordinator._global_storage_timer is not None
 
             # Test shutdown cancels all timers
             await coordinator.async_shutdown()
 
         assert coordinator._global_prior_timer is None
         assert coordinator._global_decay_timer is None
-        assert coordinator._global_storage_timer is None
 
     def test_timer_start_with_missing_hass(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -696,11 +665,9 @@ class TestCoordinatorAdvancedTimerManagement:
             # Should not start timers when hass is None
             coordinator._start_prior_timer()
             coordinator._start_decay_timer()
-            coordinator._start_storage_timer()
 
             assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
-            assert coordinator._global_storage_timer is None
 
     async def test_timer_error_handling_during_callbacks(
         self, mock_coordinator: Mock
@@ -746,7 +713,6 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_storage_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -783,7 +749,6 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_storage_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -850,7 +815,6 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_storage_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -910,7 +874,7 @@ class TestCoordinatorProbabilityCalculationEdgeCases:
         entities["binary_sensor.motion1"].type.weight = 0.9
         entities["binary_sensor.motion1"].evidence = True
 
-        entities["binary_sensor.appliancet"].type.weight = 0.1
+        entities["binary_sensor.appliance"].type.weight = 0.1
         entities["binary_sensor.appliance"].evidence = True
 
         # High weight entity should have more impact
@@ -972,7 +936,6 @@ class TestCoordinatorResourceManagement:
         # Set up some timers to test cleanup
         coordinator._global_prior_timer = Mock()
         coordinator._global_decay_timer = Mock()
-        coordinator._global_storage_timer = Mock()
         coordinator._remove_state_listener = Mock()
 
         # Mock entity types to prevent KeyError during shutdown
@@ -999,7 +962,6 @@ class TestCoordinatorResourceManagement:
             # Verify resources were cleaned up
             assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
-            assert coordinator._global_storage_timer is None
             assert coordinator._remove_state_listener is None
 
     async def test_shutdown_with_none_resources(
@@ -1011,7 +973,6 @@ class TestCoordinatorResourceManagement:
         # Resources already None - should not crash
         coordinator._global_prior_timer = None
         coordinator._global_decay_timer = None
-        coordinator._global_storage_timer = None
         coordinator._remove_state_listener = None
 
         # Mock entity types to prevent KeyError during shutdown
@@ -1038,7 +999,6 @@ class TestCoordinatorResourceManagement:
             # Verify they remain None
             assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
-            assert coordinator._global_storage_timer is None
             assert coordinator._remove_state_listener is None
 
 
@@ -1064,7 +1024,6 @@ class TestCoordinatorIntegrationFlows:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_storage_timer"),
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
                 new=AsyncMock(),

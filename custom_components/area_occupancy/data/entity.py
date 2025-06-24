@@ -91,7 +91,10 @@ class Entity:
             return str(self.state) in self.active_states
         if self.active_range:
             min_val, max_val = self.active_range
-            return min_val <= float(self.state) <= max_val
+            try:
+                return min_val <= float(self.state) <= max_val
+            except (ValueError, TypeError):
+                return False
 
         return None
 
