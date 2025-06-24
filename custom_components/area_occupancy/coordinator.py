@@ -24,7 +24,6 @@ from homeassistant.util import dt as dt_util
 # Local
 from .const import (
     DEFAULT_NAME,
-    DEFAULT_PRIOR,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -43,7 +42,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Global timer intervals in seconds
 DECAY_INTERVAL = 10
-STORAGE_INTERVAL = 300
 PRIOR_INTERVAL = 3600
 
 
@@ -78,7 +76,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.wasp_entity_id: str | None = None
         self._global_prior_timer: CALLBACK_TYPE | None = None
         self._global_decay_timer: CALLBACK_TYPE | None = None
-        self._global_storage_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
 
     @property
@@ -109,9 +106,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         This returns the pure P(area occupied) without any sensor weighting.
         """
-        if not self.entities.entities:
-            return DEFAULT_PRIOR
-
         # Use the dedicated area baseline prior calculation
         return self.prior.current_value
 
@@ -202,9 +196,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Start the global decay timer
             self._start_decay_timer()
 
-            # Start the global storage timer
-            self._start_storage_timer()
-
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
                 self.config.name,
@@ -241,11 +232,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._global_decay_timer is not None:
             self._global_decay_timer()
             self._global_decay_timer = None
-
-        # Stop global storage timer
-        if self._global_storage_timer is not None:
-            self._global_storage_timer()
-            self._global_storage_timer = None
 
         # Clean up state change listener
         if self._remove_state_listener is not None:
@@ -301,10 +287,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Only create new listener if we have entities to track
         if entity_ids:
+
+            async def _refresh_on_state_change(event):
+                entity_id = event.data.get("entity_id")
+                entity = self.entities.get_entity(entity_id)
+                if entity and entity.has_new_evidence():
+                    await self.async_refresh()
+
             self._remove_state_listener = async_track_state_change_event(
                 self.hass,
                 entity_ids,
-                self.entities.async_state_changed_listener,
+                _refresh_on_state_change,
             )
 
     # --- Prior Timer Handling ---
@@ -361,25 +354,3 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Reschedule the timer
         self._start_decay_timer()
-
-    # --- Storage Timer Handling ---
-    def _start_storage_timer(self) -> None:
-        """Start the global storage timer."""
-        if self._global_storage_timer is not None or not self.hass:
-            return
-
-        next_update = dt_util.utcnow() + timedelta(seconds=STORAGE_INTERVAL)
-
-        self._global_storage_timer = async_track_point_in_time(
-            self.hass, self._handle_storage_timer, next_update
-        )
-
-    async def _handle_storage_timer(self, _now: datetime) -> None:
-        """Handle the storage timer."""
-        self._global_storage_timer = None
-
-        # Save current state to storage
-        await self.store.async_save_data(force=True)
-
-        # Reschedule the timer
-        self._start_storage_timer()
