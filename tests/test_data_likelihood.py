@@ -243,6 +243,159 @@ class TestLikelihood:
             assert likelihood.inactive_ratio == 0.1
             assert likelihood.last_updated is not None
 
+    async def test_update_uses_cache_when_valid(self, mock_coordinator: Mock) -> None:
+        """Test that update() uses cached values when cache is valid."""
+        mock_coordinator.config.history.enabled = True
+
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # Set cached values that are fresh
+        likelihood.active_ratio = 0.6
+        likelihood.inactive_ratio = 0.05
+        likelihood.last_updated = dt_util.utcnow()
+
+        # Mock calculate method to ensure it's not called
+        with patch.object(
+            likelihood, "calculate", new_callable=AsyncMock
+        ) as mock_calculate:
+            prob_true, prob_false = await likelihood.update()
+
+            # Should not call calculate since cache is valid
+            mock_calculate.assert_not_called()
+
+            # Should return weighted values based on cached data
+            assert prob_true == likelihood.prob_given_true
+            assert prob_false == likelihood.prob_given_false
+
+    async def test_update_recalculates_when_cache_stale(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test that update() recalculates when cache is stale."""
+        mock_coordinator.config.history.enabled = True
+
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # Set stale cached values (older than cache TTL)
+        likelihood.active_ratio = 0.6
+        likelihood.inactive_ratio = 0.05
+        likelihood.last_updated = dt_util.utcnow() - timedelta(hours=3)  # Stale
+
+        # Mock successful calculation
+        with patch.object(
+            likelihood, "calculate", new_callable=AsyncMock
+        ) as mock_calculate:
+            mock_calculate.return_value = (0.7, 0.02)
+
+            prob_true, prob_false = await likelihood.update()
+
+            # Should call calculate since cache is stale
+            mock_calculate.assert_called_once()
+
+            # Should update stored values
+            assert likelihood.active_ratio == 0.7
+            assert likelihood.inactive_ratio == 0.02
+            assert likelihood.last_updated is not None
+
+    async def test_update_recalculates_when_no_cache(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test that update() recalculates when no cached values exist."""
+        mock_coordinator.config.history.enabled = True
+
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # No cached values (fresh instance)
+        assert likelihood.active_ratio is None
+        assert likelihood.inactive_ratio is None
+        assert likelihood.last_updated is None
+
+        # Mock successful calculation
+        with patch.object(
+            likelihood, "calculate", new_callable=AsyncMock
+        ) as mock_calculate:
+            mock_calculate.return_value = (0.75, 0.03)
+
+            prob_true, prob_false = await likelihood.update()
+
+            # Should call calculate since no cache exists
+            mock_calculate.assert_called_once()
+
+            # Should store calculated values
+            assert likelihood.active_ratio == 0.75
+            assert likelihood.inactive_ratio == 0.03
+            assert likelihood.last_updated is not None
+
+    def test_is_cache_valid_no_values(self, mock_coordinator: Mock) -> None:
+        """Test _is_cache_valid() returns False when no values exist."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # Fresh instance with no cached values
+        assert not likelihood._is_cache_valid()
+
+    def test_is_cache_valid_fresh_values(self, mock_coordinator: Mock) -> None:
+        """Test _is_cache_valid() returns True for fresh values."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # Set fresh cached values
+        likelihood.active_ratio = 0.6
+        likelihood.inactive_ratio = 0.05
+        likelihood.last_updated = dt_util.utcnow()
+
+        assert likelihood._is_cache_valid()
+
+    def test_is_cache_valid_stale_values(self, mock_coordinator: Mock) -> None:
+        """Test _is_cache_valid() returns False for stale values."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=0.7,
+        )
+
+        # Set stale cached values (older than cache TTL)
+        likelihood.active_ratio = 0.6
+        likelihood.inactive_ratio = 0.05
+        likelihood.last_updated = dt_util.utcnow() - timedelta(hours=3)
+
+        assert not likelihood._is_cache_valid()
+
     @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
     @patch("custom_components.area_occupancy.data.likelihood.states_to_intervals")
     async def test_calculate_with_prior_intervals(
