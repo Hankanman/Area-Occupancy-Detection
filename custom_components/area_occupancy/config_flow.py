@@ -49,7 +49,6 @@ from .const import (
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
@@ -64,7 +63,6 @@ from .const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
@@ -85,7 +83,6 @@ from .const import (
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
@@ -109,10 +106,6 @@ THRESHOLD_MAX = 100
 HISTORY_PERIOD_STEP = 1
 HISTORY_PERIOD_MIN = 1
 HISTORY_PERIOD_MAX = 30
-
-DECAY_WINDOW_STEP = 60
-DECAY_WINDOW_MIN = 60
-DECAY_WINDOW_MAX = 3600
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -150,7 +143,6 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         BinarySensorDeviceClass.DOOR,
         BinarySensorDeviceClass.GARAGE_DOOR,
         BinarySensorDeviceClass.OPENING,
-        BinarySensorDeviceClass.LIGHT,
     ]
 
     # Check binary_sensor, switch, fan for potential appliances
@@ -340,33 +332,6 @@ def _create_windows_section_schema(
             vol.Optional(
                 CONF_WEIGHT_WINDOW,
                 default=defaults.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=WEIGHT_MIN,
-                    max=WEIGHT_MAX,
-                    step=WEIGHT_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                ),
-            ),
-        }
-    )
-
-
-def _create_lights_section_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Create schema for the lights section."""
-    return vol.Schema(
-        {
-            vol.Optional(
-                CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=[Platform.LIGHT, Platform.SWITCH],
-                    multiple=True,
-                ),
-            ),
-            vol.Optional(
-                CONF_WEIGHT_LIGHT,
-                default=defaults.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -695,9 +660,6 @@ def create_schema(
         ),
         {"collapsed": True},
     )
-    schema_dict[vol.Required("lights")] = section(
-        _create_lights_section_schema(defaults), {"collapsed": True}
-    )
     schema_dict[vol.Required("media")] = section(
         _create_media_section_schema(
             defaults, cast("list[SelectOptionDict]", media_state_options)
@@ -826,7 +788,6 @@ class BaseOccupancyFlow:
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
-            (CONF_WEIGHT_LIGHT, data.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT)),
             (
                 CONF_WEIGHT_ENVIRONMENTAL,
                 data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),

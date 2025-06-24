@@ -15,7 +15,6 @@ from custom_components.area_occupancy.const import (
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
@@ -30,7 +29,6 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
@@ -50,7 +48,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
@@ -82,7 +79,6 @@ class TestSensors:
         assert sensors.primary_occupancy is None
         assert sensors.media == []
         assert sensors.appliances == []
-        assert sensors.lights == []
         assert sensors.illuminance == []
         assert sensors.humidity == []
         assert sensors.temperature == []
@@ -96,7 +92,6 @@ class TestSensors:
             primary_occupancy="binary_sensor.motion1",
             media=["media_player.tv"],
             appliances=["switch.coffee_maker"],
-            lights=["light.living_room"],
             illuminance=["sensor.illuminance"],
             humidity=["sensor.humidity"],
             temperature=["sensor.temperature"],
@@ -108,7 +103,6 @@ class TestSensors:
         assert sensors.primary_occupancy == "binary_sensor.motion1"
         assert sensors.media == ["media_player.tv"]
         assert sensors.appliances == ["switch.coffee_maker"]
-        assert sensors.lights == ["light.living_room"]
         assert sensors.illuminance == ["sensor.illuminance"]
         assert sensors.humidity == ["sensor.humidity"]
         assert sensors.temperature == ["sensor.temperature"]
@@ -194,7 +188,6 @@ class TestWeights:
         assert weights.appliance == DEFAULT_WEIGHT_APPLIANCE
         assert weights.door == DEFAULT_WEIGHT_DOOR
         assert weights.window == DEFAULT_WEIGHT_WINDOW
-        assert weights.light == DEFAULT_WEIGHT_LIGHT
         assert weights.environmental == DEFAULT_WEIGHT_ENVIRONMENTAL
         assert weights.wasp == DEFAULT_WASP_WEIGHT
 
@@ -206,7 +199,6 @@ class TestWeights:
             appliance=0.7,
             door=0.6,
             window=0.5,
-            light=0.4,
             environmental=0.3,
             wasp=0.85,
         )
@@ -216,7 +208,6 @@ class TestWeights:
         assert weights.appliance == 0.7
         assert weights.door == 0.6
         assert weights.window == 0.5
-        assert weights.light == 0.4
         assert weights.environmental == 0.3
         assert weights.wasp == 0.85
 
@@ -371,7 +362,6 @@ class TestConfig:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             CONF_MEDIA_DEVICES: ["media_player.tv"],
             CONF_APPLIANCES: ["switch.coffee_maker"],
-            CONF_LIGHTS: ["light.living_room"],
             CONF_ILLUMINANCE_SENSORS: ["sensor.illuminance"],
             CONF_HUMIDITY_SENSORS: ["sensor.humidity"],
             CONF_TEMPERATURE_SENSORS: ["sensor.temperature"],
@@ -386,7 +376,6 @@ class TestConfig:
             CONF_WEIGHT_APPLIANCE: 0.7,
             CONF_WEIGHT_DOOR: 0.6,
             CONF_WEIGHT_WINDOW: 0.5,
-            CONF_WEIGHT_LIGHT: 0.4,
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.85,
             CONF_DECAY_ENABLED: False,
@@ -411,7 +400,6 @@ class TestConfig:
         assert config.sensors.primary_occupancy == "binary_sensor.motion1"
         assert config.sensors.media == ["media_player.tv"]
         assert config.sensors.appliances == ["switch.coffee_maker"]
-        assert config.sensors.lights == ["light.living_room"]
         assert config.sensors.illuminance == ["sensor.illuminance"]
         assert config.sensors.humidity == ["sensor.humidity"]
         assert config.sensors.temperature == ["sensor.temperature"]
@@ -426,7 +414,6 @@ class TestConfig:
         assert config.weights.appliance == 0.7
         assert config.weights.door == 0.6
         assert config.weights.window == 0.5
-        assert config.weights.light == 0.4
         assert config.weights.environmental == 0.3
         assert config.weights.wasp == 0.85
         assert config.decay.enabled is False
@@ -598,7 +585,6 @@ class TestConfigIntegration:
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             CONF_MEDIA_DEVICES: ["media_player.tv", "media_player.stereo"],
             CONF_APPLIANCES: ["switch.coffee_maker", "switch.dishwasher"],
-            CONF_LIGHTS: ["light.living_room", "light.kitchen"],
             CONF_ILLUMINANCE_SENSORS: ["sensor.illuminance1", "sensor.illuminance2"],
             CONF_HUMIDITY_SENSORS: ["sensor.humidity"],
             CONF_TEMPERATURE_SENSORS: ["sensor.temperature"],
@@ -612,7 +598,6 @@ class TestConfigIntegration:
         assert len(config.sensors.motion) == 2
         assert len(config.sensors.media) == 2
         assert len(config.sensors.appliances) == 2
-        assert len(config.sensors.lights) == 2
         assert len(config.sensors.illuminance) == 2
         assert len(config.sensors.humidity) == 1
         assert len(config.sensors.temperature) == 1

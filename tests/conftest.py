@@ -26,7 +26,6 @@ from custom_components.area_occupancy.const import (
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
@@ -43,7 +42,6 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
@@ -63,7 +61,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
@@ -211,7 +208,6 @@ def mock_config_entry() -> Mock:
         CONF_HISTORY_PERIOD: DEFAULT_HISTORY_PERIOD,
         CONF_DOOR_SENSORS: [],
         CONF_WINDOW_SENSORS: [],
-        CONF_LIGHTS: [],
         CONF_MEDIA_DEVICES: [],
         CONF_APPLIANCES: [],
         CONF_ILLUMINANCE_SENSORS: [],
@@ -222,7 +218,6 @@ def mock_config_entry() -> Mock:
         CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
         CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
         CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-        CONF_WEIGHT_LIGHT: DEFAULT_WEIGHT_LIGHT,
         CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
         CONF_WASP_ENABLED: False,
         CONF_WASP_MOTION_TIMEOUT: DEFAULT_WASP_MOTION_TIMEOUT,
@@ -461,15 +456,6 @@ def mock_states() -> list[Mock]:
     motion_state.last_updated = dt_util.utcnow() - timedelta(minutes=5)
     motion_state.attributes = {"device_class": "motion"}
     states.append(motion_state)
-
-    # Light sensor states
-    light_state = Mock()
-    light_state.entity_id = "light.test_light"
-    light_state.state = STATE_ON
-    light_state.last_changed = dt_util.utcnow() - timedelta(minutes=10)
-    light_state.last_updated = dt_util.utcnow() - timedelta(minutes=10)
-    light_state.attributes = {}
-    states.append(light_state)
 
     return states
 
@@ -898,15 +884,6 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
             decay=Mock(is_decaying=True, decay_factor=0.8),
             likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
         ),
-        "light.test_light": Mock(
-            entity_id="light.test_light",
-            available=False,
-            evidence=False,
-            probability=0.15,
-            type=Mock(input_type=InputType.LIGHT, weight=0.2),
-            decay=Mock(is_decaying=False, decay_factor=1.0),
-            likelihood=Mock(prob_given_true=0.8, prob_given_false=0.1),
-        ),
         "media_player.tv": Mock(
             entity_id="media_player.tv",
             available=True,
@@ -1158,7 +1135,7 @@ def mock_entity_for_likelihood_tests() -> Mock:
     from custom_components.area_occupancy.data.entity import Entity
 
     entity = Mock(spec=Entity)
-    entity.entity_id = "light.test_light"
+    entity.entity_id = "binary_sensor.motion_sensor_1"
 
     # Mock entity type with proper numeric values (not Mock objects)
     entity.type = Mock()
@@ -1167,7 +1144,7 @@ def mock_entity_for_likelihood_tests() -> Mock:
     entity.type.prob_true = 0.8  # Real float value, not Mock
     entity.type.prob_false = 0.1  # Real float value, not Mock
     entity.type.input_type = Mock()
-    entity.type.input_type.value = "light"
+    entity.type.input_type.value = "motion"
 
     # Mock likelihood with proper numeric values
     entity.likelihood = Mock()
@@ -1339,29 +1316,6 @@ def mock_area_occupancy_storage_data():
                     "is_decaying": False,
                 },
             },
-            "light.test_light": {
-                "entity_id": "light.test_light",
-                "probability": 0.01,
-                "type": {
-                    "input_type": "light",
-                    "weight": 0.2,
-                    "prob_true": 0.2,
-                    "prob_false": 0.02,
-                    "prior": 0.13,
-                    "active_states": ["on"],
-                    "active_range": None,
-                },
-                "likelihood": {
-                    "prob_given_true": 0.08,
-                    "prob_given_false": 0.01,
-                    "last_updated": "2025-06-19T12:06:18.158463+00:00",
-                },
-                "decay": {
-                    "last_trigger_ts": 1750328374.235967,
-                    "half_life": 300,
-                    "is_decaying": False,
-                },
-            },
             "sensor.illuminance_sensor_1": {
                 "entity_id": "sensor.illuminance_sensor_1",
                 "probability": 0.01,
@@ -1491,7 +1445,6 @@ def mock_config():
             primary_occupancy="binary_sensor.motion1",
             media=["media_player.tv"],
             appliances=["switch.computer"],
-            lights=["light.test_light"],
             illuminance=["sensor.illuminance_sensor_1"],
             humidity=["sensor.humidity_sensor"],
             temperature=["sensor.temperature_sensor"],
@@ -1510,7 +1463,6 @@ def mock_config():
             appliance=0.6,
             door=0.5,
             window=0.4,
-            light=0.1,
             environmental=0.3,
             wasp=0.8,
         ),
@@ -1570,7 +1522,6 @@ def mock_realistic_config_entry():
             "sensor.illuminance_sensor_1",
             "sensor.illuminance_sensor_2",
         ],
-        "lights": [],
         "media_active_states": ["playing", "paused"],
         "media_devices": ["media_player.mock_tv_player"],
         "motion_sensors": [
@@ -1588,7 +1539,6 @@ def mock_realistic_config_entry():
         "weight_appliance": 0.3,
         "weight_door": 0.3,
         "weight_environmental": 0.1,
-        "weight_light": 0.2,
         "weight_media": 0.7,
         "weight_motion": 0.85,
         "weight_window": 0.2,
@@ -1612,7 +1562,6 @@ def mock_realistic_config_entry():
             "sensor.illuminance_sensor_1",
             "sensor.illuminance_sensor_2",
         ],
-        "lights": ["light.study_bulb_1"],
         "media_active_states": ["playing", "paused"],
         "media_devices": ["media_player.mock_tv_player"],
         "motion_sensors": [
@@ -1632,7 +1581,6 @@ def mock_realistic_config_entry():
         "weight_appliance": 0.3,
         "weight_door": 0.3,
         "weight_environmental": 0.1,
-        "weight_light": 0.2,
         "weight_media": 0.7,
         "weight_motion": 0.85,
         "weight_window": 0.2,

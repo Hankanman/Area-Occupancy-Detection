@@ -103,24 +103,34 @@ def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+CONF_LIGHTS_KEY = "lights"
+
+
+def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated lights key from config."""
+    if CONF_LIGHTS_KEY in config:
+        config.pop(CONF_LIGHTS_KEY)
+        _LOGGER.debug("Removed deprecated lights key from config")
+    return config
+
+
 CONF_DECAY_WINDOW_KEY = "decay_window"
+
+
+def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay window key from config."""
+    if CONF_DECAY_WINDOW_KEY in config:
+        config.pop(CONF_DECAY_WINDOW_KEY)
+        _LOGGER.debug("Removed deprecated decay window key from config")
+    return config
 
 
 def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add decay half life."""
     if CONF_DECAY_HALF_LIFE not in config:
-        if CONF_DECAY_WINDOW_KEY in config:
-            config[CONF_DECAY_HALF_LIFE] = config[CONF_DECAY_WINDOW_KEY]
-            config.pop(CONF_DECAY_WINDOW_KEY)
-            _LOGGER.debug(
-                "Migrated decay window to decay half life: %s",
-                config[CONF_DECAY_WINDOW_KEY],
-            )
-        else:
-            config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
-            _LOGGER.debug(
-                "Migrated decay half life to default value: %s", DEFAULT_DECAY_HALF_LIFE
-            )
+        config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
+        _LOGGER.debug("Added decay half life to config")
+
     return config
 
 
@@ -195,6 +205,8 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     config = remove_decay_min_delay(config)
     config = migrate_primary_occupancy_sensor(config)
     config = migrate_decay_half_life(config)
+    config = remove_decay_window_key(config)
+    config = remove_lights_key(config)
     return migrate_purpose_field(config)
 
 

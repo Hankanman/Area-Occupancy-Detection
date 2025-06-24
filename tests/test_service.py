@@ -304,7 +304,7 @@ class TestGetEntityMetrics:
         # Use centralized entity fixtures
         mock_coordinator.entities.entities = {
             "binary_sensor.motion1": mock_active_entity,
-            "light.test_light": mock_inactive_entity,
+            "binary_sensor.appliance": mock_inactive_entity,
         }
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -373,7 +373,7 @@ class TestGetProblematicEntities:
         # Use centralized entity fixtures that already have problematic states
         mock_coordinator.entities.entities = {
             "binary_sensor.motion1": mock_unavailable_entity,  # available=False
-            "light.test_light": mock_stale_entity,  # last_updated > 1 hour ago
+            "binary_sensor.appliance": mock_stale_entity,  # last_updated > 1 hour ago
         }
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -387,7 +387,7 @@ class TestGetProblematicEntities:
         assert "unavailable" in problems
         assert "stale_updates" in problems
         assert "binary_sensor.motion1" in problems["unavailable"]
-        assert "light.test_light" in problems["stale_updates"]
+        assert "binary_sensor.appliance" in problems["stale_updates"]
 
     async def test_get_problematic_entities_no_issues(
         self,
@@ -623,7 +623,7 @@ class TestForceEntityUpdate:
         ]
         mock_empty_entity_manager.entities = {
             "binary_sensor.motion1": mock_active_entity,
-            "light.test_light": mock_inactive_entity,
+            "binary_sensor.appliance": mock_inactive_entity,
         }
         mock_coordinator.entities = mock_empty_entity_manager
 
