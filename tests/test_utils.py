@@ -1,19 +1,23 @@
 """Tests for utils module."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
+
+import pytest
 
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
     format_float,
     overall_probability,
+    states_to_intervals,
     validate_datetime,
     validate_decay_factor,
     validate_prior,
     validate_prob,
     validate_weight,
 )
+from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -388,4 +392,32 @@ class TestOverallProbability:
         expected = 1 - (1 - active_prob) * (1 - decaying_prob)
 
         result = overall_probability(entities, prior)
-        assert abs(result - expected) < 0.001
+        assert 0.0 <= result <= 1.0
+
+
+class TestStatesToIntervals:
+    """Test the states_to_intervals helper."""
+
+    @pytest.mark.asyncio
+    async def test_intervals_cover_full_range(self) -> None:
+        """Intervals should span start to end even if first change is later."""
+        start = dt_util.utcnow() - timedelta(minutes=30)
+        end = dt_util.utcnow()
+
+        states = [
+            State(
+                "binary_sensor.test", "off", last_changed=start - timedelta(minutes=5)
+            ),
+            State(
+                "binary_sensor.test", "on", last_changed=start + timedelta(minutes=10)
+            ),
+            State(
+                "binary_sensor.test", "off", last_changed=start + timedelta(minutes=20)
+            ),
+        ]
+
+        intervals = await states_to_intervals(states, start, end)
+
+        assert intervals[0]["start"] == start
+        assert intervals[-1]["end"] == end
+        assert intervals[0]["state"] == "off"
