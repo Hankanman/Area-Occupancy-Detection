@@ -5,7 +5,6 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import ATTR_FRIENDLY_NAME
 from homeassistant.util import dt as dt_util
 
 from ..utils import bayesian_probability
@@ -41,7 +40,7 @@ class Entity:
         # Initialize previous evidence to current evidence to avoid false transitions on startup
         state = self.coordinator.hass.states.get(self.entity_id)
         if state:
-            self.name = state.attributes.get(ATTR_FRIENDLY_NAME)
+            self.name = state.name
         self._previous_evidence = self.evidence
 
         # Initialize working probability based on current evidence
