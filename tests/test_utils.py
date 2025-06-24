@@ -252,10 +252,16 @@ class TestOverallProbability:
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
+        expected = bayesian_probability(
+            prior=prior,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=1.0,
+        )
 
-        # Expected: (0.8 * 0.3) / (0.8 * 0.3 + 0.1 * 0.7) = 0.24 / 0.31 ≈ 0.774
         result = overall_probability(entities, prior)
-        assert abs(result - 0.774) < 0.001
+        assert abs(result - expected) < 0.001
 
     def test_multiple_entities(self) -> None:
         """Test probability calculation with multiple entities."""
@@ -280,9 +286,16 @@ class TestOverallProbability:
         }
         prior = 0.3
 
-        # Sequential Bayesian updates - just ensure valid probability range
+        expected = bayesian_probability(
+            prior=prior,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=1.0,
+        )
+
         result = overall_probability(entities, prior)
-        assert 0.0 <= result <= 1.0
+        assert abs(result - expected) < 0.001
 
     def test_decaying_entity(self) -> None:
         """Test probability calculation with a decaying entity."""
@@ -296,12 +309,16 @@ class TestOverallProbability:
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
+        expected = bayesian_probability(
+            prior=prior,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=0.5,
+        )
 
-        # With decay factor of 0.5, the evidence weight is reduced
         result = overall_probability(entities, prior)
-        assert 0.0 <= result <= 1.0
-        # Result should be between the prior and what it would be with full weight
-        # but closer to prior due to decay
+        assert abs(result - expected) < 0.001
 
     def test_no_entities(self) -> None:
         """Test probability calculation with no entities."""
@@ -309,6 +326,21 @@ class TestOverallProbability:
         prior = 0.3
 
         # With no entities, should return the prior unchanged
+        result = overall_probability(entities, prior)
+        assert result == prior
+
+    def test_inactive_sensor_ignored(self) -> None:
+        """Ensure inactive sensors do not influence the result."""
+        mock_entity = Mock()
+        mock_entity.evidence = False
+        mock_entity.decay.is_decaying = False
+        mock_entity.type.weight = 1.0
+        mock_entity.likelihood.prob_given_true = 0.8
+        mock_entity.likelihood.prob_given_false = 0.1
+
+        entities = {"sensor": cast("Entity", mock_entity)}
+        prior = 0.3
+
         result = overall_probability(entities, prior)
         assert result == prior
 
@@ -343,8 +375,22 @@ class TestOverallProbability:
             "decaying": cast("Entity", mock_decaying),
         }
         prior = 0.3
+        active_prob = bayesian_probability(
+            prior=prior,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=1.0,
+        )
+        decaying_prob = bayesian_probability(
+            prior=prior,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=0.5,
+        )
+        expected = 1 - (1 - active_prob) * (1 - decaying_prob)
 
-        # Should combine all evidence appropriately and return valid probability
         result = overall_probability(entities, prior)
         assert 0.0 <= result <= 1.0
 
