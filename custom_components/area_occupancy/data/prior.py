@@ -105,9 +105,17 @@ class Prior:  # exported name must stay identical
         )
 
     # --------------------------------------------------------------------- #
-    async def update(self) -> float:
-        """Return a baseline prior, re-computing if the cache is stale."""
-        if self._is_cache_valid():
+    async def update(self, force: bool = False) -> float:
+        """Return a baseline prior, re-computing if the cache is stale or forced.
+
+        Args:
+            force: If True, bypass cache validation and force recalculation
+
+        Returns:
+            The calculated or cached prior value
+
+        """
+        if not force and self._is_cache_valid():
             return self.value  # type: ignore[return-value]
 
         try:

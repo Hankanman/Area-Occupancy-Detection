@@ -193,9 +193,9 @@ class TestUpdateLikelihoods:
         assert likelihood_data["prob_given_false"] == 0.1
         assert likelihood_data["type"] == "motion"
 
-        # Verify the coordinator was called correctly with the configured history period
+        # Verify the coordinator was called correctly with the configured history period and force=True
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30
+            30, force=True
         )
         mock_coordinator.async_refresh.assert_called_once()
 
@@ -233,9 +233,9 @@ class TestUpdateLikelihoods:
         ):
             await _update_likelihoods(mock_hass, mock_service_call)
 
-        # Verify the coordinator was called with the correct history period
+        # Verify the coordinator was called with the correct history period and force=True
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30
+            30, force=True
         )
 
 
