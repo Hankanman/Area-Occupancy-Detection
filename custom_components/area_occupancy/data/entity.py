@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..utils import bayesian_probability
@@ -41,6 +42,18 @@ class Entity:
         """Get the entity name from Home Assistant state."""
         ha_state = self.coordinator.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
+
+    @property
+    def entity_class(self) -> str | None:
+        """Get the entity class from Home Assistant state."""
+        entry = er.async_get(self.coordinator.hass).async_get(self.entity_id)
+        return entry.device_class if entry else None
+
+    @property
+    def entity_category(self) -> str | None:
+        """Get the entity category from Home Assistant state."""
+        entry = er.async_get(self.coordinator.hass).async_get(self.entity_id)
+        return entry.entity_category if entry else None
 
     @property
     def probability(self) -> float:
@@ -94,11 +107,37 @@ class Entity:
         if self.active_states:
             return str(self.state) in self.active_states
         if self.active_range:
-            min_val, max_val = self.active_range
             try:
-                return min_val <= float(self.state) <= max_val
+                current_value = float(self.state)
+
+                # Use intelligent activity detection for entities with statistics
+                if self.statistics and self.statistics.statistics:
+                    result = self.statistics.detect_current_activity_sync(current_value)
+                    _LOGGER.debug(
+                        "Entity %s: Intelligent activity detection (%s) -> %s (value: %.2f)",
+                        self.entity_id,
+                        self.statistics.sensor_type,
+                        result,
+                        current_value,
+                    )
+                    return result
+
+                # Fall back to simple range check for entities without statistics
+                min_val, max_val = self.active_range
+                result = min_val <= current_value <= max_val
+                _LOGGER.debug(
+                    "Entity %s: Simple range check [%.2f, %.2f] -> %s (value: %.2f)",
+                    self.entity_id,
+                    min_val,
+                    max_val,
+                    result,
+                    current_value,
+                )
+
             except (ValueError, TypeError):
                 return False
+            else:
+                return result
 
         return None
 

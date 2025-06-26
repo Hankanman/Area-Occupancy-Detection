@@ -219,6 +219,8 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             entity_likelihood_data = {
                 "type": entity.type.input_type.value,
                 "weight": entity.type.weight,
+                "entity_class": entity.entity_class,
+                "entity_category": entity.entity_category,
                 "prob_given_true": entity.likelihood.prob_given_true,
                 "prob_given_false": entity.likelihood.prob_given_false,
                 "prob_given_true_raw": entity.likelihood.prob_given_true_raw,
