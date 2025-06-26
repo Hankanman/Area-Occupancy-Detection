@@ -577,6 +577,116 @@ async def _get_entity_type_learned_data(
         return {"entity_types": learned_data}
 
 
+async def _update_numeric_sensor_statistics(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Update numeric sensor statistics with comprehensive analysis."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        # Get parameters from service call
+        history_period = (
+            call.data.get("history_period") or coordinator.config.history.period
+        )
+        force = call.data.get("force", False)
+
+        _LOGGER.info(
+            "Updating numeric sensor statistics for entry %s with %d days history (force=%s)",
+            entry_id,
+            history_period,
+            force,
+        )
+
+        # Update all entity statistics with forced recalculation
+        updated_count = await coordinator.entities.update_all_entity_statistics(
+            history_period=history_period, force=force
+        )
+
+        # Collect results for response
+        sensor_statistics_data = {}
+        summary_stats = {
+            "total_numeric_sensors": 0,
+            "successful_updates": 0,
+            "average_confidence": 0.0,
+        }
+
+        total_confidence = 0.0
+
+        for entity_id, entity in coordinator.entities.entities.items():
+            if entity.statistics and entity.statistics.statistics:
+                summary_stats["total_numeric_sensors"] += 1
+
+                stats = entity.statistics.statistics
+                bounds_data = {
+                    "bounds": {
+                        "lower_bound": stats.lower_bound,
+                        "upper_bound": stats.upper_bound,
+                        "range_span": stats.range_span,
+                    },
+                    "statistics": {
+                        "mean": stats.mean,
+                        "median": stats.median,
+                        "std_dev": stats.std_dev,
+                    },
+                    "percentiles": {
+                        "p10": stats.percentile_10,
+                        "p90": stats.percentile_90,
+                    },
+                    "trend_analysis": {
+                        "direction": stats.trend_direction.value,
+                        "slope": stats.trend_slope,
+                    },
+                    "occupancy_analysis": {
+                        "occupied_average": stats.occupied_average,
+                        "unoccupied_average": stats.unoccupied_average,
+                        "occupancy_delta": stats.occupancy_delta,
+                    },
+                    "data_quality": {
+                        "total_samples": stats.total_samples,
+                        "occupied_samples": stats.occupied_samples,
+                        "outliers_removed": stats.outliers_removed,
+                    },
+                    "confidence_metrics": {
+                        "bounds_confidence": stats.bounds_confidence,
+                    },
+                    "sensor_type": entity.statistics.sensor_type,
+                }
+
+                summary_stats["successful_updates"] += 1
+                total_confidence += stats.bounds_confidence
+                sensor_statistics_data[entity_id] = bounds_data
+
+        # Calculate average confidence
+        if summary_stats["successful_updates"] > 0:
+            summary_stats["average_confidence"] = (
+                total_confidence / summary_stats["successful_updates"]
+            )
+
+        await coordinator.async_refresh()
+
+        _LOGGER.info(
+            "Numeric sensor statistics update completed successfully for entry %s: %d sensors updated",
+            entry_id,
+            updated_count,
+        )
+
+        return {
+            "history_period": history_period,
+            "force_update": force,
+            "update_timestamp": dt_util.utcnow().isoformat(),
+            "updated_count": updated_count,
+            "summary": summary_stats,
+            "sensor_statistics": sensor_statistics_data,
+        }
+
+    except (HomeAssistantError, ValueError, RuntimeError) as err:
+        error_msg = f"Failed to update numeric sensor statistics for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -620,6 +730,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
 
+    update_numeric_sensor_statistics_schema = vol.Schema(
+        {
+            vol.Required("entry_id"): str,
+            vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=90)),
+            vol.Optional("force", default=False): bool,
+        }
+    )
+
     # Create async wrapper functions to properly handle the service calls
     async def handle_update_area_prior(call: ServiceCall) -> dict[str, Any]:
         return await _update_area_prior(hass, call)
@@ -647,6 +765,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_type_learned_data(hass, call)
+
+    async def handle_update_numeric_sensor_statistics(
+        call: ServiceCall,
+    ) -> dict[str, Any]:
+        return await _update_numeric_sensor_statistics(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -720,4 +843,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)
+    hass.services.async_register(
+        DOMAIN,
+        "update_numeric_sensor_statistics",
+        handle_update_numeric_sensor_statistics,
+        schema=update_numeric_sensor_statistics_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    _LOGGER.info("Registered %d services for %s integration", 10, DOMAIN)
