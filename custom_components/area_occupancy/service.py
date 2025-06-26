@@ -44,7 +44,9 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         )
 
         # Update area baseline prior with forced recalculation
-        area_baseline_prior = await coordinator.prior.update(force=True)
+        area_baseline_prior = await coordinator.prior.update(
+            force=True, history_period=history_period
+        )
 
         # Collect calculation details
         calculation_details = {
@@ -205,8 +207,14 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
         # Collect the updated likelihoods to return
         likelihood_data = {}
+        total_likelihood_filtered_short = 0
+        total_likelihood_filtered_long = 0
+        total_likelihood_valid_intervals = 0
+        total_likelihood_on_intervals = 0
+        max_likelihood_stuck_duration = None
+
         for entity_id, entity in coordinator.entities.entities.items():
-            likelihood_data[entity_id] = {
+            entity_likelihood_data = {
                 "type": entity.type.input_type.value,
                 "weight": entity.type.weight,
                 "prob_given_true": entity.likelihood.prob_given_true,
@@ -215,9 +223,53 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
                 "prob_given_false_raw": entity.likelihood.prob_given_false_raw,
             }
 
+            # Add filtering statistics if available
+            if entity.likelihood.total_on_intervals is not None:
+                entity_likelihood_data.update(
+                    {
+                        "total_on_intervals": entity.likelihood.total_on_intervals,
+                        "valid_intervals": entity.likelihood.valid_intervals,
+                        "filtered_short": entity.likelihood.filtered_short_intervals,
+                        "filtered_long": entity.likelihood.filtered_long_intervals,
+                    }
+                )
+
+                # Track totals for summary
+                total_likelihood_on_intervals += entity.likelihood.total_on_intervals
+                total_likelihood_valid_intervals += (
+                    entity.likelihood.valid_intervals or 0
+                )
+                total_likelihood_filtered_short += (
+                    entity.likelihood.filtered_short_intervals or 0
+                )
+                total_likelihood_filtered_long += (
+                    entity.likelihood.filtered_long_intervals or 0
+                )
+
+                # Add per-entity max stuck duration if available
+                if entity.likelihood.max_filtered_duration_seconds is not None:
+                    entity_likelihood_data["max_stuck_duration_seconds"] = (
+                        entity.likelihood.max_filtered_duration_seconds
+                    )
+                    entity_likelihood_data["max_stuck_duration_hours"] = round(
+                        entity.likelihood.max_filtered_duration_seconds / 3600, 2
+                    )
+
+                    # Track overall maximum
+                    if (
+                        max_likelihood_stuck_duration is None
+                        or entity.likelihood.max_filtered_duration_seconds
+                        > max_likelihood_stuck_duration
+                    ):
+                        max_likelihood_stuck_duration = (
+                            entity.likelihood.max_filtered_duration_seconds
+                        )
+
+            likelihood_data[entity_id] = entity_likelihood_data
+
         _LOGGER.info("Likelihood update completed successfully for entry %s", entry_id)
 
-        return {
+        response_data = {
             "updated_entities": updated_count,
             "history_period": history_period,
             "total_entities": len(coordinator.entities.entities),
@@ -226,10 +278,51 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             "likelihoods": likelihood_data,
         }
 
+        # Add likelihood filtering summary if we have filtering data
+        if total_likelihood_on_intervals > 0:
+            likelihood_filtering_summary = {
+                "total_on_intervals": total_likelihood_on_intervals,
+                "valid_intervals_used": total_likelihood_valid_intervals,
+                "filtered_short_intervals": total_likelihood_filtered_short,
+                "filtered_long_intervals": total_likelihood_filtered_long,
+                "filtering_thresholds": {
+                    "min_seconds": 10,
+                    "max_seconds": 46800,  # 13 hours
+                    "min_description": "< 10 seconds (false triggers)",
+                    "max_description": "> 13 hours (stuck sensors)",
+                },
+            }
+
+            # Add stuck sensor analysis if any were found
+            if (
+                max_likelihood_stuck_duration is not None
+                and total_likelihood_filtered_long > 0
+            ):
+                likelihood_filtering_summary["stuck_sensor_analysis"] = {
+                    "max_stuck_duration_seconds": max_likelihood_stuck_duration,
+                    "max_stuck_duration_hours": round(
+                        max_likelihood_stuck_duration / 3600, 2
+                    ),
+                    "max_stuck_duration_days": round(
+                        max_likelihood_stuck_duration / 86400, 2
+                    ),
+                    "severity": (
+                        "extreme"
+                        if max_likelihood_stuck_duration > 7 * 86400  # > 7 days
+                        else "severe"
+                        if max_likelihood_stuck_duration > 86400  # > 1 day
+                        else "moderate"  # 13-24 hours
+                    ),
+                }
+
+            response_data["likelihood_filtering_summary"] = likelihood_filtering_summary
+
     except (HomeAssistantError, ValueError, RuntimeError) as err:
         error_msg = f"Failed to update likelihoods for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
+    else:
+        return response_data
 
 
 async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:

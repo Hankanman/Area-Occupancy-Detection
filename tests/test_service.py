@@ -227,7 +227,9 @@ class TestUpdateAreaPrior:
         assert stuck_analysis["severity"] == "moderate"  # 13-24 hours range
 
         # Verify the coordinator was called correctly
-        mock_coordinator.prior.update.assert_called_once_with(force=True)
+        mock_coordinator.prior.update.assert_called_once_with(
+            force=True, history_period=30
+        )
         mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_area_prior_missing_entry_id(self, mock_hass: Mock) -> None:
@@ -287,10 +289,19 @@ class TestUpdateLikelihoods:
         mock_entity = Mock()
         mock_entity.likelihood.prob_given_true = 0.8
         mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.likelihood.prob_given_true_raw = 0.75
+        mock_entity.likelihood.prob_given_false_raw = 0.05
         mock_entity.likelihood.last_updated.isoformat.return_value = (
             "2024-01-01T00:00:00"
         )
         mock_entity.type.input_type.value = "motion"
+        mock_entity.type.weight = 0.85
+        # Add filtering statistics
+        mock_entity.likelihood.total_on_intervals = 50
+        mock_entity.likelihood.valid_intervals = 45
+        mock_entity.likelihood.filtered_short_intervals = 3
+        mock_entity.likelihood.filtered_long_intervals = 2
+        mock_entity.likelihood.max_filtered_duration_seconds = 18 * 3600  # 18 hours
 
         mock_coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
 
@@ -317,11 +328,37 @@ class TestUpdateLikelihoods:
         likelihoods = result["likelihoods"]
         assert "binary_sensor.motion1" in likelihoods
         likelihood_data = likelihoods["binary_sensor.motion1"]
+        assert likelihood_data["type"] == "motion"
+        assert likelihood_data["weight"] == 0.85
         assert likelihood_data["prob_given_true"] == 0.8
         assert likelihood_data["prob_given_false"] == 0.1
-        assert likelihood_data["type"] == "motion"
+        assert likelihood_data["prob_given_true_raw"] == 0.75
+        assert likelihood_data["prob_given_false_raw"] == 0.05
 
-        # Verify the coordinator was called correctly with the configured history period and force=True
+        # Verify filtering statistics
+        assert likelihood_data["total_on_intervals"] == 50
+        assert likelihood_data["valid_intervals"] == 45
+        assert likelihood_data["filtered_short"] == 3
+        assert likelihood_data["filtered_long"] == 2
+        assert likelihood_data["max_stuck_duration_seconds"] == 18 * 3600
+        assert likelihood_data["max_stuck_duration_hours"] == 18.0
+
+        # Verify likelihood filtering summary
+        assert "likelihood_filtering_summary" in result
+        filtering_summary = result["likelihood_filtering_summary"]
+        assert filtering_summary["total_on_intervals"] == 50
+        assert filtering_summary["valid_intervals_used"] == 45
+        assert filtering_summary["filtered_short_intervals"] == 3
+        assert filtering_summary["filtered_long_intervals"] == 2
+
+        # Verify stuck sensor analysis
+        assert "stuck_sensor_analysis" in filtering_summary
+        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
+        assert stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
+        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
+        assert stuck_analysis["severity"] == "moderate"
+
+        # Verify the coordinator was called correctly with history_period
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
             30, force=True
         )

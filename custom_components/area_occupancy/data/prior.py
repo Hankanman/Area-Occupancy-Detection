@@ -122,11 +122,14 @@ class Prior:  # exported name must stay identical
         )
 
     # --------------------------------------------------------------------- #
-    async def update(self, force: bool = False) -> float:
+    async def update(
+        self, force: bool = False, history_period: int | None = None
+    ) -> float:
         """Return a baseline prior, re-computing if the cache is stale or forced.
 
         Args:
             force: If True, bypass cache validation and force recalculation
+            history_period: Period in days for historical data (overrides coordinator default)
 
         Returns:
             The calculated or cached prior value
@@ -136,16 +139,23 @@ class Prior:  # exported name must stay identical
             return self.value  # type: ignore[return-value]
 
         try:
-            value = await self.calculate()
+            value = await self.calculate(history_period=history_period)
         except Exception:  # pragma: no cover
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             value = MIN_PRIOR
 
         return value
 
-    async def calculate(self) -> float:
-        """Calculate the area prior with anomaly filtering."""
-        start_time = dt_util.utcnow() - timedelta(days=self.days)
+    async def calculate(self, history_period: int | None = None) -> float:
+        """Calculate the area prior with anomaly filtering.
+
+        Args:
+            history_period: Period in days for historical data (overrides coordinator default)
+
+        """
+        # Use provided history_period or fall back to coordinator default
+        days_to_use = history_period if history_period is not None else self.days
+        start_time = dt_util.utcnow() - timedelta(days=days_to_use)
         end_time = dt_util.utcnow()
         total_seconds = int((end_time - start_time).total_seconds())
 

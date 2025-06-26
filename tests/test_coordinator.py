@@ -11,7 +11,7 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.prior import DEFAULT_PRIOR
+from custom_components.area_occupancy.data.prior import MIN_PRIOR
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -266,9 +266,9 @@ class TestCoordinatorPropertyCalculations:
     def test_prior_with_empty_entities(self, mock_coordinator: Mock) -> None:
         """Test prior calculation with no entities using centralized mock."""
         mock_coordinator.entities.entities = {}
-        mock_coordinator.area_prior = DEFAULT_PRIOR
+        mock_coordinator.area_prior = MIN_PRIOR
 
-        assert mock_coordinator.area_prior == DEFAULT_PRIOR
+        assert mock_coordinator.area_prior == MIN_PRIOR
 
     def test_prior_with_multiple_entities(
         self, mock_coordinator_with_sensors: Mock
@@ -583,8 +583,8 @@ class TestCoordinatorEdgeCasesUsingCentralizedMocks:
         """Test prior property with edge values using centralized mock."""
         # Test with no entities (should use DEFAULT_PRIOR)
         mock_coordinator.entities.entities = {}
-        mock_coordinator.area_prior = DEFAULT_PRIOR
-        assert mock_coordinator.area_prior == DEFAULT_PRIOR
+        mock_coordinator.area_prior = MIN_PRIOR
+        assert mock_coordinator.area_prior == MIN_PRIOR
 
     def test_decay_edge_values(self, mock_coordinator: Mock) -> None:
         """Test decay property with edge values using centralized mock."""
