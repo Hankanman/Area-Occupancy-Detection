@@ -80,6 +80,53 @@ class TestUpdateAreaPrior:
         )
         mock_coordinator.prior.update.return_value = 0.35
 
+        # Mock the prior calculation details
+        mock_coordinator.prior.sensor_ids = [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+
+        # Create mock PriorData objects for calculation details
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        start_time = now - timedelta(days=30)
+
+        mock_prior_data_1 = Mock()
+        mock_prior_data_1.ratio = 0.32
+        mock_prior_data_1.occupied_seconds = (
+            27648  # About 32% of 86400 seconds/day * 30 days
+        )
+        mock_prior_data_1.states = [Mock() for _ in range(150)]  # Mock states list
+        mock_prior_data_1.intervals = [Mock() for _ in range(75)]  # Mock intervals list
+        mock_prior_data_1.start_time = start_time
+        mock_prior_data_1.end_time = now
+        # Add filtering statistics
+        mock_prior_data_1.total_on_intervals = 80
+        mock_prior_data_1.valid_intervals = 75
+        mock_prior_data_1.filtered_short_intervals = 3
+        mock_prior_data_1.filtered_long_intervals = 2
+
+        mock_prior_data_2 = Mock()
+        mock_prior_data_2.ratio = 0.35
+        mock_prior_data_2.occupied_seconds = (
+            30240  # About 35% of 86400 seconds/day * 30 days
+        )
+        mock_prior_data_2.states = [Mock() for _ in range(120)]  # Mock states list
+        mock_prior_data_2.intervals = [Mock() for _ in range(60)]  # Mock intervals list
+        mock_prior_data_2.start_time = start_time
+        mock_prior_data_2.end_time = now
+        # Add filtering statistics
+        mock_prior_data_2.total_on_intervals = 65
+        mock_prior_data_2.valid_intervals = 60
+        mock_prior_data_2.filtered_short_intervals = 4
+        mock_prior_data_2.filtered_long_intervals = 1
+
+        mock_coordinator.prior.data = {
+            "binary_sensor.motion1": mock_prior_data_1,
+            "binary_sensor.motion2": mock_prior_data_2,
+        }
+
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
 
@@ -92,14 +139,65 @@ class TestUpdateAreaPrior:
         assert "area_prior" in result
         assert "history_period" in result
         assert "update_timestamp" in result
+        assert "calculation_details" in result
 
         # Verify the values
         assert result["area_prior"] == 0.35
         assert result["history_period"] == 30
         assert isinstance(result["update_timestamp"], str)
 
+        # Verify calculation details
+        calc_details = result["calculation_details"]
+        assert calc_details["motion_sensors"] == [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+        assert calc_details["sensor_count"] == 2
+        assert (
+            calc_details["calculation_method"]
+            == "Average of individual sensor occupancy ratios + 5% buffer"
+        )
+
+        # Verify sensor details
+        assert "sensor_details" in calc_details
+        sensor_details = calc_details["sensor_details"]
+        assert "binary_sensor.motion1" in sensor_details
+        assert "binary_sensor.motion2" in sensor_details
+        assert sensor_details["binary_sensor.motion1"]["occupancy_ratio"] == 0.32
+        assert sensor_details["binary_sensor.motion2"]["occupancy_ratio"] == 0.35
+        assert sensor_details["binary_sensor.motion1"]["states_found"] == 150
+        assert sensor_details["binary_sensor.motion2"]["intervals_found"] == 60
+
+        # Verify filtering details
+        assert sensor_details["binary_sensor.motion1"]["total_on_intervals"] == 80
+        assert sensor_details["binary_sensor.motion1"]["valid_intervals"] == 75
+        assert sensor_details["binary_sensor.motion1"]["filtered_short"] == 3
+        assert sensor_details["binary_sensor.motion1"]["filtered_long"] == 2
+        assert sensor_details["binary_sensor.motion2"]["total_on_intervals"] == 65
+        assert sensor_details["binary_sensor.motion2"]["valid_intervals"] == 60
+        assert sensor_details["binary_sensor.motion2"]["filtered_short"] == 4
+        assert sensor_details["binary_sensor.motion2"]["filtered_long"] == 1
+
+        # Verify calculation summary
+        assert "raw_average_ratio" in calc_details
+        assert "buffer_multiplier" in calc_details
+        assert "final_prior" in calc_details
+        assert "calculation" in calc_details
+
+        # Verify filtering summary
+        assert "filtering_summary" in calc_details
+        filtering_summary = calc_details["filtering_summary"]
+        assert filtering_summary["total_on_intervals"] == 145  # 80 + 65
+        assert filtering_summary["valid_intervals_used"] == 135  # 75 + 60
+        assert filtering_summary["filtered_short_intervals"] == 7  # 3 + 4
+        assert filtering_summary["filtered_long_intervals"] == 3  # 2 + 1
+        assert "filtering_thresholds" in filtering_summary
+        thresholds = filtering_summary["filtering_thresholds"]
+        assert thresholds["min_seconds"] == 10
+        assert thresholds["max_seconds"] == 43200
+
         # Verify the coordinator was called correctly
-        mock_coordinator.prior.update.assert_called_once()
+        mock_coordinator.prior.update.assert_called_once_with(force=True)
         mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_area_prior_missing_entry_id(self, mock_hass: Mock) -> None:
@@ -193,9 +291,9 @@ class TestUpdateLikelihoods:
         assert likelihood_data["prob_given_false"] == 0.1
         assert likelihood_data["type"] == "motion"
 
-        # Verify the coordinator was called correctly with the configured history period
+        # Verify the coordinator was called correctly with the configured history period and force=True
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30
+            30, force=True
         )
         mock_coordinator.async_refresh.assert_called_once()
 
@@ -233,9 +331,9 @@ class TestUpdateLikelihoods:
         ):
             await _update_likelihoods(mock_hass, mock_service_call)
 
-        # Verify the coordinator was called with the correct history period
+        # Verify the coordinator was called with the correct history period and force=True
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30
+            30, force=True
         )
 
 
