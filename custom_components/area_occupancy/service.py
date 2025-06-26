@@ -154,7 +154,9 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
         )
 
         # Update individual sensor likelihoods with forced recalculation
+        # Update individual sensor likelihoods with forced recalculation
         updated_count = await coordinator.entities.update_all_entity_likelihoods(
+            history_period, force=True
             history_period, force=True
         )
         await coordinator.async_refresh()
