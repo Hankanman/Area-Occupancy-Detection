@@ -174,6 +174,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self.config.history.enabled:
                 await self.prior.update()
                 await self.entities.update_all_entity_likelihoods()
+                # Update numeric sensor statistics with calculated active_range
+                await self.entities.update_all_entity_statistics()
 
             # Save current state to storage
             await self.store.async_save_data(force=True)
@@ -263,6 +265,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Re-establish entity state tracking with new entity list
         await self.track_entity_state_changes(self.entities.entity_ids)
 
+        # Update numeric sensor statistics after configuration changes
+        if self.config.history.enabled:
+            await self.entities.update_all_entity_statistics(force=True)
+
         # Force immediate save after configuration changes
         await self.store.async_save_data(force=True)
 
@@ -314,6 +320,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Update individual sensor likelihoods
             await self.entities.update_all_entity_likelihoods(history_period)
+
+            # Update numeric sensor statistics with calculated active_range
+            await self.entities.update_all_entity_statistics(history_period)
 
         # Reschedule the timer
         self._start_prior_timer()
