@@ -21,6 +21,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Interval filtering thresholds to exclude anomalous data
+MIN_INTERVAL_SECONDS = 10  # Exclude intervals shorter than 10 seconds (false triggers)
+MAX_INTERVAL_SECONDS = (
+    13 * 3600
+)  # Exclude intervals longer than 13 hours (stuck sensors)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 class Likelihood:
@@ -55,6 +61,21 @@ class Likelihood:
         self.active_ratio: float | None = None
         self.inactive_ratio: float | None = None
         self.cache_ttl = timedelta(hours=2)
+
+        # Filtering statistics for anomaly detection
+        self.total_on_intervals: int | None = None
+        self.filtered_short_intervals: int | None = (
+            None  # Count of intervals < MIN_INTERVAL_SECONDS
+        )
+        self.filtered_long_intervals: int | None = (
+            None  # Count of intervals > MAX_INTERVAL_SECONDS
+        )
+        self.valid_intervals: int | None = (
+            None  # Count of intervals used in calculation
+        )
+        self.max_filtered_duration_seconds: float | None = (
+            None  # Longest filtered interval duration
+        )
 
     def _apply_weight_to_probability(self, prob: float, default_prob: float) -> float:
         """Apply weight to a probability value.
@@ -147,11 +168,14 @@ class Likelihood:
             else self.default_prob_false
         )
 
-    async def update(self, force: bool = False) -> tuple[float, float]:
+    async def update(
+        self, force: bool = False, history_period: int | None = None
+    ) -> tuple[float, float]:
         """Return a likelihood, re-computing if the cache is stale or forced.
 
         Args:
             force: If True, bypass cache validation and force recalculation
+            history_period: Period in days for historical data (overrides coordinator default)
 
         Returns:
             Tuple of (prob_given_true, prob_given_false) weighted values
@@ -174,7 +198,9 @@ class Likelihood:
         )
 
         try:
-            active_ratio, inactive_ratio = await self.calculate()
+            active_ratio, inactive_ratio = await self.calculate(
+                history_period=history_period
+            )
         except Exception:  # pragma: no cover
             _LOGGER.exception(
                 "Likelihood calculation failed, using default %.2f",
@@ -191,10 +217,17 @@ class Likelihood:
         # Return the WEIGHTED values for immediate use
         return self.prob_given_true, self.prob_given_false
 
-    async def calculate(self) -> tuple[float, float]:
-        """Calculate the likelihood, considering only intervals within prior_intervals."""
+    async def calculate(self, history_period: int | None = None) -> tuple[float, float]:
+        """Calculate the likelihood with anomaly filtering, considering only intervals within prior_intervals.
+
+        Args:
+            history_period: Period in days for historical data (overrides coordinator default)
+
+        """
         _LOGGER.info("Likelihood calculation for %s", self.entity_id)
-        self.start_time = dt_util.utcnow() - timedelta(days=self.days)
+        # Use provided history_period or fall back to coordinator default
+        days_to_use = history_period if history_period is not None else self.days
+        self.start_time = dt_util.utcnow() - timedelta(days=days_to_use)
         self.end_time = dt_util.utcnow()
 
         states = await get_states_from_recorder(
@@ -205,6 +238,13 @@ class Likelihood:
 
         active_ratio = self.default_prob_true
         inactive_ratio = self.default_prob_false
+
+        # Initialize filtering statistics
+        self.total_on_intervals = 0
+        self.filtered_short_intervals = 0
+        self.filtered_long_intervals = 0
+        self.valid_intervals = 0
+        self.max_filtered_duration_seconds = None
 
         # Debug logging
         _LOGGER.debug(
@@ -220,6 +260,57 @@ class Likelihood:
                 self.start_time,
                 self.end_time,
             )
+
+            # Apply anomaly filtering to intervals first
+            filtered_intervals = []
+            for interval in intervals:
+                if interval["state"] in self.active_states:
+                    self.total_on_intervals += 1
+                    duration_seconds = (
+                        interval["end"] - interval["start"]
+                    ).total_seconds()
+
+                    if duration_seconds < MIN_INTERVAL_SECONDS:
+                        self.filtered_short_intervals += 1
+                        _LOGGER.debug(
+                            "Likelihood %s: Filtered short interval (%.1fs) from %s to %s",
+                            self.entity_id,
+                            duration_seconds,
+                            interval["start"],
+                            interval["end"],
+                        )
+                    elif duration_seconds > MAX_INTERVAL_SECONDS:
+                        self.filtered_long_intervals += 1
+                        # Track the maximum filtered duration
+                        if (
+                            self.max_filtered_duration_seconds is None
+                            or duration_seconds > self.max_filtered_duration_seconds
+                        ):
+                            self.max_filtered_duration_seconds = duration_seconds
+                        _LOGGER.debug(
+                            "Likelihood %s: Filtered long interval (%.1fh) from %s to %s",
+                            self.entity_id,
+                            duration_seconds / 3600,
+                            interval["start"],
+                            interval["end"],
+                        )
+                    else:
+                        # Valid interval - keep it for calculation
+                        filtered_intervals.append(interval)
+                        self.valid_intervals += 1
+                else:
+                    # Keep non-active intervals for calculation (they don't get filtered)
+                    filtered_intervals.append(interval)
+
+            # Log filtering results
+            if self.filtered_short_intervals > 0 or self.filtered_long_intervals > 0:
+                _LOGGER.info(
+                    "Likelihood %s: Filtered %d short and %d long intervals, kept %d valid active intervals",
+                    self.entity_id,
+                    self.filtered_short_intervals,
+                    self.filtered_long_intervals,
+                    self.valid_intervals,
+                )
 
             # Calculate total analysis period
             total_seconds = (self.end_time - self.start_time).total_seconds()
@@ -245,11 +336,11 @@ class Likelihood:
                             return True
                     return False
 
-                # Split intervals into occupied and not-occupied periods
+                # Split filtered intervals into occupied and not-occupied periods
                 occupied_active_seconds = 0
                 not_occupied_active_seconds = 0
 
-                for interval in intervals:
+                for interval in filtered_intervals:
                     duration = (interval["end"] - interval["start"]).total_seconds()
 
                     if interval["state"] in self.active_states:
@@ -288,6 +379,12 @@ class Likelihood:
             "last_updated": self.last_updated.isoformat()
             if self.last_updated
             else None,
+            # Store filtering statistics
+            "total_on_intervals": self.total_on_intervals,
+            "filtered_short_intervals": self.filtered_short_intervals,
+            "filtered_long_intervals": self.filtered_long_intervals,
+            "valid_intervals": self.valid_intervals,
+            "max_filtered_duration_seconds": self.max_filtered_duration_seconds,
         }
 
     # ------------------------------------------------------------------ #
@@ -318,5 +415,13 @@ class Likelihood:
             datetime.fromisoformat(data["last_updated"])
             if data["last_updated"]
             else None
+        )
+        # Load filtering statistics (with backward compatibility)
+        likelihood.total_on_intervals = data.get("total_on_intervals")
+        likelihood.filtered_short_intervals = data.get("filtered_short_intervals")
+        likelihood.filtered_long_intervals = data.get("filtered_long_intervals")
+        likelihood.valid_intervals = data.get("valid_intervals")
+        likelihood.max_filtered_duration_seconds = data.get(
+            "max_filtered_duration_seconds"
         )
         return likelihood

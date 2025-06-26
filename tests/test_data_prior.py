@@ -5,11 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.data.prior import (
-    MIN_PRIOR,
-    Prior,
-    PriorData,
-)
+from custom_components.area_occupancy.data.prior import MIN_PRIOR, Prior, PriorData
 from custom_components.area_occupancy.utils import TimeInterval
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util

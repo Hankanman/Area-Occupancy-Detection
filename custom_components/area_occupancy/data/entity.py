@@ -415,7 +415,7 @@ class EntityManager:
         """Update all entity likelihoods.
 
         Args:
-            history_period: Period in days for historical data (currently not used but kept for API compatibility)
+            history_period: Period in days for historical data
             force: If True, bypass cache validation and force recalculation
 
         Returns:
@@ -424,12 +424,16 @@ class EntityManager:
         """
         # Ensure area baseline prior is calculated first since likelihood calculations depend on it
         if self.coordinator.config.history.enabled:
-            await self.coordinator.prior.update(force=force)
+            await self.coordinator.prior.update(
+                force=force, history_period=history_period
+            )
 
         updated_count = 0
         for entity in self._entities.values():
             try:
-                await entity.likelihood.update(force=force)
+                await entity.likelihood.update(
+                    force=force, history_period=history_period
+                )
                 updated_count += 1
                 _LOGGER.debug(
                     "Updated likelihood for entity %s: prob_given_true=%.3f, prob_given_false=%.3f",
