@@ -35,6 +35,10 @@ class TestPriorData:
             intervals=intervals,
             occupied_seconds=3600,
             ratio=0.5,
+            total_on_intervals=10,
+            filtered_short_intervals=1,
+            filtered_long_intervals=2,
+            valid_intervals=7,
         )
 
         assert data.entity_id == "binary_sensor.motion"
@@ -44,6 +48,10 @@ class TestPriorData:
         assert data.intervals == intervals
         assert data.occupied_seconds == 3600
         assert data.ratio == 0.5
+        assert data.total_on_intervals == 10
+        assert data.filtered_short_intervals == 1
+        assert data.filtered_long_intervals == 2
+        assert data.valid_intervals == 7
 
 
 class TestPrior:
@@ -123,6 +131,10 @@ class TestPrior:
             intervals=intervals,
             occupied_seconds=1200,
             ratio=0.333,
+            total_on_intervals=2,
+            filtered_short_intervals=0,
+            filtered_long_intervals=0,
+            valid_intervals=2,
         )
 
         result = prior.prior_intervals
@@ -167,6 +179,10 @@ class TestPrior:
             intervals=intervals1,
             occupied_seconds=900,
             ratio=0.25,
+            total_on_intervals=1,
+            filtered_short_intervals=0,
+            filtered_long_intervals=0,
+            valid_intervals=1,
         )
 
         prior.data["sensor2"] = PriorData(
@@ -177,6 +193,10 @@ class TestPrior:
             intervals=intervals2,
             occupied_seconds=900,
             ratio=0.25,
+            total_on_intervals=1,
+            filtered_short_intervals=0,
+            filtered_long_intervals=0,
+            valid_intervals=1,
         )
 
         result = prior.prior_intervals
@@ -211,6 +231,10 @@ class TestPrior:
             intervals=intervals,
             occupied_seconds=1200,
             ratio=0.333,
+            total_on_intervals=2,
+            filtered_short_intervals=0,
+            filtered_long_intervals=0,
+            valid_intervals=2,
         )
 
         assert prior.prior_total_seconds == 1200

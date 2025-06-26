@@ -410,9 +410,13 @@ class EntityManager:
         }
 
     async def update_all_entity_likelihoods(
-        self, history_period: int | None = None
+        self, history_period: int | None = None, force: bool = False
     ) -> int:
         """Update all entity likelihoods.
+
+        Args:
+            history_period: Period in days for historical data (currently not used but kept for API compatibility)
+            force: If True, bypass cache validation and force recalculation
 
         Returns:
             int: Number of entities updated
@@ -420,12 +424,12 @@ class EntityManager:
         """
         # Ensure area baseline prior is calculated first since likelihood calculations depend on it
         if self.coordinator.config.history.enabled:
-            await self.coordinator.prior.update()
+            await self.coordinator.prior.update(force=force)
 
         updated_count = 0
         for entity in self._entities.values():
             try:
-                await entity.likelihood.update()
+                await entity.likelihood.update(force=force)
                 updated_count += 1
                 _LOGGER.debug(
                     "Updated likelihood for entity %s: prob_given_true=%.3f, prob_given_false=%.3f",

@@ -43,8 +43,80 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             history_period,
         )
 
-        # Update area baseline prior
-        area_baseline_prior = await coordinator.prior.update()
+        # Update area baseline prior with forced recalculation
+        area_baseline_prior = await coordinator.prior.update(force=True)
+
+        # Collect calculation details
+        calculation_details = {
+            "motion_sensors": coordinator.prior.sensor_ids,
+            "sensor_count": len(coordinator.prior.sensor_ids),
+            "calculation_method": "Average of individual sensor occupancy ratios + 5% buffer",
+        }
+
+        # Add per-sensor details if data is available
+        if coordinator.prior.data:
+            sensor_details = {}
+            total_ratio = 0.0
+            total_filtered_short = 0
+            total_filtered_long = 0
+            total_valid_intervals = 0
+            total_on_intervals = 0
+
+            for sensor_id, sensor_data in coordinator.prior.data.items():
+                total_seconds = (
+                    sensor_data.end_time - sensor_data.start_time
+                ).total_seconds()
+                sensor_details[sensor_id] = {
+                    "occupancy_ratio": round(sensor_data.ratio, 4),
+                    "occupied_seconds": sensor_data.occupied_seconds,
+                    "total_seconds": int(total_seconds),
+                    "states_found": len(sensor_data.states),
+                    "intervals_found": len(sensor_data.intervals),
+                    "total_on_intervals": sensor_data.total_on_intervals,
+                    "valid_intervals": sensor_data.valid_intervals,
+                    "filtered_short": sensor_data.filtered_short_intervals,
+                    "filtered_long": sensor_data.filtered_long_intervals,
+                }
+                total_ratio += sensor_data.ratio
+                total_filtered_short += sensor_data.filtered_short_intervals
+                total_filtered_long += sensor_data.filtered_long_intervals
+                total_valid_intervals += sensor_data.valid_intervals
+                total_on_intervals += sensor_data.total_on_intervals
+
+            raw_average = (
+                total_ratio / len(coordinator.prior.data)
+                if coordinator.prior.data
+                else 0.0
+            )
+
+            calculation_details.update(
+                {
+                    "sensor_details": sensor_details,
+                    "raw_average_ratio": round(raw_average, 4),
+                    "buffer_multiplier": 1.05,
+                    "final_prior": round(area_baseline_prior, 4),
+                    "calculation": f"({raw_average:.4f} average) × 1.05 buffer = {area_baseline_prior:.4f}",
+                    "filtering_summary": {
+                        "total_on_intervals": total_on_intervals,
+                        "valid_intervals_used": total_valid_intervals,
+                        "filtered_short_intervals": total_filtered_short,
+                        "filtered_long_intervals": total_filtered_long,
+                        "filtering_thresholds": {
+                            "min_seconds": 10,
+                            "max_seconds": 43200,  # 12 hours
+                            "min_description": "< 10 seconds (false triggers)",
+                            "max_description": "> 12 hours (stuck sensors)",
+                        },
+                    },
+                }
+            )
+        else:
+            calculation_details.update(
+                {
+                    "sensor_details": "No sensor data available",
+                    "note": f"Using default prior value of {area_baseline_prior}",
+                }
+            )
 
         await coordinator.async_refresh()
 
@@ -54,6 +126,7 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             "area_prior": area_baseline_prior,
             "history_period": history_period,
             "update_timestamp": dt_util.utcnow().isoformat(),
+            "calculation_details": calculation_details,
         }
 
     except (HomeAssistantError, ValueError, RuntimeError) as err:
@@ -80,9 +153,9 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             history_period,
         )
 
-        # Update individual sensor likelihoods
+        # Update individual sensor likelihoods with forced recalculation
         updated_count = await coordinator.entities.update_all_entity_likelihoods(
-            history_period
+            history_period, force=True
         )
         await coordinator.async_refresh()
 

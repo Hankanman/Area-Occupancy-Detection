@@ -24,6 +24,12 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_PRIOR = 0.15
 MIN_PRIOR = 0.1
 
+# Interval filtering thresholds to exclude anomalous data
+# Exclude intervals shorter than 10 seconds (false triggers)
+MIN_INTERVAL_SECONDS = 10
+# Exclude intervals longer than 13 hours (stuck sensors)
+MAX_INTERVAL_SECONDS = 13 * 3600
+
 
 @dataclass
 class PriorData:
@@ -36,6 +42,11 @@ class PriorData:
     intervals: list[TimeInterval]
     occupied_seconds: int
     ratio: float
+    # Filtering statistics
+    total_on_intervals: int
+    filtered_short_intervals: int  # Count of intervals < MIN_INTERVAL_SECONDS
+    filtered_long_intervals: int  # Count of intervals > MAX_INTERVAL_SECONDS
+    valid_intervals: int  # Count of intervals used in calculation
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,14 +77,19 @@ class Prior:  # exported name must stay identical
 
     @property
     def prior_intervals(self) -> list[TimeInterval]:
-        """Return the merged occupied intervals (state='on') deduplicated across all motion sensors."""
-        # Collect all 'on' intervals from all sensors
-        all_on_intervals = [
-            interval
-            for data in self.data.values()
-            for interval in data.intervals
-            if interval["state"] == "on"
-        ]
+        """Return the merged occupied intervals (state='on') deduplicated across all motion sensors with anomaly filtering."""
+        # Collect all 'on' intervals from all sensors, applying anomaly filtering
+        all_on_intervals = []
+        for data in self.data.values():
+            for interval in data.intervals:
+                if interval["state"] == "on":
+                    duration_seconds = (
+                        interval["end"] - interval["start"]
+                    ).total_seconds()
+                    # Apply the same filtering logic as in calculate()
+                    if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
+                        all_on_intervals.append(interval)
+
         if not all_on_intervals:
             return []
 
@@ -105,9 +121,17 @@ class Prior:  # exported name must stay identical
         )
 
     # --------------------------------------------------------------------- #
-    async def update(self) -> float:
-        """Return a baseline prior, re-computing if the cache is stale."""
-        if self._is_cache_valid():
+    async def update(self, force: bool = False) -> float:
+        """Return a baseline prior, re-computing if the cache is stale or forced.
+
+        Args:
+            force: If True, bypass cache validation and force recalculation
+
+        Returns:
+            The calculated or cached prior value
+
+        """
+        if not force and self._is_cache_valid():
             return self.value  # type: ignore[return-value]
 
         try:
@@ -121,10 +145,11 @@ class Prior:  # exported name must stay identical
         return value
 
     async def calculate(self) -> float:
-        """Calculate the area prior."""
+        """Calculate the area prior with anomaly filtering."""
         start_time = dt_util.utcnow() - timedelta(days=self.days)
         end_time = dt_util.utcnow()
         total_seconds = int((end_time - start_time).total_seconds())
+
         for sensor_id in self.sensor_ids:
             states = await get_states_from_recorder(
                 self.hass, sensor_id, start_time, end_time
@@ -133,13 +158,62 @@ class Prior:  # exported name must stay identical
                 intervals = await states_to_intervals(
                     [s for s in states if isinstance(s, State)], start_time, end_time
                 )
+
+                # Filter and categorize intervals
+                on_intervals = [
+                    interval for interval in intervals if interval["state"] == "on"
+                ]
+                total_on_intervals = len(on_intervals)
+
+                # Apply anomaly filtering
+                valid_intervals = []
+                filtered_short = 0
+                filtered_long = 0
+
+                for interval in on_intervals:
+                    duration_seconds = (
+                        interval["end"] - interval["start"]
+                    ).total_seconds()
+
+                    if duration_seconds < MIN_INTERVAL_SECONDS:
+                        filtered_short += 1
+                        _LOGGER.debug(
+                            "Sensor %s: Filtered short interval (%.1fs) from %s to %s",
+                            sensor_id,
+                            duration_seconds,
+                            interval["start"],
+                            interval["end"],
+                        )
+                    elif duration_seconds > MAX_INTERVAL_SECONDS:
+                        filtered_long += 1
+                        _LOGGER.debug(
+                            "Sensor %s: Filtered long interval (%.1fh) from %s to %s",
+                            sensor_id,
+                            duration_seconds / 3600,
+                            interval["start"],
+                            interval["end"],
+                        )
+                    else:
+                        valid_intervals.append(interval)
+
+                # Calculate occupied seconds from valid intervals only
                 occupied_seconds = int(
                     sum(
                         (interval["end"] - interval["start"]).total_seconds()
-                        for interval in intervals
-                        if interval["state"] == "on"
+                        for interval in valid_intervals
                     )
                 )
+
+                # Log filtering results
+                if filtered_short > 0 or filtered_long > 0:
+                    _LOGGER.info(
+                        "Sensor %s: Filtered %d short and %d long intervals, kept %d valid intervals",
+                        sensor_id,
+                        filtered_short,
+                        filtered_long,
+                        len(valid_intervals),
+                    )
+
                 self.data[sensor_id] = PriorData(
                     entity_id=sensor_id,
                     start_time=start_time,
@@ -148,6 +222,10 @@ class Prior:  # exported name must stay identical
                     intervals=intervals,
                     occupied_seconds=occupied_seconds,
                     ratio=occupied_seconds / total_seconds,
+                    total_on_intervals=total_on_intervals,
+                    filtered_short_intervals=filtered_short,
+                    filtered_long_intervals=filtered_long,
+                    valid_intervals=len(valid_intervals),
                 )
 
         self.value = (
@@ -158,9 +236,11 @@ class Prior:  # exported name must stay identical
 
         for sensor_id, data in self.data.items():
             _LOGGER.debug(
-                "Sensor %s: %.3f",
+                "Sensor %s: %.3f (used %d/%d intervals)",
                 sensor_id,
                 data.ratio,
+                data.valid_intervals,
+                data.total_on_intervals,
             )
 
         _LOGGER.debug(
