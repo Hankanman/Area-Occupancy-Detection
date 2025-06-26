@@ -43,8 +43,8 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             history_period,
         )
 
-        # Update area baseline prior
-        area_baseline_prior = await coordinator.prior.update()
+        # Update area baseline prior with forced recalculation
+        area_baseline_prior = await coordinator.prior.update(force=True)
 
         await coordinator.async_refresh()
 
@@ -80,9 +80,9 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             history_period,
         )
 
-        # Update individual sensor likelihoods
+        # Update individual sensor likelihoods with forced recalculation
         updated_count = await coordinator.entities.update_all_entity_likelihoods(
-            history_period
+            history_period, force=True
         )
         await coordinator.async_refresh()
 
