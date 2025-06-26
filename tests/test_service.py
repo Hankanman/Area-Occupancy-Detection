@@ -106,6 +106,9 @@ class TestUpdateAreaPrior:
         mock_prior_data_1.valid_intervals = 75
         mock_prior_data_1.filtered_short_intervals = 3
         mock_prior_data_1.filtered_long_intervals = 2
+        mock_prior_data_1.max_filtered_duration_seconds = (
+            18 * 3600
+        )  # 18 hours stuck sensor
 
         mock_prior_data_2 = Mock()
         mock_prior_data_2.ratio = 0.35
@@ -121,6 +124,9 @@ class TestUpdateAreaPrior:
         mock_prior_data_2.valid_intervals = 60
         mock_prior_data_2.filtered_short_intervals = 4
         mock_prior_data_2.filtered_long_intervals = 1
+        mock_prior_data_2.max_filtered_duration_seconds = (
+            15 * 3600
+        )  # 15 hours stuck sensor
 
         mock_coordinator.prior.data = {
             "binary_sensor.motion1": mock_prior_data_1,
@@ -173,10 +179,24 @@ class TestUpdateAreaPrior:
         assert sensor_details["binary_sensor.motion1"]["valid_intervals"] == 75
         assert sensor_details["binary_sensor.motion1"]["filtered_short"] == 3
         assert sensor_details["binary_sensor.motion1"]["filtered_long"] == 2
+        assert (
+            sensor_details["binary_sensor.motion1"]["max_stuck_duration_seconds"]
+            == 18 * 3600
+        )
+        assert (
+            sensor_details["binary_sensor.motion1"]["max_stuck_duration_hours"] == 18.0
+        )
         assert sensor_details["binary_sensor.motion2"]["total_on_intervals"] == 65
         assert sensor_details["binary_sensor.motion2"]["valid_intervals"] == 60
         assert sensor_details["binary_sensor.motion2"]["filtered_short"] == 4
         assert sensor_details["binary_sensor.motion2"]["filtered_long"] == 1
+        assert (
+            sensor_details["binary_sensor.motion2"]["max_stuck_duration_seconds"]
+            == 15 * 3600
+        )
+        assert (
+            sensor_details["binary_sensor.motion2"]["max_stuck_duration_hours"] == 15.0
+        )
 
         # Verify calculation summary
         assert "raw_average_ratio" in calc_details
@@ -194,7 +214,17 @@ class TestUpdateAreaPrior:
         assert "filtering_thresholds" in filtering_summary
         thresholds = filtering_summary["filtering_thresholds"]
         assert thresholds["min_seconds"] == 10
-        assert thresholds["max_seconds"] == 43200
+        assert thresholds["max_seconds"] == 46800  # 13 hours
+
+        # Verify stuck sensor analysis (should show the worst case: 18 hours)
+        assert "stuck_sensor_analysis" in filtering_summary
+        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
+        assert (
+            stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
+        )  # Worst case from sensor1
+        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
+        assert stuck_analysis["max_stuck_duration_days"] == 0.75  # 18/24 = 0.75 days
+        assert stuck_analysis["severity"] == "moderate"  # 13-24 hours range
 
         # Verify the coordinator was called correctly
         mock_coordinator.prior.update.assert_called_once_with(force=True)
