@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_PRIOR = 0.15
-MIN_PRIOR = 0.1
+# Minimum prior value to avoid division by zero (1%)
+MIN_PRIOR = 0.01
 
 # Interval filtering thresholds to exclude anomalous data
 # Exclude intervals shorter than 10 seconds (false triggers)
@@ -47,6 +47,7 @@ class PriorData:
     filtered_short_intervals: int  # Count of intervals < MIN_INTERVAL_SECONDS
     filtered_long_intervals: int  # Count of intervals > MAX_INTERVAL_SECONDS
     valid_intervals: int  # Count of intervals used in calculation
+    max_filtered_duration_seconds: float | None  # Longest filtered interval duration
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ class Prior:  # exported name must stay identical
     def current_value(self) -> float:
         """Return the current cached prior value, or default if not yet calculated."""
         if self.value is None or self.value < MIN_PRIOR:
-            return DEFAULT_PRIOR
+            return MIN_PRIOR
         return self.value
 
     @property
@@ -137,10 +138,8 @@ class Prior:  # exported name must stay identical
         try:
             value = await self.calculate()
         except Exception:  # pragma: no cover
-            _LOGGER.exception(
-                "Prior calculation failed, using default %.2f", DEFAULT_PRIOR
-            )
-            value = DEFAULT_PRIOR
+            _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
+            value = MIN_PRIOR
 
         return value
 
@@ -169,6 +168,7 @@ class Prior:  # exported name must stay identical
                 valid_intervals = []
                 filtered_short = 0
                 filtered_long = 0
+                max_filtered_duration = None
 
                 for interval in on_intervals:
                     duration_seconds = (
@@ -186,6 +186,12 @@ class Prior:  # exported name must stay identical
                         )
                     elif duration_seconds > MAX_INTERVAL_SECONDS:
                         filtered_long += 1
+                        # Track the maximum filtered duration
+                        if (
+                            max_filtered_duration is None
+                            or duration_seconds > max_filtered_duration
+                        ):
+                            max_filtered_duration = duration_seconds
                         _LOGGER.debug(
                             "Sensor %s: Filtered long interval (%.1fh) from %s to %s",
                             sensor_id,
@@ -226,6 +232,7 @@ class Prior:  # exported name must stay identical
                     filtered_short_intervals=filtered_short,
                     filtered_long_intervals=filtered_long,
                     valid_intervals=len(valid_intervals),
+                    max_filtered_duration_seconds=max_filtered_duration,
                 )
 
         self.value = (

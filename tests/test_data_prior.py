@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from custom_components.area_occupancy.data.prior import (
-    DEFAULT_PRIOR,
     MIN_PRIOR,
     Prior,
     PriorData,
@@ -39,6 +38,7 @@ class TestPriorData:
             filtered_short_intervals=1,
             filtered_long_intervals=2,
             valid_intervals=7,
+            max_filtered_duration_seconds=25 * 3600,  # 25 hours stuck sensor
         )
 
         assert data.entity_id == "binary_sensor.motion"
@@ -52,6 +52,7 @@ class TestPriorData:
         assert data.filtered_short_intervals == 1
         assert data.filtered_long_intervals == 2
         assert data.valid_intervals == 7
+        assert data.max_filtered_duration_seconds == 25 * 3600
 
 
 class TestPrior:
@@ -88,11 +89,11 @@ class TestPrior:
 
         # Test with None value - should return default
         prior.value = None
-        assert prior.current_value == 0.15  # DEFAULT_PRIOR from data/prior.py
+        assert prior.current_value == 0.01  # MIN_PRIOR from data/prior.py
 
         # Test with value below minimum - should return default
-        prior.value = 0.05
-        assert prior.current_value == DEFAULT_PRIOR
+        prior.value = 0.005
+        assert prior.current_value == MIN_PRIOR
 
     def test_prior_intervals_empty(self, mock_coordinator: Mock) -> None:
         """Test prior_intervals property with no data."""
@@ -135,6 +136,7 @@ class TestPrior:
             filtered_short_intervals=0,
             filtered_long_intervals=0,
             valid_intervals=2,
+            max_filtered_duration_seconds=None,
         )
 
         result = prior.prior_intervals
@@ -183,6 +185,7 @@ class TestPrior:
             filtered_short_intervals=0,
             filtered_long_intervals=0,
             valid_intervals=1,
+            max_filtered_duration_seconds=None,
         )
 
         prior.data["sensor2"] = PriorData(
@@ -197,6 +200,7 @@ class TestPrior:
             filtered_short_intervals=0,
             filtered_long_intervals=0,
             valid_intervals=1,
+            max_filtered_duration_seconds=None,
         )
 
         result = prior.prior_intervals
@@ -235,6 +239,7 @@ class TestPrior:
             filtered_short_intervals=0,
             filtered_long_intervals=0,
             valid_intervals=2,
+            max_filtered_duration_seconds=None,
         )
 
         assert prior.prior_total_seconds == 1200
@@ -391,7 +396,7 @@ class TestPrior:
 
         result = await prior.update()
 
-        assert result == DEFAULT_PRIOR  # Should fallback to default
+        assert result == MIN_PRIOR  # Should fallback to default
 
     def test_is_cache_valid_no_value(self, mock_coordinator: Mock) -> None:
         """Test cache validation with no cached value."""
@@ -497,8 +502,7 @@ class TestPrior:
 
     def test_constants(self) -> None:
         """Test module constants."""
-        assert DEFAULT_PRIOR == 0.15
-        assert MIN_PRIOR == 0.1
+        assert MIN_PRIOR == 0.01
 
     async def test_integration_workflow(self, mock_coordinator: Mock) -> None:
         """Test complete workflow integration."""
@@ -508,7 +512,7 @@ class TestPrior:
         prior = Prior(mock_coordinator)
 
         # Test initial state
-        assert prior.current_value == DEFAULT_PRIOR
+        assert prior.current_value == MIN_PRIOR
         assert not prior._is_cache_valid()
 
         # Test serialization of initial state
@@ -518,4 +522,4 @@ class TestPrior:
         # Test deserialization
         restored_prior = Prior.from_dict(data, mock_coordinator)
         assert restored_prior.value is None
-        assert restored_prior.current_value == DEFAULT_PRIOR
+        assert restored_prior.current_value == MIN_PRIOR

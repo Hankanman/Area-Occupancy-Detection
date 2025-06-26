@@ -61,11 +61,24 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             total_filtered_long = 0
             total_valid_intervals = 0
             total_on_intervals = 0
+            max_stuck_duration_seconds = None
 
             for sensor_id, sensor_data in coordinator.prior.data.items():
                 total_seconds = (
                     sensor_data.end_time - sensor_data.start_time
                 ).total_seconds()
+
+                # Track the overall maximum stuck sensor duration
+                if sensor_data.max_filtered_duration_seconds is not None:
+                    if (
+                        max_stuck_duration_seconds is None
+                        or sensor_data.max_filtered_duration_seconds
+                        > max_stuck_duration_seconds
+                    ):
+                        max_stuck_duration_seconds = (
+                            sensor_data.max_filtered_duration_seconds
+                        )
+
                 sensor_details[sensor_id] = {
                     "occupancy_ratio": round(sensor_data.ratio, 4),
                     "occupied_seconds": sensor_data.occupied_seconds,
@@ -77,6 +90,16 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
                     "filtered_short": sensor_data.filtered_short_intervals,
                     "filtered_long": sensor_data.filtered_long_intervals,
                 }
+
+                # Add max filtered duration info if this sensor had stuck intervals
+                if sensor_data.max_filtered_duration_seconds is not None:
+                    sensor_details[sensor_id]["max_stuck_duration_seconds"] = (
+                        sensor_data.max_filtered_duration_seconds
+                    )
+                    sensor_details[sensor_id]["max_stuck_duration_hours"] = round(
+                        sensor_data.max_filtered_duration_seconds / 3600, 2
+                    )
+
                 total_ratio += sensor_data.ratio
                 total_filtered_short += sensor_data.filtered_short_intervals
                 total_filtered_long += sensor_data.filtered_long_intervals
@@ -89,6 +112,38 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
                 else 0.0
             )
 
+            filtering_summary = {
+                "total_on_intervals": total_on_intervals,
+                "valid_intervals_used": total_valid_intervals,
+                "filtered_short_intervals": total_filtered_short,
+                "filtered_long_intervals": total_filtered_long,
+                "filtering_thresholds": {
+                    "min_seconds": 10,
+                    "max_seconds": 46800,  # 13 hours
+                    "min_description": "< 10 seconds (false triggers)",
+                    "max_description": "> 13 hours (stuck sensors)",
+                },
+            }
+
+            # Add stuck sensor severity info if any were found
+            if max_stuck_duration_seconds is not None and total_filtered_long > 0:
+                filtering_summary["stuck_sensor_analysis"] = {
+                    "max_stuck_duration_seconds": max_stuck_duration_seconds,
+                    "max_stuck_duration_hours": round(
+                        max_stuck_duration_seconds / 3600, 2
+                    ),
+                    "max_stuck_duration_days": round(
+                        max_stuck_duration_seconds / 86400, 2
+                    ),
+                    "severity": (
+                        "extreme"
+                        if max_stuck_duration_seconds > 7 * 86400  # > 7 days
+                        else "severe"
+                        if max_stuck_duration_seconds > 86400  # > 1 day
+                        else "moderate"  # 13-24 hours
+                    ),
+                }
+
             calculation_details.update(
                 {
                     "sensor_details": sensor_details,
@@ -96,18 +151,7 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
                     "buffer_multiplier": 1.05,
                     "final_prior": round(area_baseline_prior, 4),
                     "calculation": f"({raw_average:.4f} average) × 1.05 buffer = {area_baseline_prior:.4f}",
-                    "filtering_summary": {
-                        "total_on_intervals": total_on_intervals,
-                        "valid_intervals_used": total_valid_intervals,
-                        "filtered_short_intervals": total_filtered_short,
-                        "filtered_long_intervals": total_filtered_long,
-                        "filtering_thresholds": {
-                            "min_seconds": 10,
-                            "max_seconds": 43200,  # 12 hours
-                            "min_description": "< 10 seconds (false triggers)",
-                            "max_description": "> 12 hours (stuck sensors)",
-                        },
-                    },
+                    "filtering_summary": filtering_summary,
                 }
             )
         else:
