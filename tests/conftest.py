@@ -88,12 +88,11 @@ from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-# Configure pytest-asyncio to use function scope for event loops
-pytestmark = pytest.mark.asyncio(loop_scope="function")
+# Event loop configuration is handled in pyproject.toml
 
 
 @pytest.fixture
-def mock_hass() -> Generator[Mock]:
+def mock_hass() -> Mock:
     """Create a comprehensive mock Home Assistant instance."""
     hass = Mock(spec=HomeAssistant)
 
@@ -135,9 +134,12 @@ def mock_hass() -> Generator[Mock]:
     hass.services = Mock()
     hass.services.async_register = Mock()
 
-    # Event loop - create new loop for each test
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Use pytest-asyncio's event loop instead of creating our own
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     hass.loop = loop
 
     # Async methods
@@ -172,16 +174,7 @@ def mock_hass() -> Generator[Mock]:
     hass.helpers.event.async_track_point_in_time = Mock(return_value=Mock())
     hass.helpers.event.async_track_time_interval = Mock(return_value=Mock())
 
-    yield hass
-
-    # Cleanup
-    try:
-        if loop.is_running():
-            loop.stop()
-        if not loop.is_closed():
-            loop.close()
-    except (RuntimeError, AttributeError):
-        pass  # Ignore loop cleanup errors
+    return hass
 
 
 @pytest.fixture
