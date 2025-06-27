@@ -20,11 +20,7 @@ NAME_THRESHOLD_NUMBER = "Occupancy Threshold"
 class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
     """Number entity for adjusting occupancy threshold."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the threshold entity."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
@@ -57,19 +53,12 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up Area Occupancy threshold number based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
     # Create a new number entity for the threshold
-    entities = [
-        Threshold(
-            coordinator=coordinator,
-            entry_id=entry.entry_id,
-        )
-    ]
+    entities = [Threshold(coordinator=coordinator, entry_id=entry.entry_id)]
 
     async_add_entities(entities, update_before_add=True)

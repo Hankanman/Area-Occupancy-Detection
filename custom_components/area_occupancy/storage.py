@@ -32,10 +32,7 @@ class AreaOccupancyStorageData(TypedDict, total=False):
 class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
     """Per-config-entry storage for Area Occupancy Detection."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Initialize the per-entry storage."""
         super().__init__(
             hass=coordinator.hass,
@@ -65,9 +62,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 "Major version change for entry %s, starting with empty storage",
                 self._coordinator.entry_id,
             )
-            return AreaOccupancyStorageData(
-                entities={},
-            )
+            return AreaOccupancyStorageData(entities={})
 
         # Handle migration from various data formats
         if isinstance(old_data, dict):
@@ -82,15 +77,9 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
             )
 
         # Fallback for unexpected data format
-        return AreaOccupancyStorageData(
-            entities={},
-            entity_types={},
-        )
+        return AreaOccupancyStorageData(entities={}, entity_types={})
 
-    async def async_save_data(
-        self,
-        force: bool = False,
-    ) -> None:
+    async def async_save_data(self, force: bool = False) -> None:
         """Save coordinator data using debounced storage."""
 
         entity_manager = self._coordinator.entities
@@ -140,8 +129,7 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
                 return None
 
             _LOGGER.debug(
-                "Successfully loaded storage data for entry %s",
-                coordinator.entry_id,
+                "Successfully loaded storage data for entry %s", coordinator.entry_id
             )
 
         except (HomeAssistantError, OSError, ValueError) as err:
@@ -164,8 +152,5 @@ class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
 
     async def async_reset(self) -> None:
         """Reset storage by removing all stored data."""
-        _LOGGER.info(
-            "Resetting storage for entry %s",
-            self._coordinator.entry_id,
-        )
+        _LOGGER.info("Resetting storage for entry %s", self._coordinator.entry_id)
         await self.async_remove()

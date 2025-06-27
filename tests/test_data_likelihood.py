@@ -443,11 +443,7 @@ class TestLikelihood:
                 "end": now - timedelta(hours=1),
                 "state": "on",
             },
-            {
-                "start": now - timedelta(hours=1),
-                "end": now,
-                "state": "off",
-            },
+            {"start": now - timedelta(hours=1), "end": now, "state": "off"},
         ]
         mock_states_to_intervals.return_value = mock_intervals
 
@@ -508,7 +504,7 @@ class TestLikelihood:
 
         # Mock some states
         mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow()),
+            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
         ]
 
         active_ratio, inactive_ratio = await likelihood.calculate()
@@ -586,11 +582,7 @@ class TestLikelihood:
 
     def test_from_dict_no_timestamp(self, mock_coordinator: Mock) -> None:
         """Test creating likelihood from dictionary with no timestamp."""
-        data = {
-            "prob_given_true": 0.6,
-            "prob_given_false": 0.05,
-            "last_updated": None,
-        }
+        data = {"prob_given_true": 0.6, "prob_given_false": 0.05, "last_updated": None}
 
         likelihood = Likelihood.from_dict(
             data=data,
@@ -728,7 +720,7 @@ class TestLikelihoodEdgeCases:
         )
 
         mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow()),
+            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
         ]
 
         active_ratio, inactive_ratio = await likelihood.calculate()

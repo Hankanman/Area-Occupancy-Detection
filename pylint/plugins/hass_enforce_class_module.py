@@ -119,7 +119,7 @@ class HassEnforceClassModule(BaseChecker):
             "Derived %s is recommended to be placed in the '%s' module",
             "hass-enforce-class-module",
             "Used when derived class should be placed in its own module.",
-        ),
+        )
     }
 
     def visit_classdef(self, node: nodes.ClassDef) -> None:

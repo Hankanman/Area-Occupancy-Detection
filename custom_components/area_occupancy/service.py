@@ -140,9 +140,11 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
                     "severity": (
                         "extreme"
                         if max_stuck_duration_seconds > 7 * 86400  # > 7 days
-                        else "severe"
-                        if max_stuck_duration_seconds > 86400  # > 1 day
-                        else "moderate"  # 13-24 hours
+                        else (
+                            "severe"
+                            if max_stuck_duration_seconds > 86400  # > 1 day
+                            else "moderate"
+                        )  # 13-24 hours
                     ),
                 }
 
@@ -309,9 +311,11 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
                     "severity": (
                         "extreme"
                         if max_likelihood_stuck_duration > 7 * 86400  # > 7 days
-                        else "severe"
-                        if max_likelihood_stuck_duration > 86400  # > 1 day
-                        else "moderate"  # 13-24 hours
+                        else (
+                            "severe"
+                            if max_likelihood_stuck_duration > 86400  # > 1 day
+                            else "moderate"
+                        )  # 13-24 hours
                     ),
                 }
 
@@ -525,14 +529,18 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
             "occupancy_probability": occupancy_probability,
             "area_baseline_prior": coordinator.prior,
             "confidence_level": (
-                "high"
-                if occupancy_probability and occupancy_probability > 0.8
-                else "medium"
-                if occupancy_probability and occupancy_probability > 0.2
-                else "low"
-            )
-            if occupancy_probability is not None
-            else "unknown",
+                (
+                    "high"
+                    if occupancy_probability and occupancy_probability > 0.8
+                    else (
+                        "medium"
+                        if occupancy_probability and occupancy_probability > 0.2
+                        else "low"
+                    )
+                )
+                if occupancy_probability is not None
+                else "unknown"
+            ),
             "total_entities": metrics["total_entities"],
             "active_entities": metrics["active_entities"],
             "available_entities": metrics["available_entities"],
@@ -605,17 +613,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     entity_details_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-            vol.Optional("entity_ids", default=[]): [str],
-        }
+        {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
     )
 
     force_update_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-            vol.Optional("entity_ids", default=[]): [str],
-        }
+        {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
     )
 
     entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
@@ -666,10 +668,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     hass.services.async_register(
-        DOMAIN,
-        "reset_entities",
-        handle_reset_entities,
-        schema=reset_entities_schema,
+        DOMAIN, "reset_entities", handle_reset_entities, schema=reset_entities_schema
     )
 
     hass.services.async_register(

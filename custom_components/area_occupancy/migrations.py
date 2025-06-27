@@ -183,10 +183,7 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
 
     if CONF_PURPOSE not in config:
         config[CONF_PURPOSE] = DEFAULT_PURPOSE
-        _LOGGER.debug(
-            "Migrated purpose field to default value: %s",
-            DEFAULT_PURPOSE,
-        )
+        _LOGGER.debug("Migrated purpose field to default value: %s", DEFAULT_PURPOSE)
 
     return config
 

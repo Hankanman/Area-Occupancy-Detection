@@ -7,9 +7,7 @@ from pylint.checkers import BaseChecker
 from pylint.interfaces import INFERENCE
 from pylint.lint import PyLinter
 
-METHODS = {
-    "async_added_to_hass",
-}
+METHODS = {"async_added_to_hass"}
 
 
 class HassEnforceSuperCallChecker(BaseChecker):
@@ -22,7 +20,7 @@ class HassEnforceSuperCallChecker(BaseChecker):
             "Missing call to: super().%s",
             "hass-missing-super-call",
             "Used when method should call its parent implementation.",
-        ),
+        )
     }
     options = ()
 
@@ -47,7 +45,7 @@ class HassEnforceSuperCallChecker(BaseChecker):
                     func=nodes.Attribute(
                         expr=nodes.Call(func=nodes.Name(name="super")),
                         attrname=node.name,
-                    ),
+                    )
                 ):
                     return
 

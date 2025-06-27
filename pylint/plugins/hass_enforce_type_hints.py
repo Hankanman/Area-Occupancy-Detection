@@ -23,9 +23,7 @@ _COMMON_ARGUMENTS: dict[str, list[str]] = {
     "hass": ["HomeAssistant", "HomeAssistant | None"]
 }
 _PLATFORMS: set[str] = {platform.value for platform in Platform}
-_KNOWN_GENERIC_TYPES: set[str] = {
-    "ConfigEntry",
-}
+_KNOWN_GENERIC_TYPES: set[str] = {"ConfigEntry"}
 _KNOWN_GENERIC_TYPES_TUPLE = tuple(_KNOWN_GENERIC_TYPES)
 
 _FORCE_ANNOTATION_PLATFORMS = ["config_flow"]
@@ -82,7 +80,7 @@ _INNER_MATCH = r"((?:[\w\| ]+)|(?:\.{3})|(?:\w+\[.+\])|(?:\[\]))"
 _TYPE_HINT_MATCHERS: dict[str, re.Pattern[str]] = {
     # a_or_b matches items such as "DiscoveryInfoType | None"
     # or "dict | list | None"
-    "a_or_b": re.compile(rf"^(.+) \| {_INNER_MATCH}$"),
+    "a_or_b": re.compile(rf"^(.+) \| {_INNER_MATCH}$")
 }
 _INNER_MATCH_POSSIBILITIES = [i + 1 for i in range(5)]
 _TYPE_HINT_MATCHERS.update(
@@ -98,10 +96,7 @@ _TYPE_HINT_MATCHERS.update(
 _MODULE_REGEX: re.Pattern[str] = re.compile(r"^homeassistant\.components\.\w+(\.\w+)?$")
 
 _METHOD_MATCH: list[TypeHintMatch] = [
-    TypeHintMatch(
-        function_name="__init__",
-        return_type=None,
-    ),
+    TypeHintMatch(function_name="__init__", return_type=None)
 ]
 
 _TEST_FIXTURES: dict[str, list[str] | str] = {
@@ -181,66 +176,44 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "__init__": [
         TypeHintMatch(
             function_name="setup",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="bool",
             has_async_counterpart=True,
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_setup_entry",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry"},
             return_type="bool",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_remove_entry",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry"},
             return_type=None,
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_unload_entry",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry"},
             return_type="bool",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_migrate_entry",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry"},
             return_type="bool",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_remove_config_entry_device",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-                2: "DeviceEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry", 2: "DeviceEntry"},
             return_type="bool",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_reset_platform",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "str"},
             return_type=None,
             mandatory=True,
         ),
@@ -272,19 +245,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "application_credentials": [
         TypeHintMatch(
             function_name="async_get_auth_implementation",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-                2: "ClientCredential",
-            },
+            arg_types={0: "HomeAssistant", 1: "str", 2: "ClientCredential"},
             return_type="AbstractOAuth2Implementation",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_authorization_server",
-            arg_types={
-                0: "HomeAssistant",
-            },
+            arg_types={0: "HomeAssistant"},
             return_type="AuthorizationServer",
             mandatory=True,
         ),
@@ -292,17 +259,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "backup": [
         TypeHintMatch(
             function_name="async_pre_backup",
-            arg_types={
-                0: "HomeAssistant",
-            },
+            arg_types={0: "HomeAssistant"},
             return_type=None,
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_post_backup",
-            arg_types={
-                0: "HomeAssistant",
-            },
+            arg_types={0: "HomeAssistant"},
             return_type=None,
             mandatory=True,
         ),
@@ -310,21 +273,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "cast": [
         TypeHintMatch(
             function_name="async_get_media_browser_root_object",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "str"},
             return_type="list[BrowseMedia]",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_browse_media",
-            arg_types={
-                0: "HomeAssistant",
-                1: "MediaType | str",
-                2: "str",
-                3: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "MediaType | str", 2: "str", 3: "str"},
             return_type=["BrowseMedia", "BrowseMedia | None"],
             mandatory=True,
         ),
@@ -344,20 +299,15 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "config_flow": [
         TypeHintMatch(
             function_name="_async_has_devices",
-            arg_types={
-                0: "HomeAssistant",
-            },
+            arg_types={0: "HomeAssistant"},
             return_type="bool",
             mandatory=True,
-        ),
+        )
     ],
     "device_action": [
         TypeHintMatch(
             function_name="async_validate_action_config",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="ConfigType",
             mandatory=True,
         ),
@@ -374,19 +324,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
         ),
         TypeHintMatch(
             function_name="async_get_action_capabilities",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="dict[str, Schema]",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_actions",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "str"},
             return_type=["list[dict[str, str]]", "list[dict[str, Any]]"],
             mandatory=True,
         ),
@@ -394,37 +338,25 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "device_condition": [
         TypeHintMatch(
             function_name="async_validate_condition_config",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="ConfigType",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_condition_from_config",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="ConditionCheckerType",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_condition_capabilities",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="dict[str, Schema]",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_conditions",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "str"},
             return_type=["list[dict[str, str]]", "list[dict[str, Any]]"],
             mandatory=True,
         ),
@@ -454,10 +386,7 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
         ),
         TypeHintMatch(
             function_name="get_scanner",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type=["DeviceScanner", None],
             has_async_counterpart=True,
             mandatory=True,
@@ -466,10 +395,7 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "device_trigger": [
         TypeHintMatch(
             function_name="async_validate_condition_config",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="ConfigType",
             mandatory=True,
         ),
@@ -486,19 +412,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
         ),
         TypeHintMatch(
             function_name="async_get_trigger_capabilities",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigType",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigType"},
             return_type="dict[str, Schema]",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_triggers",
-            arg_types={
-                0: "HomeAssistant",
-                1: "str",
-            },
+            arg_types={0: "HomeAssistant", 1: "str"},
             return_type=["list[dict[str, str]]", "list[dict[str, Any]]"],
             mandatory=True,
         ),
@@ -506,20 +426,13 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
     "diagnostics": [
         TypeHintMatch(
             function_name="async_get_config_entry_diagnostics",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry"},
             return_type="Mapping[str, Any]",
             mandatory=True,
         ),
         TypeHintMatch(
             function_name="async_get_device_diagnostics",
-            arg_types={
-                0: "HomeAssistant",
-                1: "ConfigEntry",
-                2: "DeviceEntry",
-            },
+            arg_types={0: "HomeAssistant", 1: "ConfigEntry", 2: "DeviceEntry"},
             return_type="Mapping[str, Any]",
             mandatory=True,
         ),
@@ -535,7 +448,7 @@ _FUNCTION_MATCH: dict[str, list[TypeHintMatch]] = {
             return_type=["BaseNotificationService", None],
             has_async_counterpart=True,
             mandatory=True,
-        ),
+        )
     ],
 }
 
@@ -550,7 +463,7 @@ _CLASS_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     arg_types={},
                     return_type="FlowResult",
                     mandatory=True,
-                ),
+                )
             ],
         ),
         ClassTypeHintMatch(
@@ -558,73 +471,55 @@ _CLASS_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             matches=[
                 TypeHintMatch(
                     function_name="async_get_options_flow",
-                    arg_types={
-                        0: "ConfigEntry",
-                    },
+                    arg_types={0: "ConfigEntry"},
                     return_type="OptionsFlow",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_dhcp",
-                    arg_types={
-                        1: "DhcpServiceInfo",
-                    },
+                    arg_types={1: "DhcpServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_hassio",
-                    arg_types={
-                        1: "HassioServiceInfo",
-                    },
+                    arg_types={1: "HassioServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_homekit",
-                    arg_types={
-                        1: "ZeroconfServiceInfo",
-                    },
+                    arg_types={1: "ZeroconfServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_mqtt",
-                    arg_types={
-                        1: "MqttServiceInfo",
-                    },
+                    arg_types={1: "MqttServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_reauth",
-                    arg_types={
-                        1: "Mapping[str, Any]",
-                    },
+                    arg_types={1: "Mapping[str, Any]"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_ssdp",
-                    arg_types={
-                        1: "SsdpServiceInfo",
-                    },
+                    arg_types={1: "SsdpServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_usb",
-                    arg_types={
-                        1: "UsbServiceInfo",
-                    },
+                    arg_types={1: "UsbServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_step_zeroconf",
-                    arg_types={
-                        1: "ZeroconfServiceInfo",
-                    },
+                    arg_types={1: "ZeroconfServiceInfo"},
                     return_type="ConfigFlowResult",
                     mandatory=True,
                 ),
@@ -644,7 +539,7 @@ _CLASS_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     arg_types={},
                     return_type="ConfigFlowResult",
                     mandatory=True,
-                ),
+                )
             ],
         ),
         ClassTypeHintMatch(
@@ -655,83 +550,39 @@ _CLASS_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     arg_types={},
                     return_type="SubentryFlowResult",
                     mandatory=True,
-                ),
+                )
             ],
         ),
-    ],
+    ]
 }
 # Overriding properties and functions are normally checked by mypy, and will only
 # be checked by pylint when --ignore-missing-annotations is False
 
 _ENTITY_MATCH: list[TypeHintMatch] = [
+    TypeHintMatch(function_name="should_poll", return_type="bool", mandatory=True),
+    TypeHintMatch(function_name="unique_id", return_type=["str", None]),
+    TypeHintMatch(function_name="name", return_type=["str", "UndefinedType", None]),
     TypeHintMatch(
-        function_name="should_poll",
-        return_type="bool",
-        mandatory=True,
+        function_name="state", return_type=["StateType", None, "str", "int", "float"]
     ),
     TypeHintMatch(
-        function_name="unique_id",
-        return_type=["str", None],
+        function_name="capability_attributes", return_type=["Mapping[str, Any]", None]
     ),
     TypeHintMatch(
-        function_name="name",
-        return_type=["str", "UndefinedType", None],
+        function_name="state_attributes", return_type=["dict[str, Any]", None]
     ),
     TypeHintMatch(
-        function_name="state",
-        return_type=["StateType", None, "str", "int", "float"],
+        function_name="extra_state_attributes", return_type=["Mapping[str, Any]", None]
     ),
-    TypeHintMatch(
-        function_name="capability_attributes",
-        return_type=["Mapping[str, Any]", None],
-    ),
-    TypeHintMatch(
-        function_name="state_attributes",
-        return_type=["dict[str, Any]", None],
-    ),
-    TypeHintMatch(
-        function_name="extra_state_attributes",
-        return_type=["Mapping[str, Any]", None],
-    ),
-    TypeHintMatch(
-        function_name="device_info",
-        return_type=["DeviceInfo", None],
-    ),
-    TypeHintMatch(
-        function_name="device_class",
-        return_type=["str", None],
-    ),
-    TypeHintMatch(
-        function_name="unit_of_measurement",
-        return_type=["str", None],
-    ),
-    TypeHintMatch(
-        function_name="icon",
-        return_type=["str", None],
-    ),
-    TypeHintMatch(
-        function_name="entity_picture",
-        return_type=["str", None],
-    ),
-    TypeHintMatch(
-        function_name="available",
-        return_type="bool",
-        mandatory=True,
-    ),
-    TypeHintMatch(
-        function_name="assumed_state",
-        return_type="bool",
-        mandatory=True,
-    ),
-    TypeHintMatch(
-        function_name="force_update",
-        return_type="bool",
-        mandatory=True,
-    ),
-    TypeHintMatch(
-        function_name="supported_features",
-        return_type=["int", None],
-    ),
+    TypeHintMatch(function_name="device_info", return_type=["DeviceInfo", None]),
+    TypeHintMatch(function_name="device_class", return_type=["str", None]),
+    TypeHintMatch(function_name="unit_of_measurement", return_type=["str", None]),
+    TypeHintMatch(function_name="icon", return_type=["str", None]),
+    TypeHintMatch(function_name="entity_picture", return_type=["str", None]),
+    TypeHintMatch(function_name="available", return_type="bool", mandatory=True),
+    TypeHintMatch(function_name="assumed_state", return_type="bool", mandatory=True),
+    TypeHintMatch(function_name="force_update", return_type="bool", mandatory=True),
+    TypeHintMatch(function_name="supported_features", return_type=["int", None]),
     TypeHintMatch(
         function_name="entity_registry_enabled_default",
         return_type="bool",
@@ -742,33 +593,21 @@ _ENTITY_MATCH: list[TypeHintMatch] = [
         return_type="bool",
         mandatory=True,
     ),
+    TypeHintMatch(function_name="attribution", return_type=["str", None]),
     TypeHintMatch(
-        function_name="attribution",
-        return_type=["str", None],
+        function_name="entity_category", return_type=["EntityCategory", None]
     ),
     TypeHintMatch(
-        function_name="entity_category",
-        return_type=["EntityCategory", None],
+        function_name="async_removed_from_registry", return_type=None, mandatory=True
     ),
     TypeHintMatch(
-        function_name="async_removed_from_registry",
-        return_type=None,
-        mandatory=True,
+        function_name="async_added_to_hass", return_type=None, mandatory=True
     ),
     TypeHintMatch(
-        function_name="async_added_to_hass",
-        return_type=None,
-        mandatory=True,
+        function_name="async_will_remove_from_hass", return_type=None, mandatory=True
     ),
     TypeHintMatch(
-        function_name="async_will_remove_from_hass",
-        return_type=None,
-        mandatory=True,
-    ),
-    TypeHintMatch(
-        function_name="async_registry_entry_updated",
-        return_type=None,
-        mandatory=True,
+        function_name="async_registry_entry_updated", return_type=None, mandatory=True
     ),
     TypeHintMatch(
         function_name="update",
@@ -778,24 +617,16 @@ _ENTITY_MATCH: list[TypeHintMatch] = [
     ),
 ]
 _RESTORE_ENTITY_MATCH: list[TypeHintMatch] = [
+    TypeHintMatch(function_name="async_get_last_state", return_type=["State", None]),
     TypeHintMatch(
-        function_name="async_get_last_state",
-        return_type=["State", None],
+        function_name="async_get_last_extra_data", return_type=["ExtraStoredData", None]
     ),
     TypeHintMatch(
-        function_name="async_get_last_extra_data",
-        return_type=["ExtraStoredData", None],
-    ),
-    TypeHintMatch(
-        function_name="extra_restore_state_data",
-        return_type=["ExtraStoredData", None],
+        function_name="extra_restore_state_data", return_type=["ExtraStoredData", None]
     ),
 ]
 _TOGGLE_ENTITY_MATCH: list[TypeHintMatch] = [
-    TypeHintMatch(
-        function_name="is_on",
-        return_type=["bool", None],
-    ),
+    TypeHintMatch(function_name="is_on", return_type=["bool", None]),
     TypeHintMatch(
         function_name="turn_on",
         kwargs_type="Any",
@@ -821,25 +652,15 @@ _TOGGLE_ENTITY_MATCH: list[TypeHintMatch] = [
 _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
     # "air_quality": [],  # ignored as deprecated
     "alarm_control_panel": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="AlarmControlPanelEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="code_format",
-                    return_type=["CodeFormat", None],
+                    function_name="code_format", return_type=["CodeFormat", None]
                 ),
-                TypeHintMatch(
-                    function_name="changed_by",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="changed_by", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="code_arm_required",
                     return_type="bool",
@@ -852,63 +673,49 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="alarm_disarm",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_arm_home",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_arm_away",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_arm_night",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_arm_vacation",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_trigger",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="alarm_arm_custom_bypass",
-                    named_arg_types={
-                        "code": "str | None",
-                    },
+                    named_arg_types={"code": "str | None"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
@@ -917,14 +724,8 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "binary_sensor": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="BinarySensorEntity",
             matches=[
@@ -932,22 +733,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     function_name="device_class",
                     return_type=["BinarySensorDeviceClass", None],
                 ),
-                TypeHintMatch(
-                    function_name="is_on",
-                    return_type=["bool", None],
-                ),
+                TypeHintMatch(function_name="is_on", return_type=["bool", None]),
             ],
         ),
     ],
     "button": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="ButtonEntity",
             matches=[
@@ -965,28 +757,17 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "calendar": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="CalendarEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="event",
-                    return_type=["CalendarEvent", None],
+                    function_name="event", return_type=["CalendarEvent", None]
                 ),
                 TypeHintMatch(
                     function_name="async_get_events",
-                    arg_types={
-                        1: "HomeAssistant",
-                        2: "datetime",
-                        3: "datetime",
-                    },
+                    arg_types={1: "HomeAssistant", 2: "datetime", 3: "datetime"},
                     return_type="list[CalendarEvent]",
                     mandatory=True,
                 ),
@@ -994,21 +775,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "camera": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="Camera",
             matches=[
                 TypeHintMatch(
-                    function_name="entity_picture",
-                    return_type="str",
-                    mandatory=True,
+                    function_name="entity_picture", return_type="str", mandatory=True
                 ),
                 TypeHintMatch(
                     function_name="supported_features",
@@ -1016,86 +789,56 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="is_recording",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="is_recording", return_type="bool", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="is_streaming",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="is_streaming", return_type="bool", mandatory=True
                 ),
-                TypeHintMatch(
-                    function_name="brand",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="brand", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="motion_detection_enabled",
                     return_type="bool",
                     mandatory=True,
                 ),
+                TypeHintMatch(function_name="model", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="model",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="frame_interval",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="frame_interval", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
                     function_name="frontend_stream_type",
                     return_type=["StreamType", None],
                 ),
                 TypeHintMatch(
-                    function_name="available",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="available", return_type="bool", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="async_create_stream",
-                    return_type=["Stream", None],
+                    function_name="async_create_stream", return_type=["Stream", None]
                 ),
-                TypeHintMatch(
-                    function_name="stream_source",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="stream_source", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="async_handle_web_rtc_offer",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type=["str", None],
                 ),
                 TypeHintMatch(
                     function_name="camera_image",
-                    named_arg_types={
-                        "width": "int | None",
-                        "height": "int | None",
-                    },
+                    named_arg_types={"width": "int | None", "height": "int | None"},
                     return_type=["bytes", None],
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="handle_async_still_stream",
-                    arg_types={
-                        1: "Request",
-                        2: "float",
-                    },
+                    arg_types={1: "Request", 2: "float"},
                     return_type="StreamResponse",
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="handle_async_mjpeg_stream",
-                    arg_types={
-                        1: "Request",
-                    },
+                    arg_types={1: "Request"},
                     return_type=["StreamResponse", None],
                 ),
                 TypeHintMatch(
-                    function_name="is_on",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="is_on", return_type="bool", mandatory=True
                 ),
                 TypeHintMatch(
                     function_name="turn_off",
@@ -1123,28 +866,19 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="async_handle_async_webrtc_offer",
-                    arg_types={
-                        1: "str",
-                        2: "str",
-                        3: "WebRTCSendMessage",
-                    },
+                    arg_types={1: "str", 2: "str", 3: "WebRTCSendMessage"},
                     return_type=None,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="async_on_webrtc_candidate",
-                    arg_types={
-                        1: "str",
-                        2: "RTCIceCandidateInit",
-                    },
+                    arg_types={1: "str", 2: "RTCIceCandidateInit"},
                     return_type=None,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="close_webrtc_session",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type=None,
                     mandatory=True,
                 ),
@@ -1157,38 +891,25 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "climate": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="ClimateEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="precision",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="precision", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="temperature_unit",
-                    return_type="str",
-                    mandatory=True,
+                    function_name="temperature_unit", return_type="str", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="current_humidity",
-                    return_type=["float", None],
+                    function_name="current_humidity", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_humidity",
-                    return_type=["float", None],
+                    function_name="target_humidity", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="hvac_mode",
-                    return_type=["HVACMode", None],
+                    function_name="hvac_mode", return_type=["HVACMode", None]
                 ),
                 TypeHintMatch(
                     function_name="hvac_modes",
@@ -1196,56 +917,35 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="hvac_action",
-                    return_type=["HVACAction", None],
+                    function_name="hvac_action", return_type=["HVACAction", None]
                 ),
                 TypeHintMatch(
-                    function_name="current_temperature",
-                    return_type=["float", None],
+                    function_name="current_temperature", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature",
-                    return_type=["float", None],
+                    function_name="target_temperature", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature_step",
-                    return_type=["float", None],
+                    function_name="target_temperature_step", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature_high",
-                    return_type=["float", None],
+                    function_name="target_temperature_high", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature_low",
-                    return_type=["float", None],
+                    function_name="target_temperature_low", return_type=["float", None]
                 ),
+                TypeHintMatch(function_name="preset_mode", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="preset_mode",
-                    return_type=["str", None],
+                    function_name="preset_modes", return_type=["list[str]", None]
                 ),
+                TypeHintMatch(function_name="is_aux_heat", return_type=["bool", None]),
+                TypeHintMatch(function_name="fan_mode", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="preset_modes",
-                    return_type=["list[str]", None],
+                    function_name="fan_modes", return_type=["list[str]", None]
                 ),
+                TypeHintMatch(function_name="swing_mode", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="is_aux_heat",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="fan_mode",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="fan_modes",
-                    return_type=["list[str]", None],
-                ),
-                TypeHintMatch(
-                    function_name="swing_mode",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="swing_modes",
-                    return_type=["list[str]", None],
+                    function_name="swing_modes", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
                     function_name="set_temperature",
@@ -1256,45 +956,35 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="set_humidity",
-                    arg_types={
-                        1: "int",
-                    },
+                    arg_types={1: "int"},
                     return_type="None",
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="set_fan_mode",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type="None",
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="set_hvac_mode",
-                    arg_types={
-                        1: "HVACMode",
-                    },
+                    arg_types={1: "HVACMode"},
                     return_type="None",
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="set_swing_mode",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type="None",
                     has_async_counterpart=True,
                     mandatory=True,
                 ),
                 TypeHintMatch(
                     function_name="set_preset_mode",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type="None",
                     has_async_counterpart=True,
                     mandatory=True,
@@ -1329,64 +1019,39 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="min_temp",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="min_temp", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="max_temp",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="max_temp", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="min_humidity",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="min_humidity", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="max_humidity",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="max_humidity", return_type="float", mandatory=True
                 ),
             ],
         ),
     ],
     "cover": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="CoverEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="device_class",
-                    return_type=["CoverDeviceClass", None],
+                    function_name="device_class", return_type=["CoverDeviceClass", None]
                 ),
                 TypeHintMatch(
-                    function_name="current_cover_position",
-                    return_type=["int", None],
+                    function_name="current_cover_position", return_type=["int", None]
                 ),
                 TypeHintMatch(
                     function_name="current_cover_tilt_position",
                     return_type=["int", None],
                 ),
-                TypeHintMatch(
-                    function_name="is_opening",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_closing",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_closed",
-                    return_type=["bool", None],
-                ),
+                TypeHintMatch(function_name="is_opening", return_type=["bool", None]),
+                TypeHintMatch(function_name="is_closing", return_type=["bool", None]),
+                TypeHintMatch(function_name="is_closed", return_type=["bool", None]),
                 TypeHintMatch(
                     function_name="supported_features",
                     return_type="CoverEntityFeature",
@@ -1466,21 +1131,12 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "device_tracker": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="BaseTrackerEntity",
             matches=[
-                TypeHintMatch(
-                    function_name="battery_level",
-                    return_type=["int", None],
-                ),
+                TypeHintMatch(function_name="battery_level", return_type=["int", None]),
                 TypeHintMatch(
                     function_name="source_type",
                     return_type="SourceType",
@@ -1492,116 +1148,57 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             base_class="TrackerEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="force_update",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="force_update", return_type="bool", mandatory=True
                 ),
                 TypeHintMatch(
                     function_name="location_accuracy",
                     return_type="float",
                     mandatory=True,
                 ),
-                TypeHintMatch(
-                    function_name="location_name",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="latitude",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="longitude",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="state",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="location_name", return_type=["str", None]),
+                TypeHintMatch(function_name="latitude", return_type=["float", None]),
+                TypeHintMatch(function_name="longitude", return_type=["float", None]),
+                TypeHintMatch(function_name="state", return_type=["str", None]),
             ],
         ),
         ClassTypeHintMatch(
             base_class="ScannerEntity",
             matches=[
+                TypeHintMatch(function_name="ip_address", return_type=["str", None]),
+                TypeHintMatch(function_name="mac_address", return_type=["str", None]),
+                TypeHintMatch(function_name="hostname", return_type=["str", None]),
+                TypeHintMatch(function_name="state", return_type="str", mandatory=True),
                 TypeHintMatch(
-                    function_name="ip_address",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="mac_address",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="hostname",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="state",
-                    return_type="str",
-                    mandatory=True,
-                ),
-                TypeHintMatch(
-                    function_name="is_connected",
-                    return_type="bool",
-                    mandatory=True,
+                    function_name="is_connected", return_type="bool", mandatory=True
                 ),
             ],
         ),
     ],
     "entity": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
     ],
     "fan": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="FanEntity",
             matches=[
+                TypeHintMatch(function_name="percentage", return_type=["int", None]),
                 TypeHintMatch(
-                    function_name="percentage",
-                    return_type=["int", None],
+                    function_name="speed_count", return_type="int", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="speed_count",
-                    return_type="int",
-                    mandatory=True,
+                    function_name="percentage_step", return_type="float", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="percentage_step",
-                    return_type="float",
-                    mandatory=True,
+                    function_name="current_direction", return_type=["str", None]
                 ),
+                TypeHintMatch(function_name="oscillating", return_type=["bool", None]),
+                TypeHintMatch(function_name="preset_mode", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="current_direction",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="oscillating",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="preset_mode",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="preset_modes",
-                    return_type=["list[str]", None],
+                    function_name="preset_modes", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
                     function_name="supported_features",
@@ -1651,46 +1248,23 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "geo_location": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="GeolocationEvent",
             matches=[
                 TypeHintMatch(
-                    function_name="source",
-                    return_type="str",
-                    mandatory=True,
+                    function_name="source", return_type="str", mandatory=True
                 ),
-                TypeHintMatch(
-                    function_name="distance",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="latitude",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="longitude",
-                    return_type=["float", None],
-                ),
+                TypeHintMatch(function_name="distance", return_type=["float", None]),
+                TypeHintMatch(function_name="latitude", return_type=["float", None]),
+                TypeHintMatch(function_name="longitude", return_type=["float", None]),
             ],
         ),
     ],
     "image_processing": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="ImageProcessingEntity",
             matches=[
@@ -1723,30 +1297,18 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             matches=[
                 TypeHintMatch(
                     function_name="process_faces",
-                    arg_types={
-                        1: "list[FaceInformation]",
-                        2: "int",
-                    },
+                    arg_types={1: "list[FaceInformation]", 2: "int"},
                     return_type=None,
                     has_async_counterpart=True,
                     mandatory=True,
-                ),
+                )
             ],
         ),
     ],
     "humidifier": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="HumidifierEntity",
             matches=[
@@ -1761,19 +1323,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="min_humidity",
-                    return_type=["float"],
-                    mandatory=True,
+                    function_name="min_humidity", return_type=["float"], mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="max_humidity",
-                    return_type=["float"],
-                    mandatory=True,
+                    function_name="max_humidity", return_type=["float"], mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="mode",
-                    return_type=["str", None],
-                    mandatory=True,
+                    function_name="mode", return_type=["str", None], mandatory=True
                 ),
                 TypeHintMatch(
                     function_name="supported_features",
@@ -1803,37 +1359,23 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "light": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="LightEntity",
             matches=[
-                TypeHintMatch(
-                    function_name="brightness",
-                    return_type=["int", None],
-                ),
+                TypeHintMatch(function_name="brightness", return_type=["int", None]),
                 TypeHintMatch(
                     function_name="color_mode",
                     return_type=["ColorMode", "str", None],
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="hs_color",
-                    return_type=["tuple[float, float]", None],
+                    function_name="hs_color", return_type=["tuple[float, float]", None]
                 ),
                 TypeHintMatch(
-                    function_name="xy_color",
-                    return_type=["tuple[float, float]", None],
+                    function_name="xy_color", return_type=["tuple[float, float]", None]
                 ),
                 TypeHintMatch(
                     function_name="rgb_color",
@@ -1856,23 +1398,15 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     mandatory=True,
                 ),
                 TypeHintMatch(
-                    function_name="min_mireds",
-                    return_type="int",
-                    mandatory=True,
+                    function_name="min_mireds", return_type="int", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="max_mireds",
-                    return_type="int",
-                    mandatory=True,
+                    function_name="max_mireds", return_type="int", mandatory=True
                 ),
                 TypeHintMatch(
-                    function_name="effect_list",
-                    return_type=["list[str]", None],
+                    function_name="effect_list", return_type=["list[str]", None]
                 ),
-                TypeHintMatch(
-                    function_name="effect",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="effect", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="capability_attributes",
                     return_type=["dict[str, Any]", None],
@@ -1916,44 +1450,19 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "lock": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="LockEntity",
             matches=[
+                TypeHintMatch(function_name="changed_by", return_type=["str", None]),
+                TypeHintMatch(function_name="code_format", return_type=["str", None]),
+                TypeHintMatch(function_name="is_locked", return_type=["bool", None]),
+                TypeHintMatch(function_name="is_locking", return_type=["bool", None]),
+                TypeHintMatch(function_name="is_unlocking", return_type=["bool", None]),
+                TypeHintMatch(function_name="is_jammed", return_type=["bool", None]),
                 TypeHintMatch(
-                    function_name="changed_by",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="code_format",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_locked",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_locking",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_unlocking",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_jammed",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="supported_features",
-                    return_type="LockEntityFeature",
+                    function_name="supported_features", return_type="LockEntityFeature"
                 ),
                 TypeHintMatch(
                     function_name="lock",
@@ -1977,14 +1486,8 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "media_player": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="MediaPlayerEntity",
             matches=[
@@ -1993,52 +1496,40 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     return_type=["MediaPlayerDeviceClass", None],
                 ),
                 TypeHintMatch(
-                    function_name="state",
-                    return_type=["MediaPlayerState", None],
+                    function_name="state", return_type=["MediaPlayerState", None]
+                ),
+                TypeHintMatch(function_name="access_token", return_type="str"),
+                TypeHintMatch(
+                    function_name="volume_level", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="access_token",
-                    return_type="str",
+                    function_name="is_volume_muted", return_type=["bool", None]
                 ),
                 TypeHintMatch(
-                    function_name="volume_level",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="is_volume_muted",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="media_content_id",
-                    return_type=["str", None],
+                    function_name="media_content_id", return_type=["str", None]
                 ),
                 TypeHintMatch(
                     function_name="media_content_type",
                     return_type=["MediaType", "str", None],
                 ),
                 TypeHintMatch(
-                    function_name="media_duration",
-                    return_type=["int", None],
+                    function_name="media_duration", return_type=["int", None]
                 ),
                 TypeHintMatch(
-                    function_name="media_position",
-                    return_type=["int", None],
+                    function_name="media_position", return_type=["int", None]
                 ),
                 TypeHintMatch(
                     function_name="media_position_updated_at",
                     return_type=["datetime", None],
                 ),
                 TypeHintMatch(
-                    function_name="media_image_url",
-                    return_type=["str", None],
+                    function_name="media_image_url", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="media_image_remotely_accessible",
-                    return_type="bool",
+                    function_name="media_image_remotely_accessible", return_type="bool"
                 ),
                 TypeHintMatch(
-                    function_name="media_image_hash",
-                    return_type=["str", None],
+                    function_name="media_image_hash", return_type=["str", None]
                 ),
                 TypeHintMatch(
                     function_name="async_get_media_image",
@@ -2046,88 +1537,41 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="async_get_browse_image",
-                    arg_types={
-                        1: "MediaType | str",
-                        2: "str",
-                        3: "str | None",
-                    },
+                    arg_types={1: "MediaType | str", 2: "str", 3: "str | None"},
                     return_type="tuple[bytes | None, str | None]",
                 ),
+                TypeHintMatch(function_name="media_title", return_type=["str", None]),
+                TypeHintMatch(function_name="media_artist", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="media_title",
-                    return_type=["str", None],
+                    function_name="media_album_name", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="media_artist",
-                    return_type=["str", None],
+                    function_name="media_album_artist", return_type=["str", None]
                 ),
+                TypeHintMatch(function_name="media_track", return_type=["int", None]),
                 TypeHintMatch(
-                    function_name="media_album_name",
-                    return_type=["str", None],
+                    function_name="media_series_title", return_type=["str", None]
                 ),
+                TypeHintMatch(function_name="media_season", return_type=["str", None]),
+                TypeHintMatch(function_name="media_episode", return_type=["str", None]),
+                TypeHintMatch(function_name="media_channel", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="media_album_artist",
-                    return_type=["str", None],
+                    function_name="media_playlist", return_type=["str", None]
                 ),
+                TypeHintMatch(function_name="app_id", return_type=["str", None]),
+                TypeHintMatch(function_name="app_name", return_type=["str", None]),
+                TypeHintMatch(function_name="source", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="media_track",
-                    return_type=["int", None],
+                    function_name="source_list", return_type=["list[str]", None]
                 ),
+                TypeHintMatch(function_name="sound_mode", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="media_series_title",
-                    return_type=["str", None],
+                    function_name="sound_mode_list", return_type=["list[str]", None]
                 ),
+                TypeHintMatch(function_name="shuffle", return_type=["bool", None]),
+                TypeHintMatch(function_name="repeat", return_type=["RepeatMode", None]),
                 TypeHintMatch(
-                    function_name="media_season",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="media_episode",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="media_channel",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="media_playlist",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="app_id",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="app_name",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="source",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="source_list",
-                    return_type=["list[str]", None],
-                ),
-                TypeHintMatch(
-                    function_name="sound_mode",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="sound_mode_list",
-                    return_type=["list[str]", None],
-                ),
-                TypeHintMatch(
-                    function_name="shuffle",
-                    return_type=["bool", None],
-                ),
-                TypeHintMatch(
-                    function_name="repeat",
-                    return_type=["RepeatMode", None],
-                ),
-                TypeHintMatch(
-                    function_name="group_members",
-                    return_type=["list[str]", None],
+                    function_name="group_members", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
                     function_name="supported_features",
@@ -2145,17 +1589,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="mute_volume",
-                    arg_types={
-                        1: "bool",
-                    },
+                    arg_types={1: "bool"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="set_volume_level",
-                    arg_types={
-                        1: "float",
-                    },
+                    arg_types={1: "float"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
@@ -2186,35 +1626,26 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="media_seek",
-                    arg_types={
-                        1: "float",
-                    },
+                    arg_types={1: "float"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="play_media",
-                    arg_types={
-                        1: "MediaType | str",
-                        2: "str",
-                    },
+                    arg_types={1: "MediaType | str", 2: "str"},
                     kwargs_type="Any",
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="select_source",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="select_sound_mode",
-                    arg_types={
-                        1: "str",
-                    },
+                    arg_types={1: "str"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
@@ -2225,24 +1656,18 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="set_shuffle",
-                    arg_types={
-                        1: "bool",
-                    },
+                    arg_types={1: "bool"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
                     function_name="set_repeat",
-                    arg_types={
-                        1: "RepeatMode",
-                    },
+                    arg_types={1: "RepeatMode"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
-                    function_name="toggle",
-                    return_type=None,
-                    has_async_counterpart=True,
+                    function_name="toggle", return_type=None, has_async_counterpart=True
                 ),
                 TypeHintMatch(
                     function_name="volume_up",
@@ -2260,26 +1685,19 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     has_async_counterpart=True,
                 ),
                 TypeHintMatch(
-                    function_name="media_image_local",
-                    return_type=["str", None],
+                    function_name="media_image_local", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="capability_attributes",
-                    return_type="dict[str, Any]",
+                    function_name="capability_attributes", return_type="dict[str, Any]"
                 ),
                 TypeHintMatch(
                     function_name="async_browse_media",
-                    arg_types={
-                        1: "MediaType | str | None",
-                        2: "str | None",
-                    },
+                    arg_types={1: "MediaType | str | None", 2: "str | None"},
                     return_type="BrowseMedia",
                 ),
                 TypeHintMatch(
                     function_name="join_players",
-                    arg_types={
-                        1: "list[str]",
-                    },
+                    arg_types={1: "list[str]"},
                     return_type=None,
                     has_async_counterpart=True,
                 ),
@@ -2290,11 +1708,7 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="get_browse_image_url",
-                    arg_types={
-                        1: "str",
-                        2: "str",
-                        3: "str | None",
-                    },
+                    arg_types={1: "str", 2: "str", 3: "str | None"},
                     return_type="str",
                 ),
             ],
@@ -2305,8 +1719,7 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             base_class="BaseNotificationService",
             matches=[
                 TypeHintMatch(
-                    function_name="targets",
-                    return_type=["Mapping[str, Any]", None],
+                    function_name="targets", return_type=["Mapping[str, Any]", None]
                 ),
                 TypeHintMatch(
                     function_name="send_message",
@@ -2316,17 +1729,11 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     has_async_counterpart=True,
                 ),
             ],
-        ),
+        )
     ],
     "number": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="NumberEntity",
             matches=[
@@ -2335,32 +1742,18 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     return_type=["NumberDeviceClass", None],
                 ),
                 TypeHintMatch(
-                    function_name="capability_attributes",
-                    return_type="dict[str, Any]",
+                    function_name="capability_attributes", return_type="dict[str, Any]"
                 ),
-                TypeHintMatch(
-                    function_name="native_min_value",
-                    return_type="float",
-                ),
-                TypeHintMatch(
-                    function_name="native_max_value",
-                    return_type="float",
-                ),
-                TypeHintMatch(
-                    function_name="native_step",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="mode",
-                    return_type="NumberMode",
-                ),
+                TypeHintMatch(function_name="native_min_value", return_type="float"),
+                TypeHintMatch(function_name="native_max_value", return_type="float"),
+                TypeHintMatch(function_name="native_step", return_type=["float", None]),
+                TypeHintMatch(function_name="mode", return_type="NumberMode"),
                 TypeHintMatch(
                     function_name="native_unit_of_measurement",
                     return_type=["str", None],
                 ),
                 TypeHintMatch(
-                    function_name="native_value",
-                    return_type=["float", None],
+                    function_name="native_value", return_type=["float", None]
                 ),
                 TypeHintMatch(
                     function_name="set_native_value",
@@ -2385,28 +1778,17 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "remote": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="RemoteEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="activity_list",
-                    return_type=["list[str]", None],
+                    function_name="activity_list", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
-                    function_name="current_activity",
-                    return_type=["str", None],
+                    function_name="current_activity", return_type=["str", None]
                 ),
                 TypeHintMatch(
                     function_name="supported_features",
@@ -2435,14 +1817,8 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "scene": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="Scene",
             matches=[
@@ -2451,38 +1827,24 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     kwargs_type="Any",
                     return_type=None,
                     has_async_counterpart=True,
-                ),
+                )
             ],
         ),
     ],
     "select": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="SelectEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="capability_attributes",
-                    return_type="dict[str, Any]",
+                    function_name="capability_attributes", return_type="dict[str, Any]"
                 ),
+                TypeHintMatch(function_name="options", return_type="list[str]"),
                 TypeHintMatch(
-                    function_name="options",
-                    return_type="list[str]",
+                    function_name="current_option", return_type=["str", None]
                 ),
-                TypeHintMatch(
-                    function_name="current_option",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="select_option",
-                    return_type=None,
-                ),
+                TypeHintMatch(function_name="select_option", return_type=None),
                 TypeHintMatch(
                     function_name="select_option",
                     arg_types={1: "str"},
@@ -2493,14 +1855,8 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "sensor": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="SensorEntity",
             matches=[
@@ -2513,8 +1869,7 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     return_type=["SensorStateClass", "str", None],
                 ),
                 TypeHintMatch(
-                    function_name="last_reset",
-                    return_type=["datetime", None],
+                    function_name="last_reset", return_type=["datetime", None]
                 ),
                 TypeHintMatch(
                     function_name="native_value",
@@ -2550,18 +1905,9 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "siren": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="SirenEntity",
             matches=[
@@ -2570,8 +1916,7 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     return_type=["dict[int, str]", "list[int | str]", None],
                 ),
                 TypeHintMatch(
-                    function_name="supported_features",
-                    return_type="SirenEntityFeature",
+                    function_name="supported_features", return_type="SirenEntityFeature"
                 ),
             ],
         ),
@@ -2581,16 +1926,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             base_class="Provider",
             matches=[
                 TypeHintMatch(
-                    function_name="supported_languages",
-                    return_type="list[str]",
+                    function_name="supported_languages", return_type="list[str]"
                 ),
                 TypeHintMatch(
-                    function_name="supported_formats",
-                    return_type="list[AudioFormats]",
+                    function_name="supported_formats", return_type="list[AudioFormats]"
                 ),
                 TypeHintMatch(
-                    function_name="supported_codecs",
-                    return_type="list[AudioCodecs]",
+                    function_name="supported_codecs", return_type="list[AudioCodecs]"
                 ),
                 TypeHintMatch(
                     function_name="supported_bit_rates",
@@ -2610,74 +1952,49 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     return_type="SpeechResult",
                 ),
             ],
-        ),
+        )
     ],
     "switch": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="SwitchEntity",
             matches=[
                 TypeHintMatch(
                     function_name="device_class",
                     return_type=["SwitchDeviceClass", None],
-                ),
+                )
             ],
         ),
     ],
     "todo": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="TodoListEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="todo_items",
-                    return_type=["list[TodoItem]", None],
+                    function_name="todo_items", return_type=["list[TodoItem]", None]
                 ),
                 TypeHintMatch(
                     function_name="async_create_todo_item",
-                    arg_types={
-                        1: "TodoItem",
-                    },
+                    arg_types={1: "TodoItem"},
                     return_type="None",
                 ),
                 TypeHintMatch(
                     function_name="async_update_todo_item",
-                    arg_types={
-                        1: "TodoItem",
-                    },
+                    arg_types={1: "TodoItem"},
                     return_type="None",
                 ),
                 TypeHintMatch(
                     function_name="async_delete_todo_items",
-                    arg_types={
-                        1: "list[str]",
-                    },
+                    arg_types={1: "list[str]"},
                     return_type="None",
                 ),
                 TypeHintMatch(
                     function_name="async_move_todo_item",
-                    arg_types={
-                        1: "str",
-                        2: "str | None",
-                    },
+                    arg_types={1: "str", 2: "str | None"},
                     return_type="None",
                 ),
             ],
@@ -2688,16 +2005,13 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
             base_class="Provider",
             matches=[
                 TypeHintMatch(
-                    function_name="default_language",
-                    return_type=["str", None],
+                    function_name="default_language", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="supported_languages",
-                    return_type=["list[str]", None],
+                    function_name="supported_languages", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
-                    function_name="supported_options",
-                    return_type=["list[str]", None],
+                    function_name="supported_options", return_type=["list[str]", None]
                 ),
                 TypeHintMatch(
                     function_name="default_options",
@@ -2710,56 +2024,35 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                     has_async_counterpart=True,
                 ),
             ],
-        ),
+        )
     ],
     "update": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="UpdateEntity",
             matches=[
+                TypeHintMatch(function_name="auto_update", return_type="bool"),
                 TypeHintMatch(
-                    function_name="auto_update",
-                    return_type="bool",
-                ),
-                TypeHintMatch(
-                    function_name="installed_version",
-                    return_type=["str", None],
+                    function_name="installed_version", return_type=["str", None]
                 ),
                 TypeHintMatch(
                     function_name="device_class",
                     return_type=["UpdateDeviceClass", None],
                 ),
+                TypeHintMatch(function_name="in_progress", return_type=["bool", None]),
                 TypeHintMatch(
-                    function_name="in_progress",
-                    return_type=["bool", None],
+                    function_name="latest_version", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="latest_version",
-                    return_type=["str", None],
+                    function_name="release_summary", return_type=["str", None]
                 ),
-                TypeHintMatch(
-                    function_name="release_summary",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="release_url",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="release_url", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="supported_features",
                     return_type="UpdateEntityFeature",
                 ),
-                TypeHintMatch(
-                    function_name="title",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="title", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="update_percentage",
                     return_type=["int", "float", None],
@@ -2780,37 +2073,16 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "vacuum": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="ToggleEntity",
-            matches=_TOGGLE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="ToggleEntity", matches=_TOGGLE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="_BaseVacuum",
             matches=[
-                TypeHintMatch(
-                    function_name="battery_level",
-                    return_type=["int", None],
-                ),
-                TypeHintMatch(
-                    function_name="battery_icon",
-                    return_type="str",
-                ),
-                TypeHintMatch(
-                    function_name="fan_speed",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="fan_speed_list",
-                    return_type="list[str]",
-                ),
+                TypeHintMatch(function_name="battery_level", return_type=["int", None]),
+                TypeHintMatch(function_name="battery_icon", return_type="str"),
+                TypeHintMatch(function_name="fan_speed", return_type=["str", None]),
+                TypeHintMatch(function_name="fan_speed_list", return_type="list[str]"),
                 TypeHintMatch(
                     function_name="supported_features",
                     return_type="VacuumEntityFeature",
@@ -2841,9 +2113,7 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
                 ),
                 TypeHintMatch(
                     function_name="set_fan_speed",
-                    named_arg_types={
-                        "fan_speed": "str",
-                    },
+                    named_arg_types={"fan_speed": "str"},
                     kwargs_type="Any",
                     return_type=None,
                     has_async_counterpart=True,
@@ -2863,121 +2133,74 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ClassTypeHintMatch(
             base_class="VacuumEntity",
             matches=[
-                TypeHintMatch(
-                    function_name="status",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="status", return_type=["str", None]),
                 TypeHintMatch(
                     function_name="start_pause",
                     kwargs_type="Any",
                     return_type=None,
                     has_async_counterpart=True,
                 ),
-                TypeHintMatch(
-                    function_name="async_pause",
-                    return_type=None,
-                ),
-                TypeHintMatch(
-                    function_name="async_start",
-                    return_type=None,
-                ),
+                TypeHintMatch(function_name="async_pause", return_type=None),
+                TypeHintMatch(function_name="async_start", return_type=None),
             ],
         ),
         ClassTypeHintMatch(
             base_class="StateVacuumEntity",
             matches=[
+                TypeHintMatch(function_name="state", return_type=["str", None]),
                 TypeHintMatch(
-                    function_name="state",
-                    return_type=["str", None],
+                    function_name="start", return_type=None, has_async_counterpart=True
                 ),
                 TypeHintMatch(
-                    function_name="start",
-                    return_type=None,
-                    has_async_counterpart=True,
+                    function_name="pause", return_type=None, has_async_counterpart=True
                 ),
                 TypeHintMatch(
-                    function_name="pause",
-                    return_type=None,
-                    has_async_counterpart=True,
+                    function_name="async_turn_on", kwargs_type="Any", return_type=None
                 ),
                 TypeHintMatch(
-                    function_name="async_turn_on",
-                    kwargs_type="Any",
-                    return_type=None,
+                    function_name="async_turn_off", kwargs_type="Any", return_type=None
                 ),
                 TypeHintMatch(
-                    function_name="async_turn_off",
-                    kwargs_type="Any",
-                    return_type=None,
-                ),
-                TypeHintMatch(
-                    function_name="async_toggle",
-                    kwargs_type="Any",
-                    return_type=None,
+                    function_name="async_toggle", kwargs_type="Any", return_type=None
                 ),
             ],
         ),
     ],
     "water_heater": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="WaterHeaterEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="current_operation",
-                    return_type=["str", None],
+                    function_name="current_operation", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="current_temperature",
-                    return_type=["float", None],
+                    function_name="current_temperature", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="is_away_mode_on",
-                    return_type=["bool", None],
+                    function_name="is_away_mode_on", return_type=["bool", None]
                 ),
+                TypeHintMatch(function_name="max_temp", return_type="float"),
+                TypeHintMatch(function_name="min_temp", return_type="float"),
                 TypeHintMatch(
-                    function_name="max_temp",
-                    return_type="float",
+                    function_name="operation_list", return_type=["list[str]", None]
                 ),
-                TypeHintMatch(
-                    function_name="min_temp",
-                    return_type="float",
-                ),
-                TypeHintMatch(
-                    function_name="operation_list",
-                    return_type=["list[str]", None],
-                ),
-                TypeHintMatch(
-                    function_name="precision",
-                    return_type="float",
-                ),
+                TypeHintMatch(function_name="precision", return_type="float"),
                 TypeHintMatch(
                     function_name="supported_features",
                     return_type="WaterHeaterEntityFeature",
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature",
-                    return_type=["float", None],
+                    function_name="target_temperature", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature_high",
-                    return_type=["float", None],
+                    function_name="target_temperature_high", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="target_temperature_low",
-                    return_type=["float", None],
+                    function_name="target_temperature_low", return_type=["float", None]
                 ),
-                TypeHintMatch(
-                    function_name="temperature_unit",
-                    return_type="str",
-                ),
+                TypeHintMatch(function_name="temperature_unit", return_type="str"),
                 TypeHintMatch(
                     function_name="set_temperature",
                     kwargs_type="Any",
@@ -3004,77 +2227,48 @@ _INHERITANCE_MATCH: dict[str, list[ClassTypeHintMatch]] = {
         ),
     ],
     "weather": [
-        ClassTypeHintMatch(
-            base_class="Entity",
-            matches=_ENTITY_MATCH,
-        ),
-        ClassTypeHintMatch(
-            base_class="RestoreEntity",
-            matches=_RESTORE_ENTITY_MATCH,
-        ),
+        ClassTypeHintMatch(base_class="Entity", matches=_ENTITY_MATCH),
+        ClassTypeHintMatch(base_class="RestoreEntity", matches=_RESTORE_ENTITY_MATCH),
         ClassTypeHintMatch(
             base_class="WeatherEntity",
             matches=[
                 TypeHintMatch(
-                    function_name="native_temperature",
-                    return_type=["float", None],
+                    function_name="native_temperature", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="native_temperature_unit",
-                    return_type=["str", None],
+                    function_name="native_temperature_unit", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="native_pressure",
-                    return_type=["float", None],
+                    function_name="native_pressure", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="native_pressure_unit",
-                    return_type=["str", None],
+                    function_name="native_pressure_unit", return_type=["str", None]
+                ),
+                TypeHintMatch(function_name="humidity", return_type=["float", None]),
+                TypeHintMatch(
+                    function_name="native_wind_speed", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="humidity",
-                    return_type=["float", None],
+                    function_name="native_wind_speed_unit", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="native_wind_speed",
-                    return_type=["float", None],
+                    function_name="wind_bearing", return_type=["float", "str", None]
+                ),
+                TypeHintMatch(function_name="ozone", return_type=["float", None]),
+                TypeHintMatch(
+                    function_name="native_visibility", return_type=["float", None]
                 ),
                 TypeHintMatch(
-                    function_name="native_wind_speed_unit",
-                    return_type=["str", None],
+                    function_name="native_visibility_unit", return_type=["str", None]
                 ),
                 TypeHintMatch(
-                    function_name="wind_bearing",
-                    return_type=["float", "str", None],
+                    function_name="forecast", return_type=["list[Forecast]", None]
                 ),
                 TypeHintMatch(
-                    function_name="ozone",
-                    return_type=["float", None],
+                    function_name="native_precipitation_unit", return_type=["str", None]
                 ),
-                TypeHintMatch(
-                    function_name="native_visibility",
-                    return_type=["float", None],
-                ),
-                TypeHintMatch(
-                    function_name="native_visibility_unit",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="forecast",
-                    return_type=["list[Forecast]", None],
-                ),
-                TypeHintMatch(
-                    function_name="native_precipitation_unit",
-                    return_type=["str", None],
-                ),
-                TypeHintMatch(
-                    function_name="precision",
-                    return_type="float",
-                ),
-                TypeHintMatch(
-                    function_name="condition",
-                    return_type=["str", None],
-                ),
+                TypeHintMatch(function_name="precision", return_type="float"),
+                TypeHintMatch(function_name="condition", return_type=["str", None]),
             ],
         ),
     ],
@@ -3271,9 +2465,7 @@ def _get_named_annotation(
     return None, None
 
 
-def _has_valid_annotations(
-    annotations: list[nodes.NodeNG | None],
-) -> bool:
+def _has_valid_annotations(annotations: list[nodes.NodeNG | None]) -> bool:
     return any(annotation is not None for annotation in annotations)
 
 
@@ -3513,11 +2705,7 @@ class HassTypeHintChecker(BaseChecker):
     def _check_test_function(self, node: nodes.FunctionDef, is_fixture: bool) -> None:
         # Check the return type, should always be `None` for test_*** functions.
         if not is_fixture and not _is_valid_type(None, node.returns, True):
-            self.add_message(
-                "hass-return-type",
-                node=node,
-                args=("None", node.name),
-            )
+            self.add_message("hass-return-type", node=node, args=("None", node.name))
         # Check that all positional arguments are correctly annotated.
         for arg_name, expected_type in _TEST_FIXTURES.items():
             arg_node, annotation = _get_named_annotation(node, arg_name)

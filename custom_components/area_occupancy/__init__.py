@@ -94,10 +94,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     except Exception:
         # Log error but don't prevent removal flow
-        _LOGGER.exception(
-            "Error removing instance %s data from storage",
-            entry_id,
-        )
+        _LOGGER.exception("Error removing instance %s data from storage", entry_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

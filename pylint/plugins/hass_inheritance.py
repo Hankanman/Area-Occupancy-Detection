@@ -32,7 +32,7 @@ class HassInheritanceChecker(BaseChecker):
             "Invalid inheritance: %s",
             "hass-invalid-inheritance",
             "Used when a class has inheritance has issues",
-        ),
+        )
     }
     options = ()
 

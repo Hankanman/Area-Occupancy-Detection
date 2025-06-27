@@ -1,5 +1,7 @@
-pytest>=8.2
-pytest-homeassistant-custom-component>=0.13.254
+pytest==8.3.5
+pytest-cov==6.0.0
+pytest-asyncio==0.26.0
+pytest-homeassistant-custom-component==0.13.254
 astroid==3.3.10
 pylint==3.3.7
 # SQLAlchemy version controlled by pytest-homeassistant-custom-component

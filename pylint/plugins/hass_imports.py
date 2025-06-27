@@ -23,19 +23,19 @@ _OBSOLETE_IMPORT: dict[str, list[ObsoleteImportMatch]] = {
         ObsoleteImportMatch(
             reason="replaced by propcache.api.cached_property",
             constant=re.compile(r"^cached_property$"),
-        ),
+        )
     ],
     "homeassistant.backports.enum": [
         ObsoleteImportMatch(
             reason="We can now use the Python 3.11 provided enum.StrEnum instead",
             constant=re.compile(r"^StrEnum$"),
-        ),
+        )
     ],
     "homeassistant.backports.functools": [
         ObsoleteImportMatch(
             reason="replaced by propcache.api.cached_property",
             constant=re.compile(r"^cached_property$"),
-        ),
+        )
     ],
     "homeassistant.components.light": [
         ObsoleteImportMatch(
@@ -95,25 +95,25 @@ _OBSOLETE_IMPORT: dict[str, list[ObsoleteImportMatch]] = {
         ObsoleteImportMatch(
             reason="replaced by VacuumEntityFeature enum",
             constant=re.compile(r"^SUPPORT_(\w*)$"),
-        ),
+        )
     ],
     "homeassistant.config_entries": [
         ObsoleteImportMatch(
             reason="replaced by ConfigEntryDisabler enum",
             constant=re.compile(r"^DISABLED_(\w*)$"),
-        ),
+        )
     ],
     "homeassistant.const": [
         ObsoleteImportMatch(
             reason="replaced by local constants",
             constant=re.compile(r"^CONF_UNIT_SYSTEM_(\w+)$"),
-        ),
+        )
     ],
     "homeassistant.helpers.config_validation": [
         ObsoleteImportMatch(
             reason="should be imported from homeassistant/components/<platform>",
             constant=re.compile(r"^PLATFORM_SCHEMA(_BASE)?$"),
-        ),
+        )
     ],
     "homeassistant.helpers.json": [
         ObsoleteImportMatch(
@@ -121,19 +121,19 @@ _OBSOLETE_IMPORT: dict[str, list[ObsoleteImportMatch]] = {
             constant=re.compile(
                 r"^JSON_DECODE_EXCEPTIONS|JSON_ENCODE_EXCEPTIONS|json_loads$"
             ),
-        ),
+        )
     ],
     "homeassistant.util.unit_system": [
         ObsoleteImportMatch(
             reason="replaced by US_CUSTOMARY_SYSTEM",
             constant=re.compile(r"^IMPERIAL_SYSTEM$"),
-        ),
+        )
     ],
     "propcache": [
         ObsoleteImportMatch(
             reason="importing from propcache.api recommended",
             constant=re.compile(r"^(under_)?cached_property$"),
-        ),
+        )
     ],
 }
 
@@ -176,18 +176,10 @@ _FORCE_NAMESPACE_IMPORT: dict[str, NamespaceAlias] = {
     "homeassistant.helpers.area_registry": NamespaceAlias("ar", {"async_get"}),
     "homeassistant.helpers.category_registry": NamespaceAlias("cr", {"async_get"}),
     "homeassistant.helpers.device_registry": NamespaceAlias(
-        "dr",
-        {
-            "async_get",
-            "async_entries_for_config_entry",
-        },
+        "dr", {"async_get", "async_entries_for_config_entry"}
     ),
     "homeassistant.helpers.entity_registry": NamespaceAlias(
-        "er",
-        {
-            "async_get",
-            "async_entries_for_config_entry",
-        },
+        "er", {"async_get", "async_entries_for_config_entry"}
     ),
     "homeassistant.helpers.floor_registry": NamespaceAlias("fr", {"async_get"}),
     "homeassistant.helpers.issue_registry": NamespaceAlias("ir", {"async_get"}),
@@ -328,11 +320,7 @@ class HassImportsFormatChecker(BaseChecker):
                 self.add_message(
                     "hass-import-constant-alias",
                     node=node,
-                    args=(
-                        "DOMAIN",
-                        "DOMAIN",
-                        f"{imported_component.upper()}_DOMAIN",
-                    ),
+                    args=("DOMAIN", "DOMAIN", f"{imported_component.upper()}_DOMAIN"),
                 )
                 return False
 

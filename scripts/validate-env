@@ -34,10 +34,7 @@ def check_dependencies():
             if package == "pytest-homeassistant-custom-component":
                 # Special handling for this package - use pip show
                 result = subprocess.run(
-                    ["pip", "show", package],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                    ["pip", "show", package], capture_output=True, text=True, check=True
                 )
                 # Extract version from pip show output
                 for line in result.stdout.split("\n"):
@@ -106,21 +103,18 @@ def main():
     print(f"Platform: {platform.system()} {platform.release()}")
     print()
 
-    checks = [
-        check_python_version(),
-        check_dependencies(),
-        check_pytest_config(),
-    ]
+    checks = [check_python_version(), check_dependencies(), check_pytest_config()]
 
     if all(checks):
         print("\n✅ Environment validation passed!")
         return 0
-    print("\n❌ Environment validation failed!")
-    print("\nTo fix:")
-    print("1. Use Python 3.13")
-    print("2. Run: pip install -r requirements_test.txt")
-    print("3. Check pyproject.toml configuration")
-    return 1
+    else:
+        print("\n❌ Environment validation failed!")
+        print("\nTo fix:")
+        print("1. Use Python 3.13")
+        print("2. Run: pip install -r requirements_test.txt")
+        print("3. Check pyproject.toml configuration")
+        return 1
 
 
 if __name__ == "__main__":

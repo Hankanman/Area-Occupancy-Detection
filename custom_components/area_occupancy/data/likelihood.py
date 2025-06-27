@@ -376,9 +376,9 @@ class Likelihood:
             # Store raw calculated values, not weighted ones
             "prob_given_true": self.prob_given_true_raw,
             "prob_given_false": self.prob_given_false_raw,
-            "last_updated": self.last_updated.isoformat()
-            if self.last_updated
-            else None,
+            "last_updated": (
+                self.last_updated.isoformat() if self.last_updated else None
+            ),
             # Store filtering statistics
             "total_on_intervals": self.total_on_intervals,
             "filtered_short_intervals": self.filtered_short_intervals,

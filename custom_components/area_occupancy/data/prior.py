@@ -54,10 +54,7 @@ class PriorData:
 class Prior:  # exported name must stay identical
     """Compute and cache the baseline probability for an Area entity."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Initialize the Prior class."""
         self.sensor_ids = coordinator.config.sensors.motion
         self.days = coordinator.config.history.period
@@ -261,9 +258,7 @@ class Prior:  # exported name must stay identical
             )
 
         _LOGGER.debug(
-            "Calculated new area prior: %d sensors, %.3f",
-            len(self.data),
-            self.value,
+            "Calculated new area prior: %d sensors, %.3f", len(self.data), self.value
         )
 
         return self.value
@@ -281,9 +276,9 @@ class Prior:  # exported name must stay identical
         """Convert prior to dictionary for storage."""
         return {
             "value": self.value,
-            "last_updated": self.last_updated.isoformat()
-            if self.last_updated
-            else None,
+            "last_updated": (
+                self.last_updated.isoformat() if self.last_updated else None
+            ),
             "sensor_hash": self.sensor_hash,
         }
 

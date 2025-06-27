@@ -82,10 +82,7 @@ class EntityType:
 class EntityTypeManager:
     """Entity type manager."""
 
-    def __init__(
-        self,
-        coordinator: "AreaOccupancyCoordinator",
-    ) -> None:
+    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the entity type manager."""
         self.coordinator = coordinator
         self.config = coordinator.config_manager.config
@@ -110,7 +107,7 @@ class EntityTypeManager:
             "entity_types": {
                 input_type.value: entity_type.to_dict()
                 for input_type, entity_type in self._entity_types.items()
-            },
+            }
         }
 
     @classmethod

@@ -39,10 +39,7 @@ class TimeInterval(TypedDict):
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
 async def get_states_from_recorder(
-    hass: HomeAssistant,
-    entity_id: str,
-    start_time: datetime,
-    end_time: datetime,
+    hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
 ) -> list[State | dict[str, Any]] | None:
     """Fetch states history from recorder.
 
@@ -60,12 +57,7 @@ async def get_states_from_recorder(
         SQLAlchemyError: If database query fails
 
     """
-    _LOGGER.debug(
-        "Fetching states: %s [%s -> %s]",
-        entity_id,
-        start_time,
-        end_time,
-    )
+    _LOGGER.debug("Fetching states: %s [%s -> %s]", entity_id, start_time, end_time)
 
     # Check if recorder is available
     recorder = get_instance(hass)
@@ -87,11 +79,7 @@ async def get_states_from_recorder(
         entity_states = states.get(entity_id) if states else None
 
         if entity_states:
-            _LOGGER.debug(
-                "Found %d states for %s",
-                len(entity_states),
-                entity_id,
-            )
+            _LOGGER.debug("Found %d states for %s", len(entity_states), entity_id)
         else:
             _LOGGER.debug("No states found for %s", entity_id)
 
@@ -105,9 +93,7 @@ async def get_states_from_recorder(
 
 
 async def states_to_intervals(
-    states: Sequence[State],
-    start: datetime,
-    end: datetime,
+    states: Sequence[State], start: datetime, end: datetime
 ) -> list[TimeInterval]:
     """Convert state history to time intervals.
 
@@ -263,10 +249,7 @@ def bayesian_probability(
 
 
 # ─────────────────────────────── Area-level fusion ───────────────────────────
-def overall_probability(
-    entities: dict[str, Entity],
-    prior: float,
-) -> float:
+def overall_probability(entities: dict[str, Entity], prior: float) -> float:
     """Combine weighted posteriors from active/decaying sensors."""
 
     contributing_entities = [
