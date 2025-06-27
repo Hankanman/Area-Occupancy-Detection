@@ -9,14 +9,10 @@
   "pylint.importStrategy": "fromEnvironment",
   "json.schemas": [
     {
-      "fileMatch": ["homeassistant/components/*/manifest.json"],
+      "fileMatch": ["custom_components/*/manifest.json"],
       // This value differs between working with devcontainer and locally, therefor this value should NOT be in sync!
       "url": "./script/json_schemas/manifest_schema.json"
     }
   ],
-  "python.testing.unittestEnabled": false,
-  "python.analysis.autoImportCompletions": true,
-  "python.analysis.typeCheckingMode": "basic",
-  "cursorpyright.analysis.autoImportCompletions": true,
-  "cursorpyright.analysis.typeCheckingMode": "basic"
+  "python.testing.unittestEnabled": false
 }

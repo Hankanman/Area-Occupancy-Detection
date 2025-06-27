@@ -18,7 +18,8 @@
         "visualstudioexptteam.vscodeintellicode",
         "redhat.vscode-yaml",
         "esbenp.prettier-vscode",
-        "github.vscode-pull-request-github"
+        "github.vscode-pull-request-github",
+        "github.vscode-github-actions"
       ],
       "settings": {
         "files.eol": "\n",
