@@ -172,7 +172,7 @@ class Statistics:
             # For unknown sensor types, use enhanced range detection
             return await self._detect_generic_activity(current_value, recent_baseline)
 
-        except Exception as err:
+        except (ValueError, TypeError, ArithmeticError) as err:
             _LOGGER.warning("Activity detection failed for %s: %s", self.entity_id, err)
             # Fall back to simple range check
             lower, upper = self.active_range
@@ -223,15 +223,19 @@ class Statistics:
                     self.statistics.unoccupied_average
                     or self.statistics.occupied_average
                 )
-            return 50.0  # Default baseline
 
-        except Exception:
+        except (ValueError, TypeError, AttributeError, KeyError) as err:
             # Fallback to stored unoccupied average
+            _LOGGER.debug(
+                "Error getting recent baseline for %s: %s", self.entity_id, err
+            )
             if self.statistics:
                 return (
                     self.statistics.unoccupied_average
                     or self.statistics.occupied_average
                 )
+            return 50.0  # Default baseline
+        else:
             return 50.0  # Default baseline
 
     async def _detect_humidity_activity(
@@ -330,7 +334,7 @@ class Statistics:
     async def _detect_generic_activity(
         self, current_value: float, baseline: float
     ) -> bool:
-        """Generic activity detection for unknown sensor types."""
+        """Get generic activity."""
         if not self.statistics:
             return False
 
@@ -352,7 +356,7 @@ class Statistics:
         return False
 
     def detect_current_activity_sync(self, current_value: float) -> bool:
-        """Synchronous version of activity detection using cached baselines"""
+        """Get current activity."""
 
         if self.statistics is None:
             # Fall back to simple range check if no statistics available
@@ -375,7 +379,7 @@ class Statistics:
     def _detect_humidity_activity_sync(
         self, current_value: float, baseline: float
     ) -> bool:
-        """Synchronous humidity activity detection"""
+        """Get humidity activity."""
         delta = current_value - baseline
 
         # Shower detection: significant increase above baseline
@@ -394,7 +398,7 @@ class Statistics:
     def _detect_illuminance_activity_sync(
         self, current_value: float, baseline: float
     ) -> bool:
-        """Synchronous illuminance activity detection"""
+        """Get illuminance activity."""
         delta = current_value - baseline
 
         # Light detection: significant increase above ambient
@@ -412,7 +416,7 @@ class Statistics:
     def _detect_temperature_activity_sync(
         self, current_value: float, baseline: float
     ) -> bool:
-        """Synchronous temperature activity detection"""
+        """Get temperature activity."""
         delta = abs(current_value - baseline)
 
         # Human presence detection: measurable temperature change
@@ -431,7 +435,7 @@ class Statistics:
     def _detect_generic_activity_sync(
         self, current_value: float, baseline: float
     ) -> bool:
-        """Synchronous generic activity detection."""
+        """Get generic activity."""
         if not self.statistics:
             return False
 
@@ -674,11 +678,12 @@ class Statistics:
                 return TrendDirection.STABLE, slope
             if slope > 0:
                 return TrendDirection.RISING, slope
-            return TrendDirection.FALLING, slope
 
-        except Exception as err:
+        except (ValueError, TypeError, ArithmeticError) as err:
             _LOGGER.warning("Error in trend analysis for %s: %s", self.entity_id, err)
             return TrendDirection.INSUFFICIENT_DATA, 0.0
+        else:
+            return TrendDirection.FALLING, slope
 
     def _get_noise_threshold(self) -> float:
         """Get noise threshold for trend significance based on sensor type."""

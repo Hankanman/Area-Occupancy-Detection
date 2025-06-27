@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
-from ..utils import bayesian_probability
+from ..utils import apply_decay, bayesian_probability
 from .decay import Decay
 from .entity_type import EntityType, InputType
 from .likelihood import Likelihood
@@ -56,20 +56,39 @@ class Entity:
         return entry.entity_category if entry else None
 
     @property
+    def effective_prob_given_true(self) -> float:
+        """Get decay-adjusted probability given true."""
+        effective_prob_true, _ = apply_decay(
+            self.likelihood.prob_given_true,
+            self.likelihood.prob_given_false,
+            self.decay.decay_factor,
+        )
+        return effective_prob_true
+
+    @property
+    def effective_prob_given_false(self) -> float:
+        """Get decay-adjusted probability given false."""
+        _, effective_prob_false = apply_decay(
+            self.likelihood.prob_given_true,
+            self.likelihood.prob_given_false,
+            self.decay.decay_factor,
+        )
+        return effective_prob_false
+
+    @property
     def probability(self) -> float:
         """Calculate this entity's raw contribution to area probability.
 
         This shows what this entity would contribute if it were fully active,
-        using Bayesian calculation without decay factor applied.
+        using Bayesian calculation with decay factor applied.
         """
 
         # Calculate effective Bayesian posterior with decay applied
         return bayesian_probability(
             prior=self.coordinator.area_prior,
-            prob_given_true=self.likelihood.prob_given_true,
-            prob_given_false=self.likelihood.prob_given_false,
+            prob_given_true=self.effective_prob_given_true,
+            prob_given_false=self.effective_prob_given_false,
             evidence=True,
-            decay_factor=self.decay.decay_factor,
         )
 
     @property
@@ -191,13 +210,12 @@ class Entity:
         if transition_occurred:
             self.last_updated = dt_util.utcnow()
             if current_evidence:  # FALSE→TRUE transition
-                # Evidence appeared - jump probability up via Bayesian update
+                # Evidence appeared - jump probability up via Bayesian update (no decay applied)
                 self.previous_probability = bayesian_probability(
                     prior=self.previous_probability,
                     prob_given_true=self.likelihood.prob_given_true,
                     prob_given_false=self.likelihood.prob_given_false,
                     evidence=True,
-                    decay_factor=1.0,  # No decay on evidence appearance
                 )
                 self.decay.stop_decay()
                 _LOGGER.debug(

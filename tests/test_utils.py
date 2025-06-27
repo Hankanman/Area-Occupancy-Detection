@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.area_occupancy.utils import (
+    apply_decay,
     bayesian_probability,
     format_float,
     overall_probability,
@@ -140,7 +141,6 @@ class TestBayesianProbability:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             evidence=True,
-            decay_factor=1.0,
         )
         assert abs(result - 0.774) < 0.001
 
@@ -161,7 +161,6 @@ class TestBayesianProbability:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             evidence=False,
-            decay_factor=1.0,
         )
         # Correct calculation:
         # P(OFF|occupied) = 0.2, P(OFF|unoccupied) = 0.9
@@ -177,7 +176,6 @@ class TestBayesianProbability:
             prob_given_true=0.99,
             prob_given_false=0.01,
             evidence=True,
-            decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
 
@@ -186,7 +184,6 @@ class TestBayesianProbability:
             prob_given_true=0.99,
             prob_given_false=0.01,
             evidence=False,
-            decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
 
@@ -198,7 +195,6 @@ class TestBayesianProbability:
             prob_given_true=1.1,
             prob_given_false=-0.1,
             evidence=True,
-            decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
 
@@ -207,7 +203,6 @@ class TestBayesianProbability:
             prob_given_true=-0.1,
             prob_given_false=1.1,
             evidence=False,
-            decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
 
@@ -219,20 +214,29 @@ class TestBayesianProbability:
             prob_given_true=0.8,
             prob_given_false=0.2,
             evidence=True,
-            decay_factor=1.0,
         )
         assert 0.0 <= result <= 1.0
         # Just test that it returns a valid probability
         assert 0.5 <= result <= 1.0
 
-    def test_bayesian_probability_fractional_decay(self) -> None:
-        """Test Bayesian probability with fractional decay factor."""
+    def test_bayesian_probability_with_decay_preprocessing(self) -> None:
+        """Test Bayesian probability with decay applied via preprocessing."""
+        # Apply decay to probabilities first, then call bayesian_probability
+        original_prob_true = 0.8
+        original_prob_false = 0.2
+        decay_factor = 0.5
+
+        # Apply decay to get effective probabilities
+        effective_prob_true, effective_prob_false = apply_decay(
+            original_prob_true, original_prob_false, decay_factor
+        )
+
+        # Now call bayesian_probability with effective probabilities
         result = bayesian_probability(
             prior=0.5,
-            prob_given_true=0.8,
-            prob_given_false=0.2,
+            prob_given_true=effective_prob_true,
+            prob_given_false=effective_prob_false,
             evidence=False,
-            decay_factor=0.5,
         )
         assert 0.0 <= result <= 1.0
 
@@ -249,6 +253,8 @@ class TestOverallProbability:
         mock_entity.type.weight = 1.0
         mock_entity.likelihood.prob_given_true = 0.8
         mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.effective_prob_given_true = 0.8  # No decay
+        mock_entity.effective_prob_given_false = 0.1  # No decay
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -257,7 +263,6 @@ class TestOverallProbability:
             prob_given_true=0.8,
             prob_given_false=0.1,
             evidence=True,
-            decay_factor=1.0,
         )
 
         result = overall_probability(entities, prior)
@@ -272,6 +277,8 @@ class TestOverallProbability:
         mock_entity1.type.weight = 0.8
         mock_entity1.likelihood.prob_given_true = 0.8
         mock_entity1.likelihood.prob_given_false = 0.1
+        mock_entity1.effective_prob_given_true = 0.8  # No decay
+        mock_entity1.effective_prob_given_false = 0.1  # No decay
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
@@ -279,6 +286,8 @@ class TestOverallProbability:
         mock_entity2.type.weight = 0.6
         mock_entity2.likelihood.prob_given_true = 0.7
         mock_entity2.likelihood.prob_given_false = 0.2
+        mock_entity2.effective_prob_given_true = 0.7  # No decay
+        mock_entity2.effective_prob_given_false = 0.2  # No decay
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -291,7 +300,6 @@ class TestOverallProbability:
             prob_given_true=0.8,
             prob_given_false=0.1,
             evidence=True,
-            decay_factor=1.0,
         )
 
         result = overall_probability(entities, prior)
@@ -299,22 +307,31 @@ class TestOverallProbability:
 
     def test_decaying_entity(self) -> None:
         """Test probability calculation with a decaying entity."""
+        # Calculate effective probabilities with decay applied
+        original_prob_true = 0.8
+        original_prob_false = 0.1
+        decay_factor = 0.5
+        effective_prob_true, effective_prob_false = apply_decay(
+            original_prob_true, original_prob_false, decay_factor
+        )
+
         mock_entity = Mock()
         mock_entity.evidence = False
         mock_entity.decay.is_decaying = True
-        mock_entity.decay.decay_factor = 0.5  # Half decay
+        mock_entity.decay.decay_factor = decay_factor
         mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.likelihood.prob_given_true = original_prob_true
+        mock_entity.likelihood.prob_given_false = original_prob_false
+        mock_entity.effective_prob_given_true = effective_prob_true
+        mock_entity.effective_prob_given_false = effective_prob_false
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
         expected = bayesian_probability(
             prior=prior,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
+            prob_given_true=effective_prob_true,
+            prob_given_false=effective_prob_false,
             evidence=True,
-            decay_factor=0.5,
         )
 
         result = overall_probability(entities, prior)
@@ -337,6 +354,8 @@ class TestOverallProbability:
         mock_entity.type.weight = 1.0
         mock_entity.likelihood.prob_given_true = 0.8
         mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.effective_prob_given_true = 0.8  # No decay
+        mock_entity.effective_prob_given_false = 0.1  # No decay
 
         entities = {"sensor": cast("Entity", mock_entity)}
         prior = 0.3
@@ -353,6 +372,8 @@ class TestOverallProbability:
         mock_active.type.weight = 1.0
         mock_active.likelihood.prob_given_true = 0.8
         mock_active.likelihood.prob_given_false = 0.1
+        mock_active.effective_prob_given_true = 0.8  # No decay
+        mock_active.effective_prob_given_false = 0.1  # No decay
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
@@ -360,14 +381,22 @@ class TestOverallProbability:
         mock_inactive.type.weight = 1.0
         mock_inactive.likelihood.prob_given_true = 0.8
         mock_inactive.likelihood.prob_given_false = 0.1
+        mock_inactive.effective_prob_given_true = 0.8  # No decay
+        mock_inactive.effective_prob_given_false = 0.1  # No decay
+
+        # Calculate effective probabilities for decaying entity
+        decay_factor = 0.5
+        effective_prob_true, effective_prob_false = apply_decay(0.8, 0.1, decay_factor)
 
         mock_decaying = Mock()
         mock_decaying.evidence = False
         mock_decaying.decay.is_decaying = True
-        mock_decaying.decay.decay_factor = 0.5
+        mock_decaying.decay.decay_factor = decay_factor
         mock_decaying.type.weight = 1.0
         mock_decaying.likelihood.prob_given_true = 0.8
         mock_decaying.likelihood.prob_given_false = 0.1
+        mock_decaying.effective_prob_given_true = effective_prob_true
+        mock_decaying.effective_prob_given_false = effective_prob_false
 
         entities = {
             "active": cast("Entity", mock_active),
@@ -406,3 +435,63 @@ class TestStatesToIntervals:
         assert intervals[0]["start"] == start
         assert intervals[-1]["end"] == end
         assert intervals[0]["state"] == "off"
+
+
+class TestApplyDecayToLikelihood:
+    """Test apply_decay function."""
+
+    def test_no_decay(self) -> None:
+        """Test that decay_factor=1.0 returns original probabilities."""
+        prob_true = 0.8
+        prob_false = 0.2
+
+        result_true, result_false = apply_decay(prob_true, prob_false, 1.0)
+
+        assert result_true == prob_true
+        assert result_false == prob_false
+
+    def test_full_decay(self) -> None:
+        """Test that decay_factor=0.0 returns neutral probabilities."""
+        prob_true = 0.8
+        prob_false = 0.2
+
+        result_true, result_false = apply_decay(prob_true, prob_false, 0.0)
+
+        assert result_true == 0.5
+        assert result_false == 0.5
+
+    def test_partial_decay(self) -> None:
+        """Test that partial decay moves probabilities toward neutral."""
+        prob_true = 0.8
+        prob_false = 0.2
+        decay_factor = 0.5
+
+        result_true, result_false = apply_decay(prob_true, prob_false, decay_factor)
+
+        # Should be between original and neutral (0.5)
+        assert 0.5 < result_true < 0.8
+        assert 0.2 < result_false < 0.5
+
+        # Should maintain mathematical equivalence with original bayes factor exponentiation
+        original_bf = prob_true / prob_false
+        decayed_bf = original_bf**decay_factor
+        result_bf = result_true / result_false
+
+        assert abs(result_bf - decayed_bf) < 0.001
+
+    def test_mathematical_equivalence(self) -> None:
+        """Test that apply_decay maintains mathematical equivalence."""
+        prob_true = 0.9
+        prob_false = 0.1
+        decay_factor = 0.3
+
+        # Original approach: apply decay as exponent to bayes factor
+        original_bf = prob_true / prob_false
+        expected_decayed_bf = original_bf**decay_factor
+
+        # New approach: apply decay to probabilities
+        result_true, result_false = apply_decay(prob_true, prob_false, decay_factor)
+        actual_decayed_bf = result_true / result_false
+
+        # Should be mathematically equivalent
+        assert abs(actual_decayed_bf - expected_decayed_bf) < 0.001
