@@ -96,9 +96,9 @@ These packages are critical for test consistency:
 
 | Package | Version | Why Critical |
 |---------|---------|--------------|
-| `pytest` | 8.4.0 | Test runner behavior |
-| `pytest-asyncio` | 1.0.0 | Event loop management |
-| `pytest-homeassistant-custom-component` | 0.13.256 | HA-specific test fixtures |
+| `pytest` | 8.3.5 | Test runner behavior |
+| `pytest-asyncio` | 0.26.0 | Event loop management |
+| `pytest-homeassistant-custom-component` | 0.13.254 | HA-specific test fixtures |
 
 ## Common Environment Issues
 

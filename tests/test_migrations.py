@@ -89,7 +89,7 @@ class TestMigratePrimaryOccupancySensor:
     def test_migrate_primary_occupancy_sensor_needed(self) -> None:
         """Test migration when primary sensor is missing."""
         config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"]
         }
 
         result = migrate_primary_occupancy_sensor(config)
@@ -132,9 +132,7 @@ class TestMigratePurposeField:
 
     def test_migrate_purpose_field_needed(self) -> None:
         """Test migration when purpose is missing and sensors exist."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
+        config = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
 
         result = migrate_purpose_field(config)
 
@@ -187,9 +185,7 @@ class TestMigrateConfig:
 
     def test_migrate_config_adds_primary_sensor(self) -> None:
         """Test config migration adds primary sensor."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
+        config = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
 
         result = migrate_config(config)
 
@@ -247,9 +243,7 @@ class TestAsyncMigrateEntry:
         entry.version = 1
         entry.minor_version = 0
         entry.entry_id = mock_config_entry.entry_id
-        entry.data = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
+        entry.data = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
         entry.options = {}
         return entry
 
@@ -282,8 +276,7 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
+                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
             ),
         ):
             mock_migrate_ids.return_value = None
@@ -345,8 +338,7 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
+                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
             ),
         ):
             mock_hass.config_entries.async_update_entry = Mock()
@@ -371,8 +363,7 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
+                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
             ),
         ):
             mock_migrate_ids.return_value = None
@@ -425,7 +416,7 @@ class TestMigrationsIntegration:
         mock_entry.minor_version = 0
         mock_entry.entry_id = "test_entry_id"
         mock_entry.data = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"]
         }
         mock_entry.options = {CONF_THRESHOLD: 150}  # Invalid threshold
 
@@ -439,8 +430,7 @@ class TestMigrationsIntegration:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
+                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
             ),
         ):
             mock_migrate_ids.return_value = None

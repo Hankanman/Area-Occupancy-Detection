@@ -166,7 +166,7 @@ class TestPrior:
                 "state": "on",
                 "start": base_time + timedelta(minutes=10),
                 "end": base_time + timedelta(minutes=25),
-            },
+            }
         ]
 
         prior.data["sensor1"] = PriorData(
@@ -460,11 +460,7 @@ class TestPrior:
 
         result = prior.to_dict()
 
-        expected = {
-            "value": None,
-            "last_updated": None,
-            "sensor_hash": None,
-        }
+        expected = {"value": None, "last_updated": None, "sensor_hash": None}
         assert result == expected
 
     def test_from_dict(self, mock_coordinator: Mock) -> None:
@@ -484,11 +480,7 @@ class TestPrior:
 
     def test_from_dict_none_timestamp(self, mock_coordinator: Mock) -> None:
         """Test creating prior from dictionary with None timestamp."""
-        data = {
-            "value": 0.35,
-            "last_updated": None,
-            "sensor_hash": 12345,
-        }
+        data = {"value": 0.35, "last_updated": None, "sensor_hash": 12345}
 
         prior = Prior.from_dict(data, mock_coordinator)
 

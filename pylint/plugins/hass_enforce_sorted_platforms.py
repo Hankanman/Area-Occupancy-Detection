@@ -17,7 +17,7 @@ class HassEnforceSortedPlatformsChecker(BaseChecker):
             "Platforms must be sorted alphabetically",
             "hass-enforce-sorted-platforms",
             "Used when PLATFORMS should be sorted alphabetically.",
-        ),
+        )
     }
     options = ()
 

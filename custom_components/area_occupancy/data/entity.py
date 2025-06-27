@@ -115,10 +115,7 @@ class Entity:
             bool: True if evidence transition occurred, False otherwise
 
         """
-        _LOGGER.debug(
-            "Entity %s: Checking evidence",
-            self.entity_id,
-        )
+        _LOGGER.debug("Entity %s: Checking evidence", self.entity_id)
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
@@ -133,10 +130,7 @@ class Entity:
 
         # Skip transition logic if current evidence is None (entity unavailable)
         if current_evidence is None or previous_evidence is None:
-            _LOGGER.debug(
-                "Entity %s: skipping transition logic",
-                self.entity_id,
-            )
+            _LOGGER.debug("Entity %s: skipping transition logic", self.entity_id)
             # Update previous evidence even if skipping to prevent false transitions later
             self.previous_evidence = current_evidence
             return False
@@ -144,9 +138,7 @@ class Entity:
         # Check for evidence transitions
         transition_occurred = current_evidence != previous_evidence
         _LOGGER.debug(
-            "Entity %s: transition_occurred %s",
-            self.entity_id,
-            transition_occurred,
+            "Entity %s: transition_occurred %s", self.entity_id, transition_occurred
         )
 
         # Handle evidence transitions
@@ -226,10 +218,7 @@ class Entity:
 class EntityManager:
     """Manages entities."""
 
-    def __init__(
-        self,
-        coordinator: "AreaOccupancyCoordinator",
-    ) -> None:
+    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the entities."""
         self.coordinator = coordinator
         self.config = coordinator.config_manager.config
@@ -293,7 +282,7 @@ class EntityManager:
             "entities": {
                 entity_id: entity.to_dict()
                 for entity_id, entity in self._entities.items()
-            },
+            }
         }
 
     @classmethod
@@ -351,11 +340,7 @@ class EntityManager:
         self._entities.clear()
         self._entities = await self._create_entities_from_config()
 
-    async def create_entity(
-        self,
-        entity_id: str,
-        entity_type: EntityType,
-    ) -> Entity:
+    async def create_entity(self, entity_id: str, entity_type: EntityType) -> Entity:
         """Create a new entity.
 
         Args:
@@ -518,8 +503,7 @@ class EntityManager:
             _LOGGER.info("Creating new entity %s", entity_id)
             # Create entity with default priors from entity type
             new_entity = await self.create_entity(
-                entity_id=entity_id,
-                entity_type=entity_type,
+                entity_id=entity_id, entity_type=entity_type
             )
             new_entities[entity_id] = new_entity
             updated_entities[entity_id] = new_entity
@@ -570,8 +554,7 @@ class EntityManager:
             for input_entity_id in inputs:
                 # Create entity with default priors from entity type
                 entities[input_entity_id] = await self.create_entity(
-                    entity_id=input_entity_id,
-                    entity_type=entity_type,
+                    entity_id=input_entity_id, entity_type=entity_type
                 )
 
         # Note: Likelihood calculations will be performed later in the coordinator setup

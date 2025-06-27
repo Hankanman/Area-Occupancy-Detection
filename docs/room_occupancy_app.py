@@ -290,9 +290,9 @@ class OccupancyApp:
                 prob_given_false=entity.prior.prob_given_false,
                 is_active=is_active,
                 weight=entity.weight,
-                decay_factor=entity.decay.decay_factor
-                if entity.decay.is_decaying
-                else 1.0,
+                decay_factor=(
+                    entity.decay.decay_factor if entity.decay.is_decaying else 1.0
+                ),
             )
             if entity.lbl_belief is not None:
                 entity.lbl_belief.configure(text=f"Belief: {entity.belief:0.2f}")

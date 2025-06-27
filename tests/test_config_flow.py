@@ -555,9 +555,7 @@ class TestConfigFlowIntegration:
             "appliances": {},
             "environmental": {},
             "wasp_in_box": {},
-            "parameters": {
-                CONF_THRESHOLD: 60,
-            },
+            "parameters": {CONF_THRESHOLD: 60},
         }
 
         with (
@@ -659,9 +657,7 @@ class TestConfigFlowIntegration:
                 "appliances": {},
                 "environmental": {},
                 "wasp_in_box": {},
-                "parameters": {
-                    CONF_THRESHOLD: 75,
-                },
+                "parameters": {CONF_THRESHOLD: 75},
             }
 
             # Mock async_create_entry to return the user input as data
@@ -786,11 +782,7 @@ class TestConfigFlowIntegration:
                 "custom_components.area_occupancy.config_flow._get_include_entities"
             ) as mock_get_entities,
         ):
-            mock_get_entities.return_value = {
-                "appliance": [],
-                "window": [],
-                "door": [],
-            }
+            mock_get_entities.return_value = {"appliance": [], "window": [], "door": []}
             # The AbortFlow is caught and converted to an error in the flow
             result = await flow.async_step_user(user_input)
             assert result.get("type") == FlowResultType.FORM
@@ -817,9 +809,7 @@ class TestConfigFlowIntegration:
             "appliances": {},
             "environmental": {},
             "wasp_in_box": {},
-            "parameters": {
-                CONF_THRESHOLD: 60,
-            },
+            "parameters": {CONF_THRESHOLD: 60},
         }
 
         with patch(
@@ -845,9 +835,7 @@ class TestConfigFlowIntegration:
             "appliances": {},
             "environmental": {},
             "wasp_in_box": {},
-            "parameters": {
-                CONF_THRESHOLD: 60,
-            },
+            "parameters": {CONF_THRESHOLD: 60},
         }
 
         with (

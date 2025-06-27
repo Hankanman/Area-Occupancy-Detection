@@ -161,9 +161,6 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
 def get_purpose_options() -> list[dict[str, str]]:
     """Get purpose options for SelectSelector."""
     return [
-        {
-            "value": purpose.purpose.value,
-            "label": purpose.name,
-        }
+        {"value": purpose.purpose.value, "label": purpose.name}
         for purpose in PURPOSE_DEFINITIONS.values()
     ]

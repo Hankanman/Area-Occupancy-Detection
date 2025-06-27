@@ -46,8 +46,7 @@ class TestAsyncSetupEntry:
                 return_value=coordinator,
             ) as mock_coord,
             patch(
-                "custom_components.area_occupancy.async_setup_services",
-                AsyncMock(),
+                "custom_components.area_occupancy.async_setup_services", AsyncMock()
             ) as mock_services,
         ):
             result = await async_setup_entry(mock_hass, mock_config_entry)

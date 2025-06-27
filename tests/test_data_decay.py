@@ -18,9 +18,7 @@ class TestDecay:
     def test_initialization_with_validation(self, freeze_time) -> None:
         """Test initialization with validation."""
         decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(),
-            half_life=60.0,
-            is_decaying=True,
+            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
         )
         assert decay.last_trigger_ts == freeze_time.timestamp()
         assert decay.half_life == 60.0
@@ -28,11 +26,7 @@ class TestDecay:
 
     def test_to_dict(self) -> None:
         """Test conversion to dictionary."""
-        decay = Decay(
-            last_trigger_ts=1000.0,
-            half_life=60.0,
-            is_decaying=True,
-        )
+        decay = Decay(last_trigger_ts=1000.0, half_life=60.0, is_decaying=True)
         data = decay.to_dict()
         assert data["last_trigger_ts"] == 1000.0
         assert data["half_life"] == 60.0
@@ -40,11 +34,7 @@ class TestDecay:
 
     def test_from_dict(self) -> None:
         """Test creation from dictionary."""
-        data = {
-            "last_trigger_ts": 1000.0,
-            "half_life": 60.0,
-            "is_decaying": True,
-        }
+        data = {"last_trigger_ts": 1000.0, "half_life": 60.0, "is_decaying": True}
         decay = Decay.from_dict(data)
         assert decay.last_trigger_ts == 1000.0
         assert decay.half_life == 60.0
@@ -58,9 +48,7 @@ class TestDecay:
     def test_decay_factor_decaying(self, freeze_time) -> None:
         """Test decay factor when decaying."""
         decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(),
-            half_life=60.0,
-            is_decaying=True,
+            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
         )
         # After one half-life, factor should be 0.5
         with patch("time.time", return_value=freeze_time.timestamp() + 60.0):
@@ -69,9 +57,7 @@ class TestDecay:
     def test_decay_factor_auto_stop(self, freeze_time) -> None:
         """Test auto-stop of decay when factor becomes negligible."""
         decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(),
-            half_life=60.0,
-            is_decaying=True,
+            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
         )
         # After many half-lives, decay should auto-stop
         with patch("time.time", return_value=freeze_time.timestamp() + 1000.0):

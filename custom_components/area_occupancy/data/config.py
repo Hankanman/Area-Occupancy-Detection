@@ -348,8 +348,7 @@ class ConfigManager:
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                options=new_options,
+                self.config_entry, options=new_options
             )
 
             # Merge existing config entry with new options for internal state

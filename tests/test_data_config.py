@@ -224,10 +224,7 @@ class TestDecay:
 
     def test_initialization_with_values(self) -> None:
         """Test Decay initialization with specific values."""
-        decay = Decay(
-            enabled=False,
-            half_life=600,
-        )
+        decay = Decay(enabled=False, half_life=600)
 
         assert decay.enabled is False
         assert decay.half_life == 600
@@ -245,10 +242,7 @@ class TestHistory:
 
     def test_initialization_with_values(self) -> None:
         """Test History initialization with specific values."""
-        history = History(
-            enabled=False,
-            period=60,
-        )
+        history = History(enabled=False, period=60)
 
         assert history.enabled is False
         assert history.period == 60
@@ -268,12 +262,7 @@ class TestWaspInBox:
 
     def test_initialization_with_values(self) -> None:
         """Test WaspInBox initialization with specific values."""
-        wasp = WaspInBox(
-            enabled=True,
-            motion_timeout=30,
-            weight=0.9,
-            max_duration=7200,
-        )
+        wasp = WaspInBox(enabled=True, motion_timeout=30, weight=0.9, max_duration=7200)
 
         assert wasp.enabled is True
         assert wasp.motion_timeout == 30
@@ -560,10 +549,7 @@ class TestConfigManager:
         assert initial_config.decay.enabled == DEFAULT_DECAY_ENABLED
 
         # Update with new options
-        new_options = {
-            CONF_DECAY_ENABLED: False,
-            CONF_THRESHOLD: 80,
-        }
+        new_options = {CONF_DECAY_ENABLED: False, CONF_THRESHOLD: 80}
 
         await manager.update_config(new_options)
 
@@ -639,9 +625,7 @@ class TestConfigIntegration:
             CONF_THRESHOLD: 70,
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
         }
-        new_config_entry.options = {
-            CONF_DECAY_ENABLED: False,
-        }
+        new_config_entry.options = {CONF_DECAY_ENABLED: False}
 
         manager.update_from_entry(new_config_entry)
 

@@ -47,11 +47,7 @@ DOOR_CLOSED = STATE_OFF
 class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity):
     """Binary sensor for the occupancy status."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
@@ -184,8 +180,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
             _LOGGER.exception(
-                "Error during WaspInBoxSensor setup for %s",
-                self.entity_id,
+                "Error during WaspInBoxSensor setup for %s", self.entity_id
             )
 
     async def _restore_previous_state(self) -> None:
@@ -235,18 +230,20 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         """Return the state attributes."""
         return {
             ATTR_DOOR_STATE: self._door_state,
-            ATTR_LAST_DOOR_TIME: self._last_door_time.isoformat()
-            if self._last_door_time
-            else None,
+            ATTR_LAST_DOOR_TIME: (
+                self._last_door_time.isoformat() if self._last_door_time else None
+            ),
             ATTR_MOTION_STATE: self._motion_state,
-            ATTR_LAST_MOTION_TIME: self._last_motion_time.isoformat()
-            if self._last_motion_time
-            else None,
+            ATTR_LAST_MOTION_TIME: (
+                self._last_motion_time.isoformat() if self._last_motion_time else None
+            ),
             ATTR_MOTION_TIMEOUT: self._motion_timeout,
             ATTR_MAX_DURATION: self._max_duration,
-            ATTR_LAST_OCCUPIED_TIME: self._last_occupied_time.isoformat()
-            if self._last_occupied_time
-            else None,
+            ATTR_LAST_OCCUPIED_TIME: (
+                self._last_occupied_time.isoformat()
+                if self._last_occupied_time
+                else None
+            ),
         }
 
     @property
@@ -470,28 +467,21 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: Any,
+    hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: Any
 ) -> None:
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
     # 1. Create the main sensor instance
     entities: list[BinarySensorEntity] = [
-        Occupancy(
-            coordinator=coordinator,
-            entry_id=config_entry.entry_id,
-        )
+        Occupancy(coordinator=coordinator, entry_id=config_entry.entry_id)
     ]
 
     # 2. Create the Wasp in Box sensor if enabled
     if coordinator.config.wasp_in_box.enabled:
         _LOGGER.debug("Wasp in Box sensor enabled, creating sensor")
         wasp_sensor = WaspInBoxSensor(
-            hass=hass,
-            coordinator=coordinator,
-            config_entry=config_entry,
+            hass=hass, coordinator=coordinator, config_entry=config_entry
         )
         entities.append(wasp_sensor)
         _LOGGER.debug("Created Wasp in Box sensor: %s", wasp_sensor.unique_id)

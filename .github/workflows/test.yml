@@ -24,6 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements_test.txt
 
@@ -33,7 +34,10 @@ jobs:
 
       - name: Display Package Versions (for debugging)
         run: |
-          python -c "import pytest, pytest_asyncio; print(f'pytest: {pytest.__version__}'); print(f'pytest-asyncio: {pytest_asyncio.__version__}')"
+          echo "=== Key Package Versions ==="
+          python -c "import pytest; print(f'pytest: {pytest.__version__}')"
+          pip show pytest-asyncio | grep Version
+          pip show pytest-homeassistant-custom-component | grep Version
 
       - name: Run tests with pytest
         run: |

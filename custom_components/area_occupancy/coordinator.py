@@ -48,11 +48,7 @@ PRIOR_INTERVAL = 3600
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Manage fetching and combining data for area occupancy."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        config_entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -96,8 +92,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return MIN_PROBABILITY
 
         return overall_probability(
-            entities=self.entities.entities,
-            prior=self.area_prior,
+            entities=self.entities.entities, prior=self.area_prior
         )
 
     @property
@@ -139,10 +134,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                  containing their respective entity_ids or None if not set.
 
         """
-        return {
-            "occupancy": self.occupancy_entity_id,
-            "wasp": self.wasp_entity_id,
-        }
+        return {"occupancy": self.occupancy_entity_id, "wasp": self.wasp_entity_id}
 
     # --- Public Methods ---
     async def setup(self) -> None:
@@ -166,8 +158,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.entities.__post_init__()
 
                 _LOGGER.debug(
-                    "Successfully restored stored data for instance %s",
-                    self.entry_id,
+                    "Successfully restored stored data for instance %s", self.entry_id
                 )
             else:
                 # No stored data - initialize entities from configuration
@@ -295,9 +286,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     await self.async_refresh()
 
             self._remove_state_listener = async_track_state_change_event(
-                self.hass,
-                entity_ids,
-                _refresh_on_state_change,
+                self.hass, entity_ids, _refresh_on_state_change
             )
 
     # --- Prior Timer Handling ---

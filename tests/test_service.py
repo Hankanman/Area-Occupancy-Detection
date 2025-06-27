@@ -567,7 +567,7 @@ class TestGetProblematicEntities:
         mock_active_entity.last_updated = dt_util.utcnow() - timedelta(minutes=30)
 
         mock_coordinator.entities.entities = {
-            "binary_sensor.motion1": mock_active_entity,
+            "binary_sensor.motion1": mock_active_entity
         }
 
         mock_config_entry.runtime_data = mock_coordinator

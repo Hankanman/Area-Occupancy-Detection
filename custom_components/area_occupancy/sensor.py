@@ -28,11 +28,7 @@ class AreaOccupancySensorBase(
 ):
     """Base class for area occupancy sensors."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
@@ -49,11 +45,7 @@ class AreaOccupancySensorBase(
 class PriorsSensor(AreaOccupancySensorBase):
     """Combined sensor for all priors."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the priors sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_PRIORS_SENSOR
@@ -74,11 +66,7 @@ class PriorsSensor(AreaOccupancySensorBase):
 class ProbabilitySensor(AreaOccupancySensorBase):
     """Probability sensor for current area occupancy."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the probability sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_PROBABILITY_SENSOR
@@ -106,11 +94,7 @@ class EntitiesSensor(AreaOccupancySensorBase):
 
     _unrecorded_attributes = frozenset({"evidence", "no_evidence", "total", "details"})
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the entities sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_ENTITIES_SENSOR
@@ -176,11 +160,7 @@ class EntitiesSensor(AreaOccupancySensorBase):
 class DecaySensor(AreaOccupancySensorBase):
     """Decay status sensor for area occupancy."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the decay sensor."""
         super().__init__(coordinator, entry_id)
         self._attr_name = NAME_DECAY_SENSOR
@@ -216,9 +196,7 @@ class DecaySensor(AreaOccupancySensorBase):
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: Any,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Any
 ) -> None:
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data

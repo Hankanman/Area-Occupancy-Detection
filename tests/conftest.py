@@ -1514,19 +1514,10 @@ def mock_config():
             environmental=0.3,
             wasp=0.8,
         ),
-        decay=Decay(
-            enabled=True,
-            half_life=300,
-        ),
-        history=History(
-            enabled=True,
-            period=30,
-        ),
+        decay=Decay(enabled=True, half_life=300),
+        history=History(enabled=True, period=30),
         wasp_in_box=WaspInBox(
-            enabled=False,
-            motion_timeout=60,
-            weight=0.8,
-            max_duration=600,
+            enabled=False, motion_timeout=60, weight=0.8, max_duration=600
         ),
         _raw={},
     )

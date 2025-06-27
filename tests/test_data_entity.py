@@ -168,8 +168,7 @@ class TestEntity:
         mock_coordinator.hass.states.get.return_value = mock_state
 
         entity = await manager.create_entity(
-            entity_id="test_entity",
-            entity_type=mock_entity_type,
+            entity_id="test_entity", entity_type=mock_entity_type
         )
 
         assert entity.entity_id == "test_entity"
@@ -301,12 +300,7 @@ class TestEntityManager:
         mock_from_dict.return_value = mock_entity
 
         data = {
-            "entities": {
-                "test_entity": {
-                    "entity_id": "test_entity",
-                    "type": "motion",
-                }
-            }
+            "entities": {"test_entity": {"entity_id": "test_entity", "type": "motion"}}
         }
 
         result = EntityManager.from_dict(data, mock_coordinator)
@@ -405,10 +399,7 @@ class TestEntityManager:
         mock_entity1 = Mock()
         mock_entity2 = Mock()
 
-        manager._entities = {
-            "entity1": mock_entity1,
-            "entity2": mock_entity2,
-        }
+        manager._entities = {"entity1": mock_entity1, "entity2": mock_entity2}
 
         # Mock the _create_entities_from_config method to return new entities
         manager._create_entities_from_config = AsyncMock(
@@ -445,10 +436,7 @@ class TestEntityManager:
         mock_entity2.type.active_states = [STATE_ON]
         mock_entity2.type.active_range = None
 
-        manager._entities = {
-            "test1": mock_entity1,
-            "test2": mock_entity2,
-        }
+        manager._entities = {"test1": mock_entity1, "test2": mock_entity2}
 
         # Mock state - the entities are mocks, so we need to mock their properties
         mock_state = Mock()
@@ -879,10 +867,7 @@ class TestEntityManagerAdvanced:
         mock_entity_type2.active_states = ["playing"]
         mock_entity_type2.active_range = None
 
-        config_entities = {
-            "entity1": mock_entity_type1,
-            "entity2": mock_entity_type2,
-        }
+        config_entities = {"entity1": mock_entity_type1, "entity2": mock_entity_type2}
         updated_entities = {}
 
         manager._process_existing_entities(config_entities, updated_entities)  # type: ignore[arg-type]
@@ -928,8 +913,7 @@ class TestEntityManagerAdvanced:
         assert "new_entity1" in updated_entities
         assert updated_entities["new_entity1"] == mock_new_entity
         manager.create_entity.assert_called_once_with(
-            entity_id="new_entity1",
-            entity_type=mock_entity_type,
+            entity_id="new_entity1", entity_type=mock_entity_type
         )
 
     def test_build_entity_mapping_from_types(self, mock_coordinator: Mock) -> None:
@@ -978,9 +962,7 @@ class TestEntityManagerAdvanced:
         manager = EntityManager(mock_coordinator)
 
         # Mock type mappings
-        type_mappings = {
-            InputType.MOTION: ["binary_sensor.motion"],
-        }
+        type_mappings = {InputType.MOTION: ["binary_sensor.motion"]}
         manager.build_sensor_type_mappings = Mock(return_value=type_mappings)
 
         # Mock entity type
