@@ -393,6 +393,11 @@ filterwarnings = [
   "error::sqlalchemy.exc.SAWarning",
   "error:usefixtures\\(\\) in .* without arguments has no effect:UserWarning",  # pytest
 
+  # -- Asyncio warnings in CI environments
+  "ignore:coroutine .* was never awaited:RuntimeWarning",
+  "ignore:There is no current event loop:DeprecationWarning",
+  "ignore:pytest-asyncio detected an unclosed event loop.*:DeprecationWarning:pytest_asyncio.plugin",
+
   # -- HomeAssistant - aiohttp
   # Overwrite web.Application to pass a custom default argument to _make_request
   "ignore:Inheritance class HomeAssistantApplication from web.Application is discouraged:DeprecationWarning",
