@@ -5,4 +5,29 @@ set -o pipefail
 
 cd "$(dirname "$0")/.."
 
-python3 -m pip install -r requirements.txt -r requirements_test.txt
+echo "🔧 Setting up Area Occupancy Detection development environment..."
+
+# Ensure we're using the right Python
+if [[ -n "$VIRTUAL_ENV" ]]; then
+    echo "✅ Using virtual environment: $VIRTUAL_ENV"
+    PYTHON_CMD="python"
+else
+    echo "⚠️  No virtual environment detected, using system Python"
+    PYTHON_CMD="python3"
+fi
+
+echo "📦 Installing dependencies..."
+$PYTHON_CMD -m pip install --upgrade pip
+$PYTHON_CMD -m pip install -r requirements.txt -r requirements_test.txt
+
+echo "🔍 Validating environment..."
+if [[ -f "scripts/validate-env" ]]; then
+    $PYTHON_CMD scripts/validate-env
+else
+    echo "⚠️  Environment validation script not found"
+fi
+
+echo "✅ Setup complete! You can now run:"
+echo "   pytest                    # Run tests"
+echo "   ./scripts/validate-env    # Validate environment"
+echo "   ./scripts/test-ci-local   # Run CI-like tests"

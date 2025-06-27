@@ -13,6 +13,12 @@ from custom_components.area_occupancy.binary_sensor import (
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
+# Add marker for tests that may have lingering timers due to HA internals
+pytestmark = [
+    pytest.mark.expected_lingering_timers(True),
+    pytest.mark.asyncio,
+]
+
 
 # ruff: noqa: SLF001
 class TestOccupancy:
