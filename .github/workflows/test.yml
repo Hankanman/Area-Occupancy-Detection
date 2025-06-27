@@ -27,9 +27,17 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements_test.txt
 
+      - name: Validate Environment
+        run: |
+          python scripts/validate-env
+
+      - name: Display Package Versions (for debugging)
+        run: |
+          python -c "import pytest, pytest_asyncio; print(f'pytest: {pytest.__version__}'); print(f'pytest-asyncio: {pytest_asyncio.__version__}')"
+
       - name: Run tests with pytest
         run: |
-          pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing -W ignore::RuntimeWarning
+          pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing -W ignore::RuntimeWarning --tb=short -v
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

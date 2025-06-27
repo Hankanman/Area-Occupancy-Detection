@@ -31,7 +31,30 @@ repos:
         files: ''
   - repo: local
     hooks:
-      - id: lint
-        name: Run scripts/lint
-        entry: scripts/lint
-        language: script
+      - id: validate-environment
+        name: Validate Development Environment
+        entry: python scripts/validate-env
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-check
+        name: Ruff Linting
+        entry: python -m ruff check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-format
+        name: Ruff Formatting
+        entry: python -m ruff format --check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: test-core
+        name: Run Core Tests
+        entry: pytest tests/test_coordinator.py tests/test_service.py -x --tb=short
+        language: system
+        pass_filenames: false
+        files: ^(custom_components/|tests/).*\.py$

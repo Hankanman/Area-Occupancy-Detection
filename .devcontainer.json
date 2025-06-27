@@ -1,7 +1,8 @@
 {
   "name": "Area Occupancy",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "postCreateCommand": "scripts/setup",
+  "postCreateCommand": "python -m venv .venv && source .venv/bin/activate && pip install --upgrade pip && scripts/setup",
+  "postStartCommand": "echo 'source .venv/bin/activate' >> ~/.bashrc",
   "forwardPorts": [8123],
   "portsAttributes": {
     "8123": {
@@ -24,6 +25,7 @@
       "settings": {
         "files.eol": "\n",
         "editor.tabSize": 4,
+        
         "python.terminal.activateEnvInCurrentTerminal": true,
         "editor.formatOnPaste": true,
         "editor.formatOnSave": true,
@@ -31,7 +33,8 @@
         "files.trimTrailingWhitespace": true,
         "python.analysis.typeCheckingMode": "basic",
         "python.analysis.autoImportCompletions": true,
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.defaultInterpreterPath": ".venv/bin/python",
+        "python.venvPath": ".venv",
         "[python]": {
           "editor.defaultFormatter": "charliermarsh.ruff"
         }
@@ -40,6 +43,7 @@
   },
   "remoteUser": "vscode",
   "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
       "packages": ["ffmpeg", "libturbojpeg0", "libpcap-dev"]
     },
@@ -51,5 +55,8 @@
       "pnpmVersion": "latest",
       "nvmVersion": "latest"
     }
+  },
+  "containerEnv": {
+    "VIRTUAL_ENV": "/workspaces/Area-Occupancy-Detection/.venv"
   }
 }

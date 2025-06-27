@@ -1,7 +1,5 @@
-pytest
-pytest-cov
-pytest-asyncio
-pytest-homeassistant-custom-component
-astroid
-pylint
-sqlalchemy
+pytest>=8.2
+pytest-homeassistant-custom-component>=0.13.254
+astroid==3.3.10
+pylint==3.3.7
+# SQLAlchemy version controlled by pytest-homeassistant-custom-component
