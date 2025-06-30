@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from custom_components.area_occupancy.sensor import (
     AreaOccupancySensorBase,
     DecaySensor,
-    EntitiesSensor,
+    EvidenceSensor,
     PriorsSensor,
     ProbabilitySensor,
     async_setup_entry,
@@ -127,21 +127,21 @@ class TestProbabilitySensor:
         assert sensor.native_value == 100.0
 
 
-class TestEntitiesSensor:
-    """Test EntitiesSensor class."""
+class TestEvidenceSensor:
+    """Test EvidenceSensor class."""
 
     def test_initialization(self, mock_coordinator_with_sensors: Mock) -> None:
-        """Test EntitiesSensor initialization."""
-        sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        """Test EvidenceSensor initialization."""
+        sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
 
-        assert sensor.unique_id == "test_entry_entities"
-        assert sensor.name == "Entities"
-        # EntitiesSensor doesn't have an icon property
+        assert sensor.unique_id == "test_entry_evidence"
+        assert sensor.name == "Evidence"
+        # EvidenceSensor doesn't have an icon property
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
     def test_native_value_property(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test native_value property."""
-        sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
 
         # Should return total number of entities from coordinator.entities.entities
         assert sensor.native_value == 4
@@ -150,7 +150,7 @@ class TestEntitiesSensor:
         """Test native_value when no entity manager."""
         # Set up coordinator with no entities
         mock_coordinator.entities.entities = {}
-        sensor = EntitiesSensor(mock_coordinator, "test_entry")
+        sensor = EvidenceSensor(mock_coordinator, "test_entry")
 
         assert sensor.native_value == 0
 
@@ -161,7 +161,7 @@ class TestEntitiesSensor:
         mock_coordinator_with_sensors.entities.active_entities = []
         mock_coordinator_with_sensors.entities.inactive_entities = []
 
-        sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
         attributes = sensor.extra_state_attributes
 
         # Should return the expected structure
@@ -173,7 +173,7 @@ class TestEntitiesSensor:
     ) -> None:
         """Test extra_state_attributes when no coordinator data."""
         mock_coordinator.data = None
-        sensor = EntitiesSensor(mock_coordinator, "test_entry")
+        sensor = EvidenceSensor(mock_coordinator, "test_entry")
 
         attributes = sensor.extra_state_attributes
         assert attributes == {}
@@ -280,7 +280,7 @@ class TestAsyncSetupEntry:
         entity_types = [type(entity).__name__ for entity in entities]
         assert "PriorsSensor" in entity_types
         assert "ProbabilitySensor" in entity_types
-        assert "EntitiesSensor" in entity_types
+        assert "EvidenceSensor" in entity_types
         assert "DecaySensor" in entity_types
 
     async def test_async_setup_entry_with_coordinator_data(
@@ -323,13 +323,13 @@ class TestSensorIntegration:
         probability_sensor = ProbabilitySensor(
             mock_coordinator_with_sensors, "test_entry"
         )
-        entities_sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
         decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
 
         # Test native values
         assert priors_sensor.native_value == 35.0
         assert probability_sensor.native_value == 65.0
-        assert entities_sensor.native_value == 4  # From mock_coordinator_with_sensors
+        assert evidence_sensor.native_value == 4  # From mock_coordinator_with_sensors
         assert decay_sensor.native_value == 85.0  # (1 - 0.15) * 100
 
     def test_sensor_availability_changes(
@@ -339,7 +339,7 @@ class TestSensorIntegration:
         sensors = [
             PriorsSensor(mock_coordinator_with_sensors, "test_entry"),
             ProbabilitySensor(mock_coordinator_with_sensors, "test_entry"),
-            EntitiesSensor(mock_coordinator_with_sensors, "test_entry"),
+            EvidenceSensor(mock_coordinator_with_sensors, "test_entry"),
             DecaySensor(mock_coordinator_with_sensors, "test_entry"),
         ]
 
@@ -385,19 +385,19 @@ class TestSensorIntegration:
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
         """Test entities sensor with dynamic entity updates."""
-        entities_sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
 
         # Initial state - 4 entities from mock_coordinator_with_sensors
-        assert entities_sensor.native_value == 4
+        assert evidence_sensor.native_value == 4
 
         # Add more entities
         new_entity = Mock()
         mock_coordinator_with_sensors.entities.entities["new_sensor"] = new_entity
-        assert entities_sensor.native_value == 5
+        assert evidence_sensor.native_value == 5
 
         # Remove entities
         del mock_coordinator_with_sensors.entities.entities["binary_sensor.motion1"]
-        assert entities_sensor.native_value == 4
+        assert evidence_sensor.native_value == 4
 
     def test_decay_sensor_dynamic_updates(
         self, mock_coordinator_with_sensors: Mock
@@ -437,13 +437,13 @@ class TestSensorIntegration:
             side_effect=Exception("Test error")
         )
 
-        entities_sensor = EntitiesSensor(mock_coordinator_with_sensors, "test_entry")
+        evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
         decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
 
         # Should handle gracefully and not crash
         try:  # noqa: SIM105
             # This should raise the exception since it's not caught in native_value
-            entities_sensor.native_value  # noqa: B018
+            evidence_sensor.native_value  # noqa: B018
         except Exception:  # noqa: BLE001
             # This is expected since the implementation doesn't handle the error
             pass

@@ -20,7 +20,7 @@ from .utils import format_float, format_percentage
 NAME_PRIORS_SENSOR = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_PROBABILITY_SENSOR = "Occupancy Probability"
-NAME_ENTITIES_SENSOR = "Entities"
+NAME_EVIDENCE_SENSOR = "Evidence"
 
 
 class AreaOccupancySensorBase(
@@ -89,17 +89,17 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         super()._handle_coordinator_update()
 
 
-class EntitiesSensor(AreaOccupancySensorBase):
-    """Sensor for all entities."""
+class EvidenceSensor(AreaOccupancySensorBase):
+    """Sensor for all evidence."""
 
     _unrecorded_attributes = frozenset({"evidence", "no_evidence", "total", "details"})
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the entities sensor."""
         super().__init__(coordinator, entry_id)
-        self._attr_name = NAME_ENTITIES_SENSOR
+        self._attr_name = NAME_EVIDENCE_SENSOR
         self._attr_unique_id = (
-            f"{entry_id}_{NAME_ENTITIES_SENSOR.lower().replace(' ', '_')}"
+            f"{entry_id}_{NAME_EVIDENCE_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -205,7 +205,7 @@ async def async_setup_entry(
         ProbabilitySensor(coordinator, entry.entry_id),
         DecaySensor(coordinator, entry.entry_id),
         PriorsSensor(coordinator, entry.entry_id),
-        EntitiesSensor(coordinator, entry.entry_id),
+        EvidenceSensor(coordinator, entry.entry_id),
     ]
 
     async_add_entities(entities, update_before_add=True)
