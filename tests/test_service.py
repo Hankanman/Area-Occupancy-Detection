@@ -969,7 +969,7 @@ class TestAsyncSetupServices:
         await async_setup_services(mock_hass)
 
         # Verify services were registered (8 services total)
-        assert mock_hass.services.async_register.call_count == 9
+        assert mock_hass.services.async_register.call_count == 10
 
     async def test_async_setup_services_registration_error(
         self, mock_hass: Mock
