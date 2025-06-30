@@ -5,10 +5,10 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity import get_unit_of_measurement
 from homeassistant.util import dt as dt_util
 
-from ..utils import apply_decay, bayesian_probability
+from ..utils import apply_decay, bayesian_probability, get_device_class_with_fallback
 from .decay import Decay
 from .entity_type import EntityType, InputType
 from .likelihood import Likelihood
@@ -44,16 +44,17 @@ class Entity:
         return ha_state.name if ha_state else None
 
     @property
-    def entity_class(self) -> str | None:
-        """Get the entity class from Home Assistant state."""
-        entry = er.async_get(self.coordinator.hass).async_get(self.entity_id)
-        return entry.device_class if entry else None
+    def entity_class(self) -> str:
+        """Get the entity class from Home Assistant state with intelligent fallback."""
+
+        return get_device_class_with_fallback(self.coordinator.hass, self.entity_id)
 
     @property
-    def entity_category(self) -> str | None:
-        """Get the entity category from Home Assistant state."""
-        entry = er.async_get(self.coordinator.hass).async_get(self.entity_id)
-        return entry.entity_category if entry else None
+    def unit_of_measurement(self) -> str:
+        """Get the unit of measurement from Home Assistant state."""
+        return (
+            get_unit_of_measurement(self.coordinator.hass, self.entity_id) or "Unknown"
+        )
 
     @property
     def effective_prob_given_true(self) -> float:
