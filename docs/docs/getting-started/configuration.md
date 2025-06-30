@@ -12,6 +12,10 @@ Area Occupancy Detection is configured entirely through the Home Assistant user 
 
 ## Configuration Options
 
+### Area Purpose
+
+The first step after naming the area is choosing its **purpose**. This sets a sensible default for the decay half life used when probability decreases. Purposes include options like *Passageway*, *Utility*, *Social*, and *Sleeping*. You can override the resulting half life in the options if needed.
+
 After providing the name, you'll be guided through selecting sensors and configuring parameters. You can also reconfigure these later by clicking **Configure** on the integration card.
 
 ### Sensor Selection
@@ -36,7 +40,7 @@ You will be prompted to select entities for various categories. You only need to
 | Occupancy Threshold (%) | The probability percentage required for the main **Occupancy Status** binary sensor to turn `on` | 1-99 | 50 |
 | History Period (Days) | The number of past days to analyze when performing [Prior Probability Learning](../features/prior-learning.md) | 1-90 | 7 |
 | Decay Enabled | Toggle whether to enable the [Probability Decay](../features/decay.md) feature | True/False | Enabled |
-| Decay Window (Seconds) | If decay is enabled, this sets the time over which the probability decays when sensors become inactive | 1-3600 | 300 (5 minutes) |
+| Decay Half Life (Seconds) | When decay is enabled this defines how long it takes for the occupancy probability to reduce by half after activity stops | 10-3600 | 300 (5 minutes) |
 
 ### Sensor Weights
 
