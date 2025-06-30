@@ -13,7 +13,7 @@ The decay feature provides a smoother transition from an occupied state to an un
     *   The system notes the **current time** (`decay_start_time`).
     *   It records the **probability value *before* the decrease** (`decay_start_probability`). This value serves as the starting point for the decay curve.
     *   The **Decay Status** sensor likely becomes active (showing > 0%).
-3.  **Exponential Decay:** As time passes from `decay_start_time`, the system calculates a decay factor based on an exponential function. The rate of decay is determined by the **Decay Window** configuration setting (in seconds) and an internal decay constant (`DECAY_LAMBDA`). A shorter window results in faster decay.
+3.  **Exponential Decay:** As time passes from `decay_start_time`, the system calculates a decay factor based on an exponential function. The rate of decay is determined by the configured **Decay Half Life** and an internal decay constant (`DECAY_LAMBDA`). A shorter half life results in faster decay.
 4.  **Applying Decay:** The calculated decay factor is applied to the `decay_start_probability`. This results in a potentially lower probability value.
 5.  **Floor Value:** Importantly, the decayed probability can **never go below** the probability currently being calculated based on any sensors that *are* still active. If, during decay, a sensor reactivates and pushes the calculated probability up, that new higher value becomes the floor.
 6.  **Decay Stops When:**
@@ -23,7 +23,7 @@ The decay feature provides a smoother transition from an occupied state to an un
 ## Configuration
 
 *   **Decay Enabled:** A toggle to turn the decay feature on or off entirely.
-*   **Decay Window (seconds):** The duration over which the probability decays from its starting point towards the minimum. For example, a 300-second window means it takes 5 minutes for the full decay cycle (though it might stop earlier if probability increases).
+*   **Decay Half Life (seconds):** The time for the probability to fall to half of its starting value when no new activity occurs. For example, a 300-second half life means the probability halves every 5 minutes (it may stop earlier if activity resumes).
 
 Note: The previous *Decay Minimum Delay* option has been removed in version 9.2. Any existing configurations are updated automatically during migration.
 
