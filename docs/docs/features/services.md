@@ -27,3 +27,19 @@ data:
 
 *   Running this service can be resource-intensive as it queries the recorder database.
 *   After the priors are updated, the coordinator will automatically refresh, potentially updating the **Prior Probability** sensor and influencing future **Occupancy Probability** calculations. 
+## `area_occupancy.update_likelihoods`
+
+Recalculates the sensor likelihood values used in the Bayesian calculation. This is similar to updating priors but focuses on the per-sensor probabilities.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `history_period` | No | Number of days of history to analyse. Defaults to the configured history period. | `7` |
+
+**Example:**
+```yaml
+service: area_occupancy.update_likelihoods
+data:
+  entry_id: your_config_entry_id_here
+```
+
