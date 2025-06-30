@@ -7,27 +7,27 @@ cd "$(dirname "$0")/.."
 
 echo "🔧 Setting up Area Occupancy Detection development environment..."
 
-# Ensure we're using the right Python
+# Check if we're already in a virtual environment
 if [[ -n "$VIRTUAL_ENV" ]]; then
-    echo "✅ Using virtual environment: $VIRTUAL_ENV"
+    echo "✅ Using existing virtual environment: $VIRTUAL_ENV"
     PYTHON_CMD="python"
 else
-    echo "⚠️  No virtual environment detected, using system Python"
-    PYTHON_CMD="python3"
+    # Check if .venv exists, create if it doesn't
+    if [[ ! -d ".venv" ]]; then
+        echo "📁 Creating virtual environment in .venv..."
+        python3 -m venv .venv
+    fi
+
+    echo "🔄 Activating virtual environment..."
+    source .venv/bin/activate
+    echo "✅ Virtual environment activated: $(which python)"
+    PYTHON_CMD="python"
 fi
 
 echo "📦 Installing dependencies..."
 $PYTHON_CMD -m pip install --upgrade pip
 $PYTHON_CMD -m pip install -r requirements.txt -r requirements_test.txt
 
-echo "🔍 Validating environment..."
-if [[ -f "scripts/validate-env" ]]; then
-    $PYTHON_CMD scripts/validate-env
-else
-    echo "⚠️  Environment validation script not found"
-fi
-
 echo "✅ Setup complete! You can now run:"
-echo "   pytest                    # Run tests"
-echo "   ./scripts/validate-env    # Validate environment"
-echo "   ./scripts/test-ci-local   # Run CI-like tests"
+echo "   source .venv/bin/activate  # Activate environment (if not already active)"
+echo "   pytest                     # Run tests"

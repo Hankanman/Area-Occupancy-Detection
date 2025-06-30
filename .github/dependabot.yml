@@ -15,6 +15,6 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    # ignore:
-    #   # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
-    #   - dependency-name: "homeassistant"
+    ignore:
+      # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
+      - dependency-name: "homeassistant"
