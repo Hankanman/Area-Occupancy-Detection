@@ -1,283 +1,156 @@
-"""Storage handling for Area Occupancy Detection."""
+"""Storage manager for Area Occupancy Detection."""
+
+from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any, TypedDict
 
-from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, STORAGE_KEY
-from .exceptions import StorageLoadError, StorageSaveError
-from .types import InstanceData, LoadedInstanceData, PriorState, StoredData
+from .const import CONF_VERSION, CONF_VERSION_MINOR, DOMAIN
+
+if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class AreaOccupancyStore(Store[StoredData]):
-    """Store class for area occupancy data."""
+class AreaOccupancyStorageData(TypedDict, total=False):
+    """Typed data structure for area occupancy storage."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-    ) -> None:
-        """Initialize the store."""
-        # Initialize with current version - migration will handle version changes
+    name: str | None
+    purpose: str | None
+    probability: float | None
+    prior: float | None
+    threshold: float | None
+    last_updated: str | None
+    entities: dict[str, Any]
+
+
+class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
+    """Per-config-entry storage for Area Occupancy Detection."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
+        """Initialize the per-entry storage."""
         super().__init__(
-            hass,
-            CONF_VERSION,  # Start with current version
-            STORAGE_KEY,
+            hass=coordinator.hass,
+            version=CONF_VERSION,
+            key=f"{DOMAIN}.{coordinator.entry_id}",
+            atomic_writes=True,  # Enable safe writes
             minor_version=CONF_VERSION_MINOR,
-            atomic_writes=True,
-            private=True,  # Mark as private since it contains state data
         )
-        self.hass = hass
-        self._current_version = CONF_VERSION
-        self._current_minor_version = CONF_VERSION_MINOR
-
-    def create_empty_storage(self) -> StoredData:
-        """Create default storage structure."""
-        return StoredData(instances={})
+        self._coordinator = coordinator
 
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: dict
-    ) -> dict:
-        """Migrate to the new version."""
-        _LOGGER.debug(
-            "Migrating storage from %s.%s to %s.%s",
+    ) -> AreaOccupancyStorageData:
+        """Migrate storage data to new format."""
+        _LOGGER.info(
+            "Migrating storage for entry %s from version %d.%d to %d.%d",
+            self._coordinator.entry_id,
             old_major_version,
             old_minor_version,
-            self._current_version,
-            self._current_minor_version,
+            CONF_VERSION,
+            CONF_VERSION_MINOR,
         )
 
-        data = old_data
-
-        # Handle migration for any version that's not current
-        if old_major_version != self._current_version:
-            _LOGGER.debug(
-                "Migrating from version %s to %s",
-                old_major_version,
-                self._current_version,
+        # For major version changes, start fresh
+        if old_major_version < CONF_VERSION:
+            _LOGGER.info(
+                "Major version change for entry %s, starting with empty storage",
+                self._coordinator.entry_id,
             )
-            # Create new data structure
-            empty_storage = self.create_empty_storage()
-            new_data = dict(empty_storage)
+            return AreaOccupancyStorageData(entities={})
 
-            # If old data had instances, migrate them
-            if "instances" in data:
-                new_data["instances"] = data["instances"]
-
-            data = new_data
-
-        # Add any future version migrations here as needed
-        # This structure allows for step-by-step migrations if needed
-        # For example:
-        # if old_major_version < 7:
-        #     data = migrate_to_7(data)
-        # if old_major_version < 8:
-        #     data = migrate_to_8(data)
-        # etc.
-
-        return data
-
-    async def async_remove_instance(self, entry_id: str) -> bool:
-        """Remove data for a specific instance ID from storage.
-
-        Args:
-            entry_id: The config entry ID of the instance to remove.
-
-        Returns:
-            True if data was removed, False otherwise.
-
-        """
-        try:
-            stored_data = await self.async_load()
-            if (
-                stored_data
-                and "instances" in stored_data
-                and entry_id in stored_data["instances"]
-            ):
-                _LOGGER.debug("Removing instance %s data from storage", entry_id)
-                # Create a copy to modify
-                modified_data = stored_data.copy()
-                modified_data["instances"] = modified_data["instances"].copy()
-
-                del modified_data["instances"][entry_id]
-                await self.async_save(modified_data)
-                _LOGGER.info("Successfully removed instance %s from storage", entry_id)
-                return True
-            _LOGGER.debug(
-                "Instance %s not found in storage, skipping removal", entry_id
-            )
-        except Exception:
-            _LOGGER.exception(
-                "Error removing instance %s from storage",
-                entry_id,
-            )
-            return False  # Don't re-raise, allow flow to continue
-        else:
-            return False
-
-    async def async_cleanup_orphaned_instances(
-        self, active_entry_ids: set[str]
-    ) -> bool:
-        """Remove data for instances not present in the active_entry_ids set.
-
-        Args:
-            active_entry_ids: A set of currently active config entry IDs.
-
-        Returns:
-            True if any orphaned data was removed, False otherwise.
-
-        """
-        removed_any = False
-        try:
-            stored_data = await self.async_load()
-            if stored_data and "instances" in stored_data:
-                stored_entry_ids = set(stored_data["instances"].keys())
-                orphaned_ids = stored_entry_ids - active_entry_ids
-
-                if orphaned_ids:
-                    _LOGGER.info(
-                        "Found orphaned instance(s) in storage: %s", orphaned_ids
-                    )
-                    # Create a copy to modify
-                    modified_data = stored_data.copy()
-                    modified_data["instances"] = modified_data["instances"].copy()
-
-                    for entry_id in orphaned_ids:
-                        if entry_id in modified_data["instances"]:
-                            del modified_data["instances"][entry_id]
-                            _LOGGER.debug(
-                                "Removed orphaned instance %s from storage data",
-                                entry_id,
-                            )
-                            removed_any = True
-
-                    if removed_any:
-                        await self.async_save(modified_data)
-                        _LOGGER.info(
-                            "Saved cleaned storage data after removing %d orphan(s)",
-                            len(orphaned_ids),
-                        )
-                else:
-                    _LOGGER.debug("No orphaned instances found in storage")
-            else:
-                _LOGGER.debug(
-                    "No storage data found or 'instances' key missing, skipping cleanup"
-                )
-
-        except Exception:
-            _LOGGER.exception("Error during storage cleanup")
-            # Don't re-raise, allow setup to continue
-
-        return removed_any
-
-    async def async_load_instance_prior_state(
-        self, entry_id: str
-    ) -> LoadedInstanceData:
-        """Load prior state data for a specific instance from storage.
-
-        Args:
-            entry_id: The config entry ID of the instance to load.
-
-        Returns:
-            LoadedInstanceData dataclass containing name, prior_state, and last_updated.
-
-        Raises:
-            StorageLoadError: If loading fails
-
-        """
-        try:
-            data = await self.async_load()  # Use the store's own load method
-            if not data or "instances" not in data:
-                _LOGGER.debug("No stored data or instances found for loading priors")
-                return LoadedInstanceData(
-                    name=None, prior_state=None, last_updated=None
-                )
-
-            instance_data = data["instances"].get(entry_id)
-            if not instance_data:
-                _LOGGER.debug("No instance data found for %s", entry_id)
-                return LoadedInstanceData(
-                    name=None, prior_state=None, last_updated=None
-                )
-
-            name = instance_data.get("name")
-            stored_prior_state_dict = instance_data.get("prior_state")
-            last_updated = instance_data.get("last_updated")
-
-            if not stored_prior_state_dict:
-                _LOGGER.debug("No prior_state dict found for %s", entry_id)
-                return LoadedInstanceData(
-                    name=name, prior_state=None, last_updated=last_updated
-                )
-
-            prior_state = PriorState.from_dict(stored_prior_state_dict)
-
-        except Exception as err:
-            _LOGGER.exception("Error loading prior state for %s", entry_id)
-            raise StorageLoadError(f"Failed to load prior state: {err}") from err
-        else:
-            _LOGGER.debug(
-                "Loaded prior state for %s: name=%s, last_updated=%s",
-                entry_id,
-                name,
-                last_updated,
-            )
-            return LoadedInstanceData(
-                name=name,
-                prior_state=prior_state,
-                last_updated=last_updated,
+        # Handle migration from various data formats
+        if isinstance(old_data, dict):
+            return AreaOccupancyStorageData(
+                name=old_data.get("name"),
+                purpose=old_data.get("purpose"),
+                probability=old_data.get("probability"),
+                prior=old_data.get("prior"),
+                threshold=old_data.get("threshold"),
+                last_updated=old_data.get("last_updated"),
+                entities=old_data.get("entities", {}),
             )
 
-    async def async_save_instance_prior_state(
-        self, entry_id: str, name: str, prior_state: PriorState
-    ) -> None:
-        """Save prior state data for a specific instance to storage.
+        # Fallback for unexpected data format
+        return AreaOccupancyStorageData(entities={}, entity_types={})
 
-        Args:
-            entry_id: The config entry ID of the instance to save.
-            name: The name of the area.
-            prior_state: The prior state to save.
+    async def async_save_data(self, force: bool = False) -> None:
+        """Save coordinator data using debounced storage."""
 
-        """
-        try:
-            # Load existing data first using the store's own load method
-            existing_data = await self.async_load()
-            if (
-                not existing_data
-            ):  # Should not happen if load creates empty, but defensive check
-                existing_data = self.create_empty_storage()
-            if "instances" not in existing_data:  # Ensure instances dict exists
-                existing_data["instances"] = {}
+        entity_manager = self._coordinator.entities
 
-            # Create instance data for this instance
-            instance_data = InstanceData(
-                name=name,
-                prior_state=prior_state.to_dict(),
+        def get_storage_data() -> AreaOccupancyStorageData:
+            entity_data = entity_manager.to_dict()
+
+            return AreaOccupancyStorageData(
+                name=self._coordinator.config.name,
+                purpose=self._coordinator.config.purpose,
+                probability=self._coordinator.probability,
+                prior=self._coordinator.area_prior,
+                threshold=self._coordinator.threshold,
                 last_updated=dt_util.utcnow().isoformat(),
+                entities=entity_data.get("entities", {}),
             )
 
-            # Update only this instance's data while preserving others
-            existing_data["instances"][entry_id] = instance_data
+        # Use native Store debounced saving
+        data = get_storage_data()
+        if force:
+            await self.async_save(data)
+        else:
+            self.async_delay_save(get_storage_data, delay=5)
 
-            # Log all instances being saved
+    async def async_load_data(self) -> AreaOccupancyStorageData | None:
+        """Load coordinator data from storage with compatibility checking.
+
+        Returns the full data dict if valid, or None if reset/invalid.
+        """
+        coordinator = self._coordinator
+        try:
+            data = await super().async_load()
+            if data is None:
+                _LOGGER.info(
+                    "No stored data found for entry %s, will initialize with defaults",
+                    coordinator.entry_id,
+                )
+                return None
+
+            # Basic format validation
+            if not isinstance(data, dict) or "entities" not in data:
+                _LOGGER.warning(
+                    "Invalid storage format for entry %s, resetting",
+                    coordinator.entry_id,
+                )
+                await self.async_remove()
+                return None
+
             _LOGGER.debug(
-                "Saving prior state for instance %s (total instances: %d). All instances: %s",
-                entry_id,
-                len(existing_data["instances"]),
-                list(existing_data["instances"].keys()),
+                "Successfully loaded storage data for entry %s", coordinator.entry_id
             )
 
-            # Save the modified data using the store's save method
-            await self.async_save(existing_data)
-            _LOGGER.debug(
-                "Saved prior state for instance %s (total instances: %d)",
-                entry_id,
-                len(existing_data["instances"]),
+        except (HomeAssistantError, OSError, ValueError) as err:
+            _LOGGER.warning(
+                "Storage error for entry %s, initializing with defaults: %s",
+                coordinator.entry_id,
+                err,
+            )
+            return None
+        else:
+            return AreaOccupancyStorageData(
+                name=data.get("name"),
+                purpose=data.get("purpose"),
+                probability=data.get("probability"),
+                prior=data.get("prior"),
+                threshold=data.get("threshold"),
+                last_updated=data.get("last_updated"),
+                entities=data.get("entities", {}),
             )
 
-        except Exception as err:  # Catch broader exceptions during save
-            _LOGGER.exception("Error saving prior state for %s", entry_id)
-            raise StorageSaveError(f"Failed to save prior state: {err}") from err
+    async def async_reset(self) -> None:
+        """Reset storage by removing all stored data."""
+        _LOGGER.info("Resetting storage for entry %s", self._coordinator.entry_id)
+        await self.async_remove()

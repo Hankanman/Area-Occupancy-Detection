@@ -72,15 +72,6 @@ APPLIANCE_STATES: Final[PlatformStates] = {
     "default": STATE_ON,
 }
 
-# Light states configuration
-LIGHT_STATES: Final[PlatformStates] = {
-    "options": [
-        StateOption(STATE_ON, "On", "mdi:lightbulb"),
-        StateOption(STATE_OFF, "Off", "mdi:lightbulb-off"),
-    ],
-    "default": STATE_ON,
-}
-
 # Motion sensor states configuration
 MOTION_STATES: Final[PlatformStates] = {
     "options": [
@@ -98,7 +89,6 @@ def get_state_options(platform_type: str) -> PlatformStates:
         "window": WINDOW_STATES,
         "media": MEDIA_STATES,
         "appliance": APPLIANCE_STATES,
-        "light": LIGHT_STATES,
         "motion": MOTION_STATES,
     }
     return platform_map.get(platform_type, MOTION_STATES)

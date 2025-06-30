@@ -1,7 +1,33 @@
 #!/usr/bin/env bash
 
 set -e
+set -o pipefail
 
 cd "$(dirname "$0")/.."
 
-python3 -m pip install --requirement requirements.txt
+echo "🔧 Setting up Area Occupancy Detection development environment..."
+
+# Check if we're already in a virtual environment
+if [[ -n "$VIRTUAL_ENV" ]]; then
+    echo "✅ Using existing virtual environment: $VIRTUAL_ENV"
+    PYTHON_CMD="python"
+else
+    # Check if .venv exists, create if it doesn't
+    if [[ ! -d ".venv" ]]; then
+        echo "📁 Creating virtual environment in .venv..."
+        python3 -m venv .venv
+    fi
+
+    echo "🔄 Activating virtual environment..."
+    source .venv/bin/activate
+    echo "✅ Virtual environment activated: $(which python)"
+    PYTHON_CMD="python"
+fi
+
+echo "📦 Installing dependencies..."
+$PYTHON_CMD -m pip install --upgrade pip
+$PYTHON_CMD -m pip install -r requirements.txt -r requirements_test.txt
+
+echo "✅ Setup complete! You can now run:"
+echo "   source .venv/bin/activate  # Activate environment (if not already active)"
+echo "   pytest                     # Run tests"

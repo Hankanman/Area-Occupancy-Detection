@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components.sensor import SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
@@ -10,22 +11,20 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NAME_THRESHOLD_NUMBER
+from .const import CONF_THRESHOLD
 from .coordinator import AreaOccupancyCoordinator
 
+NAME_THRESHOLD_NUMBER = "Occupancy Threshold"
 
-class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
+
+class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
     """Number entity for adjusting occupancy threshold."""
 
-    def __init__(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        entry_id: str,
-    ) -> None:
+    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the threshold entity."""
         super().__init__(coordinator)
         self._attr_has_entity_name = True
-        self._attr_name = NAME_THRESHOLD_NUMBER
+        self._attr_name = "Threshold"
         self._attr_unique_id = (
             f"{entry_id}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
         )
@@ -36,7 +35,7 @@ class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], Number
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_device_info = coordinator.device_info
-        self._attr_state_class = "measurement"  # Add state class for statistics
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> float:
@@ -46,27 +45,20 @@ class AreaOccupancyThreshold(CoordinatorEntity[AreaOccupancyCoordinator], Number
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""
-        if not 1.0 <= value <= 99.0:
+        if value < self._attr_native_min_value or value > self._attr_native_max_value:
             raise ServiceValidationError(
-                f"Threshold value must be between 1 and 99, got {value}"
+                f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
             )
-        await self.coordinator.async_update_threshold(value)
+        await self.coordinator.config_manager.update_config({CONF_THRESHOLD: value})
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up Area Occupancy threshold number based on a config entry."""
-    coordinator: AreaOccupancyCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
     # Create a new number entity for the threshold
-    number_entity = AreaOccupancyThreshold(
-        coordinator=coordinator,
-        entry_id=entry.entry_id,
-    )
+    entities = [Threshold(coordinator=coordinator, entry_id=entry.entry_id)]
 
-    async_add_entities([number_entity], update_before_add=True)
+    async_add_entities(entities, update_before_add=True)

@@ -1,3 +1,5 @@
-# Production dependencies
-homeassistant==2025.5.3
-ruff==0.11.11
+homeassistant==2025.2.4
+pip>=21.3.1
+ruff==0.12.1
+
+# Stay aligned with https://github.com/ludeeus/integration_blueprint/blob/main/requirements.txt

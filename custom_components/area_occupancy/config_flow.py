@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant, callback
@@ -42,19 +42,18 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_DECAY_ENABLED,
-    CONF_DECAY_MIN_DELAY,
-    CONF_DECAY_WINDOW,
+    CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_HISTORICAL_ANALYSIS_ENABLED,
     CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
-    CONF_LIGHTS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
@@ -64,7 +63,6 @@ from .const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
-    CONF_WEIGHT_LIGHT,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
@@ -72,12 +70,12 @@ from .const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
-    DEFAULT_DECAY_MIN_DELAY,
-    DEFAULT_DECAY_WINDOW,
+    DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
     DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -85,13 +83,13 @@ from .const import (
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_LIGHT,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
 )
+from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,20 +100,12 @@ WEIGHT_MIN = 0
 WEIGHT_MAX = 1
 
 THRESHOLD_STEP = 1
-THRESHOLD_MIN = 0
+THRESHOLD_MIN = 1
 THRESHOLD_MAX = 100
 
 HISTORY_PERIOD_STEP = 1
 HISTORY_PERIOD_MIN = 1
 HISTORY_PERIOD_MAX = 30
-
-DECAY_WINDOW_STEP = 60
-DECAY_WINDOW_MIN = 60
-DECAY_WINDOW_MAX = 3600
-
-DECAY_MIN_DELAY_STEP = 10
-DECAY_MIN_DELAY_MIN = 0
-DECAY_MIN_DELAY_MAX = 3600
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -124,6 +114,18 @@ def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     return [
         {"value": option.value, "label": option.name} for option in states["options"]
     ]
+
+
+def _get_default_decay_half_life(purpose: str | None = None) -> float:
+    """Get the default decay half-life based on the selected purpose."""
+    if purpose is not None:
+        try:
+            purpose_enum = AreaPurpose(purpose)
+            return PURPOSE_DEFINITIONS[purpose_enum].half_life
+        except (ValueError, KeyError):
+            pass
+    # Fallback to default purpose half-life
+    return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life
 
 
 def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
@@ -141,7 +143,6 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         BinarySensorDeviceClass.DOOR,
         BinarySensorDeviceClass.GARAGE_DOOR,
         BinarySensorDeviceClass.OPENING,
-        BinarySensorDeviceClass.LIGHT,
     ]
 
     # Check binary_sensor, switch, fan for potential appliances
@@ -228,11 +229,10 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                         BinarySensorDeviceClass.PRESENCE,
                     ],
                     multiple=False,
-                ),
+                )
             ),
             vol.Required(
-                CONF_MOTION_SENSORS,
-                default=defaults.get(CONF_MOTION_SENSORS, []),
+                CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.BINARY_SENSOR,
@@ -242,7 +242,7 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                         BinarySensorDeviceClass.PRESENCE,
                     ],
                     multiple=True,
-                ),
+                )
             ),
             vol.Optional(
                 CONF_WEIGHT_MOTION,
@@ -253,7 +253,7 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
         }
     )
@@ -268,21 +268,16 @@ def _create_doors_section_schema(
     return vol.Schema(
         {
             vol.Optional(
-                CONF_DOOR_SENSORS,
-                default=defaults.get(CONF_DOOR_SENSORS, []),
+                CONF_DOOR_SENSORS, default=defaults.get(CONF_DOOR_SENSORS, [])
             ): EntitySelector(
-                EntitySelectorConfig(
-                    include_entities=include_entities,
-                    multiple=True,
-                ),
+                EntitySelectorConfig(include_entities=include_entities, multiple=True)
             ),
             vol.Optional(
                 CONF_DOOR_ACTIVE_STATE,
                 default=defaults.get(CONF_DOOR_ACTIVE_STATE, get_default_state("door")),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=state_options,
-                    mode=SelectSelectorMode.DROPDOWN,
+                    options=state_options, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
             vol.Optional(
@@ -294,7 +289,7 @@ def _create_doors_section_schema(
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
         }
     )
@@ -309,13 +304,9 @@ def _create_windows_section_schema(
     return vol.Schema(
         {
             vol.Optional(
-                CONF_WINDOW_SENSORS,
-                default=defaults.get(CONF_WINDOW_SENSORS, []),
+                CONF_WINDOW_SENSORS, default=defaults.get(CONF_WINDOW_SENSORS, [])
             ): EntitySelector(
-                EntitySelectorConfig(
-                    include_entities=include_entities,
-                    multiple=True,
-                ),
+                EntitySelectorConfig(include_entities=include_entities, multiple=True)
             ),
             vol.Optional(
                 CONF_WINDOW_ACTIVE_STATE,
@@ -324,8 +315,7 @@ def _create_windows_section_schema(
                 ),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=state_options,
-                    mode=SelectSelectorMode.DROPDOWN,
+                    options=state_options, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
             vol.Optional(
@@ -337,34 +327,7 @@ def _create_windows_section_schema(
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
-            ),
-        }
-    )
-
-
-def _create_lights_section_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Create schema for the lights section."""
-    return vol.Schema(
-        {
-            vol.Optional(
-                CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=[Platform.LIGHT, Platform.SWITCH],
-                    multiple=True,
-                ),
-            ),
-            vol.Optional(
-                CONF_WEIGHT_LIGHT,
-                default=defaults.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=WEIGHT_MIN,
-                    max=WEIGHT_MAX,
-                    step=WEIGHT_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
         }
     )
@@ -377,13 +340,9 @@ def _create_media_section_schema(
     return vol.Schema(
         {
             vol.Optional(
-                CONF_MEDIA_DEVICES,
-                default=defaults.get(CONF_MEDIA_DEVICES, []),
+                CONF_MEDIA_DEVICES, default=defaults.get(CONF_MEDIA_DEVICES, [])
             ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=Platform.MEDIA_PLAYER,
-                    multiple=True,
-                ),
+                EntitySelectorConfig(domain=Platform.MEDIA_PLAYER, multiple=True)
             ),
             vol.Optional(
                 CONF_MEDIA_ACTIVE_STATES,
@@ -406,7 +365,7 @@ def _create_media_section_schema(
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
         }
     )
@@ -423,16 +382,12 @@ def _create_appliances_section_schema(
             vol.Optional(
                 CONF_APPLIANCES, default=defaults.get(CONF_APPLIANCES, [])
             ): EntitySelector(
-                EntitySelectorConfig(
-                    include_entities=include_entities,
-                    multiple=True,
-                ),
+                EntitySelectorConfig(include_entities=include_entities, multiple=True)
             ),
             vol.Optional(
                 CONF_APPLIANCE_ACTIVE_STATES,
                 default=defaults.get(
-                    CONF_APPLIANCE_ACTIVE_STATES,
-                    DEFAULT_APPLIANCE_ACTIVE_STATES,
+                    CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
                 ),
             ): SelectSelector(
                 SelectSelectorConfig(
@@ -450,7 +405,7 @@ def _create_appliances_section_schema(
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
         }
     )
@@ -468,17 +423,16 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     domain=Platform.SENSOR,
                     device_class=SensorDeviceClass.ILLUMINANCE,
                     multiple=True,
-                ),
+                )
             ),
             vol.Optional(
-                CONF_HUMIDITY_SENSORS,
-                default=defaults.get(CONF_HUMIDITY_SENSORS, []),
+                CONF_HUMIDITY_SENSORS, default=defaults.get(CONF_HUMIDITY_SENSORS, [])
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
                     device_class=SensorDeviceClass.HUMIDITY,
                     multiple=True,
-                ),
+                )
             ),
             vol.Optional(
                 CONF_TEMPERATURE_SENSORS,
@@ -488,7 +442,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     domain=Platform.SENSOR,
                     device_class=SensorDeviceClass.TEMPERATURE,
                     multiple=True,
-                ),
+                )
             ),
             vol.Optional(
                 CONF_WEIGHT_ENVIRONMENTAL,
@@ -501,26 +455,48 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
+        }
+    )
+
+
+def _create_purpose_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the purpose section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_PURPOSE, default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=cast("list[SelectOptionDict]", get_purpose_options()),
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
         }
     )
 
 
 def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the parameters section."""
+    # Get the purpose-based default for decay half-life
+    purpose = defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    purpose_based_default = _get_default_decay_half_life(purpose)
+
+    # Use the purpose-based default if no explicit value is already set
+    decay_half_life_default = defaults.get(CONF_DECAY_HALF_LIFE, purpose_based_default)
+
     return vol.Schema(
         {
             vol.Optional(
-                CONF_THRESHOLD,
-                default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD),
+                CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=THRESHOLD_MIN,
                     max=THRESHOLD_MAX,
                     step=THRESHOLD_STEP,
                     mode=NumberSelectorMode.SLIDER,
-                ),
+                )
             ),
             vol.Optional(
                 CONF_HISTORY_PERIOD,
@@ -532,32 +508,19 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=HISTORY_PERIOD_STEP,
                     mode=NumberSelectorMode.SLIDER,
                     unit_of_measurement="days",
-                ),
+                )
             ),
             vol.Optional(
                 CONF_DECAY_ENABLED,
                 default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
             ): BooleanSelector(),
             vol.Optional(
-                CONF_DECAY_WINDOW,
-                default=defaults.get(CONF_DECAY_WINDOW, DEFAULT_DECAY_WINDOW),
+                CONF_DECAY_HALF_LIFE, default=decay_half_life_default
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=DECAY_WINDOW_MIN,
-                    max=DECAY_WINDOW_MAX,
-                    step=DECAY_WINDOW_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                    unit_of_measurement="seconds",
-                ),
-            ),
-            vol.Optional(
-                CONF_DECAY_MIN_DELAY,
-                default=defaults.get(CONF_DECAY_MIN_DELAY, DEFAULT_DECAY_MIN_DELAY),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=DECAY_MIN_DELAY_MIN,
-                    max=DECAY_MIN_DELAY_MAX,
-                    step=DECAY_MIN_DELAY_STEP,
+                    min=10,
+                    max=3600,
+                    step=1,
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
                 )
@@ -592,18 +555,15 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=60,
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
-                ),
+                )
             ),
             vol.Optional(
                 CONF_WASP_WEIGHT,
                 default=defaults.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=0.0,
-                    max=1.0,
-                    step=0.05,
-                    mode=NumberSelectorMode.SLIDER,
-                ),
+                    min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
+                )
             ),
             vol.Optional(
                 CONF_WASP_MAX_DURATION,
@@ -615,7 +575,7 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=300,  # 5-minute increments
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
-                ),
+                )
             ),
         }
     )
@@ -643,17 +603,25 @@ def create_schema(
     if not is_options:
         # Add the name field only for the initial config flow
         schema_dict[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
+        # Add purpose section right after name in initial config flow
+        schema_dict[vol.Required("purpose")] = section(
+            _create_purpose_section_schema(defaults), {"collapsed": False}
+        )
+    else:
+        # Add purpose section at the top for options flow
+        schema_dict[vol.Required("purpose")] = section(
+            _create_purpose_section_schema(defaults), {"collapsed": False}
+        )
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(defaults),
-        {"collapsed": True},
+        _create_motion_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("doors")] = section(
         _create_doors_section_schema(
             defaults,
             include_entities["door"],
-            cast(list[SelectOptionDict], door_state_options),
+            cast("list[SelectOptionDict]", door_state_options),
         ),
         {"collapsed": True},
     )
@@ -661,16 +629,13 @@ def create_schema(
         _create_windows_section_schema(
             defaults,
             include_entities["window"],
-            cast(list[SelectOptionDict], window_state_options),
+            cast("list[SelectOptionDict]", window_state_options),
         ),
         {"collapsed": True},
     )
-    schema_dict[vol.Required("lights")] = section(
-        _create_lights_section_schema(defaults), {"collapsed": True}
-    )
     schema_dict[vol.Required("media")] = section(
         _create_media_section_schema(
-            defaults, cast(list[SelectOptionDict], media_state_options)
+            defaults, cast("list[SelectOptionDict]", media_state_options)
         ),
         {"collapsed": True},
     )
@@ -678,7 +643,7 @@ def create_schema(
         _create_appliances_section_schema(
             defaults,
             include_entities["appliance"],
-            cast(list[SelectOptionDict], appliance_state_options),
+            cast("list[SelectOptionDict]", appliance_state_options),
         ),
         {"collapsed": True},
     )
@@ -686,8 +651,7 @@ def create_schema(
         _create_environmental_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("wasp_in_box")] = section(
-        _create_wasp_in_box_section_schema(defaults),
-        {"collapsed": True},
+        _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("parameters")] = section(
         _create_parameters_section_schema(defaults), {"collapsed": True}
@@ -719,23 +683,44 @@ class BaseOccupancyFlow:
             ValueError: If any validation check fails
 
         """
+        # Validate name
+        name = data.get(CONF_NAME, "")
+        if not name:
+            raise vol.Invalid("Name is required")
+
+        # Validate purpose
+        purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        if not purpose:
+            raise vol.Invalid("Purpose is required")
+
+        # Validate motion sensors
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
-            raise ValueError("At least one motion sensor is required")
+            raise vol.Invalid("At least one motion sensor is required")
 
         primary_sensor = data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
         if not primary_sensor:
-            raise ValueError("A primary occupancy sensor must be selected")
+            raise vol.Invalid("A primary occupancy sensor must be selected")
         if primary_sensor not in motion_sensors:
-            raise ValueError(
-                "Primary occupancy sensor must be selected from the motion sensors"
+            raise vol.Invalid(
+                "Primary occupancy sensor must be one of the selected motion sensors"
             )
+
+        # Validate threshold
+        threshold = data.get(CONF_THRESHOLD)
+        if threshold is not None:
+            if (
+                not isinstance(threshold, (int, float))
+                or threshold < 1
+                or threshold > 100
+            ):
+                raise vol.Invalid("Threshold must be between 1 and 100")
 
         # Validate media devices
         media_devices = data.get(CONF_MEDIA_DEVICES, [])
         media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
         if media_devices and not media_states:
-            raise ValueError(
+            raise vol.Invalid(
                 "Media active states are required when media devices are configured"
             )
 
@@ -745,7 +730,7 @@ class BaseOccupancyFlow:
             CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
         )
         if appliances and not appliance_states:
-            raise ValueError(
+            raise vol.Invalid(
                 "Appliance active states are required when appliances are configured"
             )
 
@@ -753,7 +738,7 @@ class BaseOccupancyFlow:
         door_sensors = data.get(CONF_DOOR_SENSORS, [])
         door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
         if door_sensors and not door_state:
-            raise ValueError(
+            raise vol.Invalid(
                 "Door active state is required when door sensors are configured"
             )
 
@@ -761,7 +746,7 @@ class BaseOccupancyFlow:
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
         if window_sensors and not window_state:
-            raise ValueError(
+            raise vol.Invalid(
                 "Window active state is required when window sensors are configured"
             )
 
@@ -775,7 +760,6 @@ class BaseOccupancyFlow:
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
-            (CONF_WEIGHT_LIGHT, data.get(CONF_WEIGHT_LIGHT, DEFAULT_WEIGHT_LIGHT)),
             (
                 CONF_WEIGHT_ENVIRONMENTAL,
                 data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
@@ -783,9 +767,20 @@ class BaseOccupancyFlow:
         ]
         for name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
-                raise ValueError(
+                raise vol.Invalid(
                     f"{name} must be between {WEIGHT_MIN} and {WEIGHT_MAX}"
                 )
+
+        # Validate decay settings
+        decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
+        if decay_enabled:
+            decay_window = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
+            if (
+                not isinstance(decay_window, (int, float))
+                or decay_window < 10
+                or decay_window > 3600
+            ):
+                raise vol.Invalid("Decay half life must be between 10 and 3600 seconds")
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -802,10 +797,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         as it is built through the flow.
         """
         self._data: dict[str, Any] = {}
-
-    def is_matching(self, other_flow: ConfigEntry) -> bool:
-        """Check if the entry matches the current flow."""
-        return other_flow.entry_id == getattr(self, "entry_id", None)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -847,6 +838,14 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                            flattened_input[CONF_WASP_MAX_DURATION] = value.get(
+                                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                            )
+                        elif key == "purpose":
+                            # Flatten purpose settings
+                            flattened_input[CONF_PURPOSE] = value.get(
+                                CONF_PURPOSE, DEFAULT_PURPOSE
+                            )
                         else:
                             # Flatten other sections as before
                             flattened_input.update(value)
@@ -854,12 +853,44 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                         # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
 
+                # Auto-set decay half-life based on purpose selection
+                selected_purpose = flattened_input.get(CONF_PURPOSE)
+                if selected_purpose:
+                    # Check if user has explicitly set a decay half-life
+                    user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
+                    purpose_default = _get_default_decay_half_life(selected_purpose)
+
+                    # Get all purpose-based half-life values to check if current value was auto-set
+                    purpose_half_lives = {
+                        purpose_def.half_life
+                        for purpose_def in PURPOSE_DEFINITIONS.values()
+                    }
+                    purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
+
+                    # If no explicit decay half-life, or it matches any purpose default (indicating it was auto-set)
+                    if (
+                        user_set_decay is None
+                        or user_set_decay == DEFAULT_DECAY_HALF_LIFE
+                        or user_set_decay in purpose_half_lives
+                    ):
+                        flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
+                        _LOGGER.debug(
+                            "Auto-setting decay half-life to %s seconds for purpose %s",
+                            purpose_default,
+                            selected_purpose,
+                        )
+
                 self._validate_config(flattened_input)
+                await self.async_set_unique_id(flattened_input.get(CONF_NAME, ""))
+                self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=flattened_input.get(CONF_NAME, ""), data=flattened_input
                 )
 
             except HomeAssistantError as err:
+                _LOGGER.error("Validation error: %s", err)
+                errors["base"] = str(err)
+            except vol.Invalid as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
             except (ValueError, KeyError, TypeError) as err:
@@ -876,16 +907,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> AreaOccupancyOptionsFlow:
         """Get the options flow."""
-        return AreaOccupancyOptionsFlow(config_entry)
+        return AreaOccupancyOptionsFlow()
 
 
-class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
+class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     """Handle options flow."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        super().__init__(config_entry)
-        self._data = dict(config_entry.options)
+        super().__init__()
+        self._data: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -927,12 +958,51 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
                             flattened_input[CONF_WASP_WEIGHT] = value.get(
                                 CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
                             )
+                            flattened_input[CONF_WASP_MAX_DURATION] = value.get(
+                                CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                            )
+                        elif key == "purpose":
+                            # Flatten purpose settings
+                            flattened_input[CONF_PURPOSE] = value.get(
+                                CONF_PURPOSE, DEFAULT_PURPOSE
+                            )
                         else:
                             # Flatten other sections as before
                             flattened_input.update(value)
                     else:
-                        # Handle top-level keys
+                        # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
+
+                # Auto-set decay half-life based on purpose selection
+                selected_purpose = flattened_input.get(CONF_PURPOSE)
+                if selected_purpose:
+                    # Check if user has explicitly set a decay half-life
+                    user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
+                    purpose_default = _get_default_decay_half_life(selected_purpose)
+
+                    # Get all purpose-based half-life values to check if current value was auto-set
+                    purpose_half_lives = {
+                        purpose_def.half_life
+                        for purpose_def in PURPOSE_DEFINITIONS.values()
+                    }
+                    purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
+
+                    # If no explicit decay half-life, or it matches any purpose default (indicating it was auto-set)
+                    if (
+                        user_set_decay is None
+                        or user_set_decay == DEFAULT_DECAY_HALF_LIFE
+                        or user_set_decay in purpose_half_lives
+                    ):
+                        flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
+                        _LOGGER.debug(
+                            "Auto-setting decay half-life to %s seconds for purpose %s",
+                            purpose_default,
+                            selected_purpose,
+                        )
+
+                # Add the name from existing config entry for validation
+                # (name is not changeable in options flow but needed for validation)
+                flattened_input[CONF_NAME] = self.config_entry.data.get(CONF_NAME, "")
 
                 self._validate_config(flattened_input)
                 return self.async_create_entry(title="", data=flattened_input)
@@ -940,15 +1010,18 @@ class AreaOccupancyOptionsFlow(OptionsFlowWithConfigEntry, BaseOccupancyFlow):
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
                 errors["base"] = str(err)
+            except vol.Invalid as err:
+                _LOGGER.error("Validation error: %s", err)
+                errors["base"] = str(err)
             except (ValueError, KeyError, TypeError) as err:
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
-        defaults = {
-            **self.config_entry.data,
-            **self.config_entry.options,
-            **self._data,
-        }
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+
+        # Ensure purpose field has a default if missing (for older config entries)
+        if CONF_PURPOSE not in defaults:
+            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
 
         return self.async_show_form(
             step_id="init",
