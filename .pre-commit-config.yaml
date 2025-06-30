@@ -1,31 +1,23 @@
 repos:
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v2.37.3
+  - repo: local
     hooks:
-      - id: pyupgrade
-        args: [--py312-plus]
-  - repo: https://github.com/psf/black
-    rev: 24.1.1
-    hooks:
-      - id: black
-        args:
-          - --safe
-          - --quiet
-          - --verbose
-          - --skip-magic-trailing-comma
-          - --target-version
-          - py312
-        files: ''
-  - repo: https://github.com/PyCQA/flake8
-    rev: 4.0.1
-    hooks:
-      - id: flake8
-        additional_dependencies:
-          - pycodestyle==2.8.0
-          - pyflakes==2.4.0
-          - flake8-docstrings==1.6.0
-          - pydocstyle==6.1.1
-          - flake8-comprehensions==3.10.0
-          - flake8-noqa==1.2.8
-          - mccabe==0.6.1
-        files: ''
+      - id: ruff-check
+        name: Ruff Linting
+        entry: .venv/bin/python -m ruff check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-format
+        name: Ruff Formatting
+        entry: .venv/bin/python -m ruff format --check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: test-core
+        name: Run Core Tests
+        entry: .venv/bin/pytest tests/test_init.py tests/test_coordinator.py -x --tb=short
+        language: system
+        pass_filenames: false
+        files: ^(custom_components/|tests/).*\.py$

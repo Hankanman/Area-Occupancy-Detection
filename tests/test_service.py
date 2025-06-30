@@ -1,246 +1,1143 @@
-"""Tests for the Area Occupancy services."""
+"""Tests for service module."""
+
+from datetime import timedelta
+from unittest.mock import Mock, PropertyMock
 
 import pytest
-import voluptuous as vol
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.area_occupancy.const import (  # noqa: TID252
-    DEFAULT_HISTORY_PERIOD,
-    DOMAIN,
-)
-from custom_components.area_occupancy.exceptions import CalculationError  # noqa: TID252
 from custom_components.area_occupancy.service import (
-    async_setup_services,  # noqa: TID252
+    _force_entity_update,
+    _get_area_status,
+    _get_coordinator,
+    _get_entity_details,
+    _get_entity_metrics,
+    _get_entity_type_learned_data,
+    _get_problematic_entities,
+    _reset_entities,
+    _update_area_prior,
+    _update_likelihoods,
+    async_setup_services,
 )
-
-# Note: Using fixtures from conftest.py:
-# - mock_coordinator
-# - mock_config_entry
-# - init_integration
+from homeassistant.core import ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
-async def test_setup_services(hass: HomeAssistant, mock_coordinator) -> None:
-    """Test setting up services."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
+# ruff: noqa: PLC0415
+class TestGetCoordinator:
+    """Test _get_coordinator helper function."""
 
-    # Setup services
-    await async_setup_services(hass)
+    def test_get_coordinator_success(
+        self, mock_hass: Mock, mock_config_entry: Mock, mock_coordinator: Mock
+    ) -> None:
+        """Test successful coordinator retrieval."""
+        mock_config_entry.runtime_data = mock_coordinator
 
-    # Verify service was registered
-    assert hass.services.has_service(DOMAIN, "update_priors")
+        # Mock hass.config_entries.async_entries to return list with our config entry
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
 
+        result = _get_coordinator(mock_hass, "test_entry_id")
+        assert result == mock_coordinator
 
-async def test_update_priors_success(hass: HomeAssistant, mock_coordinator) -> None:
-    """Test successful update_priors service call."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
+    def test_get_coordinator_missing_domain(self, mock_hass: Mock) -> None:
+        """Test coordinator retrieval with missing domain."""
+        # Mock async_entries to return empty list
+        mock_hass.config_entries.async_entries.return_value = []
 
-    # Setup services
-    await async_setup_services(hass)
+        with pytest.raises(
+            HomeAssistantError, match="Config entry test_entry_id not found"
+        ):
+            _get_coordinator(mock_hass, "test_entry_id")
 
-    # Call service with default history period
-    await hass.services.async_call(
-        DOMAIN,
-        "update_priors",
-        {"entry_id": entry_id},
-        blocking=True,
-    )
+    def test_get_coordinator_missing_entry(
+        self, mock_hass: Mock, mock_config_entry: Mock
+    ) -> None:
+        """Test coordinator retrieval with missing entry."""
+        # Different entry_id than what we're looking for
+        mock_config_entry.entry_id = "different_entry_id"
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
 
-    # Verify coordinator methods were called with default history period
-    mock_coordinator.update_learned_priors.assert_called_once_with(
-        DEFAULT_HISTORY_PERIOD
-    )
-    mock_coordinator.async_refresh.assert_called_once()
-
-
-async def test_update_priors_with_custom_period(
-    hass: HomeAssistant, mock_coordinator
-) -> None:
-    """Test update_priors service call with custom history period."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
-
-    # Setup services
-    await async_setup_services(hass)
-
-    # Call service with custom history period
-    custom_period = 30
-    await hass.services.async_call(
-        DOMAIN,
-        "update_priors",
-        {
-            "entry_id": entry_id,
-            "history_period": custom_period,
-        },
-        blocking=True,
-    )
-
-    # Verify coordinator methods were called with custom period
-    mock_coordinator.update_learned_priors.assert_called_once_with(custom_period)
-    mock_coordinator.async_refresh.assert_called_once()
+        with pytest.raises(
+            HomeAssistantError, match="Config entry test_entry_id not found"
+        ):
+            _get_coordinator(mock_hass, "test_entry_id")
 
 
-async def test_update_priors_invalid_entry_id(hass: HomeAssistant) -> None:
-    """Test update_priors service call with invalid entry_id."""
-    # Setup services
-    await async_setup_services(hass)
+class TestUpdateAreaPrior:
+    """Test _update_area_prior service function."""
 
-    # Setup empty domain data
-    hass.data[DOMAIN] = {}
+    async def test_update_area_prior_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful area prior update."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = (
+            30  # Set as real number instead of Mock
+        )
+        mock_coordinator.prior.update.return_value = 0.35
 
-    # Call service with invalid entry_id
-    with pytest.raises(HomeAssistantError) as exc_info:
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {"entry_id": "invalid_entry_id"},
-            blocking=True,
+        # Mock the prior calculation details
+        mock_coordinator.prior.sensor_ids = [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+
+        # Create mock PriorData objects for calculation details
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        start_time = now - timedelta(days=30)
+
+        mock_prior_data_1 = Mock()
+        mock_prior_data_1.ratio = 0.32
+        mock_prior_data_1.occupied_seconds = (
+            27648  # About 32% of 86400 seconds/day * 30 days
+        )
+        mock_prior_data_1.states = [Mock() for _ in range(150)]  # Mock states list
+        mock_prior_data_1.intervals = [Mock() for _ in range(75)]  # Mock intervals list
+        mock_prior_data_1.start_time = start_time
+        mock_prior_data_1.end_time = now
+        # Add filtering statistics
+        mock_prior_data_1.total_on_intervals = 80
+        mock_prior_data_1.valid_intervals = 75
+        mock_prior_data_1.filtered_short_intervals = 3
+        mock_prior_data_1.filtered_long_intervals = 2
+        mock_prior_data_1.max_filtered_duration_seconds = (
+            18 * 3600
+        )  # 18 hours stuck sensor
+
+        mock_prior_data_2 = Mock()
+        mock_prior_data_2.ratio = 0.35
+        mock_prior_data_2.occupied_seconds = (
+            30240  # About 35% of 86400 seconds/day * 30 days
+        )
+        mock_prior_data_2.states = [Mock() for _ in range(120)]  # Mock states list
+        mock_prior_data_2.intervals = [Mock() for _ in range(60)]  # Mock intervals list
+        mock_prior_data_2.start_time = start_time
+        mock_prior_data_2.end_time = now
+        # Add filtering statistics
+        mock_prior_data_2.total_on_intervals = 65
+        mock_prior_data_2.valid_intervals = 60
+        mock_prior_data_2.filtered_short_intervals = 4
+        mock_prior_data_2.filtered_long_intervals = 1
+        mock_prior_data_2.max_filtered_duration_seconds = (
+            15 * 3600
+        )  # 15 hours stuck sensor
+
+        mock_coordinator.prior.data = {
+            "binary_sensor.motion1": mock_prior_data_1,
+            "binary_sensor.motion2": mock_prior_data_2,
+        }
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        # The service expects the service call to have entry_id
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _update_area_prior(mock_hass, mock_service_call)
+
+        # Verify the result structure
+        assert "area_prior" in result
+        assert "history_period" in result
+        assert "update_timestamp" in result
+        assert "calculation_details" in result
+
+        # Verify the values
+        assert result["area_prior"] == 0.35
+        assert result["history_period"] == 30
+        assert isinstance(result["update_timestamp"], str)
+
+        # Verify calculation details
+        calc_details = result["calculation_details"]
+        assert calc_details["motion_sensors"] == [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+        assert calc_details["sensor_count"] == 2
+        assert (
+            calc_details["calculation_method"]
+            == "Average of individual sensor occupancy ratios + 5% buffer"
         )
 
-    assert (
-        "Failed to update priors: Integration or instance invalid_entry_id not found"
-        in str(exc_info.value)
-    )
+        # Verify sensor details
+        assert "sensor_details" in calc_details
+        sensor_details = calc_details["sensor_details"]
+        assert "binary_sensor.motion1" in sensor_details
+        assert "binary_sensor.motion2" in sensor_details
+        assert sensor_details["binary_sensor.motion1"]["occupancy_ratio"] == 0.32
+        assert sensor_details["binary_sensor.motion2"]["occupancy_ratio"] == 0.35
+        assert sensor_details["binary_sensor.motion1"]["states_found"] == 150
+        assert sensor_details["binary_sensor.motion2"]["intervals_found"] == 60
 
-
-async def test_update_priors_coordinator_error(
-    hass: HomeAssistant, mock_coordinator
-) -> None:
-    """Test update_priors service call when coordinator update fails."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
-
-    # Setup services
-    await async_setup_services(hass)
-
-    # Make coordinator update raise an error
-    mock_coordinator.update_learned_priors.side_effect = RuntimeError("Update failed")
-
-    # Call service and verify error handling
-    with pytest.raises(HomeAssistantError) as exc_info:
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {"entry_id": entry_id},
-            blocking=True,
+        # Verify filtering details
+        assert sensor_details["binary_sensor.motion1"]["total_on_intervals"] == 80
+        assert sensor_details["binary_sensor.motion1"]["valid_intervals"] == 75
+        assert sensor_details["binary_sensor.motion1"]["filtered_short"] == 3
+        assert sensor_details["binary_sensor.motion1"]["filtered_long"] == 2
+        assert (
+            sensor_details["binary_sensor.motion1"]["max_stuck_duration_seconds"]
+            == 18 * 3600
+        )
+        assert (
+            sensor_details["binary_sensor.motion1"]["max_stuck_duration_hours"] == 18.0
+        )
+        assert sensor_details["binary_sensor.motion2"]["total_on_intervals"] == 65
+        assert sensor_details["binary_sensor.motion2"]["valid_intervals"] == 60
+        assert sensor_details["binary_sensor.motion2"]["filtered_short"] == 4
+        assert sensor_details["binary_sensor.motion2"]["filtered_long"] == 1
+        assert (
+            sensor_details["binary_sensor.motion2"]["max_stuck_duration_seconds"]
+            == 15 * 3600
+        )
+        assert (
+            sensor_details["binary_sensor.motion2"]["max_stuck_duration_hours"] == 15.0
         )
 
-    assert "Failed to update priors" in str(exc_info.value)
+        # Verify calculation summary
+        assert "raw_average_ratio" in calc_details
+        assert "buffer_multiplier" in calc_details
+        assert "final_prior" in calc_details
+        assert "calculation" in calc_details
+
+        # Verify filtering summary
+        assert "filtering_summary" in calc_details
+        filtering_summary = calc_details["filtering_summary"]
+        assert filtering_summary["total_on_intervals"] == 145  # 80 + 65
+        assert filtering_summary["valid_intervals_used"] == 135  # 75 + 60
+        assert filtering_summary["filtered_short_intervals"] == 7  # 3 + 4
+        assert filtering_summary["filtered_long_intervals"] == 3  # 2 + 1
+        assert "filtering_thresholds" in filtering_summary
+        thresholds = filtering_summary["filtering_thresholds"]
+        assert thresholds["min_seconds"] == 10
+        assert thresholds["max_seconds"] == 46800  # 13 hours
+
+        # Verify stuck sensor analysis (should show the worst case: 18 hours)
+        assert "stuck_sensor_analysis" in filtering_summary
+        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
+        assert (
+            stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
+        )  # Worst case from sensor1
+        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
+        assert stuck_analysis["max_stuck_duration_days"] == 0.75  # 18/24 = 0.75 days
+        assert stuck_analysis["severity"] == "moderate"  # 13-24 hours range
+
+        # Verify the coordinator was called correctly
+        mock_coordinator.prior.update.assert_called_once_with(
+            force=True, history_period=30
+        )
+        mock_coordinator.async_refresh.assert_called_once()
+
+    async def test_update_area_prior_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test area prior update with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        # The actual service implementation will raise KeyError for missing entry_id
+        with pytest.raises(KeyError):
+            await _update_area_prior(mock_hass, mock_call)
+
+    async def test_update_area_prior_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test area prior update with coordinator error."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = 30  # Set as real number
+        mock_coordinator.prior.update.side_effect = RuntimeError("Update failed")
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        # The service catches RuntimeError and wraps it in HomeAssistantError
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to update area prior for test_entry_id: Update failed",
+        ):
+            await _update_area_prior(mock_hass, mock_service_call)
+
+        # Verify the coordinator was called
+        mock_coordinator.prior.update.assert_called_once()
 
 
-async def test_update_priors_invalid_history_period(
-    hass: HomeAssistant,
-    mock_coordinator,
-) -> None:
-    """Test update_priors service with invalid history period."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
+class TestUpdateLikelihoods:
+    """Test _update_likelihoods service function."""
 
-    # Setup services
-    await async_setup_services(hass)
+    async def test_update_likelihoods_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful likelihood update."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = (
+            30  # Set as real number instead of Mock
+        )
+        mock_coordinator.entities.update_all_entity_likelihoods.return_value = 5
 
-    # Test with history period too high
-    with pytest.raises(vol.Invalid):
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {
-                "entry_id": entry_id,
-                "history_period": 91,  # Above max allowed value
-            },
-            blocking=True,
+        # Mock entities with proper structure for return data
+        mock_entity = Mock()
+        mock_entity.likelihood.prob_given_true = 0.8
+        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.likelihood.prob_given_true_raw = 0.75
+        mock_entity.likelihood.prob_given_false_raw = 0.05
+        mock_entity.likelihood.last_updated.isoformat.return_value = (
+            "2024-01-01T00:00:00"
+        )
+        mock_entity.type.input_type.value = "motion"
+        mock_entity.type.weight = 0.85
+        # Add filtering statistics
+        mock_entity.likelihood.total_on_intervals = 50
+        mock_entity.likelihood.valid_intervals = 45
+        mock_entity.likelihood.filtered_short_intervals = 3
+        mock_entity.likelihood.filtered_long_intervals = 2
+        mock_entity.likelihood.max_filtered_duration_seconds = 18 * 3600  # 18 hours
+
+        mock_coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        # The service expects the service call to have entry_id
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _update_likelihoods(mock_hass, mock_service_call)
+
+        # Verify the result structure
+        assert "likelihoods" in result
+        assert "history_period" in result
+        assert "total_entities" in result
+        assert "update_timestamp" in result
+
+        # Verify the values
+        assert result["history_period"] == 30
+        assert result["total_entities"] == 1
+        assert isinstance(result["update_timestamp"], str)
+
+        # Verify the likelihood data
+        likelihoods = result["likelihoods"]
+        assert "binary_sensor.motion1" in likelihoods
+        likelihood_data = likelihoods["binary_sensor.motion1"]
+        assert likelihood_data["type"] == "motion"
+        assert likelihood_data["weight"] == 0.85
+        assert likelihood_data["prob_given_true"] == 0.8
+        assert likelihood_data["prob_given_false"] == 0.1
+        assert likelihood_data["prob_given_true_raw"] == 0.75
+        assert likelihood_data["prob_given_false_raw"] == 0.05
+
+        # Verify filtering statistics
+        assert likelihood_data["total_on_intervals"] == 50
+        assert likelihood_data["valid_intervals"] == 45
+        assert likelihood_data["filtered_short"] == 3
+        assert likelihood_data["filtered_long"] == 2
+        assert likelihood_data["max_stuck_duration_seconds"] == 18 * 3600
+        assert likelihood_data["max_stuck_duration_hours"] == 18.0
+
+        # Verify likelihood filtering summary
+        assert "likelihood_filtering_summary" in result
+        filtering_summary = result["likelihood_filtering_summary"]
+        assert filtering_summary["total_on_intervals"] == 50
+        assert filtering_summary["valid_intervals_used"] == 45
+        assert filtering_summary["filtered_short_intervals"] == 3
+        assert filtering_summary["filtered_long_intervals"] == 2
+
+        # Verify stuck sensor analysis
+        assert "stuck_sensor_analysis" in filtering_summary
+        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
+        assert stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
+        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
+        assert stuck_analysis["severity"] == "moderate"
+
+        # Verify the coordinator was called correctly with history_period
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
+            30, force=True
+        )
+        mock_coordinator.async_refresh.assert_called_once()
+
+    async def test_update_likelihoods_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test likelihood update with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        # The actual service implementation will raise KeyError for missing entry_id
+        with pytest.raises(KeyError):
+            await _update_likelihoods(mock_hass, mock_call)
+
+    async def test_update_likelihoods_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test likelihood update with coordinator error."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.history.period = 30  # Set as real number
+        mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
+            RuntimeError("Update failed")
         )
 
-    # Test with history period too low
-    with pytest.raises(vol.Invalid):
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {
-                "entry_id": entry_id,
-                "history_period": 0,  # Below min allowed value
-            },
-            blocking=True,
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        # The service catches RuntimeError and wraps it in HomeAssistantError
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to update likelihoods for test_entry_id: Update failed",
+        ):
+            await _update_likelihoods(mock_hass, mock_service_call)
+
+        # Verify the coordinator was called with the correct history period and force=True
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
+            30, force=True
         )
 
-    # Verify coordinator methods were not called
-    mock_coordinator.update_learned_priors.assert_not_called()
-    mock_coordinator.async_refresh.assert_not_called()
+
+class TestResetEntities:
+    """Test _reset_entities service function."""
+
+    async def test_reset_entities_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful entity reset."""
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        await _reset_entities(mock_hass, mock_service_call)
+
+        mock_coordinator.entities.cleanup.assert_called_once()
+        mock_coordinator.async_refresh.assert_called_once()
+
+    async def test_reset_entities_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test entity reset with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        # The actual service implementation will raise KeyError for missing entry_id
+        with pytest.raises(KeyError):
+            await _reset_entities(mock_hass, mock_call)
+
+    async def test_reset_entities_with_clear_storage(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test entity reset with storage clearing."""
+        # Use centralized fixture instead of creating ad-hoc mocks
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id", "clear_storage": True}
+
+        await _reset_entities(mock_hass, mock_service_call)
+
+        mock_coordinator.entities.cleanup.assert_called_once()
+        mock_coordinator.storage.async_reset.assert_called_once()
+        mock_coordinator.async_refresh.assert_called_once()
 
 
-async def test_update_priors_coordinator_state(
-    hass: HomeAssistant,
-    mock_coordinator,
-) -> None:
-    """Test coordinator state updates after update_priors service call."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
+class TestGetEntityMetrics:
+    """Test _get_entity_metrics service function."""
 
-    # Setup services
-    await async_setup_services(hass)
+    async def test_get_entity_metrics_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_inactive_entity: Mock,
+    ) -> None:
+        """Test successful entity metrics retrieval."""
+        # Use centralized entity fixtures
+        mock_coordinator.entities.entities = {
+            "binary_sensor.motion1": mock_active_entity,
+            "binary_sensor.appliance": mock_inactive_entity,
+        }
 
-    # Mock successful prior update
-    mock_coordinator.update_learned_priors.return_value = None
-    mock_coordinator.async_refresh.return_value = None
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
 
-    # Call service
-    await hass.services.async_call(
-        DOMAIN,
-        "update_priors",
-        {"entry_id": entry_id},
-        blocking=True,
-    )
+        result = await _get_entity_metrics(mock_hass, mock_service_call)
 
-    # Verify coordinator methods were called in correct order
-    assert mock_coordinator.update_learned_priors.call_count == 1
-    assert mock_coordinator.async_refresh.call_count == 1
-    # If you want to check call order, use mock_calls or call_args_list
+        # The service returns metrics summary, not individual entity data
+        assert "metrics" in result
+        metrics = result["metrics"]
+        assert metrics["total_entities"] == 2
+        assert metrics["active_entities"] == 1  # mock_active_entity has evidence=True
+        assert metrics["available_entities"] == 2  # both entities are available
+        assert metrics["unavailable_entities"] == 0
+        assert (
+            metrics["decaying_entities"] == 1
+        )  # mock_inactive_entity has decay.is_decaying=True
+
+    async def test_get_entity_metrics_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test entity metrics with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        # The actual service implementation will raise KeyError for missing entry_id
+        with pytest.raises(KeyError):
+            await _get_entity_metrics(mock_hass, mock_call)
+
+    async def test_get_entity_metrics_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test entity metrics with coordinator error."""
+        # Create a mock that will raise an exception when len() is called on it
+        mock_entities = Mock()
+        mock_entities.__len__ = Mock(side_effect=Exception("Access error"))
+        mock_coordinator.entities.entities = mock_entities
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to get entity metrics for test_entry_id: Access error",
+        ):
+            await _get_entity_metrics(mock_hass, mock_service_call)
 
 
-async def test_update_priors_coordinator_error_handling(
-    hass: HomeAssistant,
-    mock_coordinator,
-) -> None:
-    """Test error handling during coordinator updates."""
-    # Setup mock data
-    entry_id = "test_entry_id"
-    hass.data[DOMAIN] = {entry_id: {"coordinator": mock_coordinator}}
+class TestGetProblematicEntities:
+    """Test _get_problematic_entities service function."""
 
-    # Setup services
-    await async_setup_services(hass)
+    async def test_get_problematic_entities_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_unavailable_entity: Mock,
+        mock_stale_entity: Mock,
+    ) -> None:
+        """Test successful problematic entities retrieval."""
+        # Use centralized entity fixtures that already have problematic states
+        mock_coordinator.entities.entities = {
+            "binary_sensor.motion1": mock_unavailable_entity,  # available=False
+            "binary_sensor.appliance": mock_stale_entity,  # last_updated > 1 hour ago
+        }
 
-    # Test update_learned_priors error
-    mock_coordinator.update_learned_priors.side_effect = CalculationError("Test error")
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
 
-    with pytest.raises(HomeAssistantError) as exc_info:
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {"entry_id": entry_id},
-            blocking=True,
+        result = await _get_problematic_entities(mock_hass, mock_service_call)
+
+        assert "problems" in result
+        problems = result["problems"]
+        assert "unavailable" in problems
+        assert "stale_updates" in problems
+        assert "binary_sensor.motion1" in problems["unavailable"]
+        assert "binary_sensor.appliance" in problems["stale_updates"]
+
+    async def test_get_problematic_entities_no_issues(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+    ) -> None:
+        """Test problematic entities with no issues."""
+        # Use active entity that has no issues - need to update its last_updated to recent
+        mock_active_entity.last_updated = dt_util.utcnow() - timedelta(minutes=30)
+
+        mock_coordinator.entities.entities = {
+            "binary_sensor.motion1": mock_active_entity
+        }
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _get_problematic_entities(mock_hass, mock_service_call)
+
+        assert "problems" in result
+        problems = result["problems"]
+        assert len(problems["unavailable"]) == 0
+        assert len(problems["stale_updates"]) == 0
+
+    async def test_get_problematic_entities_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test problematic entities with coordinator error."""
+        # Create a mock that will raise an exception when .items() is called on it
+        mock_entities = Mock()
+        mock_entities.items = Mock(side_effect=Exception("Access error"))
+        mock_coordinator.entities.entities = mock_entities
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to get problematic entities for test_entry_id: Access error",
+        ):
+            await _get_problematic_entities(mock_hass, mock_service_call)
+
+
+class TestGetEntityDetails:
+    """Test _get_entity_details service function."""
+
+    async def test_get_entity_details_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+        mock_comprehensive_entity: Mock,
+        mock_empty_entity_manager: Mock,
+    ) -> None:
+        """Test successful entity details retrieval."""
+        # Set up the comprehensive entity with proper attribute values
+        mock_comprehensive_entity.state = "on"
+        mock_comprehensive_entity.evidence = True
+        mock_comprehensive_entity.available = True
+        mock_comprehensive_entity.probability = 0.5
+        # Set up last_updated as a Mock that has an isoformat method
+        mock_last_updated = Mock()
+        mock_last_updated.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_comprehensive_entity.last_updated = mock_last_updated
+        mock_comprehensive_entity.decay.decay_factor = 0.8
+        mock_comprehensive_entity.decay.is_decaying = False
+
+        # Set up type with proper mock structure
+        mock_type = Mock()
+        mock_input_type = Mock()
+        mock_input_type.value = "motion"
+        mock_type.input_type = mock_input_type
+        mock_type.weight = 1.0
+        mock_type.prob_true = 0.8
+        mock_type.prob_false = 0.2
+        mock_type.prior = 0.3
+        mock_type.active_states = ["on"]
+        mock_type.active_range = None
+        mock_comprehensive_entity.type = mock_type
+
+        # Set up likelihood
+        mock_likelihood = Mock()
+        mock_likelihood.prob_given_true = 0.8
+        mock_likelihood.prob_given_false = 0.1
+        mock_comprehensive_entity.likelihood = mock_likelihood
+
+        # Use centralized comprehensive entity fixture which has all the required properties
+        def mock_get_entity(entity_id):
+            if entity_id == "binary_sensor.motion1":
+                return mock_comprehensive_entity
+            raise ValueError("Entity not found")
+
+        mock_empty_entity_manager.get_entity.side_effect = mock_get_entity
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_comprehensive_entity
+        }
+        mock_coordinator.entities = mock_empty_entity_manager
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call_with_entity.data = {
+            "entry_id": "test_entry_id",
+            "entity_ids": ["binary_sensor.motion1"],
+        }
+
+        result = await _get_entity_details(mock_hass, mock_service_call_with_entity)
+
+        assert "entity_details" in result
+        assert (
+            "binary_sensor.motion1" in result["entity_details"]
+        )  # Use the entity_id from service call
+        entity_detail = result["entity_details"]["binary_sensor.motion1"]
+        assert entity_detail["state"] == "on"
+        assert entity_detail["evidence"] is True
+        assert entity_detail["available"] is True
+        assert entity_detail["probability"] == 0.5
+
+    async def test_get_entity_details_missing_entity_id(
+        self, mock_hass: Mock, mock_coordinator: Mock
+    ) -> None:
+        """Test entity details with missing entity_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {"entry_id": "test_entry_id"}
+
+        # The actual service implementation doesn't require entity_id, it returns all entities if none specified
+        # So this test should actually work and return empty details
+        mock_config_entry = Mock()
+        mock_config_entry.entry_id = "test_entry_id"  # Set the correct entry_id
+        mock_entities = Mock()
+        mock_entities.entities = {}
+        mock_coordinator.entities = mock_entities
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        result = await _get_entity_details(mock_hass, mock_call)
+        assert "entity_details" in result
+        assert result["entity_details"] == {}
+
+    async def test_get_entity_details_entity_not_found(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test entity details with entity not found."""
+        mock_entities = Mock()
+        mock_entities.get_entity.side_effect = ValueError("Entity not found")
+        mock_entities.entities = [
+            "binary_sensor.motion1"
+        ]  # Has entity in list but get_entity fails
+        mock_coordinator.entities = mock_entities
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call_with_entity.data = {
+            "entry_id": "test_entry_id",
+            "entity_ids": ["binary_sensor.motion1"],
+        }
+
+        result = await _get_entity_details(mock_hass, mock_service_call_with_entity)
+
+        # The service handles ValueError and returns {"error": "Entity not found"}
+        assert "entity_details" in result
+        assert (
+            result["entity_details"]["binary_sensor.motion1"]["error"]
+            == "Entity not found"
         )
 
-    assert "Failed to update priors" in str(exc_info.value)
-    mock_coordinator.async_refresh.assert_not_called()
 
-    # Test refresh error
-    mock_coordinator.update_learned_priors.side_effect = None
-    mock_coordinator.async_refresh.side_effect = HomeAssistantError("Refresh error")
+class TestForceEntityUpdate:
+    """Test _force_entity_update service function."""
 
-    with pytest.raises(HomeAssistantError) as exc_info:
-        await hass.services.async_call(
-            DOMAIN,
-            "update_priors",
-            {"entry_id": entry_id},
-            blocking=True,
+    async def test_force_entity_update_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_empty_entity_manager: Mock,
+    ) -> None:
+        """Test successful entity update."""
+        # Use centralized active entity fixture
+        mock_empty_entity_manager.get_entity.side_effect = (
+            None  # Clear the default side_effect
+        )
+        mock_empty_entity_manager.get_entity.return_value = mock_active_entity
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_active_entity
+        }
+        mock_coordinator.entities = mock_empty_entity_manager
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call_with_entity.data = {
+            "entry_id": "test_entry_id",
+            "entity_ids": ["binary_sensor.motion1"],
+        }
+
+        result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
+
+        assert mock_active_entity.probability
+        mock_coordinator.async_refresh.assert_called_once()
+        assert result["updated_entities"] == 1
+
+    async def test_force_entity_update_all_entities(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_active_entity: Mock,
+        mock_inactive_entity: Mock,
+        mock_empty_entity_manager: Mock,
+    ) -> None:
+        """Test force update for all entities."""
+        # Use centralized entity fixtures
+        # Note: side_effect with list will return different values for each call
+        mock_empty_entity_manager.get_entity.side_effect = [
+            mock_active_entity,
+            mock_inactive_entity,
+        ]
+        mock_empty_entity_manager.entities = {
+            "binary_sensor.motion1": mock_active_entity,
+            "binary_sensor.appliance": mock_inactive_entity,
+        }
+        mock_coordinator.entities = mock_empty_entity_manager
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _force_entity_update(mock_hass, mock_service_call)
+
+        assert mock_active_entity.probability
+        assert mock_inactive_entity.probability
+        mock_coordinator.async_refresh.assert_called_once()
+        assert result["updated_entities"] == 2
+
+    async def test_force_entity_update_entity_not_found(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call_with_entity: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test force update with entity not found."""
+        mock_entities = Mock()
+        mock_entities.get_entity.side_effect = ValueError("Entity not found")
+        mock_entities.entities = ["binary_sensor.motion1"]
+        mock_coordinator.entities = mock_entities
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call_with_entity.data = {
+            "entry_id": "test_entry_id",
+            "entity_ids": ["binary_sensor.motion1"],
+        }
+
+        result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
+
+        # Service doesn't actually validate entities - it just counts the entity_ids passed
+        mock_coordinator.async_refresh.assert_called_once()
+        assert result["updated_entities"] == 1  # Returns count of entity_ids provided
+
+
+class TestGetAreaStatus:
+    """Test _get_area_status service function."""
+
+    async def test_get_area_status_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+    ) -> None:
+        """Test successful area status retrieval."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.name = "Test Area"
+        mock_coordinator.entities.entities = {}
+        mock_coordinator.probability = 0.9  # High confidence (> 0.8)
+        mock_coordinator.occupied = True
+
+        # Use centralized mock_last_updated fixture
+        mock_coordinator.last_updated = mock_last_updated
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _get_area_status(mock_hass, mock_service_call)
+
+        assert "area_status" in result
+        status = result["area_status"]
+        assert status["area_name"] == "Test Area"
+        assert status["occupied"] is True
+        assert status["occupancy_probability"] == 0.9
+        assert status["confidence_level"] == "high"
+
+    async def test_get_area_status_no_occupancy_state(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+    ) -> None:
+        """Test area status with no occupancy state."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.name = "Test Area"
+        mock_coordinator.entities.entities = {}
+        mock_coordinator.probability = None  # No probability available
+        mock_coordinator.occupied = False
+
+        # Use centralized mock_last_updated fixture
+        mock_coordinator.last_updated = mock_last_updated
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _get_area_status(mock_hass, mock_service_call)
+
+        assert "area_status" in result
+        status = result["area_status"]
+        assert status["area_name"] == "Test Area"
+        assert status["occupied"] is False
+        assert status["occupancy_probability"] is None
+        assert status["confidence_level"] == "unknown"
+
+
+class TestGetEntityTypeLearned:
+    """Test _get_entity_type_learned_data service function."""
+
+    async def test_get_entity_type_learned_data_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_motion_entity_type: Mock,
+    ) -> None:
+        """Test successful entity type learned data retrieval."""
+        # Mock entity types with proper structure
+        from custom_components.area_occupancy.data.entity_type import InputType
+
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
         )
 
-    assert "Failed to update priors" in str(exc_info.value)
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _get_entity_type_learned_data(mock_hass, mock_service_call)
+
+        assert "entity_types" in result
+        # The service converts InputType.MOTION.value to string key
+        assert InputType.MOTION.value in result["entity_types"]
+        motion_data = result["entity_types"][InputType.MOTION.value]
+        assert motion_data["prior"] == 0.3
+        assert motion_data["prob_true"] == 0.8
+        assert motion_data["prob_false"] == 0.2
+        assert motion_data["weight"] == 1.0
+        assert motion_data["active_states"] == ["on"]
+        assert motion_data["active_range"] is None
+
+    async def test_get_entity_type_learned_data_coordinator_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test entity type learned data with coordinator error."""
+        # Create a mock that will raise an exception when .items() is called on it
+        mock_entity_types = Mock()
+        mock_entity_types.items = Mock(side_effect=Exception("Access error"))
+
+        # Override the entity_types property
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value=mock_entity_types
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to get entity_type learned data for test_entry_id: Access error",
+        ):
+            await _get_entity_type_learned_data(mock_hass, mock_service_call)
+
+
+class TestAsyncSetupServices:
+    """Test async_setup_services function."""
+
+    async def test_async_setup_services_success(self, mock_hass: Mock) -> None:
+        """Test successful service setup."""
+        await async_setup_services(mock_hass)
+
+        # Verify services were registered (8 services total)
+        assert mock_hass.services.async_register.call_count == 9
+
+    async def test_async_setup_services_registration_error(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test service setup with registration error."""
+        mock_hass.services.async_register.side_effect = Exception("Registration failed")
+
+        with pytest.raises(Exception, match="Registration failed"):
+            await async_setup_services(mock_hass)
+
+
+class TestServiceIntegration:
+    """Test service integration scenarios."""
+
+    async def test_service_workflow_integration(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+        mock_motion_entity_type: Mock,
+    ) -> None:
+        """Test complete service workflow integration."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.name = "Test Area"
+        mock_coordinator.entities.entities = {}
+        mock_coordinator.probability = 0.9  # High confidence (> 0.8)
+        mock_coordinator.occupied = True
+
+        # Use centralized mock_last_updated fixture
+        mock_coordinator.last_updated = mock_last_updated
+
+        # Mock entity types using centralized fixture
+        from custom_components.area_occupancy.data.entity_type import InputType
+
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        # 1. Get area status
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+        status_result = await _get_area_status(mock_hass, mock_service_call)
+
+        assert "area_status" in status_result
+        status = status_result["area_status"]
+        assert status["area_name"] == "Test Area"
+        assert status["occupied"] is True
+        assert status["occupancy_probability"] == 0.9
+        assert status["confidence_level"] == "high"
+
+        # 2. Get entity metrics
+        metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)
+        assert "metrics" in metrics_result
+        metrics = metrics_result["metrics"]
+        assert metrics["total_entities"] == 0
+        assert metrics["active_entities"] == 0
+        assert metrics["available_entities"] == 0
+        assert metrics["unavailable_entities"] == 0
+        assert metrics["decaying_entities"] == 0
+
+        # 3. Get entity type learned data
+        learned_result = await _get_entity_type_learned_data(
+            mock_hass, mock_service_call
+        )
+        assert "entity_types" in learned_result
+        entity_types = learned_result["entity_types"]
+        assert "motion" in entity_types
+        motion_type = entity_types["motion"]
+        assert motion_type["prior"] == 0.3
+        assert motion_type["prob_true"] == 0.8
+        assert motion_type["prob_false"] == 0.2
+        assert motion_type["weight"] == 1.0
+        assert motion_type["active_states"] == ["on"]
+        assert motion_type["active_range"] is None
+
+    async def test_error_handling_across_services(
+        self, mock_hass: Mock, mock_service_call: Mock
+    ) -> None:
+        """Test error handling across different services."""
+        # Test with invalid entry_id
+        mock_hass.config_entries.async_entries.return_value = []
+        mock_service_call.data = {"entry_id": "nonexistent"}
+
+        with pytest.raises(HomeAssistantError):
+            await _get_area_status(mock_hass, mock_service_call)
+
+        # Test with missing required parameters
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _get_entity_details(mock_hass, mock_call)
+
+    async def test_service_parameter_validation(self, mock_hass: Mock) -> None:
+        """Test parameter validation across services."""
+        # Test missing required parameters
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _get_entity_details(mock_hass, mock_call)
+
+    async def test_service_return_value_consistency(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+        mock_last_updated: Mock,
+        mock_motion_entity_type: Mock,
+    ) -> None:
+        """Test return value consistency across services."""
+        # Override specific properties needed for this test
+        mock_coordinator.config.name = "Test Area"
+        mock_coordinator.entities.entities = {}
+        mock_coordinator.probability = 0.8  # Medium confidence (0.2 < 0.8 <= 0.8)
+        mock_coordinator.occupied = True
+
+        # Use centralized mock_last_updated fixture
+        mock_coordinator.last_updated = mock_last_updated
+
+        # Mock entity types using centralized fixture
+        from custom_components.area_occupancy.data.entity_type import InputType
+
+        # Override the entity_types property using centralized fixture
+        type(mock_coordinator.entity_types).entity_types = PropertyMock(
+            return_value={InputType.MOTION: mock_motion_entity_type}
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        # Test return value structures
+        status_result = await _get_area_status(mock_hass, mock_service_call)
+        assert "area_status" in status_result
+        status = status_result["area_status"]
+        assert status["area_name"] == "Test Area"
+        assert status["occupied"] is True
+        assert status["occupancy_probability"] == 0.8
+        assert status["confidence_level"] == "medium"
+
+        # Test metrics consistency
+        metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)
+        assert "metrics" in metrics_result
+        metrics = metrics_result["metrics"]
+        assert metrics["total_entities"] == 0
+        assert metrics["active_entities"] == 0
+        assert metrics["available_entities"] == 0
+        assert metrics["unavailable_entities"] == 0
+        assert metrics["decaying_entities"] == 0
+
+        # Test entity type data consistency
+        learned_result = await _get_entity_type_learned_data(
+            mock_hass, mock_service_call
+        )
+        assert "entity_types" in learned_result
+        entity_types = learned_result["entity_types"]
+        assert "motion" in entity_types
+        motion_type = entity_types["motion"]
+        assert motion_type["prior"] == 0.3
+        assert motion_type["prob_true"] == 0.8
+        assert motion_type["prob_false"] == 0.2
+        assert motion_type["weight"] == 1.0
+        assert motion_type["active_states"] == ["on"]
+        assert motion_type["active_range"] is None

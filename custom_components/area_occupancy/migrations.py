@@ -11,29 +11,32 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
+from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
+    CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PURPOSE,
+    CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
     CONF_WINDOW_ACTIVE_STATE,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_PURPOSE,
+    DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
-    NAME_BINARY_SENSOR,
-    NAME_DECAY_SENSOR,
-    NAME_PRIORS_SENSOR,
-    NAME_PROBABILITY_SENSOR,
-    NAME_THRESHOLD_NUMBER,
     PLATFORMS,
 )
-from .storage import AreaOccupancyStore
+from .number import NAME_THRESHOLD_NUMBER
+from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ async def async_migrate_unique_ids(
     hass: HomeAssistant, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
+    _LOGGER.debug("Starting unique ID migration for platform %s", platform)
     entity_registry = er.async_get(hass)
     updated_entries = 0
     entry_id = config_entry.entry_id
@@ -54,10 +58,12 @@ async def async_migrate_unique_ids(
     }
 
     if platform not in entity_types:
+        _LOGGER.debug("Platform %s not in entity_types, skipping", platform)
         return
 
     # Get the old format prefix to look for
     old_prefix = f"{DOMAIN}_{entry_id}_"
+    _LOGGER.debug("Looking for entities with old prefix: %s", old_prefix)
 
     for entity_id, entity_entry in entity_registry.entities.items():
         old_unique_id = entity_entry.unique_id
@@ -77,7 +83,55 @@ async def async_migrate_unique_ids(
             updated_entries += 1
 
     if updated_entries > 0:
-        _LOGGER.info("Completed migrating %s unique IDs", updated_entries)
+        _LOGGER.info(
+            "Completed migrating %d unique IDs for platform %s",
+            updated_entries,
+            platform,
+        )
+    else:
+        _LOGGER.debug("No unique IDs to migrate for platform %s", platform)
+
+
+DECAY_MIN_DELAY_KEY = "decay_min_delay"
+
+
+def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay delay option from config."""
+    if DECAY_MIN_DELAY_KEY in config:
+        config.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from config")
+    return config
+
+
+CONF_LIGHTS_KEY = "lights"
+
+
+def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated lights key from config."""
+    if CONF_LIGHTS_KEY in config:
+        config.pop(CONF_LIGHTS_KEY)
+        _LOGGER.debug("Removed deprecated lights key from config")
+    return config
+
+
+CONF_DECAY_WINDOW_KEY = "decay_window"
+
+
+def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay window key from config."""
+    if CONF_DECAY_WINDOW_KEY in config:
+        config.pop(CONF_DECAY_WINDOW_KEY)
+        _LOGGER.debug("Removed deprecated decay window key from config")
+    return config
+
+
+def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add decay half life."""
+    if CONF_DECAY_HALF_LIFE not in config:
+        config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
+        _LOGGER.debug("Added decay half life to config")
+
+    return config
 
 
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +165,29 @@ def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add purpose field with default value.
+
+    This migration:
+    1. Adds the purpose field with default value if it doesn't exist
+    2. Preserves any existing purpose setting
+    3. Logs the migration for debugging
+
+    Args:
+        config: The configuration to migrate
+
+    Returns:
+        The migrated configuration
+
+    """
+
+    if CONF_PURPOSE not in config:
+        config[CONF_PURPOSE] = DEFAULT_PURPOSE
+        _LOGGER.debug("Migrated purpose field to default value: %s", DEFAULT_PURPOSE)
+
+    return config
+
+
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to latest version.
 
@@ -122,36 +199,42 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     """
     # Apply migrations in order
-    return migrate_primary_occupancy_sensor(config)
+    config = remove_decay_min_delay(config)
+    config = migrate_primary_occupancy_sensor(config)
+    config = migrate_decay_half_life(config)
+    config = remove_decay_window_key(config)
+    config = remove_lights_key(config)
+    return migrate_purpose_field(config)
+
+
+LEGACY_STORAGE_KEY = "area_occupancy.storage"
 
 
 async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
-    """Migrate storage data file format."""
-    store = AreaOccupancyStore(hass)
+    """Migrate legacy multi-instance storage to per-entry storage format."""
     try:
-        _LOGGER.debug("Starting storage file format migration for %s", entry_id)
-        # Load data with old version to trigger migration
-        data = await store.async_load()
-        if data is None:
-            _LOGGER.debug("No existing storage data found, skipping format migration")
-            return
+        _LOGGER.debug("Starting storage migration for entry %s", entry_id)
 
-        # Save with current version to ensure migration
-        await store.async_save(data)
+        # Check for and clean up legacy multi-instance storage using direct file operations
+        storage_dir = Path(hass.config.config_dir) / ".storage"
+        legacy_file = storage_dir / LEGACY_STORAGE_KEY
 
-        # Clean up old instance-specific storage file
-        old_file = Path(hass.config.path(".storage", f"{DOMAIN}.{entry_id}.storage"))
-        if old_file.exists():
+        if legacy_file.exists():
+            _LOGGER.info(
+                "Found legacy storage file %s, removing it for fresh start",
+                legacy_file.name,
+            )
             try:
-                _LOGGER.debug("Removing old storage file: %s", old_file)
-                old_file.unlink()
-                _LOGGER.info("Successfully removed old storage file: %s", old_file)
+                legacy_file.unlink()
+                _LOGGER.info("Successfully removed legacy storage file")
             except OSError as err:
-                _LOGGER.warning("Error removing old storage file %s: %s", old_file, err)
+                _LOGGER.warning(
+                    "Error removing legacy storage file %s: %s", legacy_file, err
+                )
 
-        _LOGGER.debug("Storage file format migration complete for %s", entry_id)
+        _LOGGER.debug("Storage migration completed for entry %s", entry_id)
     except (HomeAssistantError, OSError, ValueError) as err:
-        _LOGGER.error("Error during storage migration for %s: %s", entry_id, err)
+        _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -187,25 +270,41 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     )
 
     # --- Run Storage File Migration First ---
+    _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)
     await async_migrate_storage(hass, config_entry.entry_id)
+    _LOGGER.debug("Storage migration completed for %s", config_entry.entry_id)
     # --------------------------------------
 
     # Get existing data
+    _LOGGER.debug("Getting existing config data for %s", config_entry.entry_id)
     data = {**config_entry.data}
     options = {**config_entry.options}
 
     try:
         # Run the unique ID migrations
+        _LOGGER.debug("Starting unique ID migrations for %s", config_entry.entry_id)
         for platform in PLATFORMS:
+            _LOGGER.debug("Migrating unique IDs for platform %s", platform)
             await async_migrate_unique_ids(hass, config_entry, platform)
+        _LOGGER.debug("Unique ID migrations completed for %s", config_entry.entry_id)
     except HomeAssistantError as err:
         _LOGGER.error("Error during unique ID migration: %s", err)
 
     # Remove deprecated fields
+    _LOGGER.debug("Removing deprecated fields for %s", config_entry.entry_id)
     if CONF_AREA_ID in data:
         data.pop(CONF_AREA_ID)
+        _LOGGER.debug("Removed deprecated CONF_AREA_ID")
+
+    if DECAY_MIN_DELAY_KEY in data:
+        data.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from data")
+    if DECAY_MIN_DELAY_KEY in options:
+        options.pop(DECAY_MIN_DELAY_KEY)
+        _LOGGER.debug("Removed deprecated decay_min_delay from options")
 
     # Ensure new state configuration values are present with defaults
+    _LOGGER.debug("Adding new state configurations for %s", config_entry.entry_id)
     new_configs = {
         CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
         CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
@@ -226,10 +325,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     try:
         # Apply configuration migrations
+        _LOGGER.debug("Applying configuration migrations for %s", config_entry.entry_id)
         data = migrate_config(data)
         options = migrate_config(options)
 
+        # Handle threshold value with default if not present
+        threshold = options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        options[CONF_THRESHOLD] = validate_threshold(threshold)
+
         # Update the config entry with new data and options
+        _LOGGER.debug("Updating config entry for %s", config_entry.entry_id)
         hass.config_entries.async_update_entry(
             config_entry,
             data=data,
@@ -243,3 +348,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         return False
     else:
         return True
+
+
+def validate_threshold(threshold: float) -> float:
+    """Validate the threshold value.
+
+    Args:
+        threshold: The threshold value to validate
+
+    Returns:
+        The validated threshold value
+
+    """
+    if threshold < 1.0 or threshold > 99.0:
+        return DEFAULT_THRESHOLD
+    return round(threshold, 0)

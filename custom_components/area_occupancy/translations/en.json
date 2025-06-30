@@ -11,6 +11,16 @@
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
+                    "purpose": {
+                        "name": "Area Purpose",
+                        "description": "Configure the primary purpose of this area",
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        }
+                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
@@ -67,17 +77,6 @@
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
-                    "lights": {
-                        "name": "Light Sensors",
-                        "description": "Configure light sensors",
-                        "data": {
-                            "lights": "Lights",
-                            "weight_light": "Light Weight"
-                        },
-                        "data_description": {
-                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
-                        }
-                    },
                     "media": {
                         "name": "Media Players",
                         "description": "Configure media players and their states",
@@ -124,16 +123,14 @@
                             "threshold": "Occupancy Threshold (%)",
                             "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_window": "Decay Window (seconds)",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
+                            "decay_half_life": "Decay Half Life (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_window": "Time window over which occupancy probability decays.",
-                            "decay_min_delay": "Minimum time before decay starts.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }
@@ -147,6 +144,16 @@
                 "title": "Area Occupancy Detection Options",
                 "description": "Modify area occupancy detection configuration",
                 "sections": {
+                    "purpose": {
+                        "name": "Area Purpose",
+                        "description": "Configure the primary purpose of this area",
+                        "data": {
+                            "purpose": "Area Purpose"
+                        },
+                        "data_description": {
+                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
+                        }
+                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
@@ -203,17 +210,6 @@
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
-                    "lights": {
-                        "name": "Light Sensors",
-                        "description": "Configure light sensors",
-                        "data": {
-                            "lights": "Lights",
-                            "weight_light": "Light Weight"
-                        },
-                        "data_description": {
-                            "weight_light": "The weight given to light sensor inputs in the occupancy calculation."
-                        }
-                    },
                     "media": {
                         "name": "Media Players",
                         "description": "Configure media players and their states",
@@ -260,16 +256,14 @@
                             "threshold": "Occupancy Threshold (%)",
                             "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_window": "Decay Window (seconds)",
-                            "decay_min_delay": "Delay Before Starting Decay (seconds)",
+                            "decay_half_life": "Decay Half Life (seconds)",
                             "historical_analysis_enabled": "Enable Historical Analysis"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_window": "Time window over which occupancy probability decays.",
-                            "decay_min_delay": "Minimum time before decay starts.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
                             "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
                         }
                     }
