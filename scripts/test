@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
