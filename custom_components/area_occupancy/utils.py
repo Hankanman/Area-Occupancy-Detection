@@ -29,12 +29,89 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class TimeInterval(TypedDict):
+class Interval(TypedDict):
     """Time interval with state information."""
 
     start: datetime
     end: datetime
+
+
+class StateInterval(Interval):
+    """Time interval with state information."""
+
     state: str
+
+
+class TimeInterval(Interval):
+    """Time interval with time information."""
+
+    state: str
+
+
+class PriorInterval:
+    """Time interval with prior information."""
+
+    start_hour: int
+    start_minute: int
+    end_hour: int
+    end_minute: int
+    prior: float | None
+
+    def __init__(
+        self,
+        start_hour: int,
+        start_minute: int,
+        end_hour: int,
+        end_minute: int,
+        prior: float | None,
+    ) -> None:
+        """Initialize prior interval."""
+        self.start_hour = start_hour
+        self.start_minute = start_minute
+        self.end_hour = end_hour
+        self.end_minute = end_minute
+        self.prior = prior
+
+    def to_interval(self) -> Interval:
+        """Convert to interval."""
+        return Interval(
+            start=datetime(
+                datetime.now().year,
+                datetime.now().month,
+                datetime.now().day,
+                self.start_hour,
+                self.start_minute,
+            ),
+            end=datetime(
+                datetime.now().year,
+                datetime.now().month,
+                datetime.now().day,
+                self.end_hour,
+                self.end_minute,
+            ),
+        )
+
+
+class LikelihoodInterval(Interval):
+    """Time interval with likelihood information."""
+
+    prob_given_true: float
+    prob_given_false: float
+
+
+async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
+    """Initialize times of day for a given entity as 24 hourly intervals."""
+    return [
+        PriorInterval(
+            start_hour=hour,
+            start_minute=minute,
+            end_hour=hour if minute == 0 else (hour + 1) % 24,
+            end_minute=29 if minute == 0 else 59,
+            prior=None,
+        )
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
 
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
@@ -244,8 +321,7 @@ def bayesian_probability(
     posterior_odds = odds * bayes_factor
 
     # Return posterior probability
-    result = posterior_odds / (1.0 + posterior_odds)
-    return validate_prob(result)
+    return posterior_odds / (1.0 + posterior_odds)
 
 
 # ─────────────────────────────── Area-level fusion ───────────────────────────
@@ -274,9 +350,6 @@ def complementary_probability(entities: dict[str, Entity], prior: float) -> floa
         e for e in entities.values() if e.evidence or e.decay.is_decaying
     ]
 
-    if not contributing_entities:
-        return validate_prob(prior)
-
     product = 1.0
     for e in contributing_entities:
         posterior = bayesian_probability(
@@ -284,11 +357,11 @@ def complementary_probability(entities: dict[str, Entity], prior: float) -> floa
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=True,
-            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
+            decay_factor=e.decay_factor,
         )
         product *= 1 - posterior
 
-    return validate_prob(1 - product)
+    return 1 - product
 
 
 def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
@@ -317,10 +390,10 @@ def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=effective_evidence,
-            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
+            decay_factor=e.decay_factor,
         )
 
-    return validate_prob(posterior)
+    return posterior
 
 
 def conditional_sorted_probability(entities: dict[str, Entity], prior: float) -> float:
@@ -355,7 +428,7 @@ def conditional_sorted_probability(entities: dict[str, Entity], prior: float) ->
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=effective_evidence,
-            decay_factor=e.decay.decay_factor,
+            decay_factor=e.decay_factor,
         )
 
-    return validate_prob(posterior)
+    return posterior
