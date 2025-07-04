@@ -99,6 +99,11 @@ class Entity:
         return None
 
     @property
+    def active(self) -> bool:
+        """Get the entity active status."""
+        return self.evidence or self.decay.is_decaying
+
+    @property
     def active_states(self) -> list[str] | None:
         """Get the active states for the entity."""
         return self.type.active_states

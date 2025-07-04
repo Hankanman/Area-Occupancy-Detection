@@ -249,8 +249,26 @@ def bayesian_probability(
 
 
 # ─────────────────────────────── Area-level fusion ───────────────────────────
-def overall_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Combine weighted posteriors from active/decaying sensors."""
+def complementary_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Calculate the complementary probability.
+
+    This function computes the probability that at least ONE entity provides
+    evidence for occupancy, using the complement rule:
+    P(at least one) = 1 - product(P(not each)). For each contributing entity,
+    a Bayesian update is performed assuming evidence is True (or decaying),
+    and the complement of the posterior is multiplied across all such entities.
+    Is not affected by the order of the entities.
+    Does not consider negative evidence.
+
+    Args:
+        entities: Dictionary of Entity objects to consider.
+        prior: The prior probability of occupancy.
+
+    Returns:
+        The combined probability that at least one contributing entity
+        indicates occupancy, after Bayesian updates and decay are applied.
+
+    """
 
     contributing_entities = [
         e for e in entities.values() if e.evidence or e.decay.is_decaying
@@ -271,3 +289,68 @@ def overall_probability(entities: dict[str, Entity], prior: float) -> float:
         product *= 1 - posterior
 
     return validate_prob(1 - product)
+
+
+def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Return conditional probability.
+
+    Sequentially update the prior probability by applying Bayes' theorem for each entity,
+    using the entity's evidence and likelihoods. The posterior from each step becomes the
+    prior for the next entity. This method reflects the effect of each entity's evidence
+    (and decay, if applicable) on the overall probability.
+
+    Args:
+        entities: Dictionary of Entity objects to process.
+        prior: Initial prior probability.
+
+    Returns:
+        The final posterior probability after all updates.
+
+    """
+
+    posterior = prior
+    for e in entities.values():
+        posterior = bayesian_probability(
+            prior=posterior,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
+            evidence=e.evidence,
+            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
+        )
+
+    return validate_prob(posterior)
+
+
+def conditional_sorted_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Return conditional sorted probability.
+
+    Sequentially update the prior probability by applying Bayes' theorem for each entity,
+    using the entity's evidence and likelihoods. The posterior from each step becomes the
+    prior for the next entity. This method reflects the effect of each entity's evidence
+    (and decay, if applicable) on the overall probability. The entities are sorted by
+    evidence status (active first) and then by weight (highest weight first) to ensure
+    that the most relevant entities are considered first.
+
+    Args:
+        entities: Dictionary of Entity objects to process.
+        prior: Initial prior probability.
+
+    Returns:
+        The final posterior probability after all updates.
+
+    """
+
+    sorted_entities = sorted(
+        entities.values(), key=lambda x: (not x.evidence, -x.type.weight)
+    )
+    posterior = prior
+    for e in sorted_entities:
+        posterior = bayesian_probability(
+            prior=posterior,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
+            evidence=e.evidence,
+            decay_factor=e.decay.decay_factor,
+        )
+
+    return validate_prob(posterior)

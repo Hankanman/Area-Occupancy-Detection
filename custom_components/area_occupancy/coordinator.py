@@ -36,7 +36,11 @@ from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
 from .storage import AreaOccupancyStore
-from .utils import overall_probability
+from .utils import (
+    complementary_probability,
+    conditional_probability,
+    conditional_sorted_probability,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,7 +95,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.entities.entities:
             return MIN_PROBABILITY
 
-        return overall_probability(
+        return complementary_probability(
+            entities=self.entities.entities, prior=self.area_prior
+        )
+
+    @property
+    def conditional_probability(self) -> float:
+        """Calculate and return the current occupancy probability (0.0-1.0)."""
+        if not self.entities.entities:
+            return MIN_PROBABILITY
+
+        return conditional_probability(
+            entities=self.entities.entities, prior=self.area_prior
+        )
+
+    @property
+    def conditional_sorted_probability(self) -> float:
+        """Calculate and return the current occupancy probability (0.0-1.0)."""
+        if not self.entities.entities:
+            return MIN_PROBABILITY
+
+        return conditional_sorted_probability(
             entities=self.entities.entities, prior=self.area_prior
         )
 
