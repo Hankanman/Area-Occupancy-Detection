@@ -644,7 +644,8 @@ class TestEntityPropertiesAndMethods:
         assert transition_occurred is True
         assert entity.previous_evidence is True
         assert entity.previous_probability > 0.2  # Should increase
-        mock_decay.stop_decay.assert_called_once()  # Should stop decay for ON state
+        # stop_decay is called twice: once by consistency check and once by transition logic
+        assert mock_decay.stop_decay.call_count == 2
 
         # Reset mocks
         mock_decay.reset_mock()

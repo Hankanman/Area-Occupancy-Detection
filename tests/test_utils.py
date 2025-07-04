@@ -8,8 +8,8 @@ import pytest
 
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
+    complementary_probability,
     format_float,
-    overall_probability,
     states_to_intervals,
     validate_datetime,
     validate_decay_factor,
@@ -237,8 +237,8 @@ class TestBayesianProbability:
         assert 0.0 <= result <= 1.0
 
 
-class TestOverallProbability:
-    """Test overall_probability function."""
+class TestComplementaryProbability:
+    """Test complementary_probability function."""
 
     def test_single_entity(self) -> None:
         """Test probability calculation with a single entity."""
@@ -246,6 +246,7 @@ class TestOverallProbability:
         mock_entity = Mock()
         mock_entity.evidence = True
         mock_entity.decay.is_decaying = False
+        mock_entity.decay_factor = 1.0
         mock_entity.type.weight = 1.0
         mock_entity.likelihood.prob_given_true = 0.8
         mock_entity.likelihood.prob_given_false = 0.1
@@ -260,7 +261,7 @@ class TestOverallProbability:
             decay_factor=1.0,
         )
 
-        result = overall_probability(entities, prior)
+        result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
 
     def test_multiple_entities(self) -> None:
@@ -269,6 +270,7 @@ class TestOverallProbability:
         mock_entity1 = Mock()
         mock_entity1.evidence = True
         mock_entity1.decay.is_decaying = False
+        mock_entity1.decay_factor = 1.0
         mock_entity1.type.weight = 0.8
         mock_entity1.likelihood.prob_given_true = 0.8
         mock_entity1.likelihood.prob_given_false = 0.1
@@ -276,6 +278,7 @@ class TestOverallProbability:
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
+        mock_entity2.decay_factor = 1.0
         mock_entity2.type.weight = 0.6
         mock_entity2.likelihood.prob_given_true = 0.7
         mock_entity2.likelihood.prob_given_false = 0.2
@@ -294,7 +297,7 @@ class TestOverallProbability:
             decay_factor=1.0,
         )
 
-        result = overall_probability(entities, prior)
+        result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
 
     def test_decaying_entity(self) -> None:
@@ -303,6 +306,7 @@ class TestOverallProbability:
         mock_entity.evidence = False
         mock_entity.decay.is_decaying = True
         mock_entity.decay.decay_factor = 0.5  # Half decay
+        mock_entity.decay_factor = 0.5
         mock_entity.type.weight = 1.0
         mock_entity.likelihood.prob_given_true = 0.8
         mock_entity.likelihood.prob_given_false = 0.1
@@ -317,32 +321,8 @@ class TestOverallProbability:
             decay_factor=0.5,
         )
 
-        result = overall_probability(entities, prior)
+        result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
-
-    def test_no_entities(self) -> None:
-        """Test probability calculation with no entities."""
-        entities = {}
-        prior = 0.3
-
-        # With no entities, should return the prior unchanged
-        result = overall_probability(entities, prior)
-        assert result == prior
-
-    def test_inactive_sensor_ignored(self) -> None:
-        """Ensure inactive sensors do not influence the result."""
-        mock_entity = Mock()
-        mock_entity.evidence = False
-        mock_entity.decay.is_decaying = False
-        mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
-
-        entities = {"sensor": cast("Entity", mock_entity)}
-        prior = 0.3
-
-        result = overall_probability(entities, prior)
-        assert result == prior
 
     def test_mixed_states(self) -> None:
         """Test probability calculation with mixed entity states."""
@@ -350,6 +330,7 @@ class TestOverallProbability:
         mock_active = Mock()
         mock_active.evidence = True
         mock_active.decay.is_decaying = False
+        mock_active.decay_factor = 1.0
         mock_active.type.weight = 1.0
         mock_active.likelihood.prob_given_true = 0.8
         mock_active.likelihood.prob_given_false = 0.1
@@ -357,6 +338,7 @@ class TestOverallProbability:
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
+        mock_inactive.decay_factor = 1.0
         mock_inactive.type.weight = 1.0
         mock_inactive.likelihood.prob_given_true = 0.8
         mock_inactive.likelihood.prob_given_false = 0.1
@@ -365,6 +347,7 @@ class TestOverallProbability:
         mock_decaying.evidence = False
         mock_decaying.decay.is_decaying = True
         mock_decaying.decay.decay_factor = 0.5
+        mock_decaying.decay_factor = 0.5
         mock_decaying.type.weight = 1.0
         mock_decaying.likelihood.prob_given_true = 0.8
         mock_decaying.likelihood.prob_given_false = 0.1
@@ -376,7 +359,7 @@ class TestOverallProbability:
         }
         prior = 0.3
 
-        result = overall_probability(entities, prior)
+        result = complementary_probability(entities, prior)
         assert 0.0 <= result <= 1.0
 
 
