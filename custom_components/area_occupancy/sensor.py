@@ -95,15 +95,9 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             return {}
         try:
             return {
-                "complementary_probability": format_float(
-                    self.coordinator.probability * 100
-                ),
-                "conditional_probability": format_float(
-                    self.coordinator.conditional_probability * 100
-                ),
-                "conditional_sorted_probability": format_float(
-                    self.coordinator.conditional_sorted_probability * 100
-                ),
+                "complementary_probability": self.coordinator.probability,
+                "conditional_probability": self.coordinator.conditional_probability,
+                "conditional_sorted_probability": self.coordinator.conditional_sorted_probability,
             }
         except (TypeError, AttributeError, KeyError):
             return {}

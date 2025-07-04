@@ -310,11 +310,13 @@ def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
 
     posterior = prior
     for e in entities.values():
+        # Use effective evidence: True if evidence is True OR if decaying
+        effective_evidence = e.evidence or e.decay.is_decaying
         posterior = bayesian_probability(
             prior=posterior,
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
-            evidence=e.evidence,
+            evidence=effective_evidence,
             decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
         )
 
@@ -341,15 +343,18 @@ def conditional_sorted_probability(entities: dict[str, Entity], prior: float) ->
     """
 
     sorted_entities = sorted(
-        entities.values(), key=lambda x: (not x.evidence, -x.type.weight)
+        entities.values(),
+        key=lambda x: (not (x.evidence or x.decay.is_decaying), -x.type.weight),
     )
     posterior = prior
     for e in sorted_entities:
+        # Use effective evidence: True if evidence is True OR if decaying
+        effective_evidence = e.evidence or e.decay.is_decaying
         posterior = bayesian_probability(
             prior=posterior,
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
-            evidence=e.evidence,
+            evidence=effective_evidence,
             decay_factor=e.decay.decay_factor,
         )
 
