@@ -102,7 +102,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This returns the pure P(area occupied) without any sensor weighting.
         """
         # Use the dedicated area baseline prior calculation
-        return self.prior.current_value
+        return self.prior.value
 
     @property
     def decay(self) -> float:

@@ -15,7 +15,8 @@ from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 from ..utils import (
-    TimeInterval,
+    StateInterval,
+    filter_intervals,
     get_states_from_recorder,
     states_to_intervals,
     validate_prob,
@@ -25,12 +26,6 @@ if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-# Interval filtering thresholds to exclude anomalous data
-MIN_INTERVAL_SECONDS = 10  # Exclude intervals shorter than 10 seconds (false triggers)
-MAX_INTERVAL_SECONDS = (
-    13 * 3600
-)  # Exclude intervals longer than 13 hours (stuck sensors)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,7 +55,7 @@ class Likelihood:
         self.start_time: datetime | None = None
         self.end_time: datetime | None = None
         self.states: list[State] | None = None
-        self.intervals: list[TimeInterval] | None = None
+        self.intervals: list[StateInterval] | None = None
         self.active_seconds: int | None = None
         self.inactive_seconds: int | None = None
         self.active_ratio: float | None = None
@@ -212,17 +207,10 @@ class Likelihood:
             self.hass, self.entity_id, self.start_time, self.end_time
         )
 
-        prior_intervals = self.coordinator.prior.prior_intervals
+        prior_intervals = self.coordinator.prior.state_intervals
 
         active_ratio = self.default_prob_true
         inactive_ratio = self.default_prob_false
-
-        # Initialize filtering statistics
-        self.total_on_intervals = 0
-        self.filtered_short_intervals = 0
-        self.filtered_long_intervals = 0
-        self.valid_intervals = 0
-        self.max_filtered_duration_seconds = None
 
         # Debug logging
         _LOGGER.debug(
@@ -240,55 +228,7 @@ class Likelihood:
             )
 
             # Apply anomaly filtering to intervals first
-            filtered_intervals = []
-            for interval in intervals:
-                if interval["state"] in self.active_states:
-                    self.total_on_intervals += 1
-                    duration_seconds = (
-                        interval["end"] - interval["start"]
-                    ).total_seconds()
-
-                    if duration_seconds < MIN_INTERVAL_SECONDS:
-                        self.filtered_short_intervals += 1
-                        _LOGGER.debug(
-                            "Likelihood %s: Filtered short interval (%.1fs) from %s to %s",
-                            self.entity_id,
-                            duration_seconds,
-                            interval["start"],
-                            interval["end"],
-                        )
-                    elif duration_seconds > MAX_INTERVAL_SECONDS:
-                        self.filtered_long_intervals += 1
-                        # Track the maximum filtered duration
-                        if (
-                            self.max_filtered_duration_seconds is None
-                            or duration_seconds > self.max_filtered_duration_seconds
-                        ):
-                            self.max_filtered_duration_seconds = duration_seconds
-                        _LOGGER.debug(
-                            "Likelihood %s: Filtered long interval (%.1fh) from %s to %s",
-                            self.entity_id,
-                            duration_seconds / 3600,
-                            interval["start"],
-                            interval["end"],
-                        )
-                    else:
-                        # Valid interval - keep it for calculation
-                        filtered_intervals.append(interval)
-                        self.valid_intervals += 1
-                else:
-                    # Keep non-active intervals for calculation (they don't get filtered)
-                    filtered_intervals.append(interval)
-
-            # Log filtering results
-            if self.filtered_short_intervals > 0 or self.filtered_long_intervals > 0:
-                _LOGGER.info(
-                    "Likelihood %s: Filtered %d short and %d long intervals, kept %d valid active intervals",
-                    self.entity_id,
-                    self.filtered_short_intervals,
-                    self.filtered_long_intervals,
-                    self.valid_intervals,
-                )
+            filtered_intervals = filter_intervals(intervals)
 
             # Calculate total analysis period
             total_seconds = (self.end_time - self.start_time).total_seconds()
@@ -357,12 +297,6 @@ class Likelihood:
             "last_updated": (
                 self.last_updated.isoformat() if self.last_updated else None
             ),
-            # Store filtering statistics
-            "total_on_intervals": self.total_on_intervals,
-            "filtered_short_intervals": self.filtered_short_intervals,
-            "filtered_long_intervals": self.filtered_long_intervals,
-            "valid_intervals": self.valid_intervals,
-            "max_filtered_duration_seconds": self.max_filtered_duration_seconds,
         }
 
     # ------------------------------------------------------------------ #
@@ -394,12 +328,5 @@ class Likelihood:
             if data["last_updated"]
             else None
         )
-        # Load filtering statistics (with backward compatibility)
-        likelihood.total_on_intervals = data.get("total_on_intervals")
-        likelihood.filtered_short_intervals = data.get("filtered_short_intervals")
-        likelihood.filtered_long_intervals = data.get("filtered_long_intervals")
-        likelihood.valid_intervals = data.get("valid_intervals")
-        likelihood.max_filtered_duration_seconds = data.get(
-            "max_filtered_duration_seconds"
-        )
+
         return likelihood

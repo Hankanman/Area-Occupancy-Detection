@@ -1,56 +1,15 @@
-"""Tests for prior module."""
+"""Tests for the Prior class."""
 
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
-from custom_components.area_occupancy.data.prior import MIN_PRIOR, Prior, PriorData
-from custom_components.area_occupancy.utils import TimeInterval
+from custom_components.area_occupancy.data.prior import MIN_PRIOR, Prior
+from custom_components.area_occupancy.utils import StateInterval
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001
-class TestPriorData:
-    """Test PriorData dataclass."""
-
-    def test_prior_data_initialization(self) -> None:
-        """Test PriorData initialization."""
-        start_time = dt_util.utcnow() - timedelta(hours=2)
-        end_time = dt_util.utcnow()
-        states = []
-        intervals = []
-
-        data = PriorData(
-            entity_id="binary_sensor.motion",
-            start_time=start_time,
-            end_time=end_time,
-            states=states,
-            intervals=intervals,
-            occupied_seconds=3600,
-            ratio=0.5,
-            total_on_intervals=10,
-            filtered_short_intervals=1,
-            filtered_long_intervals=2,
-            valid_intervals=7,
-            max_filtered_duration_seconds=25 * 3600,  # 25 hours stuck sensor
-        )
-
-        assert data.entity_id == "binary_sensor.motion"
-        assert data.start_time == start_time
-        assert data.end_time == end_time
-        assert data.states == states
-        assert data.intervals == intervals
-        assert data.occupied_seconds == 3600
-        assert data.ratio == 0.5
-        assert data.total_on_intervals == 10
-        assert data.filtered_short_intervals == 1
-        assert data.filtered_long_intervals == 2
-        assert data.valid_intervals == 7
-        assert data.max_filtered_duration_seconds == 25 * 3600
-
-
 class TestPrior:
     """Test Prior class."""
 
@@ -70,39 +29,39 @@ class TestPrior:
         assert prior.days == 7
         assert prior.hass == mock_coordinator.hass
         assert prior.cache_ttl == timedelta(hours=2)
-        assert prior.value is None
-        assert prior.last_updated is None
-        assert prior.sensor_hash is None
-        assert prior.data == {}
+        assert prior._current_value is None
+        assert prior._last_updated is None
+        assert prior._sensor_hash is None
+        assert prior._sensor_data == {}
 
-    def test_current_value_property(self, mock_coordinator: Mock) -> None:
-        """Test current_value property."""
+    def test_value_property(self, mock_coordinator: Mock) -> None:
+        """Test value property."""
         prior = Prior(mock_coordinator)
 
         # Test with value explicitly set
-        prior.value = 0.35
-        assert prior.current_value == 0.35
+        prior._current_value = 0.35
+        assert prior.value == 0.35
 
         # Test with None value - should return default
-        prior.value = None
-        assert prior.current_value == MIN_PRIOR  # MIN_PRIOR from data/prior.py
+        prior._current_value = None
+        assert prior.value == MIN_PRIOR  # MIN_PRIOR from data/prior.py
 
         # Test with value below minimum - should return default
-        prior.value = 0.005
-        assert prior.current_value == MIN_PRIOR
+        prior._current_value = 0.005
+        assert prior.value == MIN_PRIOR
 
-    def test_prior_intervals_empty(self, mock_coordinator: Mock) -> None:
-        """Test prior_intervals property with no data."""
+    def test_state_intervals_empty(self, mock_coordinator: Mock) -> None:
+        """Test state_intervals property with no data."""
         prior = Prior(mock_coordinator)
-        assert prior.prior_intervals == []
+        assert prior.state_intervals == []
 
-    def test_prior_intervals_single_sensor(self, mock_coordinator: Mock) -> None:
-        """Test prior_intervals property with single sensor data."""
+    def test_state_intervals_single_sensor(self, mock_coordinator: Mock) -> None:
+        """Test state_intervals property with single sensor data."""
         prior = Prior(mock_coordinator)
 
         # Create test intervals
         base_time = dt_util.utcnow() - timedelta(hours=1)
-        intervals: list[TimeInterval] = [
+        intervals: list[StateInterval] = [
             {
                 "state": "on",
                 "start": base_time,
@@ -120,34 +79,31 @@ class TestPrior:
             },
         ]
 
-        prior.data["sensor1"] = PriorData(
-            entity_id="sensor1",
-            start_time=base_time,
-            end_time=base_time + timedelta(hours=1),
-            states=[],
-            intervals=intervals,
-            occupied_seconds=1200,
-            ratio=0.333,
-            total_on_intervals=2,
-            filtered_short_intervals=0,
-            filtered_long_intervals=0,
-            valid_intervals=2,
-            max_filtered_duration_seconds=None,
-        )
+        prior._sensor_data["sensor1"] = {
+            "entity_id": "sensor1",
+            "start_time": base_time,
+            "end_time": base_time + timedelta(hours=1),
+            "states_count": 0,
+            "intervals": intervals,
+            "occupied_seconds": 1200,
+            "ratio": 0.333,
+        }
 
-        result = prior.prior_intervals
-        assert len(result) == 2
+        result = prior.state_intervals
+        # Should merge the two "on" intervals into one since they're contiguous
+        assert len(result) == 1
         assert result[0]["state"] == "on"
-        assert result[1]["state"] == "on"
+        assert result[0]["start"] == base_time
+        assert result[0]["end"] == base_time + timedelta(minutes=30)
 
-    def test_prior_intervals_overlapping_merge(self, mock_coordinator: Mock) -> None:
-        """Test prior_intervals property merges overlapping intervals."""
+    def test_state_intervals_overlapping_merge(self, mock_coordinator: Mock) -> None:
+        """Test state_intervals property merges overlapping intervals."""
         prior = Prior(mock_coordinator)
 
         base_time = dt_util.utcnow() - timedelta(hours=1)
 
         # Sensor 1 intervals
-        intervals1: list[TimeInterval] = [
+        intervals1: list[StateInterval] = [
             {
                 "state": "on",
                 "start": base_time,
@@ -161,7 +117,7 @@ class TestPrior:
         ]
 
         # Sensor 2 intervals (overlapping with sensor 1)
-        intervals2: list[TimeInterval] = [
+        intervals2: list[StateInterval] = [
             {
                 "state": "on",
                 "start": base_time + timedelta(minutes=10),
@@ -169,37 +125,27 @@ class TestPrior:
             }
         ]
 
-        prior.data["sensor1"] = PriorData(
-            entity_id="sensor1",
-            start_time=base_time,
-            end_time=base_time + timedelta(hours=1),
-            states=[],
-            intervals=intervals1,
-            occupied_seconds=900,
-            ratio=0.25,
-            total_on_intervals=1,
-            filtered_short_intervals=0,
-            filtered_long_intervals=0,
-            valid_intervals=1,
-            max_filtered_duration_seconds=None,
-        )
+        prior._sensor_data["sensor1"] = {
+            "entity_id": "sensor1",
+            "start_time": base_time,
+            "end_time": base_time + timedelta(hours=1),
+            "states_count": 0,
+            "intervals": intervals1,
+            "occupied_seconds": 900,
+            "ratio": 0.25,
+        }
 
-        prior.data["sensor2"] = PriorData(
-            entity_id="sensor2",
-            start_time=base_time,
-            end_time=base_time + timedelta(hours=1),
-            states=[],
-            intervals=intervals2,
-            occupied_seconds=900,
-            ratio=0.25,
-            total_on_intervals=1,
-            filtered_short_intervals=0,
-            filtered_long_intervals=0,
-            valid_intervals=1,
-            max_filtered_duration_seconds=None,
-        )
+        prior._sensor_data["sensor2"] = {
+            "entity_id": "sensor2",
+            "start_time": base_time,
+            "end_time": base_time + timedelta(hours=1),
+            "states_count": 0,
+            "intervals": intervals2,
+            "occupied_seconds": 900,
+            "ratio": 0.25,
+        }
 
-        result = prior.prior_intervals
+        result = prior.state_intervals
         # Should merge overlapping "on" intervals into one
         assert len(result) == 1
         assert result[0]["start"] == base_time
@@ -210,7 +156,7 @@ class TestPrior:
         prior = Prior(mock_coordinator)
 
         base_time = dt_util.utcnow() - timedelta(hours=1)
-        intervals: list[TimeInterval] = [
+        intervals: list[StateInterval] = [
             {
                 "state": "on",
                 "start": base_time,
@@ -223,20 +169,15 @@ class TestPrior:
             },  # 600 seconds
         ]
 
-        prior.data["sensor1"] = PriorData(
-            entity_id="sensor1",
-            start_time=base_time,
-            end_time=base_time + timedelta(hours=1),
-            states=[],
-            intervals=intervals,
-            occupied_seconds=1200,
-            ratio=0.333,
-            total_on_intervals=2,
-            filtered_short_intervals=0,
-            filtered_long_intervals=0,
-            valid_intervals=2,
-            max_filtered_duration_seconds=None,
-        )
+        prior._sensor_data["sensor1"] = {
+            "entity_id": "sensor1",
+            "start_time": base_time,
+            "end_time": base_time + timedelta(hours=1),
+            "states_count": 0,
+            "intervals": intervals,
+            "occupied_seconds": 1200,
+            "ratio": 0.333,
+        }
 
         assert prior.prior_total_seconds == 1200
 
@@ -247,8 +188,10 @@ class TestPrior:
 
     @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
     @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
+    @patch("custom_components.area_occupancy.data.prior.filter_intervals")
     async def test_calculate_success(
         self,
+        mock_filter_intervals: Mock,
         mock_states_to_intervals: AsyncMock,
         mock_get_states: AsyncMock,
         mock_coordinator: Mock,
@@ -256,6 +199,7 @@ class TestPrior:
         """Test successful prior calculation."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.config.history.period = 1
+        mock_coordinator.occupancy_entity_id = None  # No occupancy entity
 
         prior = Prior(mock_coordinator)
 
@@ -267,7 +211,8 @@ class TestPrior:
         ]
         mock_get_states.return_value = mock_states
 
-        # Mock intervals
+        # Mock intervals - only "on" intervals are used for calculation
+        # 8 hours on out of 24 hours total = 33.3% ratio
         mock_intervals = [
             {
                 "state": "on",
@@ -282,14 +227,19 @@ class TestPrior:
         ]
         mock_states_to_intervals.return_value = mock_intervals
 
+        # Mock filtered intervals to only include "on" intervals for calculation
+        mock_filter_intervals.return_value = [
+            mock_intervals[0]
+        ]  # Only the "on" interval
+
         result = await prior.calculate()
 
         # 8 hours / 24 hours = 0.333, with 5% buffer = 0.333 * 1.05 = 0.35
         expected = (8 * 3600) / (24 * 3600) * 1.05  # 0.35
         assert abs(result - expected) < 0.001
-        assert prior.value == result
-        assert prior.last_updated is not None
-        assert prior.sensor_hash is not None
+        assert prior._current_value == result
+        assert prior._last_updated is not None
+        assert prior._sensor_hash is not None
 
     @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
     async def test_calculate_no_states(
@@ -298,20 +248,21 @@ class TestPrior:
         """Test prior calculation with no states returned."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.config.history.period = 1
+        mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
         mock_get_states.return_value = []
 
-        # When no states are found, calculate() will have empty self.data
-        # and will cause ZeroDivisionError in the current implementation.
-        # This should be handled, but for now we test the actual behavior
-        with pytest.raises(ZeroDivisionError):
-            await prior.calculate()
+        # When no states are found, calculate() should return MIN_PRIOR
+        result = await prior.calculate()
+        assert result == MIN_PRIOR
 
     @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
     @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
+    @patch("custom_components.area_occupancy.data.prior.filter_intervals")
     async def test_calculate_multiple_sensors(
         self,
+        mock_filter_intervals: Mock,
         mock_states_to_intervals: AsyncMock,
         mock_get_states: AsyncMock,
         mock_coordinator: Mock,
@@ -322,6 +273,7 @@ class TestPrior:
             "binary_sensor.motion2",
         ]
         mock_coordinator.config.history.period = 1
+        mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
 
@@ -336,19 +288,25 @@ class TestPrior:
                     "state": "on",
                     "start": base_time,
                     "end": base_time + timedelta(hours=6),
-                },  # 25% for sensor1
+                },  # 6 hours on
                 {
                     "state": "off",
                     "start": base_time + timedelta(hours=6),
                     "end": base_time + timedelta(hours=24),
-                },
+                },  # 18 hours off
             ]
 
         mock_states_to_intervals.side_effect = mock_intervals_side_effect
 
+        # Mock filtered intervals to only include "on" intervals for calculation
+        def mock_filter_side_effect(intervals):
+            return [interval for interval in intervals if interval["state"] == "on"]
+
+        mock_filter_intervals.side_effect = mock_filter_side_effect
+
         result = await prior.calculate()
 
-        # Both sensors have 25% ratio, average = 25%, with 5% buffer = 26.25%
+        # Both sensors have 6/24 = 25% ratio, average = 25%, with 5% buffer = 26.25%
         expected = 0.25 * 1.05
         assert abs(result - expected) < 0.001
 
@@ -357,9 +315,9 @@ class TestPrior:
         mock_coordinator.config.sensors.motion = ["sensor1"]
 
         prior = Prior(mock_coordinator)
-        prior.value = 0.4
-        prior.last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh cache
-        prior.sensor_hash = hash(frozenset(["sensor1"]))  # Must match sensor_ids
+        prior._current_value = 0.4
+        prior._last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh cache
+        prior._sensor_hash = hash(frozenset(["sensor1"]))  # Must match sensor_ids
 
         result = await prior.update()
 
@@ -371,7 +329,7 @@ class TestPrior:
     ) -> None:
         """Test update method with invalid cache."""
         prior = Prior(mock_coordinator)
-        prior.value = None  # No cached value
+        prior._current_value = None  # No cached value
 
         mock_calculate.return_value = 0.3
 
@@ -386,7 +344,7 @@ class TestPrior:
     ) -> None:
         """Test update method handles calculation errors."""
         prior = Prior(mock_coordinator)
-        prior.value = None
+        prior._current_value = None
 
         mock_calculate.side_effect = Exception("Test error")
 
@@ -402,16 +360,16 @@ class TestPrior:
     def test_is_cache_valid_no_timestamp(self, mock_coordinator: Mock) -> None:
         """Test cache validation with no timestamp."""
         prior = Prior(mock_coordinator)
-        prior.value = 0.3
-        prior.last_updated = None
+        prior._current_value = 0.3
+        prior._last_updated = None
         assert not prior._is_cache_valid()
 
     def test_is_cache_valid_expired(self, mock_coordinator: Mock) -> None:
         """Test cache validation with expired timestamp."""
         prior = Prior(mock_coordinator)
-        prior.value = 0.3
-        prior.last_updated = dt_util.utcnow() - timedelta(hours=3)  # Expired
-        prior.sensor_hash = hash(frozenset(["sensor1"]))
+        prior._current_value = 0.3
+        prior._last_updated = dt_util.utcnow() - timedelta(hours=3)  # Expired
+        prior._sensor_hash = hash(frozenset(["sensor1"]))
         mock_coordinator.config.sensors.motion = ["sensor1"]
 
         assert not prior._is_cache_valid()
@@ -419,9 +377,9 @@ class TestPrior:
     def test_is_cache_valid_sensors_changed(self, mock_coordinator: Mock) -> None:
         """Test cache validation with changed sensors."""
         prior = Prior(mock_coordinator)
-        prior.value = 0.3
-        prior.last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh
-        prior.sensor_hash = hash(frozenset(["old_sensor"]))
+        prior._current_value = 0.3
+        prior._last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh
+        prior._sensor_hash = hash(frozenset(["old_sensor"]))
         mock_coordinator.config.sensors.motion = ["new_sensor"]  # Different sensors
 
         assert not prior._is_cache_valid()
@@ -431,9 +389,9 @@ class TestPrior:
         mock_coordinator.config.sensors.motion = ["sensor1"]
 
         prior = Prior(mock_coordinator)
-        prior.value = 0.3
-        prior.last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh
-        prior.sensor_hash = hash(frozenset(["sensor1"]))  # Must match sensor_ids
+        prior._current_value = 0.3
+        prior._last_updated = dt_util.utcnow() - timedelta(minutes=30)  # Fresh
+        prior._sensor_hash = hash(frozenset(["sensor1"]))  # Must match sensor_ids
 
         assert prior._is_cache_valid()
 
@@ -441,9 +399,9 @@ class TestPrior:
         """Test converting prior to dictionary."""
         prior = Prior(mock_coordinator)
         timestamp = dt_util.utcnow()
-        prior.value = 0.35
-        prior.last_updated = timestamp
-        prior.sensor_hash = 12345
+        prior._current_value = 0.35
+        prior._last_updated = timestamp
+        prior._sensor_hash = 12345
 
         result = prior.to_dict()
 
@@ -474,9 +432,9 @@ class TestPrior:
 
         prior = Prior.from_dict(data, mock_coordinator)
 
-        assert prior.value == 0.35
-        assert prior.last_updated == timestamp
-        assert prior.sensor_hash == 12345
+        assert prior._current_value == 0.35
+        assert prior._last_updated == timestamp
+        assert prior._sensor_hash == 12345
 
     def test_from_dict_none_timestamp(self, mock_coordinator: Mock) -> None:
         """Test creating prior from dictionary with None timestamp."""
@@ -484,9 +442,9 @@ class TestPrior:
 
         prior = Prior.from_dict(data, mock_coordinator)
 
-        assert prior.value == 0.35
-        assert prior.last_updated is None
-        assert prior.sensor_hash == 12345
+        assert prior._current_value == 0.35
+        assert prior._last_updated is None
+        assert prior._sensor_hash == 12345
 
     def test_constants(self) -> None:
         """Test module constants."""
@@ -500,7 +458,7 @@ class TestPrior:
         prior = Prior(mock_coordinator)
 
         # Test initial state
-        assert prior.current_value == MIN_PRIOR
+        assert prior.value == MIN_PRIOR
         assert not prior._is_cache_valid()
 
         # Test serialization of initial state
@@ -509,5 +467,5 @@ class TestPrior:
 
         # Test deserialization
         restored_prior = Prior.from_dict(data, mock_coordinator)
-        assert restored_prior.value is None
-        assert restored_prior.current_value == MIN_PRIOR
+        assert restored_prior._current_value is None
+        assert restored_prior.value == MIN_PRIOR

@@ -9,15 +9,6 @@ update_area_prior:
       selector:
         config_entry:
           integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
 
 update_likelihoods:
   name: Update Sensor Likelihoods
@@ -30,15 +21,6 @@ update_likelihoods:
       selector:
         config_entry:
           integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
 
 reset_entities:
   name: Reset Entities
