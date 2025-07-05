@@ -949,7 +949,7 @@ def mock_prior() -> Mock:
     """Create a mock Prior instance for backward compatibility with tests."""
     prior = Mock()
     prior.value = 0.35
-    prior.current_value = 0.35
+    prior._current_value = 0.35
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.35)
     prior.calculate = AsyncMock(return_value=0.35)
@@ -965,7 +965,7 @@ def mock_prior() -> Mock:
 def mock_area_prior() -> Mock:
     """Create a mock Prior instance for area-level prior."""
     prior = Mock(spec=PriorClass)
-    prior.current_value = 0.3
+    prior._current_value = 0.3
     prior.value = 0.3
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.3)

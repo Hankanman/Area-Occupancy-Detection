@@ -6,7 +6,6 @@ defensive default when data are sparse or sensors are being re-configured.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -14,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
-from ..utils import TimeInterval, get_states_from_recorder, states_to_intervals
+from ..utils import (
+    StateInterval,
+    filter_intervals,
+    get_states_from_recorder,
+    states_to_intervals,
+)
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -24,31 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 # Minimum prior value to avoid division by zero (1%)
 MIN_PRIOR = 0.1
 
-# Interval filtering thresholds to exclude anomalous data
-# Exclude intervals shorter than 10 seconds (false triggers)
-MIN_INTERVAL_SECONDS = 10
-# Exclude intervals longer than 13 hours (stuck sensors)
-MAX_INTERVAL_SECONDS = 13 * 3600
-
-
-@dataclass
-class PriorData:
-    """Compute and cache the baseline probability for an Area entity."""
-
-    entity_id: str
-    start_time: datetime
-    end_time: datetime
-    states: list[State]
-    intervals: list[TimeInterval]
-    occupied_seconds: int
-    ratio: float
-    # Filtering statistics
-    total_on_intervals: int
-    filtered_short_intervals: int  # Count of intervals < MIN_INTERVAL_SECONDS
-    filtered_long_intervals: int  # Count of intervals > MAX_INTERVAL_SECONDS
-    valid_intervals: int  # Count of intervals used in calculation
-    max_filtered_duration_seconds: float | None  # Longest filtered interval duration
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 class Prior:  # exported name must stay identical
@@ -56,46 +35,40 @@ class Prior:  # exported name must stay identical
 
     def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Initialize the Prior class."""
+        self.coordinator = coordinator
         self.sensor_ids = coordinator.config.sensors.motion
         self.days = coordinator.config.history.period
         self.hass = coordinator.hass
         self.cache_ttl = timedelta(hours=2)
-        self.value: float | None = None
-        self.last_updated: datetime | None = None
-        self.sensor_hash: int | None = None
-        self.data: dict[str, PriorData] = {}
+        self._current_value: float | None = None
+        self._last_updated: datetime | None = None
+        self._sensor_hash: int | None = None
+        self._sensor_data: dict[str, dict[str, Any]] = {}
 
     # --------------------------------------------------------------------- #
     @property
-    def current_value(self) -> float:
+    def value(self) -> float:
         """Return the current cached prior value, or default if not yet calculated."""
-        if self.value is None or self.value < MIN_PRIOR:
+        if self._current_value is None or self._current_value < MIN_PRIOR:
             return MIN_PRIOR
-        return self.value
+        return self._current_value
 
     @property
-    def prior_intervals(self) -> list[TimeInterval]:
+    def state_intervals(self) -> list[StateInterval]:
         """Return the merged occupied intervals (state='on') deduplicated across all motion sensors with anomaly filtering."""
-        # Collect all 'on' intervals from all sensors, applying anomaly filtering
-        all_on_intervals = []
-        for data in self.data.values():
-            for interval in data.intervals:
-                if interval["state"] == "on":
-                    duration_seconds = (
-                        interval["end"] - interval["start"]
-                    ).total_seconds()
-                    # Apply the same filtering logic as in calculate()
-                    if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
-                        all_on_intervals.append(interval)
+        # Collect all intervals from all sensors (already filtered during calculation)
+        all_intervals = []
+        for data in self._sensor_data.values():
+            all_intervals.extend(data.get("intervals", []))
 
-        if not all_on_intervals:
+        if not all_intervals:
             return []
 
         # Sort intervals by start time
-        sorted_intervals = sorted(all_on_intervals, key=lambda x: x["start"])
+        sorted_intervals = sorted(all_intervals, key=lambda x: x["start"])
 
         # Merge overlapping or contiguous intervals
-        merged: list[TimeInterval] = []
+        merged: list[StateInterval] = []
         for interval in sorted_intervals:
             if not merged:
                 merged.append(interval.copy())
@@ -114,9 +87,14 @@ class Prior:  # exported name must stay identical
         return int(
             sum(
                 (interval["end"] - interval["start"]).total_seconds()
-                for interval in self.prior_intervals
+                for interval in self.state_intervals
             )
         )
+
+    @property
+    def data(self) -> dict[str, Any]:
+        """Return the data for the prior."""
+        return self._sensor_data
 
     # --------------------------------------------------------------------- #
     async def update(
@@ -156,60 +134,98 @@ class Prior:  # exported name must stay identical
         end_time = dt_util.utcnow()
         total_seconds = int((end_time - start_time).total_seconds())
 
-        for sensor_id in self.sensor_ids:
+        # --- Standard logic: all motion sensors ---
+        all_sensors_prior, all_sensors_data = await self._calculate_prior_for_entities(
+            self.sensor_ids, start_time, end_time, total_seconds
+        )
+
+        # --- Additional logic: occupancy_entity_id only ---
+        occupancy_entity_id = self.coordinator.occupancy_entity_id
+        occupancy_entity_data = {}
+        if occupancy_entity_id:
+            try:
+                (
+                    occupancy_entity_prior,
+                    occupancy_entity_data,
+                ) = await self._calculate_prior_for_entities(
+                    [occupancy_entity_id], start_time, end_time, total_seconds
+                )
+            except (ValueError, TypeError, RuntimeError):
+                _LOGGER.warning(
+                    "Failed to calculate prior for occupancy_entity_id %s",
+                    occupancy_entity_id,
+                )
+                occupancy_entity_prior = MIN_PRIOR
+        else:
+            occupancy_entity_prior = MIN_PRIOR
+
+        # Take the max of both priors and store the corresponding data
+        if occupancy_entity_prior > all_sensors_prior:
+            final_prior = occupancy_entity_prior
+            self._sensor_data = occupancy_entity_data
+            self._prior_source = "occupancy_entity_id"
+            self._prior_source_entity_ids = (
+                [occupancy_entity_id] if occupancy_entity_id else []
+            )
+        else:
+            final_prior = all_sensors_prior
+            self._sensor_data = all_sensors_data
+            self._prior_source = "input_sensors"
+            self._prior_source_entity_ids = self.sensor_ids
+
+        self._current_value = final_prior
+        self._last_updated = dt_util.utcnow()
+        self._sensor_hash = hash(frozenset(self._prior_source_entity_ids))
+
+        # Store for debugging
+        self._all_sensors_prior = all_sensors_prior
+        self._occupancy_entity_prior = occupancy_entity_prior
+
+        for sensor_id, data in self._sensor_data.items():
+            _LOGGER.debug(
+                "Sensor %s: %.3f (used %d intervals)",
+                sensor_id,
+                data["ratio"],
+                len(data["intervals"]),
+            )
+
+        _LOGGER.debug(
+            "Calculated new area prior: %d sensors, %.3f (all_sensors_prior=%.3f, occupancy_entity_prior=%.3f, source=%s)",
+            len(self._sensor_data),
+            self._current_value,
+            all_sensors_prior,
+            occupancy_entity_prior,
+            self._prior_source,
+        )
+
+        return self._current_value
+
+    async def _calculate_prior_for_entities(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        total_seconds: int,
+    ) -> tuple[float, dict[str, dict[str, Any]]]:
+        """Calculate the prior for a given list of entity_ids.
+
+        Returns:
+            Tuple[prior, data]: prior value and the data dictionary
+
+        """
+        data = {}
+        for entity_id in entity_ids:
             states = await get_states_from_recorder(
-                self.hass, sensor_id, start_time, end_time
+                self.hass, entity_id, start_time, end_time
             )
             if states:
                 intervals = await states_to_intervals(
                     [s for s in states if isinstance(s, State)], start_time, end_time
                 )
 
-                # Filter and categorize intervals
-                on_intervals = [
-                    interval for interval in intervals if interval["state"] == "on"
-                ]
-                total_on_intervals = len(on_intervals)
+                # Apply interval filtering
+                valid_intervals = filter_intervals(intervals)
 
-                # Apply anomaly filtering
-                valid_intervals = []
-                filtered_short = 0
-                filtered_long = 0
-                max_filtered_duration = None
-
-                for interval in on_intervals:
-                    duration_seconds = (
-                        interval["end"] - interval["start"]
-                    ).total_seconds()
-
-                    if duration_seconds < MIN_INTERVAL_SECONDS:
-                        filtered_short += 1
-                        _LOGGER.debug(
-                            "Sensor %s: Filtered short interval (%.1fs) from %s to %s",
-                            sensor_id,
-                            duration_seconds,
-                            interval["start"],
-                            interval["end"],
-                        )
-                    elif duration_seconds > MAX_INTERVAL_SECONDS:
-                        filtered_long += 1
-                        # Track the maximum filtered duration
-                        if (
-                            max_filtered_duration is None
-                            or duration_seconds > max_filtered_duration
-                        ):
-                            max_filtered_duration = duration_seconds
-                        _LOGGER.debug(
-                            "Sensor %s: Filtered long interval (%.1fh) from %s to %s",
-                            sensor_id,
-                            duration_seconds / 3600,
-                            interval["start"],
-                            interval["end"],
-                        )
-                    else:
-                        valid_intervals.append(interval)
-
-                # Calculate occupied seconds from valid intervals only
                 occupied_seconds = int(
                     sum(
                         (interval["end"] - interval["start"]).total_seconds()
@@ -217,69 +233,38 @@ class Prior:  # exported name must stay identical
                     )
                 )
 
-                # Log filtering results
-                if filtered_short > 0 or filtered_long > 0:
-                    _LOGGER.info(
-                        "Sensor %s: Filtered %d short and %d long intervals, kept %d valid intervals",
-                        sensor_id,
-                        filtered_short,
-                        filtered_long,
-                        len(valid_intervals),
-                    )
-
-                self.data[sensor_id] = PriorData(
-                    entity_id=sensor_id,
-                    start_time=start_time,
-                    end_time=end_time,
-                    states=[s for s in states if isinstance(s, State)],
-                    intervals=intervals,
-                    occupied_seconds=occupied_seconds,
-                    ratio=occupied_seconds / total_seconds,
-                    total_on_intervals=total_on_intervals,
-                    filtered_short_intervals=filtered_short,
-                    filtered_long_intervals=filtered_long,
-                    valid_intervals=len(valid_intervals),
-                    max_filtered_duration_seconds=max_filtered_duration,
-                )
-
-        self.value = (
-            sum(data.ratio for data in self.data.values()) / len(self.data)
-        ) * 1.05  # 5% buffer to account for sensor noise
-        self.last_updated = dt_util.utcnow()
-        self.sensor_hash = hash(frozenset(self.sensor_ids))
-
-        for sensor_id, data in self.data.items():
-            _LOGGER.debug(
-                "Sensor %s: %.3f (used %d/%d intervals)",
-                sensor_id,
-                data.ratio,
-                data.valid_intervals,
-                data.total_on_intervals,
-            )
-
-        _LOGGER.debug(
-            "Calculated new area prior: %d sensors, %.3f", len(self.data), self.value
-        )
-
-        return self.value
+                data[entity_id] = {
+                    "entity_id": entity_id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "states_count": len([s for s in states if isinstance(s, State)]),
+                    "intervals": valid_intervals,  # Store filtered intervals, not raw
+                    "occupied_seconds": occupied_seconds,
+                    "ratio": occupied_seconds / total_seconds,
+                }
+        if data:
+            prior = (sum(d["ratio"] for d in data.values()) / len(data)) * 1.05
+        else:
+            prior = MIN_PRIOR
+        return prior, data
 
     # ------------------------------------------------------------------ #
     def _is_cache_valid(self) -> bool:
-        if self.value is None or self.last_updated is None:
+        if self._current_value is None or self._last_updated is None:
             return False
-        if (dt_util.utcnow() - self.last_updated) > self.cache_ttl:
+        if (dt_util.utcnow() - self._last_updated) > self.cache_ttl:
             return False
         # in case sensors were added/removed
-        return self.sensor_hash == hash(frozenset(self.sensor_ids))
+        return self._sensor_hash == hash(frozenset(self.sensor_ids))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""
         return {
-            "value": self.value,
+            "value": self._current_value,
             "last_updated": (
-                self.last_updated.isoformat() if self.last_updated else None
+                self._last_updated.isoformat() if self._last_updated else None
             ),
-            "sensor_hash": self.sensor_hash,
+            "sensor_hash": self._sensor_hash,
         }
 
     @classmethod
@@ -288,11 +273,11 @@ class Prior:  # exported name must stay identical
     ) -> Prior:
         """Create prior from dictionary."""
         prior = cls(coordinator)
-        prior.value = data["value"]
-        prior.last_updated = (
+        prior._current_value = data["value"]
+        prior._last_updated = (
             datetime.fromisoformat(data["last_updated"])
             if data["last_updated"]
             else None
         )
-        prior.sensor_hash = data["sensor_hash"]
+        prior._sensor_hash = data["sensor_hash"]
         return prior

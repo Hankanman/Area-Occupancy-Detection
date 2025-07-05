@@ -32,10 +32,8 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        # Get history period from service call or use coordinator default
-        history_period = (
-            call.data.get("history_period") or coordinator.config.history.period
-        )
+        # Remove history_period handling, always use coordinator.config.history.period
+        history_period = coordinator.config.history.period
 
         _LOGGER.info(
             "Updating area baseline prior for entry %s with %d days history",
@@ -48,105 +46,48 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             force=True, history_period=history_period
         )
 
+        # Determine which prior was used (occupancy_entity or sensors)
+        all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
+        occupancy_entity_prior = getattr(
+            coordinator.prior, "_occupancy_entity_prior", None
+        )
+        prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
+
         # Collect calculation details
         calculation_details = {
             "motion_sensors": coordinator.prior.sensor_ids,
             "sensor_count": len(coordinator.prior.sensor_ids),
-            "calculation_method": "Average of individual sensor occupancy ratios + 5% buffer",
+            "calculation_method": "Max of (average of individual sensor occupancy ratios + 5% buffer, occupancy_entity_id prior + 5% buffer)",
+            "all_sensors_prior": all_sensors_prior,
+            "occupancy_entity_prior": occupancy_entity_prior,
+            "prior_source": prior_source,
         }
 
         # Add per-sensor details if data is available
         if coordinator.prior.data:
             sensor_details = {}
             total_ratio = 0.0
-            total_filtered_short = 0
-            total_filtered_long = 0
-            total_valid_intervals = 0
-            total_on_intervals = 0
-            max_stuck_duration_seconds = None
 
             for sensor_id, sensor_data in coordinator.prior.data.items():
                 total_seconds = (
-                    sensor_data.end_time - sensor_data.start_time
+                    sensor_data["end_time"] - sensor_data["start_time"]
                 ).total_seconds()
 
-                # Track the overall maximum stuck sensor duration
-                if sensor_data.max_filtered_duration_seconds is not None:
-                    if (
-                        max_stuck_duration_seconds is None
-                        or sensor_data.max_filtered_duration_seconds
-                        > max_stuck_duration_seconds
-                    ):
-                        max_stuck_duration_seconds = (
-                            sensor_data.max_filtered_duration_seconds
-                        )
-
                 sensor_details[sensor_id] = {
-                    "occupancy_ratio": round(sensor_data.ratio, 4),
-                    "occupied_seconds": sensor_data.occupied_seconds,
+                    "occupancy_ratio": round(sensor_data["ratio"], 4),
+                    "occupied_seconds": sensor_data["occupied_seconds"],
                     "total_seconds": int(total_seconds),
-                    "states_found": len(sensor_data.states),
-                    "intervals_found": len(sensor_data.intervals),
-                    "total_on_intervals": sensor_data.total_on_intervals,
-                    "valid_intervals": sensor_data.valid_intervals,
-                    "filtered_short": sensor_data.filtered_short_intervals,
-                    "filtered_long": sensor_data.filtered_long_intervals,
+                    "states_found": sensor_data["states_count"],
+                    "intervals_found": len(sensor_data["intervals"]),
                 }
 
-                # Add max filtered duration info if this sensor had stuck intervals
-                if sensor_data.max_filtered_duration_seconds is not None:
-                    sensor_details[sensor_id]["max_stuck_duration_seconds"] = (
-                        sensor_data.max_filtered_duration_seconds
-                    )
-                    sensor_details[sensor_id]["max_stuck_duration_hours"] = round(
-                        sensor_data.max_filtered_duration_seconds / 3600, 2
-                    )
-
-                total_ratio += sensor_data.ratio
-                total_filtered_short += sensor_data.filtered_short_intervals
-                total_filtered_long += sensor_data.filtered_long_intervals
-                total_valid_intervals += sensor_data.valid_intervals
-                total_on_intervals += sensor_data.total_on_intervals
+                total_ratio += sensor_data["ratio"]
 
             raw_average = (
                 total_ratio / len(coordinator.prior.data)
                 if coordinator.prior.data
                 else 0.0
             )
-
-            filtering_summary = {
-                "total_on_intervals": total_on_intervals,
-                "valid_intervals_used": total_valid_intervals,
-                "filtered_short_intervals": total_filtered_short,
-                "filtered_long_intervals": total_filtered_long,
-                "filtering_thresholds": {
-                    "min_seconds": 10,
-                    "max_seconds": 46800,  # 13 hours
-                    "min_description": "< 10 seconds (false triggers)",
-                    "max_description": "> 13 hours (stuck sensors)",
-                },
-            }
-
-            # Add stuck sensor severity info if any were found
-            if max_stuck_duration_seconds is not None and total_filtered_long > 0:
-                filtering_summary["stuck_sensor_analysis"] = {
-                    "max_stuck_duration_seconds": max_stuck_duration_seconds,
-                    "max_stuck_duration_hours": round(
-                        max_stuck_duration_seconds / 3600, 2
-                    ),
-                    "max_stuck_duration_days": round(
-                        max_stuck_duration_seconds / 86400, 2
-                    ),
-                    "severity": (
-                        "extreme"
-                        if max_stuck_duration_seconds > 7 * 86400  # > 7 days
-                        else (
-                            "severe"
-                            if max_stuck_duration_seconds > 86400  # > 1 day
-                            else "moderate"
-                        )  # 13-24 hours
-                    ),
-                }
 
             calculation_details.update(
                 {
@@ -155,7 +96,6 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
                     "buffer_multiplier": 1.05,
                     "final_prior": round(area_baseline_prior, 4),
                     "calculation": f"({raw_average:.4f} average) × 1.05 buffer = {area_baseline_prior:.4f}",
-                    "filtering_summary": filtering_summary,
                 }
             )
         else:
@@ -174,6 +114,7 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             "area_prior": area_baseline_prior,
             "history_period": history_period,
             "update_timestamp": dt_util.utcnow().isoformat(),
+            "prior_source": prior_source,
             "calculation_details": calculation_details,
         }
 
@@ -190,10 +131,8 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        # Get history period from service call or use coordinator default
-        history_period = (
-            call.data.get("history_period") or coordinator.config.history.period
-        )
+        # Remove history_period handling, always use coordinator.config.history.period
+        history_period = coordinator.config.history.period
 
         _LOGGER.info(
             "Updating sensor likelihoods for entry %s with %d days history",
@@ -209,11 +148,6 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
         # Collect the updated likelihoods to return
         likelihood_data = {}
-        total_likelihood_filtered_short = 0
-        total_likelihood_filtered_long = 0
-        total_likelihood_valid_intervals = 0
-        total_likelihood_on_intervals = 0
-        max_likelihood_stuck_duration = None
 
         for entity_id, entity in coordinator.entities.entities.items():
             entity_likelihood_data = {
@@ -224,48 +158,6 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
                 "prob_given_true_raw": entity.likelihood.prob_given_true_raw,
                 "prob_given_false_raw": entity.likelihood.prob_given_false_raw,
             }
-
-            # Add filtering statistics if available
-            if entity.likelihood.total_on_intervals is not None:
-                entity_likelihood_data.update(
-                    {
-                        "total_on_intervals": entity.likelihood.total_on_intervals,
-                        "valid_intervals": entity.likelihood.valid_intervals,
-                        "filtered_short": entity.likelihood.filtered_short_intervals,
-                        "filtered_long": entity.likelihood.filtered_long_intervals,
-                    }
-                )
-
-                # Track totals for summary
-                total_likelihood_on_intervals += entity.likelihood.total_on_intervals
-                total_likelihood_valid_intervals += (
-                    entity.likelihood.valid_intervals or 0
-                )
-                total_likelihood_filtered_short += (
-                    entity.likelihood.filtered_short_intervals or 0
-                )
-                total_likelihood_filtered_long += (
-                    entity.likelihood.filtered_long_intervals or 0
-                )
-
-                # Add per-entity max stuck duration if available
-                if entity.likelihood.max_filtered_duration_seconds is not None:
-                    entity_likelihood_data["max_stuck_duration_seconds"] = (
-                        entity.likelihood.max_filtered_duration_seconds
-                    )
-                    entity_likelihood_data["max_stuck_duration_hours"] = round(
-                        entity.likelihood.max_filtered_duration_seconds / 3600, 2
-                    )
-
-                    # Track overall maximum
-                    if (
-                        max_likelihood_stuck_duration is None
-                        or entity.likelihood.max_filtered_duration_seconds
-                        > max_likelihood_stuck_duration
-                    ):
-                        max_likelihood_stuck_duration = (
-                            entity.likelihood.max_filtered_duration_seconds
-                        )
 
             likelihood_data[entity_id] = entity_likelihood_data
 
@@ -279,47 +171,6 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
             "prior": coordinator.area_prior,
             "likelihoods": likelihood_data,
         }
-
-        # Add likelihood filtering summary if we have filtering data
-        if total_likelihood_on_intervals > 0:
-            likelihood_filtering_summary = {
-                "total_on_intervals": total_likelihood_on_intervals,
-                "valid_intervals_used": total_likelihood_valid_intervals,
-                "filtered_short_intervals": total_likelihood_filtered_short,
-                "filtered_long_intervals": total_likelihood_filtered_long,
-                "filtering_thresholds": {
-                    "min_seconds": 10,
-                    "max_seconds": 46800,  # 13 hours
-                    "min_description": "< 10 seconds (false triggers)",
-                    "max_description": "> 13 hours (stuck sensors)",
-                },
-            }
-
-            # Add stuck sensor analysis if any were found
-            if (
-                max_likelihood_stuck_duration is not None
-                and total_likelihood_filtered_long > 0
-            ):
-                likelihood_filtering_summary["stuck_sensor_analysis"] = {
-                    "max_stuck_duration_seconds": max_likelihood_stuck_duration,
-                    "max_stuck_duration_hours": round(
-                        max_likelihood_stuck_duration / 3600, 2
-                    ),
-                    "max_stuck_duration_days": round(
-                        max_likelihood_stuck_duration / 86400, 2
-                    ),
-                    "severity": (
-                        "extreme"
-                        if max_likelihood_stuck_duration > 7 * 86400  # > 7 days
-                        else (
-                            "severe"
-                            if max_likelihood_stuck_duration > 86400  # > 1 day
-                            else "moderate"
-                        )  # 13-24 hours
-                    ),
-                }
-
-            response_data["likelihood_filtering_summary"] = likelihood_filtering_summary
 
     except (HomeAssistantError, ValueError, RuntimeError) as err:
         error_msg = f"Failed to update likelihoods for {entry_id}: {err}"
@@ -591,17 +442,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
 
+    # Remove history_period from schemas
     update_area_prior_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,
-            vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=90)),
         }
     )
 
     update_likelihoods_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,
-            vol.Optional("history_period"): vol.All(int, vol.Range(min=1, max=90)),
         }
     )
 

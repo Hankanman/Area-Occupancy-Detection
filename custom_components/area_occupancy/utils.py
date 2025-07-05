@@ -28,6 +28,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Interval filtering thresholds to exclude anomalous data
+# Exclude intervals shorter than 10 seconds (false triggers)
+MIN_INTERVAL_SECONDS = 10
+# Exclude intervals longer than 13 hours (stuck sensors)
+MAX_INTERVAL_SECONDS = 13 * 3600
+
 
 class Interval(TypedDict):
     """Time interval with state information."""
@@ -37,12 +43,6 @@ class Interval(TypedDict):
 
 
 class StateInterval(Interval):
-    """Time interval with state information."""
-
-    state: str
-
-
-class TimeInterval(Interval):
     """Time interval with time information."""
 
     state: str
@@ -171,7 +171,7 @@ async def get_states_from_recorder(
 
 async def states_to_intervals(
     states: Sequence[State], start: datetime, end: datetime
-) -> list[TimeInterval]:
+) -> list[StateInterval]:
     """Convert state history to time intervals.
 
     Args:
@@ -180,10 +180,10 @@ async def states_to_intervals(
         end: End time for analysis
 
     Returns:
-        List of TimeInterval objects
+        List of StateInterval objects
 
     """
-    intervals: list[TimeInterval] = []
+    intervals: list[StateInterval] = []
     if not states:
         return intervals
 
@@ -207,7 +207,7 @@ async def states_to_intervals(
         if state.last_changed > end:
             break
         intervals.append(
-            TimeInterval(
+            StateInterval(
                 start=current_time, end=state.last_changed, state=current_state
             )
         )
@@ -215,9 +215,49 @@ async def states_to_intervals(
         current_time = state.last_changed
 
     # Final interval until end
-    intervals.append(TimeInterval(start=current_time, end=end, state=current_state))
+    intervals.append(StateInterval(start=current_time, end=end, state=current_state))
 
     return intervals
+
+
+def filter_intervals(
+    intervals: list[StateInterval],
+) -> list[StateInterval]:
+    """Filter intervals to remove anomalous data.
+
+    Args:
+        intervals: List of intervals to filter
+        entity_id: Entity ID for logging purposes
+
+    Returns:
+        Tuple of (filtered_intervals, filtering_stats)
+
+    """
+    # Filter and categorize intervals
+    on_intervals = [interval for interval in intervals if interval["state"] == "on"]
+
+    # Apply anomaly filtering
+    valid_intervals = []
+    filtered_short = 0
+    filtered_long = 0
+    max_filtered_duration = None
+
+    for interval in on_intervals:
+        duration_seconds = (interval["end"] - interval["start"]).total_seconds()
+
+        if duration_seconds < MIN_INTERVAL_SECONDS:
+            filtered_short += 1
+        elif duration_seconds > MAX_INTERVAL_SECONDS:
+            filtered_long += 1
+            if (
+                max_filtered_duration is None
+                or duration_seconds > max_filtered_duration
+            ):
+                max_filtered_duration = duration_seconds
+        else:
+            valid_intervals.append(interval)
+
+    return valid_intervals
 
 
 # ───────────────────────────────────────── Validation ────────────────────────
