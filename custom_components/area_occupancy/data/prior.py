@@ -10,15 +10,9 @@ from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
-from ..utils import (
-    StateInterval,
-    filter_intervals,
-    get_states_from_recorder,
-    states_to_intervals,
-)
+from ..utils import StateInterval, get_intervals_hybrid
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -215,17 +209,20 @@ class Prior:  # exported name must stay identical
         """
         data = {}
         for entity_id in entity_ids:
-            states = await get_states_from_recorder(
-                self.hass, entity_id, start_time, end_time
+            # Get intervals using hybrid approach - checks our DB first, then recorder
+            storage = getattr(self.coordinator, "sqlite_store", None)
+            intervals = await get_intervals_hybrid(
+                self.hass,
+                entity_id,
+                start_time,
+                end_time,
+                storage=storage.storage if storage else None,
             )
-            if states:
-                intervals = await states_to_intervals(
-                    [s for s in states if isinstance(s, State)], start_time, end_time
-                )
 
-                # Apply interval filtering
-                valid_intervals = filter_intervals(intervals)
+            # Intervals are already filtered by get_intervals_hybrid
+            valid_intervals = intervals
 
+            if valid_intervals:
                 occupied_seconds = int(
                     sum(
                         (interval["end"] - interval["start"]).total_seconds()
@@ -237,7 +234,9 @@ class Prior:  # exported name must stay identical
                     "entity_id": entity_id,
                     "start_time": start_time,
                     "end_time": end_time,
-                    "states_count": len([s for s in states if isinstance(s, State)]),
+                    "states_count": len(
+                        valid_intervals
+                    ),  # Number of intervals instead of states
                     "intervals": valid_intervals,  # Store filtered intervals, not raw
                     "occupied_seconds": occupied_seconds,
                     "ratio": occupied_seconds / total_seconds,

@@ -46,6 +46,7 @@ class StateInterval(Interval):
     """Time interval with time information."""
 
     state: str
+    entity_id: str
 
 
 class PriorInterval:
@@ -115,6 +116,152 @@ async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
 
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
+async def get_intervals_hybrid(
+    hass: HomeAssistant,
+    entity_id: str,
+    start_time: datetime,
+    end_time: datetime,
+    storage=None,
+) -> list[StateInterval]:
+    """Get state intervals from our DB first, then fall back to recorder.
+
+    This is the primary function for getting historical state data.
+    It efficiently combines our stored intervals with fresh recorder data.
+
+    Args:
+        hass: Home Assistant instance
+        entity_id: Entity ID to fetch intervals for
+        start_time: Start time window
+        end_time: End time window
+        storage: Optional SQLite storage instance
+
+    Returns:
+        List of StateInterval objects covering the time window
+
+    """
+    intervals = []
+
+    # Try to get intervals from our database first
+    if storage:
+        try:
+            db_intervals = await storage.get_historical_intervals(
+                entity_id, start_time, end_time
+            )
+            if db_intervals:
+                intervals.extend(db_intervals)
+                _LOGGER.debug(
+                    "Retrieved %d intervals from database for %s",
+                    len(db_intervals),
+                    entity_id,
+                )
+        except (ValueError, TypeError, OSError) as err:
+            _LOGGER.warning("Failed to get intervals from database: %s", err)
+
+    # If we have gaps or no data, fill from recorder
+    covered_time = _calculate_time_coverage(intervals, start_time, end_time)
+    if covered_time < 0.9:  # If less than 90% coverage, supplement with recorder
+        _LOGGER.debug(
+            "Database coverage %.1f%%, supplementing with recorder data for %s",
+            covered_time * 100,
+            entity_id,
+        )
+        recorder_intervals = await _get_intervals_from_recorder(
+            hass, entity_id, start_time, end_time
+        )
+        if recorder_intervals:
+            # Merge and deduplicate intervals
+            intervals = _merge_intervals(intervals + recorder_intervals)
+
+    return filter_intervals(intervals)
+
+
+async def _get_intervals_from_recorder(
+    hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
+) -> list[StateInterval]:
+    """Get intervals from HA recorder (internal helper)."""
+    states = await get_states_from_recorder(hass, entity_id, start_time, end_time)
+    if not states:
+        return []
+
+    # Filter to only State objects
+    state_objects: list[State] = [s for s in states if isinstance(s, State)]
+    return await states_to_intervals(state_objects, start_time, end_time)
+
+
+def _calculate_time_coverage(
+    intervals: list[StateInterval], start_time: datetime, end_time: datetime
+) -> float:
+    """Calculate what percentage of the time window is covered by intervals."""
+    if not intervals:
+        return 0.0
+
+    total_window = (end_time - start_time).total_seconds()
+    if total_window <= 0:
+        return 0.0
+
+    # Sort intervals by start time
+    sorted_intervals = sorted(intervals, key=lambda x: x["start"])
+
+    # Calculate covered time (handling overlaps)
+    covered_seconds = 0.0
+    last_end = start_time
+
+    for interval in sorted_intervals:
+        interval_start = max(interval["start"], start_time)
+        interval_end = min(interval["end"], end_time)
+
+        if interval_start < interval_end:
+            # Only count time not already covered
+            if interval_start > last_end:
+                covered_seconds += (interval_end - interval_start).total_seconds()
+                last_end = interval_end
+            elif interval_end > last_end:
+                covered_seconds += (interval_end - last_end).total_seconds()
+                last_end = interval_end
+
+    return covered_seconds / total_window
+
+
+def _merge_intervals(intervals: list[StateInterval]) -> list[StateInterval]:
+    """Merge overlapping intervals and remove duplicates."""
+    if not intervals:
+        return []
+
+    # Group by entity_id and state
+    grouped = {}
+    for interval in intervals:
+        key = (interval["entity_id"], interval["state"])
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append(interval)
+
+    merged = []
+    for group_intervals in grouped.values():
+        # Sort by start time
+        sorted_intervals = sorted(group_intervals, key=lambda x: x["start"])
+
+        current = sorted_intervals[0]
+        for next_interval in sorted_intervals[1:]:
+            # If intervals overlap or are adjacent, merge them
+            if next_interval["start"] <= current["end"]:
+                # Extend current interval
+                current = StateInterval(
+                    start=current["start"],
+                    end=max(current["end"], next_interval["end"]),
+                    state=current["state"],
+                    entity_id=current["entity_id"],
+                )
+            else:
+                # No overlap, add current and start new one
+                merged.append(current)
+                current = next_interval
+
+        # Add the last interval
+        merged.append(current)
+
+    return merged
+
+
 async def get_states_from_recorder(
     hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
 ) -> list[State | dict[str, Any]] | None:
@@ -208,14 +355,21 @@ async def states_to_intervals(
             break
         intervals.append(
             StateInterval(
-                start=current_time, end=state.last_changed, state=current_state
+                start=current_time,
+                end=state.last_changed,
+                state=current_state,
+                entity_id=state.entity_id,
             )
         )
         current_state = state.state
         current_time = state.last_changed
 
     # Final interval until end
-    intervals.append(StateInterval(start=current_time, end=end, state=current_state))
+    intervals.append(
+        StateInterval(
+            start=current_time, end=end, state=current_state, entity_id=state.entity_id
+        )
+    )
 
     return intervals
 
