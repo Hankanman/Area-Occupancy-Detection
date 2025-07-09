@@ -1,5 +1,6 @@
 """Entity model."""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 import logging
@@ -403,19 +404,38 @@ class EntityManager:
                 force=force, history_period=history_period
             )
 
+        if not self._entities:
+            _LOGGER.debug("No entities to update likelihoods for")
+            return 0
+
+        # Process entities in parallel chunks to avoid blocking
+        chunk_size = 5  # Process 5 entities at a time
+        entity_list = list(self._entities.values())
         updated_count = 0
-        for entity in self._entities.values():
-            try:
-                await entity.likelihood.update(
-                    force=force, history_period=history_period
+
+        for i in range(0, len(entity_list), chunk_size):
+            chunk = entity_list[i : i + chunk_size]
+
+            # Create tasks for parallel processing
+            tasks = []
+            for entity in chunk:
+                task = self._update_entity_likelihood_safe(
+                    entity, force=force, history_period=history_period
                 )
-                updated_count += 1
-            except (ValueError, TypeError) as err:
-                _LOGGER.warning(
-                    "Failed to update likelihood for entity %s: %s",
-                    entity.entity_id,
-                    err,
-                )
+                tasks.append(task)
+
+            # Wait for all tasks in this chunk to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Count successful updates
+            for result in results:
+                if isinstance(result, Exception):
+                    _LOGGER.warning("Entity likelihood update failed: %s", result)
+                elif isinstance(result, int):
+                    updated_count += result
+
+            # Yield control between chunks to avoid blocking
+            await asyncio.sleep(0)
 
         _LOGGER.info(
             "Updated likelihoods for %d out of %d entities",
@@ -423,6 +443,32 @@ class EntityManager:
             len(self._entities),
         )
         return updated_count
+
+    async def _update_entity_likelihood_safe(
+        self, entity: Entity, force: bool = False, history_period: int | None = None
+    ) -> int:
+        """Safely update a single entity's likelihood with error handling.
+
+        Args:
+            entity: The entity to update
+            force: If True, bypass cache validation and force recalculation
+            history_period: Period in days for historical data
+
+        Returns:
+            1 if successful, 0 if failed
+
+        """
+        try:
+            await entity.likelihood.update(force=force, history_period=history_period)
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning(
+                "Failed to update likelihood for entity %s: %s",
+                entity.entity_id,
+                err,
+            )
+            return 0
+        else:
+            return 1
 
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
