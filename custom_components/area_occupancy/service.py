@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .utils import get_current_time_slot, get_time_slot_name
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -181,6 +182,220 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
         return response_data
 
 
+async def _update_time_based_priors(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Manually trigger an update of time-based priors."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        # Use coordinator's history period
+        history_period = coordinator.config.history.period
+
+        _LOGGER.info(
+            "Starting time-based priors update for entry %s with %d days history",
+            entry_id,
+            history_period,
+        )
+
+        # Start the calculation in a background task to avoid blocking
+        async def _calculate_in_background():
+            """Calculate time-based priors in background."""
+            try:
+                # Calculate time-based priors with forced recalculation
+                time_priors = await coordinator.prior.calculate_time_based_priors(
+                    history_period=history_period, force=True
+                )
+
+                current_day, current_slot = get_current_time_slot()
+                current_prior = time_priors.get(
+                    (current_day, current_slot), coordinator.prior.value
+                )
+
+                await coordinator.async_refresh()
+
+                _LOGGER.info(
+                    "Time-based priors update completed successfully for entry %s",
+                    entry_id,
+                )
+
+                return {
+                    "status": "completed",
+                    "time_priors_calculated": len(time_priors),
+                    "current_time_prior": current_prior,
+                    "history_period": history_period,
+                    "completion_timestamp": dt_util.utcnow().isoformat(),
+                }
+
+            except HomeAssistantError as err:
+                _LOGGER.error(
+                    "Background time-based priors calculation failed for entry %s: %s",
+                    entry_id,
+                    err,
+                )
+                return {
+                    "status": "failed",
+                    "error": str(err),
+                    "completion_timestamp": dt_util.utcnow().isoformat(),
+                }
+
+        # Start the background task
+        hass.async_create_task(_calculate_in_background())
+
+        # Return immediately with status
+        return {
+            "status": "started",
+            "message": f"Time-based priors calculation started for entry {entry_id}",
+            "history_period_days": history_period,
+            "start_timestamp": dt_util.utcnow().isoformat(),
+            "note": "This is a background operation. Check logs for completion status.",
+        }
+
+    except (HomeAssistantError, ValueError, RuntimeError) as err:
+        error_msg = f"Failed to start time-based priors update for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
+async def _get_time_based_priors(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Get current time-based priors in a human-readable format."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        current_day, current_slot = get_current_time_slot()
+
+        # Get all time-based priors from database
+        time_priors = {}
+        if coordinator.sqlite_store:
+            try:
+                records = await coordinator.sqlite_store.get_time_priors_for_entry(
+                    entry_id
+                )
+                for record in records:
+                    time_priors[(record.day_of_week, record.time_slot)] = (
+                        record.prior_value
+                    )
+            except HomeAssistantError as err:
+                _LOGGER.debug("Failed to get time priors from database: %s", err)
+
+        # Format the data in a human-readable way
+        day_names = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+
+        # Create a summary by day
+        daily_summaries = {}
+        for day_of_week in range(7):
+            day_name = day_names[day_of_week]
+            day_priors = {}
+
+            # Get priors for this day
+            for time_slot in range(48):
+                prior_value = time_priors.get((day_of_week, time_slot), None)
+                if prior_value is not None:
+                    hour = time_slot // 2
+                    minute = (time_slot % 2) * 30
+                    time_str = f"{hour:02d}:{minute:02d}"
+                    day_priors[time_str] = round(prior_value, 4)
+
+            if day_priors:
+                daily_summaries[day_name] = day_priors
+
+        # Create a summary of key time periods
+        key_periods = {
+            "Early Morning (06:00-08:00)": [],
+            "Morning (08:00-12:00)": [],
+            "Afternoon (12:00-17:00)": [],
+            "Evening (17:00-21:00)": [],
+            "Night (21:00-06:00)": [],
+        }
+
+        for day_of_week in range(7):
+            day_name = day_names[day_of_week]
+
+            # Calculate averages for key periods
+            early_morning = []
+            morning = []
+            afternoon = []
+            evening = []
+            night = []
+
+            for time_slot in range(48):
+                prior_value = time_priors.get((day_of_week, time_slot), None)
+                if prior_value is not None:
+                    hour = time_slot // 2
+                    if 6 <= hour < 8:
+                        early_morning.append(prior_value)
+                    elif 8 <= hour < 12:
+                        morning.append(prior_value)
+                    elif 12 <= hour < 17:
+                        afternoon.append(prior_value)
+                    elif 17 <= hour < 21:
+                        evening.append(prior_value)
+                    else:
+                        night.append(prior_value)
+
+            # Calculate averages
+            if early_morning:
+                key_periods["Early Morning (06:00-08:00)"].append(
+                    {
+                        "day": day_name,
+                        "average": round(sum(early_morning) / len(early_morning), 4),
+                    }
+                )
+            if morning:
+                key_periods["Morning (08:00-12:00)"].append(
+                    {"day": day_name, "average": round(sum(morning) / len(morning), 4)}
+                )
+            if afternoon:
+                key_periods["Afternoon (12:00-17:00)"].append(
+                    {
+                        "day": day_name,
+                        "average": round(sum(afternoon) / len(afternoon), 4),
+                    }
+                )
+            if evening:
+                key_periods["Evening (17:00-21:00)"].append(
+                    {"day": day_name, "average": round(sum(evening) / len(evening), 4)}
+                )
+            if night:
+                key_periods["Night (21:00-06:00)"].append(
+                    {"day": day_name, "average": round(sum(night) / len(night), 4)}
+                )
+
+        # Remove empty periods
+        key_periods = {k: v for k, v in key_periods.items() if v}
+
+        return {
+            "area_name": coordinator.config.name,
+            "current_time_slot": get_time_slot_name(current_day, current_slot),
+            "current_prior": round(coordinator.prior.value, 4),
+            "time_prior": round(coordinator.prior.time_prior, 4),
+            "global_prior": round(coordinator.prior.global_prior, 4),
+            "total_time_slots_available": len(time_priors),
+            "daily_summaries": daily_summaries,
+            "key_periods": key_periods,
+            "note": "Time-based priors show the learned occupancy probability for specific times of day and days of the week.",
+        }
+
+    except Exception as err:
+        error_msg = f"Failed to get time-based priors for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
 async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
     """Reset all entity probabilities and learned data."""
     entry_id = call.data["entry_id"]
@@ -215,16 +430,27 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
         coordinator = _get_coordinator(hass, entry_id)
         entities = coordinator.entities.entities
 
+        total_entities = len(entities)
+        active_entities = sum(1 for e in entities.values() if e.evidence)
+        available_entities = sum(1 for e in entities.values() if e.available)
+        unavailable_entities = sum(1 for e in entities.values() if not e.available)
+        decaying_entities = sum(1 for e in entities.values() if e.decay.is_decaying)
+
         metrics = {
-            "total_entities": len(entities),
-            "active_entities": sum(1 for e in entities.values() if e.evidence),
-            "available_entities": sum(1 for e in entities.values() if e.available),
-            "unavailable_entities": sum(
-                1 for e in entities.values() if not e.available
-            ),
-            "decaying_entities": sum(
-                1 for e in entities.values() if e.decay.is_decaying
-            ),
+            "total_entities": total_entities,
+            "active_entities": active_entities,
+            "available_entities": available_entities,
+            "unavailable_entities": unavailable_entities,
+            "decaying_entities": decaying_entities,
+            "availability_percentage": round(
+                (available_entities / total_entities * 100), 1
+            )
+            if total_entities > 0
+            else 0,
+            "activity_percentage": round((active_entities / total_entities * 100), 1)
+            if total_entities > 0
+            else 0,
+            "summary": f"{total_entities} total entities: {active_entities} active, {available_entities} available, {unavailable_entities} unavailable, {decaying_entities} decaying",
         }
 
         _LOGGER.info("Retrieved entity metrics for entry %s", entry_id)
@@ -249,13 +475,18 @@ async def _get_problematic_entities(
         entities = coordinator.entities.entities
         now = dt_util.utcnow()
 
+        unavailable = [eid for eid, e in entities.items() if not e.available]
+        stale_updates = [
+            eid
+            for eid, e in entities.items()
+            if e.last_updated and (now - e.last_updated).total_seconds() > 3600
+        ]
+
         problems = {
-            "unavailable": [eid for eid, e in entities.items() if not e.available],
-            "stale_updates": [
-                eid
-                for eid, e in entities.items()
-                if e.last_updated and (now - e.last_updated).total_seconds() > 3600
-            ],
+            "unavailable": unavailable,
+            "stale_updates": stale_updates,
+            "total_problems": len(unavailable) + len(stale_updates),
+            "summary": f"Found {len(unavailable)} unavailable and {len(stale_updates)} stale entities out of {len(entities)} total",
         }
 
         _LOGGER.info("Retrieved problematic entities for entry %s", entry_id)
@@ -375,29 +606,41 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
             ),
         }
 
+        # Format confidence level with more detail
+        if occupancy_probability is not None:
+            if occupancy_probability > 0.8:
+                confidence_level = "high"
+                confidence_description = "Very confident in occupancy status"
+            elif occupancy_probability > 0.6:
+                confidence_level = "medium-high"
+                confidence_description = "Fairly confident in occupancy status"
+            elif occupancy_probability > 0.2:
+                confidence_level = "medium"
+                confidence_description = "Moderate confidence in occupancy status"
+            else:
+                confidence_level = "low"
+                confidence_description = "Low confidence in occupancy status"
+        else:
+            confidence_level = "unknown"
+            confidence_description = "Unable to determine confidence level"
+
         status = {
             "area_name": area_name,
             "occupied": coordinator.occupied,
-            "occupancy_probability": occupancy_probability,
-            "area_baseline_prior": coordinator.prior,
-            "confidence_level": (
-                (
-                    "high"
-                    if occupancy_probability and occupancy_probability > 0.8
-                    else (
-                        "medium"
-                        if occupancy_probability and occupancy_probability > 0.2
-                        else "low"
-                    )
-                )
-                if occupancy_probability is not None
-                else "unknown"
-            ),
-            "total_entities": metrics["total_entities"],
-            "active_entities": metrics["active_entities"],
-            "available_entities": metrics["available_entities"],
-            "unavailable_entities": metrics["unavailable_entities"],
-            "decaying_entities": metrics["decaying_entities"],
+            "occupancy_probability": round(occupancy_probability, 4)
+            if occupancy_probability is not None
+            else None,
+            "area_baseline_prior": round(coordinator.prior.value, 4),
+            "confidence_level": confidence_level,
+            "confidence_description": confidence_description,
+            "entity_summary": {
+                "total_entities": metrics["total_entities"],
+                "active_entities": metrics["active_entities"],
+                "available_entities": metrics["available_entities"],
+                "unavailable_entities": metrics["unavailable_entities"],
+                "decaying_entities": metrics["decaying_entities"],
+            },
+            "status_summary": f"Area '{area_name}' is {'occupied' if coordinator.occupied else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
         }
 
         _LOGGER.info("Retrieved area status for entry %s", entry_id)
@@ -651,6 +894,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_update_likelihoods(call: ServiceCall) -> dict[str, Any]:
         return await _update_likelihoods(hass, call)
 
+    async def handle_update_time_based_priors(call: ServiceCall) -> dict[str, Any]:
+        return await _update_time_based_priors(hass, call)
+
+    async def handle_get_time_based_priors(call: ServiceCall) -> dict[str, Any]:
+        return await _get_time_based_priors(hass, call)
+
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
 
@@ -692,6 +941,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "update_likelihoods",
         handle_update_likelihoods,
         schema=update_likelihoods_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "update_time_based_priors",
+        handle_update_time_based_priors,
+        schema=vol.Schema({vol.Required("entry_id"): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_time_based_priors",
+        handle_get_time_based_priors,
+        schema=vol.Schema({vol.Required("entry_id"): str}),
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -772,4 +1037,4 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 11, DOMAIN)
+    _LOGGER.info("Registered %d services for %s integration", 12, DOMAIN)

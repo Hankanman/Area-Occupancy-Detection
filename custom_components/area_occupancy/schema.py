@@ -30,7 +30,7 @@ from .utils import StateInterval
 metadata = MetaData()
 
 # Database schema version for migrations
-DB_VERSION = 1
+DB_VERSION = 2
 
 # ─────────────────── Global Tables ───────────────────
 
@@ -112,6 +112,29 @@ area_entity_config_table = Table(
     sa.PrimaryKeyConstraint("entry_id", "entity_id", name="pk_area_entity_config"),
 )
 
+# Area-specific time-based priors (one record per day/time-slot combination)
+area_time_priors_table = Table(
+    "area_time_priors",
+    metadata,
+    Column(
+        "entry_id",
+        String,
+        ForeignKey("area_occupancy.entry_id", name="fk_area_time_priors_entry"),
+        nullable=False,
+    ),
+    Column("day_of_week", Integer, nullable=False),  # 0=Monday, 6=Sunday
+    Column("time_slot", Integer, nullable=False),  # 0-47 (30-minute intervals)
+    Column("prior_value", Float, nullable=False, default=0.1),
+    Column(
+        "data_points", Integer, nullable=False, default=0
+    ),  # Number of data points used
+    Column("last_updated", DateTime, nullable=False, default=dt_util.utcnow),
+    # Composite primary key
+    sa.PrimaryKeyConstraint(
+        "entry_id", "day_of_week", "time_slot", name="pk_area_time_priors"
+    ),
+)
+
 # Index definitions for performance
 indexes = [
     # Critical state intervals indexes for time-based queries
@@ -124,6 +147,14 @@ indexes = [
     ),
     # Area entity config primary lookup
     sa.Index("idx_area_entity_entry", area_entity_config_table.c.entry_id),
+    # Area time priors lookup
+    sa.Index("idx_area_time_priors_entry", area_time_priors_table.c.entry_id),
+    sa.Index(
+        "idx_area_time_priors_day_slot",
+        area_time_priors_table.c.entry_id,
+        area_time_priors_table.c.day_of_week,
+        area_time_priors_table.c.time_slot,
+    ),
 ]
 
 
@@ -167,6 +198,37 @@ class AreaEntityConfigRecord:
     prob_given_true: float = 0.5
     prob_given_false: float = 0.1
     last_updated: datetime = field(default_factory=dt_util.utcnow)
+
+
+@dataclass
+class AreaTimePriorRecord:
+    """Data class for area-specific time-based prior records."""
+
+    entry_id: str = ""
+    day_of_week: int = 0  # 0=Monday, 6=Sunday
+    time_slot: int = 0  # 0-47 (30-minute intervals)
+    prior_value: float = 0.1
+    data_points: int = 0
+    last_updated: datetime = field(default_factory=dt_util.utcnow)
+
+    @property
+    def time_range(self) -> tuple[int, int]:
+        """Get the time range for this slot (start_hour, start_minute)."""
+        start_hour = self.time_slot // 2
+        start_minute = (self.time_slot % 2) * 30
+        return start_hour, start_minute
+
+    @property
+    def end_time_range(self) -> tuple[int, int]:
+        """Get the end time range for this slot (end_hour, end_minute)."""
+        start_hour, start_minute = self.time_range
+        if start_minute == 30:
+            end_hour = (start_hour + 1) % 24
+            end_minute = 0
+        else:
+            end_hour = start_hour
+            end_minute = 30
+        return end_hour, end_minute
 
 
 # ─────────────────── Schema Converter ───────────────────
@@ -250,6 +312,32 @@ class SchemaConverter:
             "weight": record.weight,
             "prob_given_true": record.prob_given_true,
             "prob_given_false": record.prob_given_false,
+            "last_updated": record.last_updated,
+        }
+
+    @staticmethod
+    def row_to_area_time_prior(row: Any) -> AreaTimePriorRecord:
+        """Convert SQLAlchemy row to AreaTimePriorRecord."""
+        return AreaTimePriorRecord(
+            entry_id=row.entry_id,
+            day_of_week=row.day_of_week,
+            time_slot=row.time_slot,
+            prior_value=row.prior_value,
+            data_points=row.data_points,
+            last_updated=row.last_updated
+            if isinstance(row.last_updated, datetime)
+            else dt_util.parse_datetime(row.last_updated) or dt_util.utcnow(),
+        )
+
+    @staticmethod
+    def area_time_prior_to_dict(record: AreaTimePriorRecord) -> dict[str, Any]:
+        """Convert AreaTimePriorRecord to dictionary for database insertion."""
+        return {
+            "entry_id": record.entry_id,
+            "day_of_week": record.day_of_week,
+            "time_slot": record.time_slot,
+            "prior_value": record.prior_value,
+            "data_points": record.data_points,
             "last_updated": record.last_updated,
         }
 

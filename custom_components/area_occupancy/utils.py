@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -114,6 +114,132 @@ async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
         for hour in range(24)
         for minute in (0, 30)
     ]
+
+
+# ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
+
+
+def datetime_to_time_slot(dt: datetime) -> tuple[int, int]:
+    """Convert datetime to day of week and time slot.
+
+    Args:
+        dt: Datetime to convert
+
+    Returns:
+        Tuple of (day_of_week, time_slot) where:
+        - day_of_week: 0=Monday, 6=Sunday
+        - time_slot: 0-47 (30-minute intervals, 00:00-00:29=0, 00:30-00:59=1, etc.)
+
+    """
+    # weekday() already returns Monday=0, Tuesday=1, ..., Sunday=6
+    day_of_week = dt.weekday()
+
+    # Calculate time slot (0-47 for 30-minute intervals)
+    hour = dt.hour
+    minute = dt.minute
+    time_slot = hour * 2 + (1 if minute >= 30 else 0)
+
+    return day_of_week, time_slot
+
+
+def time_slot_to_datetime_range(
+    day_of_week: int, time_slot: int, base_date: datetime | None = None
+) -> tuple[datetime, datetime]:
+    """Convert day of week and time slot to datetime range.
+
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
+        base_date: Base date to use (defaults to current date)
+
+    Returns:
+        Tuple of (start_datetime, end_datetime) for the 30-minute slot
+
+    """
+    if base_date is None:
+        base_date = dt_util.utcnow()
+
+    # Calculate start hour and minute
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
+
+    # Calculate end hour and minute
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
+    else:
+        end_hour = start_hour
+        end_minute = 30
+
+    # Find the target day of week
+    current_weekday = base_date.weekday()  # weekday() already returns Monday=0
+    days_diff = (day_of_week - current_weekday) % 7
+
+    # Calculate target date
+    target_date = base_date.date() + timedelta(days=days_diff)
+
+    # Create start and end datetimes
+    start_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=start_hour, minute=start_minute)
+    )
+    end_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=end_hour, minute=end_minute)
+    )
+
+    return start_dt, end_dt
+
+
+def get_current_time_slot() -> tuple[int, int]:
+    """Get the current day of week and time slot.
+
+    Returns:
+        Tuple of (day_of_week, time_slot) for current time
+
+    """
+    return datetime_to_time_slot(dt_util.utcnow())
+
+
+def get_time_slot_name(day_of_week: int, time_slot: int) -> str:
+    """Get a human-readable name for a time slot.
+
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
+
+    Returns:
+        Human-readable time slot name (e.g., "Monday 13:00-13:29")
+
+    """
+    day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
+
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
+    else:
+        end_hour = start_hour
+        end_minute = 30
+
+    return f"{day_names[day_of_week]} {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d}"
+
+
+def get_all_time_slots() -> list[tuple[int, int]]:
+    """Get all possible day of week and time slot combinations.
+
+    Returns:
+        List of (day_of_week, time_slot) tuples for all 336 slots (7 days × 48 slots)
+
+    """
+    return [(day, slot) for day in range(7) for slot in range(48)]
 
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────

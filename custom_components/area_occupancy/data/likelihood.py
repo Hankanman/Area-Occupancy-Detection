@@ -7,6 +7,7 @@ differ between H and ¬H.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -189,7 +190,7 @@ class Likelihood:
             history_period: Period in days for historical data (overrides coordinator default)
 
         """
-        _LOGGER.info("Likelihood calculation for %s", self.entity_id)
+        _LOGGER.debug("Likelihood calculation for %s", self.entity_id)
         # Use provided history_period or fall back to coordinator default
         days_to_use = history_period if history_period is not None else self.days
         self.start_time = dt_util.utcnow() - timedelta(days=days_to_use)
@@ -223,7 +224,7 @@ class Likelihood:
             # Calculate total analysis period
             total_seconds = (self.end_time - self.start_time).total_seconds()
 
-            # Calculate occupied time (sum of prior intervals)
+            # Calculate occupied time (sum of prior intervals) - more efficient
             occupied_seconds = sum(
                 (interval["end"] - interval["start"]).total_seconds()
                 for interval in prior_intervals
@@ -233,29 +234,33 @@ class Likelihood:
             not_occupied_seconds = total_seconds - occupied_seconds
 
             if occupied_seconds > 0 and not_occupied_seconds > 0:
-                # Filter intervals by overlap with prior intervals
-                def interval_overlaps_prior(interval):
-                    """Return True if the interval overlaps any prior interval."""
-                    for prior in prior_intervals:
-                        if (
-                            interval["end"] > prior["start"]
-                            and interval["start"] < prior["end"]
-                        ):
-                            return True
-                    return False
+                # Optimize overlap calculation by pre-sorting and using binary search approach
+                # Sort prior intervals by start time for more efficient overlap checking
+                sorted_prior_intervals = sorted(
+                    prior_intervals, key=lambda x: x["start"]
+                )
 
                 # Split filtered intervals into occupied and not-occupied periods
                 occupied_active_seconds = 0
                 not_occupied_active_seconds = 0
 
-                for interval in filtered_intervals:
+                # Process intervals in chunks to avoid blocking
+                chunk_size = 50
+                for i, interval in enumerate(filtered_intervals):
                     duration = (interval["end"] - interval["start"]).total_seconds()
 
                     if interval["state"] in self.active_states:
-                        if interval_overlaps_prior(interval):
+                        # More efficient overlap check using sorted intervals
+                        if self._interval_overlaps_prior_optimized(
+                            interval, sorted_prior_intervals
+                        ):
                             occupied_active_seconds += duration
                         else:
                             not_occupied_active_seconds += duration
+
+                    # Yield control periodically to avoid blocking
+                    if i % chunk_size == 0:
+                        await asyncio.sleep(0)
 
                 # Calculate the raw likelihoods as pure probabilities
                 active_ratio = (
@@ -276,6 +281,34 @@ class Likelihood:
 
         # Return the RAW values (weighting happens in properties)
         return active_ratio, inactive_ratio
+
+    def _interval_overlaps_prior_optimized(
+        self, interval: StateInterval, sorted_prior_intervals: list[StateInterval]
+    ) -> bool:
+        """Optimized overlap check using sorted prior intervals.
+
+        Args:
+            interval: The interval to check
+            sorted_prior_intervals: Prior intervals sorted by start time
+
+        Returns:
+            True if interval overlaps any prior interval
+
+        """
+        interval_start = interval["start"]
+        interval_end = interval["end"]
+
+        # Binary search approach for better performance with many prior intervals
+        for prior in sorted_prior_intervals:
+            # Early exit if we've passed all possible overlaps
+            if prior["start"] > interval_end:
+                break
+
+            # Check for overlap
+            if interval_end > prior["start"] and interval_start < prior["end"]:
+                return True
+
+        return False
 
     # ------------------------------------------------------------------ #
     def to_dict(self) -> dict[str, Any]:

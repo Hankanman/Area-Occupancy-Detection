@@ -18,10 +18,12 @@ from .schema import (
     DB_VERSION,
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
+    AreaTimePriorRecord,
     EntityRecord,
     SchemaConverter,
     area_entity_config_table,
     area_occupancy_table,
+    area_time_priors_table,
     entities_table,
     indexes,
     metadata,
@@ -359,6 +361,189 @@ class SQLiteStorage:
 
         return await self.hass.async_add_executor_job(_get)
 
+    # ─────────────────── Time-Based Priors Methods ───────────────────
+
+    async def save_time_prior(self, record: AreaTimePriorRecord) -> AreaTimePriorRecord:
+        """Save or update a time-based prior record."""
+        record.last_updated = dt_util.utcnow()
+
+        def _save(record: AreaTimePriorRecord):
+            with self.engine.connect() as conn:
+                values = SchemaConverter.area_time_prior_to_dict(record)
+
+                # Use INSERT OR REPLACE for SQLite
+                stmt = sa.text("""
+                    INSERT OR REPLACE INTO area_time_priors
+                    (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
+                    VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
+                """)
+
+                conn.execute(stmt, values)
+                conn.commit()
+                return record
+
+        return await self.hass.async_add_executor_job(_save, record)
+
+    async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
+        """Save multiple time-based prior records efficiently."""
+        if not records:
+            _LOGGER.debug("No time priors to save")
+            return 0
+
+        _LOGGER.debug("Saving batch of %d time priors", len(records))
+
+        def _save_batch():
+            stored_count = 0
+            with self.engine.connect() as conn:
+                for record in records:
+                    try:
+                        values = SchemaConverter.area_time_prior_to_dict(record)
+                        values["last_updated"] = dt_util.utcnow()
+
+                        stmt = sa.text("""
+                            INSERT OR REPLACE INTO area_time_priors
+                            (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
+                            VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
+                        """)
+
+                        conn.execute(stmt, values)
+                        stored_count += 1
+
+                    except (sa.exc.SQLAlchemyError, OSError) as err:
+                        _LOGGER.warning(
+                            "Failed to save time prior for entry %s, day %d, slot %d: %s",
+                            record.entry_id,
+                            record.day_of_week,
+                            record.time_slot,
+                            err,
+                        )
+
+                conn.commit()
+                _LOGGER.debug(
+                    "Committed batch: %d time priors stored successfully", stored_count
+                )
+            return stored_count
+
+        return await self.hass.async_add_executor_job(_save_batch)
+
+    async def get_time_prior(
+        self, entry_id: str, day_of_week: int, time_slot: int
+    ) -> AreaTimePriorRecord | None:
+        """Get a specific time-based prior record."""
+
+        def _get():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(area_time_priors_table).where(
+                        sa.and_(
+                            area_time_priors_table.c.entry_id == entry_id,
+                            area_time_priors_table.c.day_of_week == day_of_week,
+                            area_time_priors_table.c.time_slot == time_slot,
+                        )
+                    )
+                ).fetchone()
+
+                return (
+                    SchemaConverter.row_to_area_time_prior(result) if result else None
+                )
+
+        return await self.hass.async_add_executor_job(_get)
+
+    async def get_time_priors_for_entry(
+        self, entry_id: str
+    ) -> list[AreaTimePriorRecord]:
+        """Get all time-based prior records for an entry."""
+
+        def _get():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(area_time_priors_table)
+                    .where(area_time_priors_table.c.entry_id == entry_id)
+                    .order_by(
+                        area_time_priors_table.c.day_of_week,
+                        area_time_priors_table.c.time_slot,
+                    )
+                ).fetchall()
+
+                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
+
+        return await self.hass.async_add_executor_job(_get)
+
+    async def get_time_priors_for_day(
+        self, entry_id: str, day_of_week: int
+    ) -> list[AreaTimePriorRecord]:
+        """Get all time-based prior records for a specific day of week."""
+
+        def _get():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(area_time_priors_table)
+                    .where(
+                        sa.and_(
+                            area_time_priors_table.c.entry_id == entry_id,
+                            area_time_priors_table.c.day_of_week == day_of_week,
+                        )
+                    )
+                    .order_by(area_time_priors_table.c.time_slot)
+                ).fetchall()
+
+                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
+
+        return await self.hass.async_add_executor_job(_get)
+
+    async def delete_time_priors_for_entry(self, entry_id: str) -> int:
+        """Delete all time-based prior records for an entry."""
+
+        def _delete():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    area_time_priors_table.delete().where(
+                        area_time_priors_table.c.entry_id == entry_id
+                    )
+                )
+                deleted_count = result.rowcount
+                conn.commit()
+                return deleted_count
+
+        deleted_count = await self.hass.async_add_executor_job(_delete)
+        _LOGGER.info("Deleted %d time priors for entry %s", deleted_count, entry_id)
+        return deleted_count
+
+    async def get_recent_time_priors(
+        self, entry_id: str, hours: int = 24
+    ) -> list[AreaTimePriorRecord]:
+        """Get time-based prior records updated within the specified hours.
+
+        Args:
+            entry_id: The entry ID to get priors for
+            hours: Number of hours to look back for recent updates
+
+        Returns:
+            List of recent time prior records
+
+        """
+
+        def _get():
+            cutoff_time = dt_util.utcnow() - timedelta(hours=hours)
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(area_time_priors_table)
+                    .where(
+                        sa.and_(
+                            area_time_priors_table.c.entry_id == entry_id,
+                            area_time_priors_table.c.last_updated >= cutoff_time,
+                        )
+                    )
+                    .order_by(
+                        area_time_priors_table.c.day_of_week,
+                        area_time_priors_table.c.time_slot,
+                    )
+                ).fetchall()
+
+                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
+
+        return await self.hass.async_add_executor_job(_get)
+
     # ─────────────────── Global State Intervals Methods ───────────────────
 
     async def save_state_intervals_batch(self, intervals: list[StateInterval]) -> int:
@@ -649,6 +834,12 @@ class SQLiteStorage:
                         area_occupancy_table.c.entry_id == entry_id
                     )
                 )
+                # Delete time-based priors
+                conn.execute(
+                    area_time_priors_table.delete().where(
+                        area_time_priors_table.c.entry_id == entry_id
+                    )
+                )
                 conn.commit()
 
         await self.hass.async_add_executor_job(_reset)
@@ -673,12 +864,20 @@ class SQLiteStorage:
                 stats["state_intervals_count"] = conn.execute(
                     sa.select(sa.func.count()).select_from(state_intervals_table)
                 ).scalar()
+                stats["area_time_priors_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(area_time_priors_table)
+                ).scalar()
 
                 # Entry-specific stats
                 stats[f"area_entity_config_entry_{self.entry_id}"] = conn.execute(
                     sa.select(sa.func.count())
                     .select_from(area_entity_config_table)
                     .where(area_entity_config_table.c.entry_id == self.entry_id)
+                ).scalar()
+                stats[f"area_time_priors_entry_{self.entry_id}"] = conn.execute(
+                    sa.select(sa.func.count())
+                    .select_from(area_time_priors_table)
+                    .where(area_time_priors_table.c.entry_id == self.entry_id)
                 ).scalar()
 
                 # Database schema info
@@ -917,3 +1116,50 @@ class AreaOccupancySQLiteStore:
         return await self._storage.get_historical_intervals(
             entity_id, start_time, end_time
         )
+
+    # ─────────────────── Time-Based Priors Methods ───────────────────
+
+    async def save_time_prior(self, record: AreaTimePriorRecord) -> AreaTimePriorRecord:
+        """Save a time-based prior record."""
+        return await self._storage.save_time_prior(record)
+
+    async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
+        """Save multiple time-based prior records efficiently."""
+        return await self._storage.save_time_priors_batch(records)
+
+    async def get_time_prior(
+        self, entry_id: str, day_of_week: int, time_slot: int
+    ) -> AreaTimePriorRecord | None:
+        """Get a specific time-based prior record."""
+        return await self._storage.get_time_prior(entry_id, day_of_week, time_slot)
+
+    async def get_time_priors_for_entry(
+        self, entry_id: str
+    ) -> list[AreaTimePriorRecord]:
+        """Get all time-based prior records for an entry."""
+        return await self._storage.get_time_priors_for_entry(entry_id)
+
+    async def get_time_priors_for_day(
+        self, entry_id: str, day_of_week: int
+    ) -> list[AreaTimePriorRecord]:
+        """Get all time-based prior records for a specific day of week."""
+        return await self._storage.get_time_priors_for_day(entry_id, day_of_week)
+
+    async def delete_time_priors_for_entry(self, entry_id: str) -> int:
+        """Delete all time-based prior records for an entry."""
+        return await self._storage.delete_time_priors_for_entry(entry_id)
+
+    async def get_recent_time_priors(
+        self, entry_id: str, hours: int = 24
+    ) -> list[AreaTimePriorRecord]:
+        """Get time-based prior records updated within the specified hours.
+
+        Args:
+            entry_id: The entry ID to get priors for
+            hours: Number of hours to look back for recent updates
+
+        Returns:
+            List of recent time prior records
+
+        """
+        return await self._storage.get_recent_time_priors(entry_id, hours)
