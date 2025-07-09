@@ -188,6 +188,20 @@ class Config:
         """Return the end time of the history period."""
         return dt_util.utcnow()
 
+    @property
+    def entity_ids(self) -> list[str]:
+        """Return the entity ids of the sensors."""
+        return [
+            *self.sensors.motion,
+            *self.sensors.media,
+            *self.sensors.appliances,
+            *self.sensors.doors,
+            *self.sensors.windows,
+            *self.sensors.illuminance,
+            *self.sensors.humidity,
+            *self.sensors.temperature,
+        ]
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create a config from a dictionary with validation."""

@@ -131,39 +131,24 @@ class Entity:
             bool: True if evidence transition occurred, False otherwise
 
         """
-        _LOGGER.debug("Entity %s: Checking evidence", self.entity_id)
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
         # Capture previous evidence before updating it
         previous_evidence = self.previous_evidence
-        _LOGGER.debug(
-            "Entity %s: previous_evidence %s, current_evidence %s",
-            self.entity_id,
-            previous_evidence,
-            current_evidence,
-        )
 
         # Skip transition logic if current evidence is None (entity unavailable)
         if current_evidence is None or previous_evidence is None:
-            _LOGGER.debug("Entity %s: skipping transition logic", self.entity_id)
             # Update previous evidence even if skipping to prevent false transitions later
             self.previous_evidence = current_evidence
             return False
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
         if current_evidence and self.decay.is_decaying:
-            _LOGGER.debug(
-                "Entity %s: fixing inconsistent state - evidence is True but decay is running, stopping decay",
-                self.entity_id,
-            )
             self.decay.stop_decay()
 
         # Check for evidence transitions
         transition_occurred = current_evidence != previous_evidence
-        _LOGGER.debug(
-            "Entity %s: transition_occurred %s", self.entity_id, transition_occurred
-        )
 
         # Handle evidence transitions
         if transition_occurred:
@@ -178,18 +163,10 @@ class Entity:
                     decay_factor=1.0,  # No decay on evidence appearance
                 )
                 self.decay.stop_decay()
-                _LOGGER.debug(
-                    "Entity %s: evidence transition FALSE→TRUE, stopped decay",
-                    self.entity_id,
-                )
             else:  # TRUE→FALSE transition
                 # Evidence lost - start decay from current probability towards prob_given_false
                 # Working probability stays at current level and will decay over time
                 self.decay.start_decay()
-                _LOGGER.debug(
-                    "Entity %s: evidence transition TRUE→FALSE, started decay",
-                    self.entity_id,
-                )
 
         # Update previous evidence for next comparison
         self.previous_evidence = current_evidence
@@ -252,18 +229,9 @@ class EntityManager:
     async def __post_init__(self) -> None:
         """Post init - validate datetime."""
         if self._entities:
-            _LOGGER.debug(
-                "Found %d restored entities, updating with current config",
-                len(self._entities),
-            )
             await self._update_entities_from_config()
         else:
-            _LOGGER.debug(
-                "No restored entities found, creating fresh entities from config"
-            )
             self._entities = await self._create_entities_from_config()
-
-        _LOGGER.debug("EntityManager initialized with %d entities", len(self._entities))
 
     @property
     def entities(self) -> dict[str, Entity]:
@@ -351,13 +319,11 @@ class EntityManager:
     def add_entity(self, entity: Entity) -> None:
         """Add an entity to the manager."""
         self._entities[entity.entity_id] = entity
-        _LOGGER.debug("Added entity %s to entity manager", entity.entity_id)
 
     def remove_entity(self, entity_id: str) -> None:
         """Remove an entity from the manager."""
         if entity_id in self._entities:
             del self._entities[entity_id]
-            _LOGGER.debug("Removed entity %s from entity manager", entity_id)
 
     async def cleanup(self) -> None:
         """Clean up resources."""
@@ -444,12 +410,6 @@ class EntityManager:
                     force=force, history_period=history_period
                 )
                 updated_count += 1
-                _LOGGER.debug(
-                    "Updated likelihood for entity %s: prob_given_true=%.3f, prob_given_false=%.3f",
-                    entity.entity_id,
-                    entity.likelihood.prob_given_true,
-                    entity.likelihood.prob_given_false,
-                )
             except (ValueError, TypeError) as err:
                 _LOGGER.warning(
                     "Failed to update likelihood for entity %s: %s",

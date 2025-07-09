@@ -24,6 +24,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,11 +118,10 @@ async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
 async def get_intervals_hybrid(
-    hass: HomeAssistant,
+    coordinator: AreaOccupancyCoordinator,
     entity_id: str,
     start_time: datetime,
     end_time: datetime,
-    storage=None,
 ) -> list[StateInterval]:
     """Get state intervals from our DB first, then fall back to recorder.
 
@@ -129,22 +129,23 @@ async def get_intervals_hybrid(
     It efficiently combines our stored intervals with fresh recorder data.
 
     Args:
-        hass: Home Assistant instance
+        coordinator: Area Occupancy Coordinator instance
         entity_id: Entity ID to fetch intervals for
         start_time: Start time window
         end_time: End time window
-        storage: Optional SQLite storage instance
 
     Returns:
         List of StateInterval objects covering the time window
 
     """
     intervals = []
+    hass = coordinator.hass
+    sqlite_store = coordinator.sqlite_store
 
     # Try to get intervals from our database first
-    if storage:
+    if sqlite_store:
         try:
-            db_intervals = await storage.get_historical_intervals(
+            db_intervals = await sqlite_store.get_historical_intervals(
                 entity_id, start_time, end_time
             )
             if db_intervals:
@@ -179,13 +180,40 @@ async def _get_intervals_from_recorder(
     hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
 ) -> list[StateInterval]:
     """Get intervals from HA recorder (internal helper)."""
+    _LOGGER.debug(
+        "Getting intervals from recorder for %s from %s to %s",
+        entity_id,
+        start_time,
+        end_time,
+    )
+
     states = await get_states_from_recorder(hass, entity_id, start_time, end_time)
+
+    _LOGGER.debug(
+        "Got %d states from recorder for %s", len(states) if states else 0, entity_id
+    )
+
     if not states:
+        _LOGGER.debug("No states found in recorder for %s", entity_id)
         return []
 
-    # Filter to only State objects
-    state_objects: list[State] = [s for s in states if isinstance(s, State)]
-    return await states_to_intervals(state_objects, start_time, end_time)
+    # Filter to only State objects and exclude unavailable/unknown states
+    state_objects: list[State] = [
+        s
+        for s in states
+        if isinstance(s, State)
+        and s.state not in ["unknown", "unavailable", None, "", "NaN"]
+    ]
+
+    _LOGGER.debug(
+        "Filtered to %d valid State objects for %s", len(state_objects), entity_id
+    )
+
+    intervals = await states_to_intervals(state_objects, start_time, end_time)
+
+    _LOGGER.debug("Converted to %d intervals for %s", len(intervals), entity_id)
+
+    return intervals
 
 
 def _calculate_time_coverage(
@@ -290,6 +318,7 @@ async def get_states_from_recorder(
         return None
 
     try:
+        _LOGGER.debug("Executing recorder query for %s", entity_id)
         states = await recorder.async_add_executor_job(
             lambda: get_significant_states(
                 hass,
@@ -300,12 +329,13 @@ async def get_states_from_recorder(
             )
         )
 
+        _LOGGER.debug("Recorder query completed for %s, processing results", entity_id)
         entity_states = states.get(entity_id) if states else None
 
         if entity_states:
             _LOGGER.debug("Found %d states for %s", len(entity_states), entity_id)
         else:
-            _LOGGER.debug("No states found for %s", entity_id)
+            _LOGGER.debug("No states found for %s in recorder query result", entity_id)
 
     except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
         _LOGGER.error("Error getting states for %s: %s", entity_id, err)
@@ -334,8 +364,19 @@ async def states_to_intervals(
     if not states:
         return intervals
 
+    # Filter out any invalid states that might have slipped through
+    valid_states = [
+        state
+        for state in states
+        if state.state not in ["unknown", "unavailable", None, "", "NaN"]
+    ]
+
+    if not valid_states:
+        _LOGGER.debug("No valid states after filtering unavailable/unknown")
+        return intervals
+
     # Sort states chronologically
-    sorted_states = sorted(states, key=lambda x: x.last_changed)
+    sorted_states = sorted(valid_states, key=lambda x: x.last_changed)
 
     # Determine the state that was active at the start time
     current_state = sorted_states[0].state
@@ -353,23 +394,30 @@ async def states_to_intervals(
             continue
         if state.last_changed > end:
             break
+
+        # Only create intervals for valid states
+        if current_state not in ["unknown", "unavailable", None, "", "NaN"]:
+            intervals.append(
+                StateInterval(
+                    start=current_time,
+                    end=state.last_changed,
+                    state=current_state,
+                    entity_id=state.entity_id,
+                )
+            )
+        current_state = state.state
+        current_time = state.last_changed
+
+    # Final interval until end (only if state is valid)
+    if current_state not in ["unknown", "unavailable", None, "", "NaN"]:
         intervals.append(
             StateInterval(
                 start=current_time,
-                end=state.last_changed,
+                end=end,
                 state=current_state,
                 entity_id=state.entity_id,
             )
         )
-        current_state = state.state
-        current_time = state.last_changed
-
-    # Final interval until end
-    intervals.append(
-        StateInterval(
-            start=current_time, end=end, state=current_state, entity_id=state.entity_id
-        )
-    )
 
     return intervals
 
@@ -377,21 +425,29 @@ async def states_to_intervals(
 def filter_intervals(
     intervals: list[StateInterval],
 ) -> list[StateInterval]:
-    """Filter intervals to remove anomalous data.
+    """Filter intervals to remove anomalous data and invalid states.
 
     Args:
         intervals: List of intervals to filter
-        entity_id: Entity ID for logging purposes
 
     Returns:
-        Tuple of (filtered_intervals, filtering_stats)
+        List of filtered intervals
 
     """
-    # Filter and categorize intervals
-    on_intervals = [interval for interval in intervals if interval["state"] == "on"]
+    # First filter out any invalid states that might have slipped through
+    valid_intervals = [
+        interval
+        for interval in intervals
+        if interval["state"] not in ["unknown", "unavailable", None, "", "NaN"]
+    ]
 
-    # Apply anomaly filtering
-    valid_intervals = []
+    # Filter and categorize intervals (focus on 'on' states for motion sensors)
+    on_intervals = [
+        interval for interval in valid_intervals if interval["state"] == "on"
+    ]
+
+    # Apply anomaly filtering to duration
+    filtered_intervals = []
     filtered_short = 0
     filtered_long = 0
     max_filtered_duration = None
@@ -409,9 +465,22 @@ def filter_intervals(
             ):
                 max_filtered_duration = duration_seconds
         else:
-            valid_intervals.append(interval)
+            filtered_intervals.append(interval)
 
-    return valid_intervals
+    # For non-motion sensors, also include other valid states (not just 'on')
+    non_on_intervals = [
+        interval
+        for interval in valid_intervals
+        if interval["state"] != "on" and interval["state"] not in ["off"]
+    ]
+
+    # Apply duration filtering to non-on intervals as well
+    for interval in non_on_intervals:
+        duration_seconds = (interval["end"] - interval["start"]).total_seconds()
+        if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
+            filtered_intervals.append(interval)
+
+    return filtered_intervals
 
 
 # ───────────────────────────────────────── Validation ────────────────────────

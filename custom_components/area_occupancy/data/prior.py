@@ -210,13 +210,11 @@ class Prior:  # exported name must stay identical
         data = {}
         for entity_id in entity_ids:
             # Get intervals using hybrid approach - checks our DB first, then recorder
-            storage = getattr(self.coordinator, "sqlite_store", None)
             intervals = await get_intervals_hybrid(
-                self.hass,
+                self.coordinator,
                 entity_id,
                 start_time,
                 end_time,
-                storage=storage.storage if storage else None,
             )
 
             # Intervals are already filtered by get_intervals_hybrid

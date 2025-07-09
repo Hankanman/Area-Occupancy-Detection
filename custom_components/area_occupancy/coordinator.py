@@ -156,6 +156,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Load stored data
             await self.sqlite_store.async_initialize()
+
+            # Check if this is a new database and populate immediately if needed
+            await self._check_and_populate_new_database()
+
             loaded_data = await self.sqlite_store.async_load_data()
 
             if loaded_data:
@@ -405,3 +409,54 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._historical_timer = async_track_point_in_time(
             self.hass, self._handle_historical_timer, next_update
         )
+
+    async def _check_and_populate_new_database(self) -> None:
+        """Check if the state_intervals table is empty and populate it if needed."""
+        if await self.sqlite_store.is_state_intervals_empty():
+            _LOGGER.info(
+                "State intervals table is empty for instance %s. Populating with initial data from recorder.",
+                self.entry_id,
+            )
+
+            # Get entity IDs from configuration since entities haven't been created yet
+            entity_ids = self.config.entity_ids
+            _LOGGER.debug("Raw entity_ids from config: %s", entity_ids)
+
+            # Remove duplicates and empty strings
+            entity_ids = [eid for eid in set(entity_ids) if eid]
+            _LOGGER.debug("Filtered entity_ids: %s", entity_ids)
+
+            if entity_ids:
+                _LOGGER.info(
+                    "Importing initial data for %d entities from recorder (last 10 days)",
+                    len(entity_ids),
+                )
+
+                # Add debug: Check if entities exist in HA
+                for entity_id in entity_ids:
+                    state = self.hass.states.get(entity_id)
+                    if state:
+                        _LOGGER.debug(
+                            "Entity %s exists with state: %s", entity_id, state.state
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Entity %s does not exist in Home Assistant", entity_id
+                        )
+
+                import_counts = await self.sqlite_store.import_intervals_from_recorder(
+                    entity_ids, days=10
+                )
+                total_imported = sum(import_counts.values())
+
+                _LOGGER.info("Import results by entity: %s", import_counts)
+                _LOGGER.info(
+                    "Populated state intervals table for instance %s with %d intervals.",
+                    self.entry_id,
+                    total_imported,
+                )
+            else:
+                _LOGGER.warning(
+                    "No entity IDs found in configuration to populate state intervals table for instance %s.",
+                    self.entry_id,
+                )

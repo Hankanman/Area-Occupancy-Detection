@@ -126,3 +126,37 @@ get_entity_type_learned_data:
       selector:
         config_entry:
           integration: area_occupancy
+
+debug_import_intervals:
+  name: Debug Import State Intervals
+  description: "Manually trigger state intervals import from recorder with detailed debug logging. Use this to diagnose why state intervals aren't being populated."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to debug import for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    days:
+      name: Days to Import
+      description: "Number of days of historical data to import from recorder."
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+
+debug_database_state:
+  name: Debug Database State
+  description: "Check current simplified database state including intervals count, sample data, database statistics, and schema information. The database has been optimized with fewer tables and indexes for better performance."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to check database state for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy

@@ -1,5 +1,6 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
+from datetime import timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -194,7 +195,7 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
 
         # Clear storage if requested
         if call.data.get("clear_storage", False):
-            await coordinator.store.async_reset()
+            await coordinator.sqlite_store.async_reset()
 
         await coordinator.async_refresh()
 
@@ -436,6 +437,177 @@ async def _get_entity_type_learned_data(
         return {"entity_types": learned_data}
 
 
+async def _debug_import_intervals(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Debug service to manually trigger state intervals import."""
+    entry_id = call.data["entry_id"]
+    days = call.data.get("days", 10)
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        _LOGGER.info("Debug: Manual state intervals import for entry %s", entry_id)
+
+        # Get entity IDs from configuration
+        entity_ids = coordinator.config.entity_ids
+        _LOGGER.info(
+            "Debug: Found %d entity_ids in config: %s", len(entity_ids), entity_ids
+        )
+
+        # Remove duplicates and empty strings
+        entity_ids = [eid for eid in set(entity_ids) if eid]
+        _LOGGER.info(
+            "Debug: Filtered to %d entity_ids: %s", len(entity_ids), entity_ids
+        )
+
+        if not entity_ids:
+            return {
+                "error": "No entity IDs found in configuration",
+                "entity_ids": [],
+            }
+
+        # Check entity states
+        entity_states = {}
+        for entity_id in entity_ids:
+            state = hass.states.get(entity_id)
+            if state:
+                entity_states[entity_id] = state.state
+                _LOGGER.info(
+                    "Debug: Entity %s exists with state: %s", entity_id, state.state
+                )
+            else:
+                entity_states[entity_id] = "NOT_FOUND"
+                _LOGGER.warning(
+                    "Debug: Entity %s does not exist in Home Assistant", entity_id
+                )
+
+        # Perform import
+        import_counts = await coordinator.sqlite_store.import_intervals_from_recorder(
+            entity_ids, days=days
+        )
+        total_imported = sum(import_counts.values())
+
+        _LOGGER.info("Debug: Import completed with results: %s", import_counts)
+
+        # Check final state of database
+        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
+
+    except Exception as err:
+        error_msg = f"Debug import failed for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return {
+            "entity_ids": entity_ids,
+            "entity_states": entity_states,
+            "import_counts": import_counts,
+            "total_imported": total_imported,
+            "total_intervals_in_db": total_intervals,
+            "days_imported": days,
+        }
+
+
+async def _debug_database_state(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Debug service to check current database state."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        _LOGGER.info("Debug: Checking database state for entry %s", entry_id)
+
+        # Check if state_intervals table is empty
+        is_empty = await coordinator.sqlite_store.is_state_intervals_empty()
+        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
+
+        _LOGGER.info(
+            "Debug: State intervals empty: %s, Total count: %d",
+            is_empty,
+            total_intervals,
+        )
+
+        # Get some sample intervals for a few entities
+        entity_ids = coordinator.config.entity_ids[:3]  # Just first 3 entities
+        sample_data = {}
+
+        for entity_id in entity_ids:
+            try:
+                # Get recent intervals for this entity
+                intervals = await coordinator.sqlite_store.get_historical_intervals(
+                    entity_id,
+                    start_time=dt_util.utcnow() - timedelta(days=1),
+                    end_time=dt_util.utcnow(),
+                )
+                sample_data[entity_id] = {
+                    "intervals_found": len(intervals),
+                    "latest_intervals": [
+                        {
+                            "state": interval["state"],
+                            "start": interval["start"].isoformat(),
+                            "end": interval["end"].isoformat(),
+                            "duration_minutes": round(
+                                (interval["end"] - interval["start"]).total_seconds()
+                                / 60,
+                                2,
+                            ),
+                        }
+                        for interval in intervals[:3]
+                    ],
+                }
+                _LOGGER.info(
+                    "Debug: Entity %s has %d intervals in last 24h",
+                    entity_id,
+                    len(intervals),
+                )
+            except (HomeAssistantError, OSError) as err:
+                sample_data[entity_id] = {"error": str(err)}
+
+        # Get database statistics
+        stats = await coordinator.sqlite_store.async_get_stats()
+
+        # Add schema information
+        schema_info = {
+            "tables": [
+                "entities",
+                "state_intervals",
+                "area_occupancy",
+                "area_entity_config",
+                "metadata",
+            ],
+            "simplified_schema": True,
+            "removed_tables": ["area_history"],
+            "removed_fields": {
+                "area_occupancy": ["probability", "prior", "occupied"],
+                "area_entity_config": ["attributes", "last_state"],
+                "entities": ["domain"],
+            },
+            "indexes_count": 3,  # Simplified from 11 to 3
+        }
+
+    except Exception as err:
+        error_msg = f"Debug database state failed for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return {
+            "database_state": {
+                "state_intervals_empty": is_empty,
+                "total_intervals": total_intervals,
+                "sample_entities": sample_data,
+                "database_stats": stats,
+                "schema_info": schema_info,
+            },
+            "configuration": {
+                "entity_ids": coordinator.config.entity_ids,
+                "history_enabled": coordinator.config.history.enabled,
+                "history_period": coordinator.config.history.period,
+            },
+        }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -499,6 +671,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_type_learned_data(hass, call)
+
+    async def handle_debug_import_intervals(call: ServiceCall) -> dict[str, Any]:
+        return await _debug_import_intervals(hass, call)
+
+    async def handle_debug_database_state(call: ServiceCall) -> dict[str, Any]:
+        return await _debug_database_state(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -569,4 +747,29 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)
+    hass.services.async_register(
+        DOMAIN,
+        "debug_import_intervals",
+        handle_debug_import_intervals,
+        schema=vol.Schema(
+            {
+                vol.Required("entry_id"): str,
+                vol.Optional("days", default=10): int,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "debug_database_state",
+        handle_debug_database_state,
+        schema=vol.Schema(
+            {
+                vol.Required("entry_id"): str,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    _LOGGER.info("Registered %d services for %s integration", 11, DOMAIN)
