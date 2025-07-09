@@ -11,16 +11,9 @@ from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
-from ..utils import (
-    StateInterval,
-    filter_intervals,
-    get_states_from_recorder,
-    states_to_intervals,
-    validate_prob,
-)
+from ..utils import StateInterval, get_intervals_hybrid, validate_prob
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -54,7 +47,6 @@ class Likelihood:
         self.last_updated: datetime | None = None
         self.start_time: datetime | None = None
         self.end_time: datetime | None = None
-        self.states: list[State] | None = None
         self.intervals: list[StateInterval] | None = None
         self.active_seconds: int | None = None
         self.inactive_seconds: int | None = None
@@ -203,8 +195,12 @@ class Likelihood:
         self.start_time = dt_util.utcnow() - timedelta(days=days_to_use)
         self.end_time = dt_util.utcnow()
 
-        states = await get_states_from_recorder(
-            self.hass, self.entity_id, self.start_time, self.end_time
+        # Use hybrid approach - checks our DB first, then recorder
+        intervals = await get_intervals_hybrid(
+            self.coordinator,
+            self.entity_id,
+            self.start_time,
+            self.end_time,
         )
 
         prior_intervals = self.coordinator.prior.state_intervals
@@ -214,21 +210,15 @@ class Likelihood:
 
         # Debug logging
         _LOGGER.debug(
-            "Likelihood calculation for %s: states=%d, prior_intervals=%d",
+            "Likelihood calculation for %s: intervals=%d, prior_intervals=%d",
             self.entity_id,
-            len(states) if states else 0,
+            len(intervals) if intervals else 0,
             len(prior_intervals),
         )
 
-        if states and prior_intervals:
-            intervals = await states_to_intervals(
-                [s for s in states if isinstance(s, State)],
-                self.start_time,
-                self.end_time,
-            )
-
-            # Apply anomaly filtering to intervals first
-            filtered_intervals = filter_intervals(intervals)
+        if intervals and prior_intervals:
+            # Intervals are already filtered by get_intervals_hybrid
+            filtered_intervals = intervals
 
             # Calculate total analysis period
             total_seconds = (self.end_time - self.start_time).total_seconds()
