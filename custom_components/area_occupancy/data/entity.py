@@ -413,9 +413,9 @@ class EntityManager:
             InputType.APPLIANCE: self.config.sensors.appliances,
             InputType.DOOR: self.config.sensors.doors,
             InputType.WINDOW: self.config.sensors.windows,
-            InputType.ENVIRONMENTAL: self.config.sensors.illuminance
-            + self.config.sensors.humidity
-            + self.config.sensors.temperature,
+            InputType.ILLUMINANCE: self.config.sensors.illuminance,
+            InputType.HUMIDITY: self.config.sensors.humidity,
+            InputType.TEMPERATURE: self.config.sensors.temperature,
         }
 
     async def update_all_entity_likelihoods(

@@ -826,18 +826,18 @@ class TestEntityManagerAdvanced:
         assert InputType.APPLIANCE in mappings
         assert InputType.DOOR in mappings
         assert InputType.WINDOW in mappings
-        assert InputType.ENVIRONMENTAL in mappings
+        assert InputType.ILLUMINANCE in mappings
+        assert InputType.HUMIDITY in mappings
+        assert InputType.TEMPERATURE in mappings
 
         assert mappings[InputType.MOTION] == [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
         ]
         assert mappings[InputType.MEDIA] == ["media_player.tv"]
-        assert mappings[InputType.ENVIRONMENTAL] == [
-            "sensor.lux",
-            "sensor.humidity",
-            "sensor.temp",
-        ]
+        assert mappings[InputType.ILLUMINANCE] == ["sensor.lux"]
+        assert mappings[InputType.HUMIDITY] == ["sensor.humidity"]
+        assert mappings[InputType.TEMPERATURE] == ["sensor.temp"]
 
     def test_process_existing_entities(self, mock_coordinator: Mock) -> None:
         """Test _process_existing_entities method."""
