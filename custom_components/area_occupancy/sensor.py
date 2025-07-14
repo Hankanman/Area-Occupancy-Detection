@@ -88,6 +88,20 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         """Handle updated data from the coordinator."""
         super()._handle_coordinator_update()
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data:
+            return {}
+        try:
+            return {
+                "complementary_probability": self.coordinator.probability,
+                "conditional_probability": self.coordinator.conditional_probability,
+                "conditional_sorted_probability": self.coordinator.conditional_sorted_probability,
+            }
+        except (TypeError, AttributeError, KeyError):
+            return {}
+
 
 class EvidenceSensor(AreaOccupancySensorBase):
     """Sensor for all evidence."""
@@ -114,44 +128,39 @@ class EvidenceSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            active_entity_names = [
-                entity.name
-                for entity in self.coordinator.entities.active_entities
-                if entity.name
-            ]
-            inactive_entity_names = [
-                entity.name
-                for entity in self.coordinator.entities.inactive_entities
-                if entity.name
-            ]
+            active_entity_names = ", ".join(
+                [
+                    entity.name
+                    for entity in self.coordinator.entities.active_entities
+                    if entity.name
+                ]
+            )
+            inactive_entity_names = ", ".join(
+                [
+                    entity.name
+                    for entity in self.coordinator.entities.inactive_entities
+                    if entity.name
+                ]
+            )
             return {
-                "evidence": ", ".join(active_entity_names),
-                "no_evidence": ", ".join(inactive_entity_names),
+                "evidence": active_entity_names,
+                "no_evidence": inactive_entity_names,
                 "total": len(self.coordinator.entities.entities),
-                "details": {
-                    "active": [
-                        {
-                            "id": {entity.entity_id},
-                            "name": {entity.name},
-                            "state": {entity.state},
-                            "decaying": {entity.decay.is_decaying},
-                            "evidence": {entity.evidence},
-                            "probability": {format_percentage(entity.probability)},
-                        }
-                        for entity in self.coordinator.entities.active_entities
-                    ],
-                    "inactive": [
-                        {
-                            "id": {entity.entity_id},
-                            "name": {entity.name},
-                            "state": {entity.state},
-                            "decaying": {entity.decay.is_decaying},
-                            "evidence": {entity.evidence},
-                            "probability": {format_percentage(entity.probability)},
-                        }
-                        for entity in self.coordinator.entities.inactive_entities
-                    ],
-                },
+                "details": [
+                    {
+                        "id": entity.entity_id,
+                        "evidence": entity.evidence,
+                        "probability": entity.probability,
+                        "weight": entity.type.weight,
+                        "name": entity.name,
+                        "state": entity.state,
+                        "decaying": entity.decay.is_decaying,
+                    }
+                    for entity in sorted(
+                        self.coordinator.entities.entities.values(),
+                        key=lambda x: (not x.evidence, -x.type.weight),
+                    )
+                ],
             }
         except (TypeError, AttributeError, KeyError):
             return {}

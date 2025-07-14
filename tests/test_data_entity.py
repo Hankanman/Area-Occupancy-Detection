@@ -644,7 +644,8 @@ class TestEntityPropertiesAndMethods:
         assert transition_occurred is True
         assert entity.previous_evidence is True
         assert entity.previous_probability > 0.2  # Should increase
-        mock_decay.stop_decay.assert_called_once()  # Should stop decay for ON state
+        # stop_decay is called twice: once by consistency check and once by transition logic
+        assert mock_decay.stop_decay.call_count == 2
 
         # Reset mocks
         mock_decay.reset_mock()
@@ -825,18 +826,18 @@ class TestEntityManagerAdvanced:
         assert InputType.APPLIANCE in mappings
         assert InputType.DOOR in mappings
         assert InputType.WINDOW in mappings
-        assert InputType.ENVIRONMENTAL in mappings
+        assert InputType.ILLUMINANCE in mappings
+        assert InputType.HUMIDITY in mappings
+        assert InputType.TEMPERATURE in mappings
 
         assert mappings[InputType.MOTION] == [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
         ]
         assert mappings[InputType.MEDIA] == ["media_player.tv"]
-        assert mappings[InputType.ENVIRONMENTAL] == [
-            "sensor.lux",
-            "sensor.humidity",
-            "sensor.temp",
-        ]
+        assert mappings[InputType.ILLUMINANCE] == ["sensor.lux"]
+        assert mappings[InputType.HUMIDITY] == ["sensor.humidity"]
+        assert mappings[InputType.TEMPERATURE] == ["sensor.temp"]
 
     def test_process_existing_entities(self, mock_coordinator: Mock) -> None:
         """Test _process_existing_entities method."""
