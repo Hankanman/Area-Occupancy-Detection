@@ -1,7 +1,7 @@
 {
   "name": "Area Occupancy",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "postCreateCommand": "python -m venv .venv && source .venv/bin/activate && pip install --upgrade pip && scripts/setup",
+  "postCreateCommand": "scripts/setup --recreate-venv",
   "postStartCommand": "echo 'source .venv/bin/activate' >> ~/.bashrc",
   "forwardPorts": [8123],
   "portsAttributes": {

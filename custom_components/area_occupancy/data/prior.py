@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 # Minimum prior value to avoid division by zero (1%)
-MIN_PRIOR = 0.01
+MIN_PRIOR = 0.1
 
 # Interval filtering thresholds to exclude anomalous data
 # Exclude intervals shorter than 10 seconds (false triggers)

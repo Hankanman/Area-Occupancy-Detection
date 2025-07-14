@@ -29,12 +29,89 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class TimeInterval(TypedDict):
+class Interval(TypedDict):
     """Time interval with state information."""
 
     start: datetime
     end: datetime
+
+
+class StateInterval(Interval):
+    """Time interval with state information."""
+
     state: str
+
+
+class TimeInterval(Interval):
+    """Time interval with time information."""
+
+    state: str
+
+
+class PriorInterval:
+    """Time interval with prior information."""
+
+    start_hour: int
+    start_minute: int
+    end_hour: int
+    end_minute: int
+    prior: float | None
+
+    def __init__(
+        self,
+        start_hour: int,
+        start_minute: int,
+        end_hour: int,
+        end_minute: int,
+        prior: float | None,
+    ) -> None:
+        """Initialize prior interval."""
+        self.start_hour = start_hour
+        self.start_minute = start_minute
+        self.end_hour = end_hour
+        self.end_minute = end_minute
+        self.prior = prior
+
+    def to_interval(self) -> Interval:
+        """Convert to interval."""
+        return Interval(
+            start=datetime(
+                datetime.now().year,
+                datetime.now().month,
+                datetime.now().day,
+                self.start_hour,
+                self.start_minute,
+            ),
+            end=datetime(
+                datetime.now().year,
+                datetime.now().month,
+                datetime.now().day,
+                self.end_hour,
+                self.end_minute,
+            ),
+        )
+
+
+class LikelihoodInterval(Interval):
+    """Time interval with likelihood information."""
+
+    prob_given_true: float
+    prob_given_false: float
+
+
+async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
+    """Initialize times of day for a given entity as 24 hourly intervals."""
+    return [
+        PriorInterval(
+            start_hour=hour,
+            start_minute=minute,
+            end_hour=hour if minute == 0 else (hour + 1) % 24,
+            end_minute=29 if minute == 0 else 59,
+            prior=None,
+        )
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
 
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
@@ -244,20 +321,34 @@ def bayesian_probability(
     posterior_odds = odds * bayes_factor
 
     # Return posterior probability
-    result = posterior_odds / (1.0 + posterior_odds)
-    return validate_prob(result)
+    return posterior_odds / (1.0 + posterior_odds)
 
 
 # ─────────────────────────────── Area-level fusion ───────────────────────────
-def overall_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Combine weighted posteriors from active/decaying sensors."""
+def complementary_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Calculate the complementary probability.
+
+    This function computes the probability that at least ONE entity provides
+    evidence for occupancy, using the complement rule:
+    P(at least one) = 1 - product(P(not each)). For each contributing entity,
+    a Bayesian update is performed assuming evidence is True (or decaying),
+    and the complement of the posterior is multiplied across all such entities.
+    Is not affected by the order of the entities.
+    Does not consider negative evidence.
+
+    Args:
+        entities: Dictionary of Entity objects to consider.
+        prior: The prior probability of occupancy.
+
+    Returns:
+        The combined probability that at least one contributing entity
+        indicates occupancy, after Bayesian updates and decay are applied.
+
+    """
 
     contributing_entities = [
         e for e in entities.values() if e.evidence or e.decay.is_decaying
     ]
-
-    if not contributing_entities:
-        return validate_prob(prior)
 
     product = 1.0
     for e in contributing_entities:
@@ -266,8 +357,78 @@ def overall_probability(entities: dict[str, Entity], prior: float) -> float:
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=True,
-            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
+            decay_factor=e.decay_factor,
         )
         product *= 1 - posterior
 
-    return validate_prob(1 - product)
+    return 1 - product
+
+
+def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Return conditional probability.
+
+    Sequentially update the prior probability by applying Bayes' theorem for each entity,
+    using the entity's evidence and likelihoods. The posterior from each step becomes the
+    prior for the next entity. This method reflects the effect of each entity's evidence
+    (and decay, if applicable) on the overall probability.
+
+    Args:
+        entities: Dictionary of Entity objects to process.
+        prior: Initial prior probability.
+
+    Returns:
+        The final posterior probability after all updates.
+
+    """
+
+    posterior = prior
+    for e in entities.values():
+        # Use effective evidence: True if evidence is True OR if decaying
+        effective_evidence = e.evidence or e.decay.is_decaying
+        posterior = bayesian_probability(
+            prior=posterior,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
+            evidence=effective_evidence,
+            decay_factor=e.decay_factor,
+        )
+
+    return posterior
+
+
+def conditional_sorted_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Return conditional sorted probability.
+
+    Sequentially update the prior probability by applying Bayes' theorem for each entity,
+    using the entity's evidence and likelihoods. The posterior from each step becomes the
+    prior for the next entity. This method reflects the effect of each entity's evidence
+    (and decay, if applicable) on the overall probability. The entities are sorted by
+    evidence status (active first) and then by weight (highest weight first) to ensure
+    that the most relevant entities are considered first.
+
+    Args:
+        entities: Dictionary of Entity objects to process.
+        prior: Initial prior probability.
+
+    Returns:
+        The final posterior probability after all updates.
+
+    """
+
+    sorted_entities = sorted(
+        entities.values(),
+        key=lambda x: (not (x.evidence or x.decay.is_decaying), -x.type.weight),
+    )
+    posterior = prior
+    for e in sorted_entities:
+        # Use effective evidence: True if evidence is True OR if decaying
+        effective_evidence = e.evidence or e.decay.is_decaying
+        posterior = bayesian_probability(
+            prior=posterior,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
+            evidence=effective_evidence,
+            decay_factor=e.decay_factor,
+        )
+
+    return posterior
