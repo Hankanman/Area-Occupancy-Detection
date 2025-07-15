@@ -18,7 +18,7 @@ jobs:
       - name: Fetch download count
         id: fetch
         run: |
-          count=$(curl -s https://analytics.home-assistant.io/custom_integrations.json | jq -r '.area_occupancy')
+          count=$(curl -s https://analytics.home-assistant.io/custom_integrations.json | jq -r '.area_occupancy.total')
           echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Update README
         run: |
