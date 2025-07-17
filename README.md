@@ -274,6 +274,19 @@ Key things to check in the logs:
 
 ![Probability Cards](docs/docs/images/probability-cards.png)
 
+## Lovelace Card
+
+The integration provides a small custom card to display the current
+occupancy probability. Copy `area-occupancy-card.js` from the `www`
+folder to your Home Assistant `config/www` directory and add it as a
+resource. Then use the card with:
+
+```yaml
+type: custom:area-occupancy-card
+entity: sensor.living_room_occupancy_probability
+status_entity: binary_sensor.living_room_occupancy_status
+``` 
+
 ## Support & Feedback
 
 - **Issues**: [GitHub Issues][issues]
