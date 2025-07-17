@@ -277,9 +277,10 @@ Key things to check in the logs:
 ## Lovelace Card
 
 The integration provides a small custom card to display the current
-occupancy probability. Copy `area-occupancy-card.js` from the `www`
-folder to your Home Assistant `config/www` directory and add it as a
-resource. Then use the card with:
+occupancy probability and a graph of recent values. Copy
+`area-occupancy-card.js` from the `www` folder to your Home Assistant
+`config/www` directory and add it as a resource. Once added you can
+configure the card through the Lovelace UI or via YAML. Example YAML:
 
 ```yaml
 type: custom:area-occupancy-card

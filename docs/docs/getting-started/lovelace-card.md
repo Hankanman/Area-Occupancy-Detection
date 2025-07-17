@@ -1,6 +1,7 @@
 # Lovelace Card
 
 This integration includes a simple custom card to display the occupancy probability in the Home Assistant dashboard.
+The card also shows a line graph of the last hour of probability values.
 
 ## Installation
 
@@ -20,4 +21,5 @@ status_entity: binary_sensor.living_room_occupancy_status
 name: Living Room
 ```
 
-The card shows the current probability, the occupancy status, and a progress bar visualising the probability level.
+The card shows the current probability, the occupancy status, a progress bar visualising the probability level, and a graph of recent changes.
+The configuration can be done entirely from the UI once the card is added as a resource.
