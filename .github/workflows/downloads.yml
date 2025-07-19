@@ -1,8 +1,10 @@
 name: Update Downloads Badge
 
 on:
-  schedule:
-    - cron: '0 0 * * 0'
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 permissions:

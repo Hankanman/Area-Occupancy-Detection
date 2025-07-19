@@ -325,6 +325,7 @@ def bayesian_probability(
 
 
 # ─────────────────────────────── Area-level fusion ───────────────────────────
+# Not used
 def complementary_probability(entities: dict[str, Entity], prior: float) -> float:
     """Calculate the complementary probability.
 
@@ -359,18 +360,21 @@ def complementary_probability(entities: dict[str, Entity], prior: float) -> floa
             evidence=True,
             decay_factor=e.decay_factor,
         )
-        product *= 1 - posterior
+        weighted_posterior = posterior * e.type.weight
+        product *= 1 - weighted_posterior
 
     return 1 - product
 
 
+# Not used
 def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Return conditional probability.
+    """Return conditional probability, accounting for entity weights.
 
     Sequentially update the prior probability by applying Bayes' theorem for each entity,
     using the entity's evidence and likelihoods. The posterior from each step becomes the
-    prior for the next entity. This method reflects the effect of each entity's evidence
-    (and decay, if applicable) on the overall probability.
+    prior for the next entity. Each entity's weight is used to interpolate between the
+    previous posterior and the new posterior, so that higher-weight entities have more
+    influence on the result.
 
     Args:
         entities: Dictionary of Entity objects to process.
@@ -385,13 +389,16 @@ def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
     for e in entities.values():
         # Use effective evidence: True if evidence is True OR if decaying
         effective_evidence = e.evidence or e.decay.is_decaying
-        posterior = bayesian_probability(
+        entity_posterior = bayesian_probability(
             prior=posterior,
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )
+        # Interpolate between previous posterior and entity_posterior using entity weight
+        weight = e.type.weight
+        posterior = posterior * (1 - weight) + entity_posterior * weight
 
     return posterior
 
@@ -423,12 +430,15 @@ def conditional_sorted_probability(entities: dict[str, Entity], prior: float) ->
     for e in sorted_entities:
         # Use effective evidence: True if evidence is True OR if decaying
         effective_evidence = e.evidence or e.decay.is_decaying
-        posterior = bayesian_probability(
+        entity_posterior = bayesian_probability(
             prior=posterior,
             prob_given_true=e.likelihood.prob_given_true,
             prob_given_false=e.likelihood.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )
+        # Interpolate between previous posterior and entity_posterior using entity weight
+        weight = e.type.weight
+        posterior = posterior * (1 - weight) + entity_posterior * weight
 
     return posterior

@@ -88,20 +88,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         """Handle updated data from the coordinator."""
         super()._handle_coordinator_update()
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return entity specific state attributes."""
-        if not self.coordinator.data:
-            return {}
-        try:
-            return {
-                "complementary_probability": self.coordinator.probability,
-                "conditional_probability": self.coordinator.conditional_probability,
-                "conditional_sorted_probability": self.coordinator.conditional_sorted_probability,
-            }
-        except (TypeError, AttributeError, KeyError):
-            return {}
-
 
 class EvidenceSensor(AreaOccupancySensorBase):
     """Sensor for all evidence."""
