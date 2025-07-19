@@ -76,6 +76,95 @@ data:
   - Filtering statistics (intervals processed, filtered, stuck sensor analysis)
 - `likelihood_filtering_summary`: Overall filtering statistics across all entities
 
+## `area_occupancy.update_time_based_priors`
+
+Manually triggers a recalculation of [Time-Based Priors](../features/time-based-priors.md) for a specific Area Occupancy instance.
+
+This service runs the time-based prior calculation in the background, analyzing historical data to learn occupancy patterns for different times of day and days of the week.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+
+**Example:**
+```yaml
+service: area_occupancy.update_time_based_priors
+data:
+  entry_id: your_config_entry_id_here
+```
+
+**Returns:**
+- `status`: "started" (calculation runs in background)
+- `message`: Confirmation message with entry ID
+- `history_period_days`: Number of days that will be analyzed
+- `start_timestamp`: ISO timestamp when calculation began
+- `note`: Information about background processing
+
+**Notes:**
+- This is a background operation that can take several minutes to complete
+- The service returns immediately while calculation continues in the background
+- Check the Home Assistant logs for completion status and any errors
+- Time-based priors are automatically recalculated on a schedule (default: every 4 hours)
+
+## `area_occupancy.get_time_based_priors`
+
+Retrieves current time-based priors in a human-readable format, showing learned occupancy patterns for different times of day and days of the week.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+
+**Example:**
+```yaml
+service: area_occupancy.get_time_based_priors
+data:
+  entry_id: your_config_entry_id_here
+```
+
+**Returns:**
+- `area_name`: Name of the area
+- `current_time_slot`: Current time slot (e.g., "Monday 14:00-14:30")
+- `current_prior`: Current time-based prior value
+- `time_prior`: Time-based prior for current slot
+- `global_prior`: Fallback global prior value
+- `total_time_slots_available`: Number of time slots with data
+- `daily_summaries`: Prior values organized by day and time
+- `key_periods`: Average priors for common time periods (Early Morning, Morning, Afternoon, Evening, Night)
+- `note`: Explanation of time-based priors
+
+**Example Output:**
+```json
+{
+  "area_name": "Living Room",
+  "current_time_slot": "Monday 14:00-14:30",
+  "current_prior": 0.2345,
+  "time_prior": 0.1567,
+  "global_prior": 0.2345,
+  "total_time_slots_available": 312,
+  "daily_summaries": {
+    "Monday": {
+      "08:00": 0.4567,
+      "08:30": 0.4789,
+      "18:00": 0.8234,
+      "18:30": 0.8456
+    },
+    "Saturday": {
+      "10:00": 0.3456,
+      "20:00": 0.9123
+    }
+  },
+  "key_periods": {
+    "Morning (08:00-12:00)": [
+      {"day": "Monday", "average": 0.4567}
+    ],
+    "Evening (17:00-21:00)": [
+      {"day": "Monday", "average": 0.8234},
+      {"day": "Saturday", "average": 0.9123}
+    ]
+  }
+}
+```
+
 ## `area_occupancy.reset_entities`
 
 Resets all entity probabilities and learned data for a specific Area Occupancy instance. This will clear all calculated probabilities and return entities to their initial state.
@@ -227,9 +316,44 @@ data:
 - `active_states`: States considered as "active" for this entity type
 - `active_range`: Range of values considered "active" (for numeric entities)
 
+## Debug Services
+
+### `area_occupancy.debug_import_intervals`
+
+Manually triggers state intervals import from recorder with detailed debug logging. Use this to diagnose why state intervals aren't being populated.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `days` | No | Number of days of historical data to import from recorder. Defaults to 10. | `10` |
+
+**Example:**
+```yaml
+service: area_occupancy.debug_import_intervals
+data:
+  entry_id: your_config_entry_id_here
+  days: 14
+```
+
+### `area_occupancy.debug_database_state`
+
+Check current simplified database state including intervals count, sample data, database statistics, and schema information.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+
+**Example:**
+```yaml
+service: area_occupancy.debug_database_state
+data:
+  entry_id: your_config_entry_id_here
+```
+
 **Notes:**
 
 - All services except `reset_entities` return response data that can be used in automations or scripts
-- Services that query historical data (`update_area_prior`, `update_likelihoods`) can be resource-intensive
+- Services that query historical data (`update_area_prior`, `update_likelihoods`, `update_time_based_priors`) can be resource-intensive
 - The `entry_id` can be found in Home Assistant under Settings → Devices & Services → Area Occupancy Detection → (click on an instance)
+- Time-based prior services are part of the new advanced features and require historical analysis to be enabled
 
