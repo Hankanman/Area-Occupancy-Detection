@@ -393,37 +393,34 @@ class SQLiteStorage:
         _LOGGER.debug("Saving batch of %d time priors", len(records))
 
         def _save_batch():
-            stored_count = 0
             with self.engine.connect() as conn:
-                for record in records:
-                    try:
-                        values = SchemaConverter.area_time_prior_to_dict(record)
-                        values["last_updated"] = dt_util.utcnow()
+                try:
+                    # Prepare a list of dictionaries for bulk insert
+                    values_list = [
+                        {
+                            **SchemaConverter.area_time_prior_to_dict(record),
+                            "last_updated": dt_util.utcnow(),
+                        }
+                        for record in records
+                    ]
 
-                        stmt = sa.text("""
-                            INSERT OR REPLACE INTO area_time_priors
-                            (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                            VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                        """)
+                    # Use executemany for bulk insert
+                    stmt = sa.text("""
+                        INSERT OR REPLACE INTO area_time_priors
+                        (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
+                        VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
+                    """)
 
-                        conn.execute(stmt, values)
-                        stored_count += 1
+                    conn.execute(stmt, values_list)
+                    conn.commit()
+                    _LOGGER.debug(
+                        "Committed batch: %d time priors stored successfully", len(values_list)
+                    )
+                    return len(values_list)
 
-                    except (sa.exc.SQLAlchemyError, OSError) as err:
-                        _LOGGER.warning(
-                            "Failed to save time prior for entry %s, day %d, slot %d: %s",
-                            record.entry_id,
-                            record.day_of_week,
-                            record.time_slot,
-                            err,
-                        )
-
-                conn.commit()
-                _LOGGER.debug(
-                    "Committed batch: %d time priors stored successfully", stored_count
-                )
-            return stored_count
-
+                except (sa.exc.SQLAlchemyError, OSError) as err:
+                    _LOGGER.error("Failed to save batch of time priors: %s", err)
+                    return 0
         return await self.hass.async_add_executor_job(_save_batch)
 
     async def get_time_prior(
