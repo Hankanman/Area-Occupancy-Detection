@@ -55,10 +55,12 @@ P(O|A) = \frac{P(A|O) P(O)}{P(A|O) P(O) + P(A|\neg O) (1 - P(O))}
 
 ### Weighting
 
-The result \(P(O|A)\) is then weighted:
+The result \(P(O|A)\) is then weighted **after** the Bayesian update:
 \[
 P_{weighted} = P(O|A) \times W_{type}\]
-Where \(W_{type}\) is the configured weight for the sensor's type.
+Where \(W_{type}\) is the configured weight for the sensor's type. The
+likelihood values themselves remain unweighted; each sensor's posterior is
+scaled only at this stage.
 
 ### Combining Probabilities (Complementary Method)
 

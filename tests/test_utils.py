@@ -253,13 +253,14 @@ class TestComplementaryProbability:
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
-        expected = bayesian_probability(
+        expected_post = bayesian_probability(
             prior=prior,
             prob_given_true=0.8,
             prob_given_false=0.1,
             evidence=True,
             decay_factor=1.0,
         )
+        expected = expected_post
 
         result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
@@ -289,13 +290,14 @@ class TestComplementaryProbability:
         }
         prior = 0.3
 
-        expected = bayesian_probability(
+        expected_post1 = bayesian_probability(
             prior=prior,
             prob_given_true=0.8,
             prob_given_false=0.1,
             evidence=True,
             decay_factor=1.0,
         )
+        expected = 1 - (1 - expected_post1 * 0.8)
 
         result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
@@ -361,6 +363,25 @@ class TestComplementaryProbability:
 
         result = complementary_probability(entities, prior)
         assert 0.0 <= result <= 1.0
+
+    def test_many_low_weight_entities_do_not_exceed_prior(self) -> None:
+        """A large number of low-weight sensors should not raise probability."""
+
+        entities = {}
+        for i in range(50):
+            mock_entity = Mock()
+            mock_entity.evidence = True
+            mock_entity.decay.is_decaying = False
+            mock_entity.decay_factor = 1.0
+            mock_entity.type.weight = 0.001
+            mock_entity.likelihood.prob_given_true = 0.8
+            mock_entity.likelihood.prob_given_false = 0.1
+            entities[f"e{i}"] = cast("Entity", mock_entity)
+
+        prior = 0.3
+        result = complementary_probability(entities, prior)
+
+        assert result <= prior
 
 
 class TestStatesToIntervals:
