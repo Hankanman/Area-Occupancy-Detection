@@ -9,15 +9,6 @@ update_area_prior:
       selector:
         config_entry:
           integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
 
 update_likelihoods:
   name: Update Sensor Likelihoods
@@ -30,15 +21,6 @@ update_likelihoods:
       selector:
         config_entry:
           integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
 
 reset_entities:
   name: Reset Entities
@@ -140,6 +122,64 @@ get_entity_type_learned_data:
     entry_id:
       name: Entry ID
       description: "Select the Area Occupancy instance to get learned entity type data for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+debug_import_intervals:
+  name: Debug Import State Intervals
+  description: "Manually trigger state intervals import from recorder with detailed debug logging. Use this to diagnose why state intervals aren't being populated."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to debug import for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    days:
+      name: Days to Import
+      description: "Number of days of historical data to import from recorder."
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+
+debug_database_state:
+  name: Debug Database State
+  description: "Check current simplified database state including intervals count, sample data, database statistics, and schema information. The database has been optimized with fewer tables and indexes for better performance."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to check database state for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+update_time_based_priors:
+  name: Update Time Based Priors
+  description: "Update the time-based priors for the area occupancy detection (runs in background)."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to update time-based priors for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+get_time_based_priors:
+  name: Get Time Based Priors
+  description: "Get current time-based priors in a human-readable format."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to get time-based priors for."
       required: true
       selector:
         config_entry:

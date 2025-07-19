@@ -88,6 +88,7 @@ nav:
   - Features:
     - Bayesian Calculation: features/calculation.md
     - Prior Learning: features/prior-learning.md
+    - Time-Based Priors: features/time-based-priors.md
     - Sensor Likelihoods: features/likelihood.md
     - Area Purpose: features/purpose.md
     - Wasp in Box: features/wasp-in-box.md

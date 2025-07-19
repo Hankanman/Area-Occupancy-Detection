@@ -9,6 +9,8 @@ import logging
 from typing import Any
 
 # Third Party
+import sqlalchemy as sa
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -35,7 +37,9 @@ from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
-from .storage import AreaOccupancyStore
+from .sqlite_storage import AreaOccupancySQLiteStore
+
+# from .storage import AreaOccupancyStore  # Replaced with SQLite storage
 from .utils import conditional_sorted_probability
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +47,7 @@ _LOGGER = logging.getLogger(__name__)
 # Global timer intervals in seconds
 DECAY_INTERVAL = 10
 PRIOR_INTERVAL = 3600
+HISTORICAL_INTERVAL = 86400  # 24 hours in seconds
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -64,7 +69,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
         self.prior = Prior(self)
-        self.store = AreaOccupancyStore(self)
+        self.sqlite_store = AreaOccupancySQLiteStore(self)
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
@@ -73,6 +78,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_prior_timer: CALLBACK_TYPE | None = None
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
+        self._historical_timer: CALLBACK_TYPE | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -102,7 +108,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This returns the pure P(area occupied) without any sensor weighting.
         """
         # Use the dedicated area baseline prior calculation
-        return self.prior.current_value
+        return self.prior.value
 
     @property
     def decay(self) -> float:
@@ -149,7 +155,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.entity_types.async_initialize()
 
             # Load stored data
-            loaded_data = await self.store.async_load_data()
+            await self.sqlite_store.async_initialize()
+
+            # Check if this is a new database and populate immediately if needed
+            await self._check_and_populate_new_database()
+
+            loaded_data = await self.sqlite_store.async_load_data()
 
             if loaded_data:
                 # Create entity manager from loaded data
@@ -170,13 +181,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.entry_id,
                 )
 
-            # Calculate initial area baseline prior
+            # Calculate initial area baseline prior (this is fast and needed immediately)
             if self.config.history.enabled:
                 await self.prior.update()
-                await self.entities.update_all_entity_likelihoods()
+
+                # Defer time-based prior calculation to background task to avoid blocking startup
+                self.hass.async_create_task(
+                    self._calculate_time_priors_async(initial_setup=True)
+                )
+
+                # Defer likelihood updates to background task to avoid blocking startup
+                self.hass.async_create_task(
+                    self._update_likelihoods_async(initial_setup=True)
+                )
 
             # Save current state to storage
-            await self.store.async_save_data(force=True)
+            await self.sqlite_store.async_save_data(force=True)
 
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
@@ -186,6 +206,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Start the global decay timer
             self._start_decay_timer()
+
+            # Start the historical data import timer
+            self._start_historical_timer()
 
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
@@ -200,7 +223,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
         # Save current state to storage
-        await self.store.async_save_data()
+        await self.sqlite_store.async_save_data()
 
         # Return current state data
         return {
@@ -229,7 +252,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._remove_state_listener()
             self._remove_state_listener = None
 
-        await self.store.async_save_data(force=True)
+        # Clean up historical timer
+        if self._historical_timer is not None:
+            self._historical_timer()
+            self._historical_timer = None
+
+        await self.sqlite_store.async_save_data(force=True)
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -264,7 +292,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.track_entity_state_changes(self.entities.entity_ids)
 
         # Force immediate save after configuration changes
-        await self.store.async_save_data(force=True)
+        await self.sqlite_store.async_save_data(force=True)
 
         await self.async_request_refresh()
 
@@ -312,14 +340,46 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Update area baseline prior separately (unweighted)
             await self.prior.update()
 
+            # Calculate time-based priors (this is more intensive, so do it less frequently)
+            # Use configurable frequency (default: every 4th run = 4 hours)
+            if not hasattr(self, "_prior_timer_count"):
+                self._prior_timer_count = 0
+            self._prior_timer_count += 1
+
+            if (
+                self._prior_timer_count
+                % self.config.history.time_based_priors_frequency
+                == 0
+            ):
+                # Use the async method to avoid blocking
+                self.hass.async_create_task(
+                    self._calculate_time_priors_async(initial_setup=False)
+                )
+
             # Update individual sensor likelihoods
-            await self.entities.update_all_entity_likelihoods(history_period)
+            if self.config.history.likelihood_updates_enabled:
+                # Check if we should update likelihoods based on frequency
+                if not hasattr(self, "_likelihood_timer_count"):
+                    self._likelihood_timer_count = 0
+                self._likelihood_timer_count += 1
+
+                if (
+                    self._likelihood_timer_count
+                    % self.config.history.likelihood_updates_frequency
+                    == 0
+                ):
+                    # Use background task to avoid blocking
+                    self.hass.async_create_task(
+                        self._update_likelihoods_async(
+                            history_period, initial_setup=False
+                        )
+                    )
 
         # Reschedule the timer
         self._start_prior_timer()
 
         # Save current state to storage
-        await self.store.async_save_data(force=True)
+        await self.sqlite_store.async_save_data(force=True)
 
     # --- Decay Timer Handling ---
     def _start_decay_timer(self) -> None:
@@ -343,3 +403,151 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Reschedule the timer
         self._start_decay_timer()
+
+    # --- Historical Timer Handling ---
+    def _start_historical_timer(self) -> None:
+        """Start the historical data import timer."""
+        if self._historical_timer is not None or not self.hass:
+            return
+
+        # Run first import shortly after startup (5 minutes)
+        next_update = dt_util.utcnow() + timedelta(minutes=5)
+
+        self._historical_timer = async_track_point_in_time(
+            self.hass, self._handle_historical_timer, next_update
+        )
+
+    async def _handle_historical_timer(self, _now: datetime) -> None:
+        """Handle the historical data import timer."""
+        self._historical_timer = None
+
+        try:
+            # Import recent data from recorder
+            entity_ids = list(self.entities.entities.keys())
+            if entity_ids:
+                import_counts = await self.sqlite_store.import_intervals_from_recorder(
+                    entity_ids, days=10
+                )
+                total_imported = sum(import_counts.values())
+
+                if total_imported > 0:
+                    _LOGGER.info(
+                        "Historical import: %d intervals imported", total_imported
+                    )
+
+                    # Recalculate priors with new data
+                    await self.prior.update(force=True)
+                    # Use background task for likelihood updates
+                    self.hass.async_create_task(
+                        self._update_likelihoods_async(initial_setup=False)
+                    )
+
+                # Cleanup old data (yearly retention)
+                await self.sqlite_store.cleanup_old_intervals(retention_days=365)
+
+        except (sa.exc.SQLAlchemyError, OSError) as err:
+            _LOGGER.error("Historical data import failed: %s", err)
+
+        # Schedule next run (24 hours)
+        next_update = dt_util.utcnow() + timedelta(seconds=HISTORICAL_INTERVAL)
+        self._historical_timer = async_track_point_in_time(
+            self.hass, self._handle_historical_timer, next_update
+        )
+
+    async def _check_and_populate_new_database(self) -> None:
+        """Check if the state_intervals table is empty and populate it if needed."""
+        if await self.sqlite_store.is_state_intervals_empty():
+            _LOGGER.info(
+                "State intervals table is empty for instance %s. Populating with initial data from recorder.",
+                self.entry_id,
+            )
+
+            # Get entity IDs from configuration since entities haven't been created yet
+            entity_ids = self.config.entity_ids
+
+            # Remove duplicates and empty strings
+            entity_ids = [eid for eid in set(entity_ids) if eid]
+
+            if entity_ids:
+                _LOGGER.info(
+                    "Importing initial data for %d entities from recorder (last 10 days)",
+                    len(entity_ids),
+                )
+
+                import_counts = await self.sqlite_store.import_intervals_from_recorder(
+                    entity_ids, days=10
+                )
+                total_imported = sum(import_counts.values())
+
+                _LOGGER.info("Import results by entity: %s", import_counts)
+                _LOGGER.info(
+                    "Populated state intervals table for instance %s with %d intervals.",
+                    self.entry_id,
+                    total_imported,
+                )
+            else:
+                _LOGGER.warning(
+                    "No entity IDs found in configuration to populate state intervals table for instance %s.",
+                    self.entry_id,
+                )
+
+    async def _calculate_time_priors_async(self, initial_setup: bool = False) -> None:
+        """Calculate time-based priors asynchronously without blocking startup.
+
+        Args:
+            initial_setup: If True, this is the initial setup calculation
+
+        """
+        if (
+            not self.config.history.enabled
+            or not self.config.history.time_based_priors_enabled
+        ):
+            return
+
+        try:
+            # Check if we already have recent time-based priors
+            if not initial_setup:
+                try:
+                    current_prior = await self.prior.get_time_prior()
+                    if current_prior > 0:
+                        return
+                except HomeAssistantError:
+                    pass  # Continue with calculation if check fails
+
+            # Calculate time-based priors in background
+            await self.prior.calculate_time_based_priors()
+
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Failed to calculate time-based priors for entry %s: %s",
+                self.entry_id,
+                err,
+            )
+
+    async def _update_likelihoods_async(
+        self, history_period: int | None = None, initial_setup: bool = False
+    ) -> None:
+        """Update entity likelihoods asynchronously without blocking.
+
+        Args:
+            history_period: Period in days for historical data
+            initial_setup: If True, this is the initial setup calculation
+
+        """
+        if (
+            not self.config.history.enabled
+            or not self.config.history.likelihood_updates_enabled
+        ):
+            return
+
+        try:
+            await self.entities.update_all_entity_likelihoods(
+                history_period=history_period
+            )
+
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Failed to update likelihoods for entry %s: %s",
+                self.entry_id,
+                err,
+            )

@@ -86,47 +86,29 @@ class TestUpdateAreaPrior:
             "binary_sensor.motion2",
         ]
 
-        # Create mock PriorData objects for calculation details
+        # Create mock data dictionaries for calculation details
         from datetime import datetime, timedelta
 
         now = datetime.now()
         start_time = now - timedelta(days=30)
 
-        mock_prior_data_1 = Mock()
-        mock_prior_data_1.ratio = 0.32
-        mock_prior_data_1.occupied_seconds = (
-            27648  # About 32% of 86400 seconds/day * 30 days
-        )
-        mock_prior_data_1.states = [Mock() for _ in range(150)]  # Mock states list
-        mock_prior_data_1.intervals = [Mock() for _ in range(75)]  # Mock intervals list
-        mock_prior_data_1.start_time = start_time
-        mock_prior_data_1.end_time = now
-        # Add filtering statistics
-        mock_prior_data_1.total_on_intervals = 80
-        mock_prior_data_1.valid_intervals = 75
-        mock_prior_data_1.filtered_short_intervals = 3
-        mock_prior_data_1.filtered_long_intervals = 2
-        mock_prior_data_1.max_filtered_duration_seconds = (
-            18 * 3600
-        )  # 18 hours stuck sensor
+        mock_prior_data_1 = {
+            "ratio": 0.32,
+            "occupied_seconds": 27648,  # About 32% of 86400 seconds/day * 30 days
+            "states_count": 150,
+            "intervals": [Mock() for _ in range(75)],  # Mock intervals list
+            "start_time": start_time,
+            "end_time": now,
+        }
 
-        mock_prior_data_2 = Mock()
-        mock_prior_data_2.ratio = 0.35
-        mock_prior_data_2.occupied_seconds = (
-            30240  # About 35% of 86400 seconds/day * 30 days
-        )
-        mock_prior_data_2.states = [Mock() for _ in range(120)]  # Mock states list
-        mock_prior_data_2.intervals = [Mock() for _ in range(60)]  # Mock intervals list
-        mock_prior_data_2.start_time = start_time
-        mock_prior_data_2.end_time = now
-        # Add filtering statistics
-        mock_prior_data_2.total_on_intervals = 65
-        mock_prior_data_2.valid_intervals = 60
-        mock_prior_data_2.filtered_short_intervals = 4
-        mock_prior_data_2.filtered_long_intervals = 1
-        mock_prior_data_2.max_filtered_duration_seconds = (
-            15 * 3600
-        )  # 15 hours stuck sensor
+        mock_prior_data_2 = {
+            "ratio": 0.35,
+            "occupied_seconds": 30240,  # About 35% of 86400 seconds/day * 30 days
+            "states_count": 120,
+            "intervals": [Mock() for _ in range(60)],  # Mock intervals list
+            "start_time": start_time,
+            "end_time": now,
+        }
 
         mock_coordinator.prior.data = {
             "binary_sensor.motion1": mock_prior_data_1,
@@ -161,7 +143,7 @@ class TestUpdateAreaPrior:
         assert calc_details["sensor_count"] == 2
         assert (
             calc_details["calculation_method"]
-            == "Average of individual sensor occupancy ratios + 5% buffer"
+            == "Max of (average of individual sensor occupancy ratios + 5% buffer, occupancy_entity_id prior + 5% buffer)"
         )
 
         # Verify sensor details
@@ -174,57 +156,11 @@ class TestUpdateAreaPrior:
         assert sensor_details["binary_sensor.motion1"]["states_found"] == 150
         assert sensor_details["binary_sensor.motion2"]["intervals_found"] == 60
 
-        # Verify filtering details
-        assert sensor_details["binary_sensor.motion1"]["total_on_intervals"] == 80
-        assert sensor_details["binary_sensor.motion1"]["valid_intervals"] == 75
-        assert sensor_details["binary_sensor.motion1"]["filtered_short"] == 3
-        assert sensor_details["binary_sensor.motion1"]["filtered_long"] == 2
-        assert (
-            sensor_details["binary_sensor.motion1"]["max_stuck_duration_seconds"]
-            == 18 * 3600
-        )
-        assert (
-            sensor_details["binary_sensor.motion1"]["max_stuck_duration_hours"] == 18.0
-        )
-        assert sensor_details["binary_sensor.motion2"]["total_on_intervals"] == 65
-        assert sensor_details["binary_sensor.motion2"]["valid_intervals"] == 60
-        assert sensor_details["binary_sensor.motion2"]["filtered_short"] == 4
-        assert sensor_details["binary_sensor.motion2"]["filtered_long"] == 1
-        assert (
-            sensor_details["binary_sensor.motion2"]["max_stuck_duration_seconds"]
-            == 15 * 3600
-        )
-        assert (
-            sensor_details["binary_sensor.motion2"]["max_stuck_duration_hours"] == 15.0
-        )
-
         # Verify calculation summary
         assert "raw_average_ratio" in calc_details
         assert "buffer_multiplier" in calc_details
         assert "final_prior" in calc_details
         assert "calculation" in calc_details
-
-        # Verify filtering summary
-        assert "filtering_summary" in calc_details
-        filtering_summary = calc_details["filtering_summary"]
-        assert filtering_summary["total_on_intervals"] == 145  # 80 + 65
-        assert filtering_summary["valid_intervals_used"] == 135  # 75 + 60
-        assert filtering_summary["filtered_short_intervals"] == 7  # 3 + 4
-        assert filtering_summary["filtered_long_intervals"] == 3  # 2 + 1
-        assert "filtering_thresholds" in filtering_summary
-        thresholds = filtering_summary["filtering_thresholds"]
-        assert thresholds["min_seconds"] == 10
-        assert thresholds["max_seconds"] == 46800  # 13 hours
-
-        # Verify stuck sensor analysis (should show the worst case: 18 hours)
-        assert "stuck_sensor_analysis" in filtering_summary
-        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
-        assert (
-            stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
-        )  # Worst case from sensor1
-        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
-        assert stuck_analysis["max_stuck_duration_days"] == 0.75  # 18/24 = 0.75 days
-        assert stuck_analysis["severity"] == "moderate"  # 13-24 hours range
 
         # Verify the coordinator was called correctly
         mock_coordinator.prior.update.assert_called_once_with(
@@ -335,28 +271,7 @@ class TestUpdateLikelihoods:
         assert likelihood_data["prob_given_true_raw"] == 0.75
         assert likelihood_data["prob_given_false_raw"] == 0.05
 
-        # Verify filtering statistics
-        assert likelihood_data["total_on_intervals"] == 50
-        assert likelihood_data["valid_intervals"] == 45
-        assert likelihood_data["filtered_short"] == 3
-        assert likelihood_data["filtered_long"] == 2
-        assert likelihood_data["max_stuck_duration_seconds"] == 18 * 3600
-        assert likelihood_data["max_stuck_duration_hours"] == 18.0
-
-        # Verify likelihood filtering summary
-        assert "likelihood_filtering_summary" in result
-        filtering_summary = result["likelihood_filtering_summary"]
-        assert filtering_summary["total_on_intervals"] == 50
-        assert filtering_summary["valid_intervals_used"] == 45
-        assert filtering_summary["filtered_short_intervals"] == 3
-        assert filtering_summary["filtered_long_intervals"] == 2
-
-        # Verify stuck sensor analysis
-        assert "stuck_sensor_analysis" in filtering_summary
-        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
-        assert stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
-        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
-        assert stuck_analysis["severity"] == "moderate"
+        # Verify the coordinator was called correctly with history_period
 
         # Verify the coordinator was called correctly with history_period
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(

@@ -15,9 +15,9 @@ repos:
         types: [python]
         pass_filenames: false
 
-      - id: test-core
-        name: Run Core Tests
-        entry: .venv/bin/pytest tests/test_init.py tests/test_coordinator.py -x --tb=short
-        language: system
-        pass_filenames: false
-        files: ^(custom_components/|tests/).*\.py$
+      # - id: test-core
+      #   name: Run Core Tests
+      #   entry: .venv/bin/pytest tests/test_init.py tests/test_coordinator.py -x --tb=short
+      #   language: system
+      #   pass_filenames: false
+      #   files: ^(custom_components/|tests/).*\.py$

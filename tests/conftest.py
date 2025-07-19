@@ -949,7 +949,7 @@ def mock_prior() -> Mock:
     """Create a mock Prior instance for backward compatibility with tests."""
     prior = Mock()
     prior.value = 0.35
-    prior.current_value = 0.35
+    prior._current_value = 0.35
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.35)
     prior.calculate = AsyncMock(return_value=0.35)
@@ -965,7 +965,7 @@ def mock_prior() -> Mock:
 def mock_area_prior() -> Mock:
     """Create a mock Prior instance for area-level prior."""
     prior = Mock(spec=PriorClass)
-    prior.current_value = 0.3
+    prior._current_value = 0.3
     prior.value = 0.3
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.3)
@@ -1209,18 +1209,18 @@ def mock_entity_for_likelihood_tests() -> Mock:
 
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_store_globally():
-    """Automatically mock AreaOccupancyStore for all tests."""
+    """Automatically mock AreaOccupancySQLiteStore for all tests."""
     with patch(
-        "custom_components.area_occupancy.storage.AreaOccupancyStore"
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancySQLiteStore"
     ) as mock_store_class:
         mock_store = Mock()
-        mock_store.async_save_coordinator_data = Mock()
-        mock_store.async_load_coordinator_data = AsyncMock(return_value=None)
-        mock_store.async_load = AsyncMock(return_value=None)
-        mock_store.async_save = AsyncMock()
-        mock_store.async_remove = AsyncMock()
-        mock_store.async_delay_save = Mock()
+        mock_store.async_save_data = AsyncMock()
+        mock_store.async_load_data = AsyncMock(return_value=None)
         mock_store.async_reset = AsyncMock()
+        mock_store.async_get_stats = AsyncMock(return_value={})
+        mock_store.get_time_prior = AsyncMock(return_value=None)
+        mock_store.save_time_priors_batch = AsyncMock(return_value=0)
+        mock_store.get_historical_intervals = AsyncMock(return_value=[])
         mock_store_class.return_value = mock_store
         yield mock_store
 
@@ -1467,17 +1467,17 @@ def mock_area_occupancy_storage_data():
 
 @pytest.fixture
 def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
-    """Mock AreaOccupancyStore with async methods returning the provided storage data."""
-    from custom_components.area_occupancy.storage import AreaOccupancyStore
+    """Mock AreaOccupancySQLiteStore with async methods returning the provided storage data."""
+    from custom_components.area_occupancy.sqlite_storage import AreaOccupancySQLiteStore
 
-    store = Mock(spec=AreaOccupancyStore)
+    store = Mock(spec=AreaOccupancySQLiteStore)
     store.async_save_data = AsyncMock()
     store.async_load_data = AsyncMock(return_value=mock_area_occupancy_storage_data)
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(return_value=mock_area_occupancy_storage_data)
-    store.async_remove = AsyncMock()
-    store.async_delay_save = Mock()
     store.async_reset = AsyncMock()
+    store.async_get_stats = AsyncMock(return_value={})
+    store.get_time_prior = AsyncMock(return_value=None)
+    store.save_time_priors_batch = AsyncMock(return_value=0)
+    store.get_historical_intervals = AsyncMock(return_value=[])
     return store
 
 

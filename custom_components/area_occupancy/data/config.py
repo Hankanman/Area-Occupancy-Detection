@@ -150,6 +150,10 @@ class History:
 
     enabled: bool = DEFAULT_HISTORICAL_ANALYSIS_ENABLED
     period: int = DEFAULT_HISTORY_PERIOD
+    time_based_priors_enabled: bool = True  # Enable time-based priors by default
+    time_based_priors_frequency: int = 4  # Calculate every 4 prior timer runs (4 hours)
+    likelihood_updates_enabled: bool = True  # Enable likelihood updates by default
+    likelihood_updates_frequency: int = 2  # Update every 2 prior timer runs (2 hours)
 
 
 @dataclass
@@ -187,6 +191,20 @@ class Config:
     def end_time(self) -> datetime:
         """Return the end time of the history period."""
         return dt_util.utcnow()
+
+    @property
+    def entity_ids(self) -> list[str]:
+        """Return the entity ids of the sensors."""
+        return [
+            *self.sensors.motion,
+            *self.sensors.media,
+            *self.sensors.appliances,
+            *self.sensors.doors,
+            *self.sensors.windows,
+            *self.sensors.illuminance,
+            *self.sensors.humidity,
+            *self.sensors.temperature,
+        ]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -265,6 +283,24 @@ class Config:
                     )
                 ),
                 period=int(data.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)),
+                time_based_priors_enabled=bool(
+                    data.get(
+                        "time_based_priors_enabled",
+                        DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+                    )
+                ),
+                time_based_priors_frequency=int(
+                    data.get("time_based_priors_frequency", 4)
+                ),
+                likelihood_updates_enabled=bool(
+                    data.get(
+                        "likelihood_updates_enabled",
+                        DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
+                    )
+                ),
+                likelihood_updates_frequency=int(
+                    data.get("likelihood_updates_frequency", 2)
+                ),
             ),
             wasp_in_box=WaspInBox(
                 enabled=bool(data.get(CONF_WASP_ENABLED, False)),

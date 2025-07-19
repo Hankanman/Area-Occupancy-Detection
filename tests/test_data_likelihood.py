@@ -332,7 +332,7 @@ class TestLikelihood:
     ) -> None:
         """Test calculate method with prior intervals and states."""
         # Set up mock coordinator with prior intervals
-        mock_coordinator.prior.prior_intervals = [
+        mock_coordinator.prior.state_intervals = [
             {
                 "start": dt_util.utcnow() - timedelta(hours=2),
                 "end": dt_util.utcnow() - timedelta(hours=1),
@@ -390,7 +390,7 @@ class TestLikelihood:
         self, mock_get_states: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test calculate method when no states are available."""
-        mock_coordinator.prior.prior_intervals = []
+        mock_coordinator.prior.state_intervals = []
         mock_coordinator.config.history.period = 1
 
         likelihood = Likelihood(
@@ -416,7 +416,7 @@ class TestLikelihood:
         self, mock_get_states: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test calculate method when no prior intervals are available."""
-        mock_coordinator.prior.prior_intervals = []
+        mock_coordinator.prior.state_intervals = []
         mock_coordinator.config.history.period = 1
 
         likelihood = Likelihood(
@@ -633,7 +633,7 @@ class TestLikelihoodEdgeCases:
     ) -> None:
         """Test calculate method when occupied or not-occupied time is zero."""
         # Set up mock coordinator with no prior intervals (zero occupied time)
-        mock_coordinator.prior.prior_intervals = []
+        mock_coordinator.prior.state_intervals = []
         mock_coordinator.config.history.period = 1
 
         likelihood = Likelihood(

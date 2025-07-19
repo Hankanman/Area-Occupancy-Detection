@@ -159,7 +159,7 @@ sequenceDiagram
     *   Once for the *primary* occupancy sensor over the full period. Requires full state objects (`minimal_response=False`) to get `last_changed`.
     *   Once for the *current* sensor being analyzed over the full period. Requires full state objects.
 5.  **Fetch Prior State:** `PriorCalculator._states_to_intervals` makes another call to `get_significant_states` for a tiny (1-second) window *before* the main `start_time`. This uses `minimal_response=True` and `significant_changes_only=False` to efficiently get the state value just before the analysis window begins.
-6.  **Calculate Intervals:** `_states_to_intervals` converts the list of `State` objects (from step 4 & 5) into a list of `TimeInterval` dictionaries, each representing a period during which the sensor held a specific state.
+6.  **Calculate Intervals:** `_states_to_intervals` converts the list of `State` objects (from step 4 & 5) into a list of `StateInterval` dictionaries, each representing a period during which the sensor held a specific state.
 7.  **Calculate Probabilities (Non-Primary):**
     *   Calculates the simple prior for the current sensor (total active time / total time).
     *   Calls `_calculate_conditional_probability_with_intervals` twice:
