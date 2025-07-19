@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
-from ..utils import TimeInterval, get_states_from_recorder, states_to_intervals
+from ..utils import (
+    TimeInterval,
+    get_states_from_recorder,
+    states_to_intervals,
+    validate_prob,
+)
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -77,31 +82,6 @@ class Likelihood:
             None  # Longest filtered interval duration
         )
 
-    def _apply_weight_to_probability(self, prob: float, default_prob: float) -> float:
-        """Apply weight to a probability value.
-
-        Args:
-            prob: Calculated probability
-            default_prob: Default probability to use when calculated is very low
-
-        Returns:
-            Weighted probability
-
-        """
-        # Threshold for meaningful calculated data
-        LOW_PROB_THRESHOLD = 0.05  # 5%
-
-        if prob < LOW_PROB_THRESHOLD:
-            # No meaningful calculated data - apply weight as multiplier to defaults
-            weighted_prob = default_prob * self.weight
-        else:
-            # Good calculated data - apply weight as interpolation from neutral
-            neutral_prob = 0.5
-            weighted_prob = neutral_prob + (prob - neutral_prob) * self.weight
-
-        # Final clamping to valid probability range
-        return max(0.001, min(weighted_prob, 0.999))
-
     def _is_cache_valid(self) -> bool:
         """Check if the cached likelihood values are still valid.
 
@@ -126,29 +106,27 @@ class Likelihood:
 
     @property
     def prob_given_true(self) -> float:
-        """Return the weighted probability of the sensor being active given the area is occupied."""
+        """Return the probability of the sensor being active given the area is occupied."""
+
         calculated_prob = (
             self.active_ratio
             if self.active_ratio is not None
             else self.default_prob_true
         )
-        # Pass both calculated and default values
-        return self._apply_weight_to_probability(
-            calculated_prob, self.default_prob_true
-        )
+
+        return validate_prob(calculated_prob)
 
     @property
     def prob_given_false(self) -> float:
-        """Return the weighted probability of the sensor being active given the area is not occupied."""
+        """Return the probability of the sensor being active given the area is not occupied."""
+
         calculated_prob = (
             self.inactive_ratio
             if self.inactive_ratio is not None
             else self.default_prob_false
         )
-        # Pass both calculated and default values
-        return self._apply_weight_to_probability(
-            calculated_prob, self.default_prob_false
-        )
+
+        return validate_prob(calculated_prob)
 
     @property
     def prob_given_true_raw(self) -> float:

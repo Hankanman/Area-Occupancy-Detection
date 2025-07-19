@@ -33,72 +33,6 @@ class TestLikelihood:
         assert likelihood.active_ratio is None
         assert likelihood.inactive_ratio is None
 
-    def test_apply_weight_to_probability_low_threshold(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test weight application when calculated probability is below threshold."""
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.5,
-        )
-
-        # Test with very low calculated probability (below 5% threshold)
-        result = likelihood._apply_weight_to_probability(0.02, 0.8)
-        # Should use default * weight = 0.8 * 0.5 = 0.4
-        assert result == 0.4
-
-        # Test with zero probability
-        result = likelihood._apply_weight_to_probability(0.0, 0.6)
-        # Should use default * weight = 0.6 * 0.5 = 0.3
-        assert result == 0.3
-
-    def test_apply_weight_to_probability_high_threshold(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test weight application when calculated probability is above threshold."""
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.6,
-        )
-
-        # Test with probability above 5% threshold
-        # Formula: neutral + (prob - neutral) * weight = 0.5 + (0.8 - 0.5) * 0.6 = 0.5 + 0.18 = 0.68
-        result = likelihood._apply_weight_to_probability(0.8, 0.2)
-        assert abs(result - 0.68) < 0.001
-
-        # Test with probability below neutral
-        # Formula: 0.5 + (0.3 - 0.5) * 0.6 = 0.5 - 0.12 = 0.38
-        result = likelihood._apply_weight_to_probability(0.3, 0.9)
-        assert abs(result - 0.38) < 0.001
-
-    def test_apply_weight_to_probability_clamping(self, mock_coordinator: Mock) -> None:
-        """Test that weight application properly clamps values."""
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=2.0,  # Very high weight
-        )
-
-        # Test upper clamping
-        result = likelihood._apply_weight_to_probability(0.9, 0.8)
-        assert result <= 0.999
-
-        # Test lower clamping with very low default and weight
-        likelihood.weight = 0.001
-        result = likelihood._apply_weight_to_probability(0.01, 0.01)
-        assert result >= 0.001
-
     def test_prob_given_true_with_calculated_values(
         self, mock_coordinator: Mock
     ) -> None:
@@ -113,15 +47,11 @@ class TestLikelihood:
         )
 
         # Test with no calculated values (should use defaults)
-        assert likelihood.prob_given_true == likelihood._apply_weight_to_probability(
-            0.8, 0.8
-        )
+        assert likelihood.prob_given_true == 0.8
 
         # Test with calculated values
         likelihood.active_ratio = 0.6
-        assert likelihood.prob_given_true == likelihood._apply_weight_to_probability(
-            0.6, 0.8
-        )
+        assert likelihood.prob_given_true == 0.6
 
     def test_prob_given_false_with_calculated_values(
         self, mock_coordinator: Mock
@@ -137,15 +67,11 @@ class TestLikelihood:
         )
 
         # Test with no calculated values (should use defaults)
-        assert likelihood.prob_given_false == likelihood._apply_weight_to_probability(
-            0.1, 0.1
-        )
+        assert likelihood.prob_given_false == 0.1
 
         # Test with calculated values
         likelihood.inactive_ratio = 0.05
-        assert likelihood.prob_given_false == likelihood._apply_weight_to_probability(
-            0.05, 0.1
-        )
+        assert likelihood.prob_given_false == 0.05
 
     def test_raw_probability_properties(self, mock_coordinator: Mock) -> None:
         """Test raw probability properties."""
