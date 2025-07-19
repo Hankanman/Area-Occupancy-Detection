@@ -260,7 +260,7 @@ class TestComplementaryProbability:
             evidence=True,
             decay_factor=1.0,
         )
-        expected = 1 - (1 - expected_post * 1.0)
+        expected = expected_post
 
         result = complementary_probability(entities, prior)
         assert abs(result - expected) < 0.001
