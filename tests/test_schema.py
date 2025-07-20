@@ -23,6 +23,7 @@ from custom_components.area_occupancy.schema import (
 from custom_components.area_occupancy.utils import StateInterval
 
 
+# ruff: noqa: PLC0415
 class TestDataModels:
     """Test data model classes."""
 
@@ -432,7 +433,7 @@ class TestDatabaseSchema:
         assert table.primary_key.columns[0].name == "id"
 
         # Check foreign key
-        fk_constraints = [c for c in table.foreign_keys]
+        fk_constraints = list(table.foreign_keys)
         assert len(fk_constraints) == 1
         assert fk_constraints[0].column.name == "entity_id"
 
@@ -470,7 +471,7 @@ class TestDatabaseSchema:
         assert "entity_id" in pk_columns
 
         # Check foreign keys
-        fk_constraints = [c for c in table.foreign_keys]
+        fk_constraints = list(table.foreign_keys)
         assert len(fk_constraints) == 2
 
     def test_area_time_priors_table_structure(self) -> None:
@@ -533,5 +534,5 @@ class TestDatabaseVersion:
         assert "CREATE TABLE" in ddl.upper()
 
         # Test with invalid dialect
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             get_create_table_ddl("invalid_dialect")
