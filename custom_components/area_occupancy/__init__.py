@@ -42,7 +42,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Create and setup coordinator
     _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
-    coordinator = AreaOccupancyCoordinator(hass, entry)
+    try:
+        coordinator = AreaOccupancyCoordinator(hass, entry)
+    except Exception as err:
+        _LOGGER.error("Failed to create coordinator: %s", err)
+        raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
 
     # Use modern coordinator setup pattern
     try:

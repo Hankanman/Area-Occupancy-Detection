@@ -1123,7 +1123,7 @@ def mock_recorder_globally():
     """Automatically mock recorder for all tests."""
     with patch("homeassistant.helpers.recorder.get_instance") as mock_get_instance_ha:
         mock_instance = Mock()
-        mock_instance.async_add_executor_job = AsyncMock(return_value={})
+        mock_instance.async_add_executor_job = AsyncMock(return_value=[])
         mock_get_instance_ha.return_value = mock_instance
         yield mock_instance
 
