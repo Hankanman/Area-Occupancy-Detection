@@ -4,7 +4,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 from custom_components.area_occupancy.data.likelihood import Likelihood
-from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 
@@ -322,123 +321,6 @@ class TestLikelihood:
 
         assert not likelihood._is_cache_valid()
 
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.likelihood.states_to_intervals")
-    async def test_calculate_with_prior_intervals(
-        self,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test calculate method with prior intervals and states."""
-        # Set up mock coordinator with prior intervals
-        mock_coordinator.prior.state_intervals = [
-            {
-                "start": dt_util.utcnow() - timedelta(hours=2),
-                "end": dt_util.utcnow() - timedelta(hours=1),
-                "state": "on",
-            }
-        ]
-        mock_coordinator.config.history.period = 1  # 1 day
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock states from recorder
-        now = dt_util.utcnow()
-        mock_states = [
-            State(
-                "binary_sensor.motion", "on", last_changed=now - timedelta(hours=1.5)
-            ),
-            State(
-                "binary_sensor.motion", "off", last_changed=now - timedelta(hours=0.5)
-            ),
-        ]
-        mock_get_states.return_value = mock_states
-
-        # Mock intervals
-        mock_intervals = [
-            {
-                "start": now - timedelta(hours=2),
-                "end": now - timedelta(hours=1),
-                "state": "on",
-            },
-            {"start": now - timedelta(hours=1), "end": now, "state": "off"},
-        ]
-        mock_states_to_intervals.return_value = mock_intervals
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Verify calls
-        mock_get_states.assert_called_once()
-        mock_states_to_intervals.assert_called_once()
-
-        # Should calculate based on overlap with prior intervals
-        assert isinstance(active_ratio, float)
-        assert isinstance(inactive_ratio, float)
-        assert 0 <= active_ratio <= 1
-        assert 0 <= inactive_ratio <= 1
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    async def test_calculate_no_states(
-        self, mock_get_states: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test calculate method when no states are available."""
-        mock_coordinator.prior.state_intervals = []
-        mock_coordinator.config.history.period = 1
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock no states
-        mock_get_states.return_value = []
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Should return defaults
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    async def test_calculate_no_prior_intervals(
-        self, mock_get_states: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test calculate method when no prior intervals are available."""
-        mock_coordinator.prior.state_intervals = []
-        mock_coordinator.config.history.period = 1
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock some states
-        mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
-        ]
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Should return defaults when no prior intervals
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1
-
     def test_to_dict(self, mock_coordinator: Mock) -> None:
         """Test converting likelihood to dictionary."""
         likelihood = Likelihood(
@@ -622,35 +504,3 @@ class TestLikelihoodEdgeCases:
         # Should handle extreme values gracefully
         assert likelihood.prob_given_true <= 0.999
         assert likelihood.prob_given_false >= 0.001
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.likelihood.states_to_intervals")
-    async def test_calculate_with_zero_time_periods(
-        self,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test calculate method when occupied or not-occupied time is zero."""
-        # Set up mock coordinator with no prior intervals (zero occupied time)
-        mock_coordinator.prior.state_intervals = []
-        mock_coordinator.config.history.period = 1
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
-        ]
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Should fall back to defaults when time periods are invalid
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1

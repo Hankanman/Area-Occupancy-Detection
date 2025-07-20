@@ -703,10 +703,10 @@ class TestCoordinatorSetupScenarios:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         # Mock no stored data
-        coordinator.store.async_load_data = AsyncMock(return_value=None)
+        coordinator.sqlite_store.async_load_data = AsyncMock(return_value=None)
         coordinator.entity_types.async_initialize = AsyncMock()
         # EntityManager doesn't have async_initialize - __post_init__ is called automatically during creation
-        coordinator.store.async_save_data = AsyncMock()
+        coordinator.sqlite_store.async_save_data = AsyncMock()
 
         # Mock entity types to prevent KeyError during entity creation
         with (
@@ -730,7 +730,7 @@ class TestCoordinatorSetupScenarios:
         # Verify initialization sequence
         coordinator.entity_types.async_initialize.assert_called_once()
         # EntityManager.__post_init__ is called automatically during object creation, not by setup
-        coordinator.store.async_save_data.assert_called_once_with(force=True)
+        coordinator.sqlite_store.async_save_data.assert_called_once_with(force=True)
 
     async def test_setup_with_stored_data_restoration(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -740,7 +740,7 @@ class TestCoordinatorSetupScenarios:
 
         # Mock stored data
         stored_data = {"entities": {"binary_sensor.test": {}}}
-        coordinator.store.async_load_data = AsyncMock(return_value=stored_data)
+        coordinator.sqlite_store.async_load_data = AsyncMock(return_value=stored_data)
 
         with (
             patch(
@@ -774,7 +774,7 @@ class TestCoordinatorSetupScenarios:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         # Mock storage to avoid unpacking issues
-        coordinator.store.async_load_data = AsyncMock(return_value=None)
+        coordinator.sqlite_store.async_load_data = AsyncMock(return_value=None)
 
         # Mock entity initialization failure - patch the actual method that can fail
         with (
@@ -807,7 +807,7 @@ class TestCoordinatorSetupScenarios:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         # Mock storage failure
-        coordinator.store.async_load_data = AsyncMock(
+        coordinator.sqlite_store.async_load_data = AsyncMock(
             side_effect=HomeAssistantError("Storage failed")
         )
 
@@ -1018,9 +1018,9 @@ class TestCoordinatorIntegrationFlows:
             ) as mock_get_entity_type,
             patch.object(coordinator.entity_types, "async_initialize", new=AsyncMock()),
             patch.object(
-                coordinator.store, "async_load_data", new=AsyncMock(return_value=None)
+                coordinator.sqlite_store, "async_load_data", new=AsyncMock(return_value=None)
             ),
-            patch.object(coordinator.store, "async_save_data", new=AsyncMock()),
+            patch.object(coordinator.sqlite_store, "async_save_data", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
@@ -1186,7 +1186,7 @@ class TestCoordinatorErrorRecoveryAndResilience:
 
         # Mock partial failure scenario
         coordinator.entity_types.async_initialize = AsyncMock()
-        coordinator.store.async_load_data = AsyncMock(
+        coordinator.sqlite_store.async_load_data = AsyncMock(
             side_effect=HomeAssistantError("Storage unavailable")
         )
 

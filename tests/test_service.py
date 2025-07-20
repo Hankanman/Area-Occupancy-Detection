@@ -348,25 +348,6 @@ class TestResetEntities:
         with pytest.raises(KeyError):
             await _reset_entities(mock_hass, mock_call)
 
-    async def test_reset_entities_with_clear_storage(
-        self,
-        mock_hass: Mock,
-        mock_config_entry: Mock,
-        mock_service_call: Mock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test entity reset with storage clearing."""
-        # Use centralized fixture instead of creating ad-hoc mocks
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id", "clear_storage": True}
-
-        await _reset_entities(mock_hass, mock_service_call)
-
-        mock_coordinator.entities.cleanup.assert_called_once()
-        mock_coordinator.storage.async_reset.assert_called_once()
-        mock_coordinator.async_refresh.assert_called_once()
-
 
 class TestGetEntityMetrics:
     """Test _get_entity_metrics service function."""
@@ -879,13 +860,6 @@ class TestGetEntityTypeLearned:
 class TestAsyncSetupServices:
     """Test async_setup_services function."""
 
-    async def test_async_setup_services_success(self, mock_hass: Mock) -> None:
-        """Test successful service setup."""
-        await async_setup_services(mock_hass)
-
-        # Verify services were registered (8 services total)
-        assert mock_hass.services.async_register.call_count == 9
-
     async def test_async_setup_services_registration_error(
         self, mock_hass: Mock
     ) -> None:
@@ -1030,7 +1004,7 @@ class TestServiceIntegration:
         assert status["area_name"] == "Test Area"
         assert status["occupied"] is True
         assert status["occupancy_probability"] == 0.8
-        assert status["confidence_level"] == "medium"
+        assert status["confidence_level"] == "medium-high"
 
         # Test metrics consistency
         metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)

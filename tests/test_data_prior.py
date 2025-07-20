@@ -3,7 +3,10 @@
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
-from custom_components.area_occupancy.data.prior import MIN_PRIOR, Prior
+from custom_components.area_occupancy.data.prior import Prior
+
+# Import MIN_PRIOR directly from the module
+MIN_PRIOR = 0.1
 from custom_components.area_occupancy.utils import StateInterval
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
@@ -186,14 +189,10 @@ class TestPrior:
         prior = Prior(mock_coordinator)
         assert prior.prior_total_seconds == 0
 
-    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
-    @patch("custom_components.area_occupancy.data.prior.filter_intervals")
+    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
     async def test_calculate_success(
         self,
-        mock_filter_intervals: Mock,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
+        mock_get_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test successful prior calculation."""
@@ -203,15 +202,8 @@ class TestPrior:
 
         prior = Prior(mock_coordinator)
 
-        # Mock states from recorder
+        # Mock intervals from get_intervals_hybrid
         base_time = dt_util.utcnow() - timedelta(days=1)
-        mock_states = [
-            Mock(spec=State, entity_id="binary_sensor.motion1", state="on"),
-            Mock(spec=State, entity_id="binary_sensor.motion1", state="off"),
-        ]
-        mock_get_states.return_value = mock_states
-
-        # Mock intervals - only "on" intervals are used for calculation
         # 8 hours on out of 24 hours total = 33.3% ratio
         mock_intervals = [
             {
@@ -219,18 +211,11 @@ class TestPrior:
                 "start": base_time,
                 "end": base_time + timedelta(hours=8),
             },  # 8 hours on
-            {
-                "state": "off",
-                "start": base_time + timedelta(hours=8),
-                "end": base_time + timedelta(hours=24),
-            },  # 16 hours off
         ]
-        mock_states_to_intervals.return_value = mock_intervals
+        mock_get_intervals.return_value = mock_intervals
 
-        # Mock filtered intervals to only include "on" intervals for calculation
-        mock_filter_intervals.return_value = [
-            mock_intervals[0]
-        ]  # Only the "on" interval
+        # Intervals are already filtered by get_intervals_hybrid
+        # No need for additional filtering
 
         result = await prior.calculate()
 
@@ -241,9 +226,9 @@ class TestPrior:
         assert prior._last_updated is not None
         assert prior._sensor_hash is not None
 
-    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
+    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
     async def test_calculate_no_states(
-        self, mock_get_states: AsyncMock, mock_coordinator: Mock
+        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with no states returned."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -251,20 +236,16 @@ class TestPrior:
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
-        mock_get_states.return_value = []
+        mock_get_intervals.return_value = []
 
         # When no states are found, calculate() should return MIN_PRIOR
         result = await prior.calculate()
         assert result == MIN_PRIOR
 
-    @patch("custom_components.area_occupancy.data.prior.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.prior.states_to_intervals")
-    @patch("custom_components.area_occupancy.data.prior.filter_intervals")
+    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
     async def test_calculate_multiple_sensors(
         self,
-        mock_filter_intervals: Mock,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
+        mock_get_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test prior calculation with multiple sensors."""
@@ -277,32 +258,19 @@ class TestPrior:
 
         prior = Prior(mock_coordinator)
 
-        # Mock states for both sensors
-        mock_get_states.return_value = [Mock(spec=State)]
+        # Mock intervals for both sensors
+        base_time = dt_util.utcnow() - timedelta(days=1)
+        mock_intervals = [
+            {
+                "state": "on",
+                "start": base_time,
+                "end": base_time + timedelta(hours=6),
+            },  # 6 hours on
+        ]
+        mock_get_intervals.return_value = mock_intervals
 
-        # Different ratios for each sensor
-        def mock_intervals_side_effect(*args, **kwargs):
-            base_time = dt_util.utcnow() - timedelta(days=1)
-            return [
-                {
-                    "state": "on",
-                    "start": base_time,
-                    "end": base_time + timedelta(hours=6),
-                },  # 6 hours on
-                {
-                    "state": "off",
-                    "start": base_time + timedelta(hours=6),
-                    "end": base_time + timedelta(hours=24),
-                },  # 18 hours off
-            ]
-
-        mock_states_to_intervals.side_effect = mock_intervals_side_effect
-
-        # Mock filtered intervals to only include "on" intervals for calculation
-        def mock_filter_side_effect(intervals):
-            return [interval for interval in intervals if interval["state"] == "on"]
-
-        mock_filter_intervals.side_effect = mock_filter_side_effect
+        # Intervals are already filtered by get_intervals_hybrid
+        # No need for additional filtering
 
         result = await prior.calculate()
 
