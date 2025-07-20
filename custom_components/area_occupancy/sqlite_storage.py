@@ -414,13 +414,15 @@ class SQLiteStorage:
                     conn.execute(stmt, values_list)
                     conn.commit()
                     _LOGGER.debug(
-                        "Committed batch: %d time priors stored successfully", len(values_list)
+                        "Committed batch: %d time priors stored successfully",
+                        len(values_list),
                     )
                     return len(values_list)
 
                 except (sa.exc.SQLAlchemyError, OSError) as err:
                     _LOGGER.error("Failed to save batch of time priors: %s", err)
                     return 0
+
         return await self.hass.async_add_executor_job(_save_batch)
 
     async def get_time_prior(

@@ -4,12 +4,11 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 from custom_components.area_occupancy.data.prior import Prior
+from custom_components.area_occupancy.utils import StateInterval
+from homeassistant.util import dt as dt_util
 
 # Import MIN_PRIOR directly from the module
 MIN_PRIOR = 0.1
-from custom_components.area_occupancy.utils import StateInterval
-from homeassistant.core import State
-from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001

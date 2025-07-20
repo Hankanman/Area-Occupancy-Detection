@@ -1004,18 +1004,18 @@ def mock_area_prior() -> Mock:
     prior.calculate = AsyncMock(return_value=0.3)
     prior.prior_intervals = []
     prior.prior_total_seconds = 0
-    
+
     # Add time-based prior properties
     prior.time_prior_value = 0.25
     prior.time_prior_last_updated = dt_util.utcnow()
     prior.time_prior_intervals = []
     prior.time_prior_total_seconds = 0
-    
+
     # Add methods for time-based priors
     prior.update_time_prior = AsyncMock(return_value=0.25)
     prior.calculate_time_prior = AsyncMock(return_value=0.25)
     prior.get_time_prior = AsyncMock(return_value=0.25)
-    
+
     prior.to_dict.return_value = {
         "value": 0.3,
         "last_updated": prior.last_updated.isoformat(),
@@ -1560,12 +1560,12 @@ def mock_config():
         ),
         decay=Decay(enabled=True, half_life=300),
         history=History(
-            enabled=True, 
+            enabled=True,
             period=30,
             time_based_priors_enabled=True,
             time_based_priors_frequency=4,
             likelihood_updates_enabled=True,
-            likelihood_updates_frequency=2
+            likelihood_updates_frequency=2,
         ),
         wasp_in_box=WaspInBox(
             enabled=False, motion_timeout=60, weight=0.8, max_duration=600
