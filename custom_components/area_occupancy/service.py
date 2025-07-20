@@ -408,10 +408,6 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
         # Reset entities to fresh state
         await coordinator.entities.cleanup()
 
-        # Clear storage if requested
-        if call.data.get("clear_storage", False):
-            await coordinator.sqlite_store.async_reset()
-
         await coordinator.async_refresh()
 
         _LOGGER.info("Entity reset completed successfully for entry %s", entry_id)
@@ -873,7 +869,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     reset_entities_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,
-            vol.Optional("clear_storage", default=False): bool,
         }
     )
 
