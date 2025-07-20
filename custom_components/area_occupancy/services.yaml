@@ -33,13 +33,6 @@ reset_entities:
       selector:
         config_entry:
           integration: area_occupancy
-    clear_storage:
-      name: Clear Storage
-      description: "Also clear all stored historical data."
-      required: false
-      default: false
-      selector:
-        boolean:
 
 get_area_status:
   name: Get Area Status
