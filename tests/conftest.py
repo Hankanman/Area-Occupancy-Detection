@@ -81,6 +81,7 @@ from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
+from custom_components.area_occupancy.sqlite_storage import AreaOccupancySQLiteStore
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -257,6 +258,40 @@ def mock_config_entry() -> Mock:
 
 
 @pytest.fixture
+def mock_time_prior_data() -> dict[str, Any]:
+    """Create mock time-based prior data for testing."""
+    return {
+        "hour": 14,
+        "day_of_week": 2,  # Tuesday
+        "prior_value": 0.35,
+        "total_seconds": 3600,
+        "last_updated": dt_util.utcnow().isoformat(),
+    }
+
+
+@pytest.fixture
+def mock_historical_intervals() -> list[dict[str, Any]]:
+    """Create mock historical intervals for testing."""
+    base_time = dt_util.utcnow() - timedelta(days=1)
+    return [
+        {
+            "entity_id": "binary_sensor.motion1",
+            "state": "on",
+            "start": base_time.isoformat(),
+            "end": (base_time + timedelta(hours=2)).isoformat(),
+            "duration_seconds": 7200,
+        },
+        {
+            "entity_id": "binary_sensor.motion1",
+            "state": "off",
+            "start": (base_time + timedelta(hours=2)).isoformat(),
+            "end": (base_time + timedelta(hours=4)).isoformat(),
+            "duration_seconds": 7200,
+        },
+    ]
+
+
+@pytest.fixture
 def sample_config_data() -> dict[str, Any]:
     """Create sample configuration data."""
     return {
@@ -378,22 +413,19 @@ def mock_coordinator(
     coordinator.likelihoods = Mock()
     coordinator.likelihoods.calculate = AsyncMock(return_value=Mock(prior=0.35))
 
-    # Store - keep as a simple mock unless you want to inject a fixture
-    coordinator.store = Mock()
-    coordinator.store.async_save_coordinator_data = Mock()
-    coordinator.store.async_load_coordinator_data = AsyncMock(return_value=None)
-    coordinator.store.async_load_with_compatibility_check = AsyncMock(
-        return_value=(None, False)
-    )
-    coordinator.store.async_load = AsyncMock(return_value=None)
-    coordinator.store.async_save = AsyncMock()
-    coordinator.store.async_remove = AsyncMock()
-    coordinator.store.async_save_data = AsyncMock()
-    coordinator.store.async_load_data = AsyncMock(return_value=None)
-    coordinator.store.async_reset = AsyncMock()
+    # SQLite Store - use the new SQLite storage system
+    coordinator.sqlite_store = Mock()
+    coordinator.sqlite_store.async_save_data = AsyncMock()
+    coordinator.sqlite_store.async_load_data = AsyncMock(return_value=None)
+    coordinator.sqlite_store.async_reset = AsyncMock()
+    coordinator.sqlite_store.async_get_stats = AsyncMock(return_value={})
+    coordinator.sqlite_store.get_time_prior = AsyncMock(return_value=None)
+    coordinator.sqlite_store.save_time_priors_batch = AsyncMock(return_value=0)
+    coordinator.sqlite_store.get_historical_intervals = AsyncMock(return_value=[])
 
-    # Add storage alias for compatibility with service calls
-    coordinator.storage = coordinator.store
+    # Legacy store for backward compatibility
+    coordinator.store = coordinator.sqlite_store
+    coordinator.storage = coordinator.sqlite_store
 
     # Config manager
     coordinator.config_manager = Mock()
@@ -972,10 +1004,24 @@ def mock_area_prior() -> Mock:
     prior.calculate = AsyncMock(return_value=0.3)
     prior.prior_intervals = []
     prior.prior_total_seconds = 0
+    
+    # Add time-based prior properties
+    prior.time_prior_value = 0.25
+    prior.time_prior_last_updated = dt_util.utcnow()
+    prior.time_prior_intervals = []
+    prior.time_prior_total_seconds = 0
+    
+    # Add methods for time-based priors
+    prior.update_time_prior = AsyncMock(return_value=0.25)
+    prior.calculate_time_prior = AsyncMock(return_value=0.25)
+    prior.get_time_prior = AsyncMock(return_value=0.25)
+    
     prior.to_dict.return_value = {
         "value": 0.3,
         "last_updated": prior.last_updated.isoformat(),
         "sensor_hash": None,
+        "time_prior_value": 0.25,
+        "time_prior_last_updated": prior.time_prior_last_updated.isoformat(),
     }
     return prior
 
@@ -1468,8 +1514,6 @@ def mock_area_occupancy_storage_data():
 @pytest.fixture
 def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
     """Mock AreaOccupancySQLiteStore with async methods returning the provided storage data."""
-    from custom_components.area_occupancy.sqlite_storage import AreaOccupancySQLiteStore
-
     store = Mock(spec=AreaOccupancySQLiteStore)
     store.async_save_data = AsyncMock()
     store.async_load_data = AsyncMock(return_value=mock_area_occupancy_storage_data)
@@ -1515,7 +1559,14 @@ def mock_config():
             wasp=0.8,
         ),
         decay=Decay(enabled=True, half_life=300),
-        history=History(enabled=True, period=30),
+        history=History(
+            enabled=True, 
+            period=30,
+            time_based_priors_enabled=True,
+            time_based_priors_frequency=4,
+            likelihood_updates_enabled=True,
+            likelihood_updates_frequency=2
+        ),
         wasp_in_box=WaspInBox(
             enabled=False, motion_timeout=60, weight=0.8, max_duration=600
         ),
