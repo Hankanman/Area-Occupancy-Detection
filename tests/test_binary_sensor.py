@@ -14,7 +14,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 # Add marker for tests that may have lingering timers due to HA internals
-pytestmark = [pytest.mark.expected_lingering_timers(True), pytest.mark.asyncio]
+pytestmark = [pytest.mark.expected_lingering_timers(True)]
 
 
 # ruff: noqa: SLF001

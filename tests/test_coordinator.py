@@ -1018,7 +1018,9 @@ class TestCoordinatorIntegrationFlows:
             ) as mock_get_entity_type,
             patch.object(coordinator.entity_types, "async_initialize", new=AsyncMock()),
             patch.object(
-                coordinator.sqlite_store, "async_load_data", new=AsyncMock(return_value=None)
+                coordinator.sqlite_store,
+                "async_load_data",
+                new=AsyncMock(return_value=None),
             ),
             patch.object(coordinator.sqlite_store, "async_save_data", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
