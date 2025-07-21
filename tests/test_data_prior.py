@@ -958,8 +958,9 @@ class TestPriorTimeBasedCalculations:
         mock_intervals = [
             {
                 "state": "on",
-                "start": base_time + timedelta(hours=10),  # Different time
-                "end": base_time + timedelta(hours=12),
+                # Use a time window well outside the 7:00 AM slot
+                "start": base_time + timedelta(hours=15),
+                "end": base_time + timedelta(hours=17),
             },
         ]
         mock_get_intervals.return_value = mock_intervals
