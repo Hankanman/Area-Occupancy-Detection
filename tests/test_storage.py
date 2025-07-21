@@ -355,6 +355,32 @@ class TestAreaOccupancyStorageDirect:
             await area_occupancy_storage.async_initialize()
             mock_logger.assert_called()
 
+    async def test_save_and_query_intervals_real_db(
+        self, mock_hass: Mock, tmp_path
+    ) -> None:
+        """Save records to a real database and query them back."""
+        mock_hass.async_add_executor_job.side_effect = (
+            lambda func, *args, **kwargs: func(*args, **kwargs)
+        )
+        mock_hass.config.config_dir = str(tmp_path)
+        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
+        await storage.async_initialize()
+        record = AreaOccupancyRecord(
+            entry_id="test_entry",
+            area_name="Test Area",
+            purpose="test",
+            threshold=0.4,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+        saved = await storage.save_area_occupancy(record)
+        assert saved.entry_id == "test_entry"
+
+        fetched = await storage.get_area_occupancy("test_entry")
+        assert fetched is not None
+        assert fetched.area_name == "Test Area"
+
     async def test_save_area_entity_config(self, mock_hass: Mock) -> None:
         """Test saving area entity config."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")

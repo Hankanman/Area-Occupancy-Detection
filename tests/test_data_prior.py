@@ -954,7 +954,9 @@ class TestPriorTimeBasedCalculations:
         prior = Prior(mock_coordinator)
 
         # Mock intervals that don't overlap with time slot
-        base_time = dt_util.utcnow() - timedelta(days=7)
+        base_time = (dt_util.utcnow() - timedelta(days=7)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         mock_intervals = [
             {
                 "state": "on",
