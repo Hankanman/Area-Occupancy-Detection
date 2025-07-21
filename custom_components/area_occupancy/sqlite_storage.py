@@ -19,7 +19,6 @@ from .schema import (
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
     AreaTimePriorRecord,
-    EntityRecord,
     SchemaConverter,
     area_entity_config_table,
     area_occupancy_table,
@@ -203,59 +202,6 @@ class AreaOccupancyStorage:
         except (sa.exc.SQLAlchemyError, OSError) as err:
             _LOGGER.warning("Database integrity check failed: %s", err)
 
-    # ─────────────────── Global Entity Methods ───────────────────
-
-    async def ensure_entity_exists(
-        self, entity_id: str, entity_class: str
-    ) -> EntityRecord:
-        """Ensure a global entity record exists, creating if necessary."""
-
-        def _upsert_entity():
-            with self.engine.connect() as conn:
-                # Check if entity exists
-                result = conn.execute(
-                    sa.select(entities_table).where(
-                        entities_table.c.entity_id == entity_id
-                    )
-                ).fetchone()
-
-                if result:
-                    # Update last_seen time
-                    conn.execute(
-                        entities_table.update()
-                        .where(entities_table.c.entity_id == entity_id)
-                        .values(last_seen=dt_util.utcnow())
-                    )
-                    conn.commit()
-                    return SchemaConverter.row_to_entity(result)
-                # Create new entity
-                entity_record = EntityRecord(
-                    entity_id=entity_id,
-                    last_seen=dt_util.utcnow(),
-                    created_at=dt_util.utcnow(),
-                )
-                values = SchemaConverter.entity_to_dict(entity_record)
-                conn.execute(entities_table.insert().values(**values))
-                conn.commit()
-                return entity_record
-
-        return await self.hass.async_add_executor_job(_upsert_entity)
-
-    async def get_entity(self, entity_id: str) -> EntityRecord | None:
-        """Get global entity record."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(entities_table).where(
-                        entities_table.c.entity_id == entity_id
-                    )
-                ).fetchone()
-
-                return SchemaConverter.row_to_entity(result) if result else None
-
-        return await self.hass.async_add_executor_job(_get)
-
     # ─────────────────── Area Occupancy Methods ───────────────────
 
     async def save_area_occupancy(
@@ -363,54 +309,7 @@ class AreaOccupancyStorage:
 
         return await self.hass.async_add_executor_job(_get)
 
-    async def get_area_entity_config(
-        self, entry_id: str, entity_id: str
-    ) -> AreaEntityConfigRecord | None:
-        """Get specific area entity configuration."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_entity_config_table).where(
-                        sa.and_(
-                            area_entity_config_table.c.entry_id == entry_id,
-                            area_entity_config_table.c.entity_id == entity_id,
-                        )
-                    )
-                ).fetchone()
-
-                return (
-                    SchemaConverter.row_to_area_entity_config(result)
-                    if result
-                    else None
-                )
-
-        return await self.hass.async_add_executor_job(_get)
-
     # ─────────────────── Time-Based Priors Methods ───────────────────
-
-    async def save_time_prior(self, record: AreaTimePriorRecord) -> AreaTimePriorRecord:
-        """Save or update a time-based prior record."""
-        record.last_updated = dt_util.utcnow()
-
-        def _save(record: AreaTimePriorRecord):
-            with self.engine.connect() as conn:
-                values = SchemaConverter.area_time_prior_to_dict(record)
-
-                # Use INSERT OR REPLACE for SQLite
-                stmt = sa.text(
-                    """
-                    INSERT OR REPLACE INTO area_time_priors
-                    (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                    VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                """
-                )
-
-                conn.execute(stmt, values)
-                conn.commit()
-                return record
-
-        return await self.hass.async_add_executor_job(_save, record)
 
     async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
         """Save multiple time-based prior records efficiently."""
@@ -420,41 +319,39 @@ class AreaOccupancyStorage:
 
         _LOGGER.debug("Saving batch of %d time priors", len(records))
 
-        return await self.hass.async_add_executor_job(
-            self._save_time_priors_batch_impl, records
-        )
+        def _save():
+            try:
+                with self.engine.connect() as conn:
+                    # Prepare a list of dictionaries for bulk insert
+                    values_list = [
+                        {
+                            **SchemaConverter.area_time_prior_to_dict(record),
+                            "last_updated": dt_util.utcnow(),
+                        }
+                        for record in records
+                    ]
 
-    def _save_time_priors_batch_impl(self, records: list[AreaTimePriorRecord]) -> int:
-        try:
-            with self.engine.connect() as conn:
-                # Prepare a list of dictionaries for bulk insert
-                values_list = [
-                    {
-                        **SchemaConverter.area_time_prior_to_dict(record),
-                        "last_updated": dt_util.utcnow(),
-                    }
-                    for record in records
-                ]
+                    # Use executemany for bulk insert
+                    stmt = sa.text(
+                        """
+                        INSERT OR REPLACE INTO area_time_priors
+                        (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
+                        VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
+                        """
+                    )
 
-                # Use executemany for bulk insert
-                stmt = sa.text(
-                    """
-                    INSERT OR REPLACE INTO area_time_priors
-                    (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                    VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                """
-                )
+                    conn.execute(stmt, values_list)
+                    conn.commit()
+                    _LOGGER.debug(
+                        "Committed batch: %d time priors stored successfully",
+                        len(values_list),
+                    )
+                    return len(values_list)
+            except (sa.exc.SQLAlchemyError, OSError) as err:
+                _LOGGER.error("Failed to save batch of time priors: %s", err)
+                return 0
 
-                conn.execute(stmt, values_list)
-                conn.commit()
-                _LOGGER.debug(
-                    "Committed batch: %d time priors stored successfully",
-                    len(values_list),
-                )
-                return len(values_list)
-        except (sa.exc.SQLAlchemyError, OSError) as err:
-            _LOGGER.error("Failed to save batch of time priors: %s", err)
-            return 0
+        return await self.hass.async_add_executor_job(_save)
 
     async def get_time_prior(
         self, entry_id: str, day_of_week: int, time_slot: int
@@ -498,46 +395,6 @@ class AreaOccupancyStorage:
                 return [SchemaConverter.row_to_area_time_prior(row) for row in result]
 
         return await self.hass.async_add_executor_job(_get)
-
-    async def get_time_priors_for_day(
-        self, entry_id: str, day_of_week: int
-    ) -> list[AreaTimePriorRecord]:
-        """Get all time-based prior records for a specific day of week."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table)
-                    .where(
-                        sa.and_(
-                            area_time_priors_table.c.entry_id == entry_id,
-                            area_time_priors_table.c.day_of_week == day_of_week,
-                        )
-                    )
-                    .order_by(area_time_priors_table.c.time_slot)
-                ).fetchall()
-
-                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
-
-        return await self.hass.async_add_executor_job(_get)
-
-    async def delete_time_priors_for_entry(self, entry_id: str) -> int:
-        """Delete all time-based prior records for an entry."""
-
-        def _delete():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    area_time_priors_table.delete().where(
-                        area_time_priors_table.c.entry_id == entry_id
-                    )
-                )
-                deleted_count = result.rowcount
-                conn.commit()
-                return deleted_count
-
-        deleted_count = await self.hass.async_add_executor_job(_delete)
-        _LOGGER.info("Deleted %d time priors for entry %s", deleted_count, entry_id)
-        return deleted_count
 
     async def get_recent_time_priors(
         self, entry_id: str, hours: int = 24
@@ -584,78 +441,74 @@ class AreaOccupancyStorage:
 
         _LOGGER.debug("Saving batch of %d intervals", len(intervals))
 
-        return await self.hass.async_add_executor_job(
-            self._save_state_intervals_batch_impl, intervals
-        )
-
-    def _save_state_intervals_batch_impl(self, intervals: list[StateInterval]) -> int:
-        stored_count = 0
-        try:
-            with self.engine.connect() as conn:
-                # First, ensure all entities exist in a separate transaction
-                unique_entities = {interval["entity_id"] for interval in intervals}
-                for entity_id in unique_entities:
-                    try:
+        def _save():
+            stored_count = 0
+            try:
+                with self.engine.connect() as conn:
+                    # First, ensure all entities exist in a single executemany call
+                    unique_entities = {interval["entity_id"] for interval in intervals}
+                    entity_values = [
+                        {"entity_id": entity_id, "now": dt_util.utcnow()}
+                        for entity_id in unique_entities
+                    ]
+                    if entity_values:
                         conn.execute(
                             sa.text(
                                 """
                                 INSERT OR IGNORE INTO entities (entity_id, domain, last_seen, created_at)
                                 VALUES (:entity_id, 'unknown', :now, :now)
-                            """
+                                """
                             ),
-                            {
-                                "entity_id": entity_id,
-                                "now": dt_util.utcnow(),
-                            },
+                            entity_values,
                         )
-                    except (sa.exc.SQLAlchemyError, OSError):
-                        _LOGGER.warning("Failed to ensure entity %s exists", entity_id)
 
-                # Commit entities first
-                conn.commit()
+                    # Commit entities first
+                    conn.commit()
 
-                # Prepare all interval values for bulk insert
-                values_list = [
-                    SchemaConverter.state_interval_to_dict(interval)
-                    for interval in intervals
-                ]
+                    # Prepare all interval values for bulk insert
+                    values_list = [
+                        SchemaConverter.state_interval_to_dict(interval)
+                        for interval in intervals
+                    ]
 
-                if not values_list:
-                    _LOGGER.debug("No intervals to insert after conversion")
-                    return 0
+                    if not values_list:
+                        _LOGGER.debug("No intervals to insert after conversion")
+                        return 0
 
-                stmt = sa.text(
-                    """
-                    INSERT OR IGNORE INTO state_intervals
-                    (entity_id, state, start_time, end_time, duration_seconds, created_at)
-                    VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
-                """
-                )
+                    stmt = sa.text(
+                        """
+                        INSERT OR IGNORE INTO state_intervals
+                        (entity_id, state, start_time, end_time, duration_seconds, created_at)
+                        VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
+                        """
+                    )
 
-                result = conn.execute(stmt, values_list)
-                conn.commit()
+                    result = conn.execute(stmt, values_list)
+                    conn.commit()
 
-                # SQLAlchemy 1.4+ result.rowcount is total rows inserted (may be -1 for some DBs)
-                if (
-                    hasattr(result, "rowcount")
-                    and result.rowcount is not None
-                    and result.rowcount >= 0
-                ):
-                    stored_count = result.rowcount
-                else:
-                    # Fallback: count attempted inserts (not always accurate with OR IGNORE)
-                    stored_count = len(values_list)
+                    # SQLAlchemy 1.4+ result.rowcount is total rows inserted (may be -1 for some DBs)
+                    if (
+                        hasattr(result, "rowcount")
+                        and result.rowcount is not None
+                        and result.rowcount >= 0
+                    ):
+                        stored_count = result.rowcount
+                    else:
+                        # Fallback: count attempted inserts (not always accurate with OR IGNORE)
+                        stored_count = len(values_list)
 
-                _LOGGER.debug(
-                    "Committed batch: attempted %d, stored %d intervals successfully",
-                    len(values_list),
-                    stored_count,
-                )
-        except (sa.exc.SQLAlchemyError, OSError) as err:
-            _LOGGER.warning("Failed to save batch of state intervals: %s", err)
-            return 0
-        else:
-            return stored_count
+                    _LOGGER.debug(
+                        "Committed batch: attempted %d, stored %d intervals successfully",
+                        len(values_list),
+                        stored_count,
+                    )
+            except (sa.exc.SQLAlchemyError, OSError) as err:
+                _LOGGER.warning("Failed to save batch of state intervals: %s", err)
+                return 0
+            else:
+                return stored_count
+
+        return await self.hass.async_add_executor_job(_save)
 
     async def get_historical_intervals(
         self,

@@ -10,7 +10,6 @@ from custom_components.area_occupancy.schema import (
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
     AreaTimePriorRecord,
-    EntityRecord,
 )
 from custom_components.area_occupancy.sqlite_storage import AreaOccupancyStorage
 from custom_components.area_occupancy.utils import StateInterval
@@ -236,23 +235,6 @@ class TestAreaOccupancyStorage:
             )
             assert result == expected_intervals
 
-    async def test_save_time_prior(self, mock_coordinator: Mock) -> None:
-        """Test save_time_prior method."""
-        store = AreaOccupancyStorage(coordinator=mock_coordinator)
-
-        record = AreaTimePriorRecord(
-            entry_id="test_entry",
-            day_of_week=1,
-            time_slot=12,
-            prior_value=0.5,
-            data_points=100,
-            last_updated=datetime.now(),
-        )
-
-        with patch.object(store, "save_time_prior", return_value=record):
-            result = await store.save_time_prior(record)
-            assert result == record
-
     async def test_save_time_priors_batch(self, mock_coordinator: Mock) -> None:
         """Test save_time_priors_batch method."""
         store = AreaOccupancyStorage(coordinator=mock_coordinator)
@@ -316,33 +298,6 @@ class TestAreaOccupancyStorage:
             result = await store.get_time_priors_for_entry("test_entry")
             assert result == records
 
-    async def test_get_time_priors_for_day(self, mock_coordinator: Mock) -> None:
-        """Test get_time_priors_for_day method."""
-        store = AreaOccupancyStorage(coordinator=mock_coordinator)
-
-        records = [
-            AreaTimePriorRecord(
-                entry_id="test_entry",
-                day_of_week=1,
-                time_slot=12,
-                prior_value=0.5,
-                data_points=100,
-                last_updated=datetime.now(),
-            )
-        ]
-
-        with patch.object(store, "get_time_priors_for_day", return_value=records):
-            result = await store.get_time_priors_for_day("test_entry", 1)
-            assert result == records
-
-    async def test_delete_time_priors_for_entry(self, mock_coordinator: Mock) -> None:
-        """Test delete_time_priors_for_entry method."""
-        store = AreaOccupancyStorage(coordinator=mock_coordinator)
-
-        with patch.object(store, "delete_time_priors_for_entry", return_value=5):
-            result = await store.delete_time_priors_for_entry("test_entry")
-            assert result == 5
-
     async def test_get_recent_time_priors(self, mock_coordinator: Mock) -> None:
         """Test get_recent_time_priors method."""
         store = AreaOccupancyStorage(coordinator=mock_coordinator)
@@ -400,68 +355,6 @@ class TestAreaOccupancyStorageDirect:
             await area_occupancy_storage.async_initialize()
             mock_logger.assert_called()
 
-    async def test_ensure_entity_exists_new(self, mock_hass: Mock) -> None:
-        """Test ensuring entity exists when it doesn't exist."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_entity = EntityRecord(
-            entity_id="sensor.test",
-            last_seen=datetime.now(),
-            created_at=datetime.now(),
-        )
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_entity
-        ):
-            result = await storage.ensure_entity_exists("sensor.test", "binary_sensor")
-
-            assert result == expected_entity
-            mock_hass.async_add_executor_job.assert_called_once()
-
-    async def test_ensure_entity_exists_existing(self, mock_hass: Mock) -> None:
-        """Test ensuring entity exists when it already exists."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_entity = EntityRecord(
-            entity_id="sensor.test",
-            last_seen=datetime.now(),
-            created_at=datetime.now(),
-        )
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_entity
-        ):
-            result = await storage.ensure_entity_exists("sensor.test", "binary_sensor")
-
-            assert result == expected_entity
-            mock_hass.async_add_executor_job.assert_called_once()
-
-    async def test_get_entity_found(self, mock_hass: Mock) -> None:
-        """Test getting entity when it exists."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_entity = EntityRecord(
-            entity_id="sensor.test",
-            last_seen=datetime.now(),
-            created_at=datetime.now(),
-        )
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_entity
-        ):
-            result = await storage.get_entity("sensor.test")
-
-            assert result == expected_entity
-
-    async def test_get_entity_not_found(self, mock_hass: Mock) -> None:
-        """Test getting entity when it doesn't exist."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        with patch.object(mock_hass, "async_add_executor_job", return_value=None):
-            result = await storage.get_entity("sensor.test")
-
-            assert result is None
-
     async def test_save_area_entity_config(self, mock_hass: Mock) -> None:
         """Test saving area entity config."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
@@ -481,36 +374,6 @@ class TestAreaOccupancyStorageDirect:
 
             assert result == record
             mock_hass.async_add_executor_job.assert_called_once()
-
-    async def test_get_area_entity_config_found(self, mock_hass: Mock) -> None:
-        """Test getting area entity config when it exists."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_config = AreaEntityConfigRecord(
-            entry_id="test_entry",
-            entity_id="sensor.test",
-            entity_type="motion",
-            weight=1.0,
-            prob_given_true=0.8,
-            prob_given_false=0.2,
-            last_updated=datetime.now(),
-        )
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_config
-        ):
-            result = await storage.get_area_entity_config("test_entry", "sensor.test")
-
-            assert result == expected_config
-
-    async def test_get_area_entity_config_not_found(self, mock_hass: Mock) -> None:
-        """Test getting area entity config when it doesn't exist."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        with patch.object(mock_hass, "async_add_executor_job", return_value=None):
-            result = await storage.get_area_entity_config("test_entry", "sensor.test")
-
-            assert result is None
 
     async def test_save_state_intervals_batch_empty(self, mock_hass: Mock) -> None:
         """Test saving empty state intervals batch."""
@@ -689,22 +552,6 @@ class TestAreaOccupancyStorageDirect:
             result = await storage.get_recent_time_priors("test_entry", hours=48)
             assert result == expected_records
 
-    async def test_delete_time_priors_for_entry_logging(self, mock_hass: Mock) -> None:
-        """Test that delete operation logs the count."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        with (
-            patch.object(mock_hass, "async_add_executor_job", return_value=5),
-            patch(
-                "custom_components.area_occupancy.sqlite_storage._LOGGER.info"
-            ) as mock_logger,
-        ):
-            result = await storage.delete_time_priors_for_entry("test_entry")
-            assert result == 5
-            mock_logger.assert_called_with(
-                "Deleted %d time priors for entry %s", 5, "test_entry"
-            )
-
     async def test_cleanup_old_intervals_logging(self, mock_hass: Mock) -> None:
         """Test that cleanup operation logs the count."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
@@ -766,35 +613,6 @@ class TestAreaOccupancyStorageDirect:
         ):
             result = await storage.get_area_entity_configs("test_entry")
             assert result == expected_configs
-
-    async def test_get_time_priors_for_day_ordering(self, mock_hass: Mock) -> None:
-        """Test that time priors for day are returned in correct order."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_records = [
-            AreaTimePriorRecord(
-                entry_id="test_entry",
-                day_of_week=1,
-                time_slot=0,
-                prior_value=0.3,
-                data_points=50,
-                last_updated=datetime.now(),
-            ),
-            AreaTimePriorRecord(
-                entry_id="test_entry",
-                day_of_week=1,
-                time_slot=1,
-                prior_value=0.4,
-                data_points=60,
-                last_updated=datetime.now(),
-            ),
-        ]
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_records
-        ):
-            result = await storage.get_time_priors_for_day("test_entry", 1)
-            assert result == expected_records
 
     async def test_async_save_data_missing_coordinator_attributes(
         self, mock_coordinator: Mock
@@ -910,24 +728,6 @@ class TestAreaOccupancyStorageDirect:
 
             assert result == expected_record
 
-    async def test_save_time_prior(self, mock_hass: Mock) -> None:
-        """Test saving time prior record."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        record = AreaTimePriorRecord(
-            entry_id="test_entry",
-            day_of_week=1,
-            time_slot=12,
-            prior_value=0.5,
-            data_points=100,
-            last_updated=datetime.now(),
-        )
-
-        with patch.object(mock_hass, "async_add_executor_job", return_value=record):
-            result = await storage.save_time_prior(record)
-
-            assert result == record
-
     async def test_save_time_priors_batch(self, mock_hass: Mock) -> None:
         """Test saving time priors batch."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
@@ -990,37 +790,6 @@ class TestAreaOccupancyStorageDirect:
 
             assert result == expected_records
 
-    async def test_get_time_priors_for_day(self, mock_hass: Mock) -> None:
-        """Test getting time priors for specific day."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        expected_records = [
-            AreaTimePriorRecord(
-                entry_id="test_entry",
-                day_of_week=1,
-                time_slot=12,
-                prior_value=0.5,
-                data_points=100,
-                last_updated=datetime.now(),
-            )
-        ]
-
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_records
-        ):
-            result = await storage.get_time_priors_for_day("test_entry", 1)
-
-            assert result == expected_records
-
-    async def test_delete_time_priors_for_entry(self, mock_hass: Mock) -> None:
-        """Test deleting time priors for entry."""
-        storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
-
-        with patch.object(mock_hass, "async_add_executor_job", return_value=5):
-            result = await storage.delete_time_priors_for_entry("test_entry")
-
-            assert result == 5
-
     async def test_get_recent_time_priors(self, mock_hass: Mock) -> None:
         """Test getting recent time priors."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
@@ -1066,18 +835,6 @@ class TestAreaOccupancyStorageDirect:
 
             # Should call async_add_executor_job once for the reset operation
             mock_executor.assert_called_once()
-
-    async def test_database_corruption_recovery(
-        self, mock_hass: Mock, mock_storage_path
-    ):
-        """Test database corruption recovery."""
-        mock_hass.config.config_dir = str(mock_storage_path.parent)
-
-        # This test is skipped as the corruption recovery logic is complex to test
-        # and the actual implementation handles corruption gracefully
-        pytest.skip(
-            "Database corruption recovery test skipped - complex to mock properly"
-        )
 
     async def test_database_integrity_check(self, mock_hass: Mock) -> None:
         """Test database integrity check."""
