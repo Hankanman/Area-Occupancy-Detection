@@ -392,38 +392,39 @@ class SQLiteStorage:
 
         _LOGGER.debug("Saving batch of %d time priors", len(records))
 
-        def _save_batch():
+        return await self.hass.async_add_executor_job(
+            self._save_time_priors_batch_impl, records
+        )
+
+    def _save_time_priors_batch_impl(self, records: list[AreaTimePriorRecord]) -> int:
+        try:
             with self.engine.connect() as conn:
-                try:
-                    # Prepare a list of dictionaries for bulk insert
-                    values_list = [
-                        {
-                            **SchemaConverter.area_time_prior_to_dict(record),
-                            "last_updated": dt_util.utcnow(),
-                        }
-                        for record in records
-                    ]
+                # Prepare a list of dictionaries for bulk insert
+                values_list = [
+                    {
+                        **SchemaConverter.area_time_prior_to_dict(record),
+                        "last_updated": dt_util.utcnow(),
+                    }
+                    for record in records
+                ]
 
-                    # Use executemany for bulk insert
-                    stmt = sa.text("""
-                        INSERT OR REPLACE INTO area_time_priors
-                        (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                        VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                    """)
+                # Use executemany for bulk insert
+                stmt = sa.text("""
+                    INSERT OR REPLACE INTO area_time_priors
+                    (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
+                    VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
+                """)
 
-                    conn.execute(stmt, values_list)
-                    conn.commit()
-                    _LOGGER.debug(
-                        "Committed batch: %d time priors stored successfully",
-                        len(values_list),
-                    )
-                    return len(values_list)
-
-                except (sa.exc.SQLAlchemyError, OSError) as err:
-                    _LOGGER.error("Failed to save batch of time priors: %s", err)
-                    return 0
-
-        return await self.hass.async_add_executor_job(_save_batch)
+                conn.execute(stmt, values_list)
+                conn.commit()
+                _LOGGER.debug(
+                    "Committed batch: %d time priors stored successfully",
+                    len(values_list),
+                )
+                return len(values_list)
+        except (sa.exc.SQLAlchemyError, OSError) as err:
+            _LOGGER.error("Failed to save batch of time priors: %s", err)
+            return 0
 
     async def get_time_prior(
         self, entry_id: str, day_of_week: int, time_slot: int
@@ -553,8 +554,13 @@ class SQLiteStorage:
 
         _LOGGER.debug("Saving batch of %d intervals", len(intervals))
 
-        def _save_batch():
-            stored_count = 0
+        return await self.hass.async_add_executor_job(
+            self._save_state_intervals_batch_impl, intervals
+        )
+
+    def _save_state_intervals_batch_impl(self, intervals: list[StateInterval]) -> int:
+        stored_count = 0
+        try:
             with self.engine.connect() as conn:
                 # First, ensure all entities exist in a separate transaction
                 unique_entities = {interval["entity_id"] for interval in intervals}
@@ -576,88 +582,46 @@ class SQLiteStorage:
                 # Commit entities first
                 conn.commit()
 
-                # Now process intervals
-                for i, interval in enumerate(intervals):
-                    try:
-                        values = SchemaConverter.state_interval_to_dict(interval)
+                # Prepare all interval values for bulk insert
+                values_list = [
+                    SchemaConverter.state_interval_to_dict(interval)
+                    for interval in intervals
+                ]
 
-                        # Try INSERT OR IGNORE first
-                        stmt = sa.text("""
-                            INSERT OR IGNORE INTO state_intervals
-                            (entity_id, state, start_time, end_time, duration_seconds, created_at)
-                            VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
-                        """)
+                if not values_list:
+                    _LOGGER.debug("No intervals to insert after conversion")
+                    return 0
 
-                        result = conn.execute(stmt, values)
+                stmt = sa.text("""
+                    INSERT OR IGNORE INTO state_intervals
+                    (entity_id, state, start_time, end_time, duration_seconds, created_at)
+                    VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
+                """)
 
-                        if result.rowcount > 0:
-                            stored_count += 1
-                            if stored_count <= 5:  # Log first few successes
-                                _LOGGER.debug(
-                                    "Successfully stored interval %d for %s: %s",
-                                    stored_count,
-                                    interval["entity_id"],
-                                    interval["state"],
-                                )
-                        # If INSERT OR IGNORE failed, try to understand why
-                        elif i < 3:  # Only diagnose first few failures
-                            # Check if it actually exists
-                            check_stmt = sa.text("""
-                                    SELECT COUNT(*) FROM state_intervals
-                                    WHERE entity_id = :entity_id
-                                    AND start_time = :start_time
-                                    AND end_time = :end_time
-                                """)
-                            exists_count = conn.execute(
-                                check_stmt,
-                                {
-                                    "entity_id": interval["entity_id"],
-                                    "start_time": values["start_time"],
-                                    "end_time": values["end_time"],
-                                },
-                            ).scalar()
-
-                            if (exists_count or 0) > 0:
-                                _LOGGER.debug(
-                                    "Interval %d actually exists, skipped", i + 1
-                                )
-                            else:
-                                # Try direct INSERT to see the actual error
-                                try:
-                                    direct_stmt = sa.text("""
-                                            INSERT INTO state_intervals
-                                            (entity_id, state, start_time, end_time, duration_seconds, created_at)
-                                            VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
-                                        """)
-                                    conn.execute(direct_stmt, values)
-                                    _LOGGER.warning(
-                                        "Direct INSERT succeeded but OR IGNORE failed - unexpected!"
-                                    )
-                                    stored_count += 1
-                                except (sa.exc.SQLAlchemyError, OSError):
-                                    _LOGGER.warning(
-                                        "Interval %d INSERT failed. Values: entity_id=%s, state=%s, times=%s to %s",
-                                        i + 1,
-                                        values["entity_id"],
-                                        values["state"],
-                                        values["start_time"],
-                                        values["end_time"],
-                                    )
-
-                    except (sa.exc.SQLAlchemyError, OSError):
-                        _LOGGER.warning(
-                            "Failed to process interval %d for %s",
-                            i + 1,
-                            interval["entity_id"],
-                        )
-
+                result = conn.execute(stmt, values_list)
                 conn.commit()
-                _LOGGER.debug(
-                    "Committed batch: %d intervals stored successfully", stored_count
-                )
-            return stored_count
 
-        return await self.hass.async_add_executor_job(_save_batch)
+                # SQLAlchemy 1.4+ result.rowcount is total rows inserted (may be -1 for some DBs)
+                if (
+                    hasattr(result, "rowcount")
+                    and result.rowcount is not None
+                    and result.rowcount >= 0
+                ):
+                    stored_count = result.rowcount
+                else:
+                    # Fallback: count attempted inserts (not always accurate with OR IGNORE)
+                    stored_count = len(values_list)
+
+                _LOGGER.debug(
+                    "Committed batch: attempted %d, stored %d intervals successfully",
+                    len(values_list),
+                    stored_count,
+                )
+        except (sa.exc.SQLAlchemyError, OSError) as err:
+            _LOGGER.warning("Failed to save batch of state intervals: %s", err)
+            return 0
+        else:
+            return stored_count
 
     async def get_historical_intervals(
         self,
