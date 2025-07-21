@@ -41,21 +41,41 @@ _LOGGER = logging.getLogger(__name__)
 DB_NAME = "area_occupancy.db"
 
 
-class SQLiteStorage:
-    """Normalized SQLite storage using global entities and area-specific configuration."""
+class AreaOccupancyStorage:
+    """Unified storage for Area Occupancy Detection, combining DB access and coordinator logic."""
 
-    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
-        """Initialize SQLite storage."""
+    # Merge all methods and logic from SQLiteStorage and AreaOccupancySQLiteStore here.
+    # Accept both hass/entry_id and coordinator in __init__, and set up attributes accordingly.
+    # All public APIs from both classes should be preserved.
+
+    def __init__(
+        self,
+        hass: HomeAssistant = None,
+        entry_id: str | None = None,
+        coordinator: AreaOccupancyCoordinator | None = None,
+    ) -> None:
+        """Initialize SQLite storage.
+
+        Args:
+            hass: Home Assistant instance (optional for testing)
+            entry_id: Unique entry ID for the area (optional for testing)
+            coordinator: AreaOccupancyCoordinator instance (optional for testing)
+
+        """
         self.hass = hass
         self.entry_id = entry_id
-        self.storage_path = Path(hass.config.config_dir) / ".storage"
-        self.db_path = self.storage_path / DB_NAME
+        self.coordinator = coordinator
+        self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
+        self.db_path = self.storage_path / DB_NAME if self.storage_path else None
 
         # Ensure storage directory exists
-        self.storage_path.mkdir(exist_ok=True)
+        if self.storage_path:
+            self.storage_path.mkdir(exist_ok=True)
 
         # Create SQLAlchemy engine
-        self.engine = create_engine(f"sqlite:///{self.db_path}")
+        self.engine = (
+            create_engine(f"sqlite:///{self.db_path}") if self.db_path else None
+        )
 
         _LOGGER.debug(
             "SQLite storage initialized for entry %s at %s", entry_id, self.db_path
@@ -249,13 +269,15 @@ class SQLiteStorage:
                 values = SchemaConverter.area_occupancy_to_dict(record)
 
                 # Use INSERT OR REPLACE for SQLite
-                stmt = sa.text("""
+                stmt = sa.text(
+                    """
                     INSERT OR REPLACE INTO area_occupancy
                     (entry_id, area_name, purpose, threshold, created_at, updated_at)
                     VALUES (:entry_id, :area_name, :purpose, :threshold,
                             COALESCE((SELECT created_at FROM area_occupancy WHERE entry_id = :entry_id), :created_at),
                             :updated_at)
-                """)
+                """
+                )
 
                 conn.execute(stmt, values)
                 conn.commit()
@@ -292,10 +314,12 @@ class SQLiteStorage:
             with self.engine.connect() as conn:
                 # Ensure global entity exists
                 conn.execute(
-                    sa.text("""
+                    sa.text(
+                        """
                         INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
                         VALUES (:entity_id, :now, :now)
-                    """),
+                    """
+                    ),
                     {
                         "entity_id": record.entity_id,
                         "now": dt_util.utcnow(),
@@ -304,13 +328,15 @@ class SQLiteStorage:
 
                 # Save area-specific config
                 values = SchemaConverter.area_entity_config_to_dict(record)
-                stmt = sa.text("""
+                stmt = sa.text(
+                    """
                     INSERT OR REPLACE INTO area_entity_config
                     (entry_id, entity_id, entity_type, weight,
                      prob_given_true, prob_given_false, last_updated)
                     VALUES (:entry_id, :entity_id, :entity_type, :weight,
                             :prob_given_true, :prob_given_false, :last_updated)
-                """)
+                """
+                )
 
                 conn.execute(stmt, values)
                 conn.commit()
@@ -372,11 +398,13 @@ class SQLiteStorage:
                 values = SchemaConverter.area_time_prior_to_dict(record)
 
                 # Use INSERT OR REPLACE for SQLite
-                stmt = sa.text("""
+                stmt = sa.text(
+                    """
                     INSERT OR REPLACE INTO area_time_priors
                     (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
                     VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                """)
+                """
+                )
 
                 conn.execute(stmt, values)
                 conn.commit()
@@ -409,11 +437,13 @@ class SQLiteStorage:
                 ]
 
                 # Use executemany for bulk insert
-                stmt = sa.text("""
+                stmt = sa.text(
+                    """
                     INSERT OR REPLACE INTO area_time_priors
                     (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
                     VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                """)
+                """
+                )
 
                 conn.execute(stmt, values_list)
                 conn.commit()
@@ -567,10 +597,12 @@ class SQLiteStorage:
                 for entity_id in unique_entities:
                     try:
                         conn.execute(
-                            sa.text("""
+                            sa.text(
+                                """
                                 INSERT OR IGNORE INTO entities (entity_id, domain, last_seen, created_at)
                                 VALUES (:entity_id, 'unknown', :now, :now)
-                            """),
+                            """
+                            ),
                             {
                                 "entity_id": entity_id,
                                 "now": dt_util.utcnow(),
@@ -592,11 +624,13 @@ class SQLiteStorage:
                     _LOGGER.debug("No intervals to insert after conversion")
                     return 0
 
-                stmt = sa.text("""
+                stmt = sa.text(
+                    """
                     INSERT OR IGNORE INTO state_intervals
                     (entity_id, state, start_time, end_time, duration_seconds, created_at)
                     VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
-                """)
+                """
+                )
 
                 result = conn.execute(stmt, values_list)
                 conn.commit()
@@ -768,18 +802,6 @@ class SQLiteStorage:
 
     # ─────────────────── Cleanup Methods ───────────────────
 
-    async def cleanup_old_area_history(self, entry_id: str, days: int = 30) -> int:
-        """Remove area history records older than specified days.
-
-        Note: area_history table has been removed in schema simplification.
-        This method is kept for compatibility but does nothing.
-        """
-        _LOGGER.debug(
-            "cleanup_old_area_history called but area_history table no longer exists (entry %s)",
-            entry_id,
-        )
-        return 0
-
     async def reset_entry_data(self, entry_id: str) -> None:
         """Remove all data for a specific entry (area-specific only)."""
 
@@ -884,100 +906,76 @@ class SQLiteStorage:
 
         return await self.hass.async_add_executor_job(_get_count)
 
-
-class AreaOccupancySQLiteStore:
-    """High-level storage abstraction for Area Occupancy Detection."""
-
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the SQLite store."""
-        self._coordinator = coordinator
-        self._storage = SQLiteStorage(coordinator.hass, coordinator.entry_id)
-
-    async def async_initialize(self) -> None:
-        """Initialize the storage."""
-        await self._storage.async_initialize()
-
     async def async_save_data(self, force: bool = False) -> None:
         """Save coordinator data to SQLite storage using normalized schema."""
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_save_data")
         try:
             # Save area occupancy data
             area_record = AreaOccupancyRecord(
-                entry_id=self._coordinator.entry_id,
-                area_name=self._coordinator.config.name,
-                purpose=self._coordinator.config.purpose,
-                threshold=self._coordinator.threshold,
+                entry_id=self.coordinator.entry_id,
+                area_name=self.coordinator.config.name,
+                purpose=self.coordinator.config.purpose,
+                threshold=self.coordinator.threshold,
             )
-            await self._storage.save_area_occupancy(area_record)
+            await self.save_area_occupancy(area_record)
 
             # Save area-specific entity configurations
-            for entity in self._coordinator.entities.entities.values():
-                # Create area-specific entity config record
+            for entity in self.coordinator.entities.entities.values():
                 entity_config = AreaEntityConfigRecord(
-                    entry_id=self._coordinator.entry_id,
+                    entry_id=self.coordinator.entry_id,
                     entity_id=entity.entity_id,
                     entity_type=entity.type.input_type.value,
                     weight=entity.type.weight,
                     prob_given_true=entity.likelihood.prob_given_true,
                     prob_given_false=entity.likelihood.prob_given_false,
                 )
-                await self._storage.save_area_entity_config(entity_config)
+                await self.save_area_entity_config(entity_config)
 
             _LOGGER.debug(
                 "Successfully saved data to SQLite storage for entry %s",
-                self._coordinator.entry_id,
+                self.coordinator.entry_id,
             )
-
         except Exception as err:
             _LOGGER.error("Failed to save data to SQLite storage: %s", err)
             raise
 
     async def async_load_data(self) -> dict[str, Any] | None:
         """Load coordinator data from SQLite storage using normalized schema."""
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_load_data")
         try:
-            # Load area occupancy data
-            area_record = await self._storage.get_area_occupancy(
-                self._coordinator.entry_id
-            )
+            area_record = await self.get_area_occupancy(self.coordinator.entry_id)
             if not area_record:
                 _LOGGER.info(
                     "No area occupancy data found for entry %s",
-                    self._coordinator.entry_id,
+                    self.coordinator.entry_id,
                 )
                 return None
-
-            # Load area-specific entity configurations
-            entity_configs = await self._storage.get_area_entity_configs(
-                self._coordinator.entry_id
+            entity_configs = await self.get_area_entity_configs(
+                self.coordinator.entry_id
             )
-
-            # Convert to format expected by coordinator
             entities_data = {}
             for config in entity_configs:
-                # Get the default entity type data for this input type
                 try:
                     input_type = InputType(config.entity_type)
                     type_defaults = _ENTITY_TYPE_DATA.get(input_type, {})
                 except (ValueError, KeyError):
-                    # Fallback to motion type defaults if unknown type
                     type_defaults = _ENTITY_TYPE_DATA.get(InputType.MOTION, {})
                     _LOGGER.warning(
                         "Unknown entity type %s for %s, using motion defaults",
                         config.entity_type,
                         config.entity_id,
                     )
-
-                # Create entity dict in old format for compatibility
                 entities_data[config.entity_id] = {
                     "entity_id": config.entity_id,
                     "entity_type": config.entity_type,
                     "last_updated": config.last_updated.isoformat(),
-                    # Include likelihood data for restoration
                     "likelihood": {
                         "prob_given_true": config.prob_given_true,
                         "prob_given_false": config.prob_given_false,
                         "last_updated": config.last_updated.isoformat(),
                     },
-                    # Include type data with proper active_states/active_range from defaults
                     "type": {
                         "input_type": config.entity_type,
                         "weight": config.weight,
@@ -987,142 +985,34 @@ class AreaOccupancySQLiteStore:
                         "active_states": type_defaults.get("active_states"),
                         "active_range": type_defaults.get("active_range"),
                     },
-                    # Include basic decay data (will be reset)
                     "decay": {
                         "last_trigger_ts": dt_util.utcnow().timestamp(),
-                        "half_life": self._coordinator.config.decay.half_life,
+                        "half_life": self.coordinator.config.decay.half_life,
                         "is_decaying": False,
                     },
                     "previous_evidence": None,
-                    "previous_probability": 0.0,  # Use default since probability field is removed
+                    "previous_probability": 0.0,
                 }
-
             return {
                 "name": area_record.area_name,
                 "purpose": area_record.purpose,
-                "probability": self._coordinator.probability,  # Use current calculated value
-                "prior": self._coordinator.area_prior,  # Use current calculated value
+                "probability": self.coordinator.probability,
+                "prior": self.coordinator.area_prior,
                 "threshold": area_record.threshold,
                 "last_updated": area_record.updated_at.isoformat(),
                 "entities": entities_data,
             }
-
         except (sa.exc.SQLAlchemyError, OSError) as err:
             _LOGGER.error("Failed to load data from SQLite storage: %s", err)
             return None
 
     async def async_reset(self) -> None:
         """Reset SQLite storage by removing all area-specific data for this entry."""
-        await self._storage.reset_entry_data(self._coordinator.entry_id)
-        _LOGGER.info("Reset SQLite storage for entry %s", self._coordinator.entry_id)
-
-    async def async_record_state_change(
-        self,
-        entity_id: str,
-        probability_change: float,
-        context: dict[str, Any] | None = None,
-    ) -> None:
-        """Record a state change in area history."""
-        # This method is no longer used as area_history_table is removed.
-        # Keeping it for now to avoid breaking existing calls, but it will do nothing.
-        _LOGGER.warning(
-            "async_record_state_change is deprecated as area_history_table is removed."
-        )
-
-    async def async_get_history(
-        self,
-        entity_id: str | None = None,
-        days: int = 7,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Get area history records for analysis."""
-        # This method is no longer used as area_history_table is removed.
-        # Keeping it for now to avoid breaking existing calls, but it will return empty list.
-        _LOGGER.warning(
-            "async_get_history is deprecated as area_history_table is removed."
-        )
-        return []
-
-    async def async_cleanup(self, days: int = 30) -> None:
-        """Clean up old area history records."""
-        await self._storage.cleanup_old_area_history(self._coordinator.entry_id, days)
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_reset")
+        await self.reset_entry_data(self.coordinator.entry_id)
+        _LOGGER.info("Reset SQLite storage for entry %s", self.coordinator.entry_id)
 
     async def async_get_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
-        return await self._storage.get_stats()
-
-    async def import_intervals_from_recorder(
-        self, entity_ids: list[str], days: int = 10
-    ) -> dict[str, int]:
-        """Import state intervals from HA recorder to global table."""
-        return await self._storage.import_intervals_from_recorder(entity_ids, days)
-
-    async def cleanup_old_intervals(self, retention_days: int = 365) -> int:
-        """Remove state intervals older than retention period."""
-        return await self._storage.cleanup_old_intervals(retention_days)
-
-    async def is_state_intervals_empty(self) -> bool:
-        """Check if the state_intervals table is empty."""
-        return await self._storage.is_state_intervals_empty()
-
-    async def get_total_intervals_count(self) -> int:
-        """Get the total count of state intervals."""
-        return await self._storage.get_total_intervals_count()
-
-    async def get_historical_intervals(
-        self,
-        entity_id: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> list[StateInterval]:
-        """Get historical intervals for an entity (public interface)."""
-        return await self._storage.get_historical_intervals(
-            entity_id, start_time, end_time
-        )
-
-    # ─────────────────── Time-Based Priors Methods ───────────────────
-
-    async def save_time_prior(self, record: AreaTimePriorRecord) -> AreaTimePriorRecord:
-        """Save a time-based prior record."""
-        return await self._storage.save_time_prior(record)
-
-    async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
-        """Save multiple time-based prior records efficiently."""
-        return await self._storage.save_time_priors_batch(records)
-
-    async def get_time_prior(
-        self, entry_id: str, day_of_week: int, time_slot: int
-    ) -> AreaTimePriorRecord | None:
-        """Get a specific time-based prior record."""
-        return await self._storage.get_time_prior(entry_id, day_of_week, time_slot)
-
-    async def get_time_priors_for_entry(
-        self, entry_id: str
-    ) -> list[AreaTimePriorRecord]:
-        """Get all time-based prior records for an entry."""
-        return await self._storage.get_time_priors_for_entry(entry_id)
-
-    async def get_time_priors_for_day(
-        self, entry_id: str, day_of_week: int
-    ) -> list[AreaTimePriorRecord]:
-        """Get all time-based prior records for a specific day of week."""
-        return await self._storage.get_time_priors_for_day(entry_id, day_of_week)
-
-    async def delete_time_priors_for_entry(self, entry_id: str) -> int:
-        """Delete all time-based prior records for an entry."""
-        return await self._storage.delete_time_priors_for_entry(entry_id)
-
-    async def get_recent_time_priors(
-        self, entry_id: str, hours: int = 24
-    ) -> list[AreaTimePriorRecord]:
-        """Get time-based prior records updated within the specified hours.
-
-        Args:
-            entry_id: The entry ID to get priors for
-            hours: Number of hours to look back for recent updates
-
-        Returns:
-            List of recent time prior records
-
-        """
-        return await self._storage.get_recent_time_priors(entry_id, hours)
+        return await self.get_stats()

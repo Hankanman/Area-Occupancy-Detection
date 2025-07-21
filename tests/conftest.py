@@ -81,7 +81,7 @@ from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
-from custom_components.area_occupancy.sqlite_storage import AreaOccupancySQLiteStore
+from custom_components.area_occupancy.sqlite_storage import AreaOccupancyStorage
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -413,7 +413,7 @@ def mock_coordinator(
     coordinator.likelihoods = Mock()
     coordinator.likelihoods.calculate = AsyncMock(return_value=Mock(prior=0.35))
 
-    # SQLite Store - use the new SQLite storage system
+    # SQLite Store - use the new AreaOccupancyStorage system
     coordinator.sqlite_store = Mock()
     coordinator.sqlite_store.async_save_data = AsyncMock()
     coordinator.sqlite_store.async_load_data = AsyncMock(return_value=None)
@@ -1169,7 +1169,7 @@ def mock_recorder_globally():
     """Automatically mock recorder for all tests."""
     with patch("homeassistant.helpers.recorder.get_instance") as mock_get_instance_ha:
         mock_instance = Mock()
-        mock_instance.async_add_executor_job = AsyncMock(return_value=[])
+        mock_instance.async_add_executor_job = AsyncMock(return_value={})
         mock_get_instance_ha.return_value = mock_instance
         yield mock_instance
 
@@ -1257,7 +1257,7 @@ def mock_entity_for_likelihood_tests() -> Mock:
 def mock_area_occupancy_store_globally():
     """Automatically mock AreaOccupancySQLiteStore for all tests."""
     with patch(
-        "custom_components.area_occupancy.sqlite_storage.AreaOccupancySQLiteStore"
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage"
     ) as mock_store_class:
         mock_store = Mock()
         mock_store.async_save_data = AsyncMock()
@@ -1514,7 +1514,7 @@ def mock_area_occupancy_storage_data():
 @pytest.fixture
 def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
     """Mock AreaOccupancySQLiteStore with async methods returning the provided storage data."""
-    store = Mock(spec=AreaOccupancySQLiteStore)
+    store = Mock(spec=AreaOccupancyStorage)
     store.async_save_data = AsyncMock()
     store.async_load_data = AsyncMock(return_value=mock_area_occupancy_storage_data)
     store.async_reset = AsyncMock()
