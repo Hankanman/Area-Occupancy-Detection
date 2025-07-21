@@ -1246,4 +1246,39 @@ class TestCoordinatorErrorRecoveryAndResilience:
         mock_coordinator.track_entity_state_changes.assert_called_with(entity_ids)
 
 
+class TestCoordinatorAsyncHelpers:
+    """Tests for async helper methods not exercised elsewhere."""
+
+    async def test_calculate_time_priors_async_triggers_calculation(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """_calculate_time_priors_async should call prior calculation when enabled."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        coordinator.config.history.enabled = True
+        coordinator.config.history.time_based_priors_enabled = True
+        coordinator.config.history.time_based_priors_frequency = 1
+
+        with patch.object(coordinator.prior, "get_time_prior", return_value=0), patch.object(
+            coordinator.prior, "calculate_time_based_priors", new=AsyncMock()
+        ) as mock_calc:
+            await coordinator._calculate_time_priors_async(initial_setup=False)
+            mock_calc.assert_called_once()
+
+    async def test_update_likelihoods_async_calls_entity_update(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """_update_likelihoods_async should update likelihoods when enabled."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        coordinator.config.history.enabled = True
+        coordinator.config.history.likelihood_updates_enabled = True
+
+        with patch.object(
+            coordinator.entities, "update_all_entity_likelihoods", new=AsyncMock()
+        ) as mock_update:
+            await coordinator._update_likelihoods_async(history_period=30)
+            mock_update.assert_called_once_with(history_period=30)
+
+
 # ... existing code ...
