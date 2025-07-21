@@ -3,6 +3,8 @@
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.util import dt as dt_util
 
@@ -504,3 +506,58 @@ class TestLikelihoodEdgeCases:
         # Should handle extreme values gracefully
         assert likelihood.prob_given_true <= 0.999
         assert likelihood.prob_given_false >= 0.001
+
+    async def test_calculate_basic(self, mock_coordinator: Mock, freeze_time) -> None:
+        """Test calculate() computes ratios from intervals and prior data."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=1.0,
+        )
+
+        base = freeze_time
+        # Prior intervals representing occupancy
+        prior_intervals = [
+            {"start": base - timedelta(minutes=15), "end": base - timedelta(minutes=7)}
+        ]
+        mock_coordinator.prior.state_intervals = prior_intervals
+
+        intervals = [
+            {"state": "on", "start": base - timedelta(minutes=10), "end": base - timedelta(minutes=5)},
+            {"state": "on", "start": base - timedelta(minutes=4), "end": base - timedelta(minutes=2)},
+        ]
+        with patch(
+            "custom_components.area_occupancy.data.likelihood.get_intervals_hybrid",
+            return_value=intervals,
+        ):
+            active_ratio, inactive_ratio = await likelihood.calculate(history_period=1)
+
+        assert active_ratio == pytest.approx(0.625, rel=1e-3)
+        assert inactive_ratio == pytest.approx(0.001396, rel=1e-3)
+
+    def test_interval_overlap_helper(self, mock_coordinator: Mock, freeze_time) -> None:
+        """Test the optimized interval overlap helper."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=1.0,
+        )
+
+        base = freeze_time
+        prior = [
+            {"start": base - timedelta(minutes=10), "end": base - timedelta(minutes=5)},
+            {"start": base - timedelta(minutes=4), "end": base - timedelta(minutes=2)},
+        ]
+        sorted_prior = sorted(prior, key=lambda x: x["start"])
+
+        overlapping = {"start": base - timedelta(minutes=3), "end": base - timedelta(minutes=1)}
+        non_overlapping = {"start": base - timedelta(minutes=20), "end": base - timedelta(minutes=18)}
+
+        assert likelihood._interval_overlaps_prior_optimized(overlapping, sorted_prior)
+        assert not likelihood._interval_overlaps_prior_optimized(non_overlapping, sorted_prior)
