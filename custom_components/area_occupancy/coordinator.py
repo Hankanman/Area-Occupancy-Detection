@@ -37,7 +37,7 @@ from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
-from .sqlite_storage import AreaOccupancySQLiteStore
+from .sqlite_storage import AreaOccupancyStorage
 
 # from .storage import AreaOccupancyStore  # Replaced with SQLite storage
 from .utils import conditional_sorted_probability
@@ -69,7 +69,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
         self.prior = Prior(self)
-        self.sqlite_store = AreaOccupancySQLiteStore(self)
+        self.sqlite_store = AreaOccupancyStorage(
+            hass=self.hass, entry_id=self.entry_id, coordinator=self
+        )
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
