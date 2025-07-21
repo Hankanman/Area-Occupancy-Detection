@@ -1028,28 +1028,32 @@ class TestGetIntervalsHybrid:
         )
         mock_coordinator.hass = Mock()
 
-        with patch(
-            "custom_components.area_occupancy.utils._get_intervals_from_recorder"
-        ) as mock_get_recorder, patch(
-            "custom_components.area_occupancy.utils._merge_intervals"
-        ) as mock_merge:
-                mock_get_recorder.return_value = mock_recorder_intervals
-                mock_merge.return_value = mock_db_intervals + mock_recorder_intervals
+        with (
+            patch(
+                "custom_components.area_occupancy.utils._get_intervals_from_recorder"
+            ) as mock_get_recorder,
+            patch(
+                "custom_components.area_occupancy.utils._merge_intervals"
+            ) as mock_merge,
+        ):
+            mock_get_recorder.return_value = mock_recorder_intervals
+            mock_merge.return_value = mock_db_intervals + mock_recorder_intervals
 
-                # Mock the coverage calculation to return 0.5 (50% coverage) to trigger recorder fallback
-                with patch(
+            # Mock the coverage calculation to return 0.5 (50% coverage) to trigger recorder fallback
+            with (
+                patch(
                     "custom_components.area_occupancy.utils._calculate_time_coverage",
                     return_value=0.5,
-                ), patch(
+                ),
+                patch(
                     "custom_components.area_occupancy.utils.filter_intervals"
-                ) as mock_filter:
-                        mock_filter.return_value = (
-                            mock_db_intervals + mock_recorder_intervals
-                        )
-                        result = await get_intervals_hybrid(
-                            mock_coordinator, "binary_sensor.test", start_time, end_time
-                        )
-                        assert len(result) == 2
+                ) as mock_filter,
+            ):
+                mock_filter.return_value = mock_db_intervals + mock_recorder_intervals
+                result = await get_intervals_hybrid(
+                    mock_coordinator, "binary_sensor.test", start_time, end_time
+                )
+                assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_no_sqlite_store(self, mock_coordinator: Mock) -> None:
