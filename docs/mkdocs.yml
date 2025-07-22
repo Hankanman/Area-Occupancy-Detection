@@ -85,6 +85,7 @@ nav:
     - Installation: getting-started/installation.md
     - Configuration: getting-started/configuration.md
     - Basic Usage: getting-started/basic-usage.md
+    - Lovelace Card: getting-started/lovelace-card.md
   - Features:
     - Bayesian Calculation: features/calculation.md
     - Prior Learning: features/prior-learning.md
