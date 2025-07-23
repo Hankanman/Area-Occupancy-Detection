@@ -24,7 +24,6 @@ from .const import (
 )
 
 if TYPE_CHECKING:
-    from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,6 +33,8 @@ _LOGGER = logging.getLogger(__name__)
 MIN_INTERVAL_SECONDS = 10
 # Exclude intervals longer than 13 hours (stuck sensors)
 MAX_INTERVAL_SECONDS = 13 * 3600
+# States to exclude from intervals
+INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
 
 
 class Interval(TypedDict):
@@ -99,6 +100,11 @@ class LikelihoodInterval(Interval):
 
     prob_given_true: float
     prob_given_false: float
+
+
+def is_valid_state(state: Any) -> bool:
+    """Check if a state is valid."""
+    return state not in INVALID_STATES
 
 
 async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
@@ -243,69 +249,10 @@ def get_all_time_slots() -> list[tuple[int, int]]:
 
 
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
-async def get_intervals_hybrid(
-    coordinator: AreaOccupancyCoordinator,
-    entity_id: str,
-    start_time: datetime,
-    end_time: datetime,
-) -> list[StateInterval]:
-    """Get state intervals from our DB first, then fall back to recorder.
-
-    This is the primary function for getting historical state data.
-    It efficiently combines our stored intervals with fresh recorder data.
-
-    Args:
-        coordinator: Area Occupancy Coordinator instance
-        entity_id: Entity ID to fetch intervals for
-        start_time: Start time window
-        end_time: End time window
-
-    Returns:
-        List of StateInterval objects covering the time window
-
-    """
-    intervals = []
-    hass = coordinator.hass
-    sqlite_store = coordinator.sqlite_store
-
-    # Try to get intervals from our database first
-    if sqlite_store:
-        try:
-            db_intervals = await sqlite_store.get_historical_intervals(
-                entity_id, start_time, end_time
-            )
-            if db_intervals:
-                intervals.extend(db_intervals)
-                _LOGGER.debug(
-                    "Retrieved %d intervals from database for %s",
-                    len(db_intervals),
-                    entity_id,
-                )
-        except (ValueError, TypeError, OSError) as err:
-            _LOGGER.warning("Failed to get intervals from database: %s", err)
-
-    # If we have gaps or no data, fill from recorder
-    covered_time = _calculate_time_coverage(intervals, start_time, end_time)
-    if covered_time < 0.9:  # If less than 90% coverage, supplement with recorder
-        _LOGGER.debug(
-            "Database coverage %.1f%%, supplementing with recorder data for %s",
-            covered_time * 100,
-            entity_id,
-        )
-        recorder_intervals = await _get_intervals_from_recorder(
-            hass, entity_id, start_time, end_time
-        )
-        if recorder_intervals:
-            # Merge and deduplicate intervals
-            intervals = _merge_intervals(intervals + recorder_intervals)
-
-    return filter_intervals(intervals)
-
-
-async def _get_intervals_from_recorder(
+async def get_intervals_from_recorder(
     hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
 ) -> list[StateInterval]:
-    """Get intervals from HA recorder (internal helper)."""
+    """Get intervals from HA recorder."""
     _LOGGER.debug(
         "Getting intervals from recorder for %s from %s to %s",
         entity_id,
@@ -325,10 +272,7 @@ async def _get_intervals_from_recorder(
 
     # Filter to only State objects and exclude unavailable/unknown states
     state_objects: list[State] = [
-        s
-        for s in states
-        if isinstance(s, State)
-        and s.state not in ["unknown", "unavailable", None, "", "NaN"]
+        s for s in states if isinstance(s, State) and is_valid_state(s.state)
     ]
 
     _LOGGER.debug(
@@ -339,81 +283,7 @@ async def _get_intervals_from_recorder(
 
     _LOGGER.debug("Converted to %d intervals for %s", len(intervals), entity_id)
 
-    return intervals
-
-
-def _calculate_time_coverage(
-    intervals: list[StateInterval], start_time: datetime, end_time: datetime
-) -> float:
-    """Calculate what percentage of the time window is covered by intervals."""
-    if not intervals:
-        return 0.0
-
-    total_window = (end_time - start_time).total_seconds()
-    if total_window <= 0:
-        return 0.0
-
-    # Sort intervals by start time
-    sorted_intervals = sorted(intervals, key=lambda x: x["start"])
-
-    # Calculate covered time (handling overlaps)
-    covered_seconds = 0.0
-    last_end = start_time
-
-    for interval in sorted_intervals:
-        interval_start = max(interval["start"], start_time)
-        interval_end = min(interval["end"], end_time)
-
-        if interval_start < interval_end:
-            # Only count time not already covered
-            if interval_start > last_end:
-                covered_seconds += (interval_end - interval_start).total_seconds()
-                last_end = interval_end
-            elif interval_end > last_end:
-                covered_seconds += (interval_end - last_end).total_seconds()
-                last_end = interval_end
-
-    return covered_seconds / total_window
-
-
-def _merge_intervals(intervals: list[StateInterval]) -> list[StateInterval]:
-    """Merge overlapping intervals and remove duplicates."""
-    if not intervals:
-        return []
-
-    # Group by entity_id and state
-    grouped = {}
-    for interval in intervals:
-        key = (interval["entity_id"], interval["state"])
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(interval)
-
-    merged = []
-    for group_intervals in grouped.values():
-        # Sort by start time
-        sorted_intervals = sorted(group_intervals, key=lambda x: x["start"])
-
-        current = sorted_intervals[0]
-        for next_interval in sorted_intervals[1:]:
-            # If intervals overlap or are adjacent, merge them
-            if next_interval["start"] <= current["end"]:
-                # Extend current interval
-                current = StateInterval(
-                    start=current["start"],
-                    end=max(current["end"], next_interval["end"]),
-                    state=current["state"],
-                    entity_id=current["entity_id"],
-                )
-            else:
-                # No overlap, add current and start new one
-                merged.append(current)
-                current = next_interval
-
-        # Add the last interval
-        merged.append(current)
-
-    return merged
+    return filter_intervals(intervals)
 
 
 async def get_states_from_recorder(
@@ -491,11 +361,7 @@ async def states_to_intervals(
         return intervals
 
     # Filter out any invalid states that might have slipped through
-    valid_states = [
-        state
-        for state in states
-        if state.state not in ["unknown", "unavailable", None, "", "NaN"]
-    ]
+    valid_states = [state for state in states if is_valid_state(state.state)]
 
     if not valid_states:
         _LOGGER.debug("No valid states after filtering unavailable/unknown")
@@ -522,7 +388,7 @@ async def states_to_intervals(
             break
 
         # Only create intervals for valid states
-        if current_state not in ["unknown", "unavailable", None, "", "NaN"]:
+        if is_valid_state(current_state):
             intervals.append(
                 StateInterval(
                     start=current_time,
@@ -535,7 +401,7 @@ async def states_to_intervals(
         current_time = state.last_changed
 
     # Final interval until end (only if state is valid)
-    if current_state not in ["unknown", "unavailable", None, "", "NaN"]:
+    if is_valid_state(current_state):
         intervals.append(
             StateInterval(
                 start=current_time,
@@ -553,57 +419,25 @@ def filter_intervals(
 ) -> list[StateInterval]:
     """Filter intervals to remove anomalous data and invalid states.
 
-    Args:
-        intervals: List of intervals to filter
-
-    Returns:
-        List of filtered intervals
-
+    - For binary sensors ("on" state): filter out intervals that are too short or too long.
+    - For numeric sensors and other valid states: only remove intervals with invalid states, do not filter by duration.
     """
-    # First filter out any invalid states that might have slipped through
+    # Remove intervals with invalid states
     valid_intervals = [
-        interval
-        for interval in intervals
-        if interval["state"] not in ["unknown", "unavailable", None, "", "NaN"]
+        interval for interval in intervals if is_valid_state(interval["state"])
     ]
 
-    # Filter and categorize intervals (focus on 'on' states for motion sensors)
-    on_intervals = [
-        interval for interval in valid_intervals if interval["state"] == "on"
-    ]
-
-    # Apply anomaly filtering to duration
     filtered_intervals = []
-    filtered_short = 0
-    filtered_long = 0
-    max_filtered_duration = None
-
-    for interval in on_intervals:
-        duration_seconds = (interval["end"] - interval["start"]).total_seconds()
-
-        if duration_seconds < MIN_INTERVAL_SECONDS:
-            filtered_short += 1
-        elif duration_seconds > MAX_INTERVAL_SECONDS:
-            filtered_long += 1
-            if (
-                max_filtered_duration is None
-                or duration_seconds > max_filtered_duration
-            ):
-                max_filtered_duration = duration_seconds
+    for interval in valid_intervals:
+        state = interval["state"]
+        # Only apply duration filtering to binary "on" state
+        if state == "on":
+            duration_seconds = (interval["end"] - interval["start"]).total_seconds()
+            if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
+                filtered_intervals.append(interval)
+            # else: skip this interval (too short/long)
         else:
-            filtered_intervals.append(interval)
-
-    # For non-motion sensors, also include other valid states (not just 'on')
-    non_on_intervals = [
-        interval
-        for interval in valid_intervals
-        if interval["state"] != "on" and interval["state"] not in ["off"]
-    ]
-
-    # Apply duration filtering to non-on intervals as well
-    for interval in non_on_intervals:
-        duration_seconds = (interval["end"] - interval["start"]).total_seconds()
-        if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
+            # For all other states (including numerics), keep as long as state is valid
             filtered_intervals.append(interval)
 
     return filtered_intervals
