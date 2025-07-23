@@ -494,9 +494,19 @@ class TestDatabaseSchema:
 
     def test_indexes_exist(self) -> None:
         """Test that expected indexes are defined."""
-        assert len(indexes) > 0
+        expected_index_names = {
+            "idx_state_intervals_entity",
+            "idx_state_intervals_entity_time",
+            "idx_state_intervals_end_time",
+            "idx_area_entity_entry",
+            "idx_area_time_priors_entry",
+            "idx_area_time_priors_day_slot",
+            "idx_area_time_priors_last_updated",
+        }
 
-        # Check that indexes reference valid tables
+        actual_index_names = {index.name for index in indexes}
+        assert expected_index_names.issubset(actual_index_names)
+
         for index in indexes:
             assert index.table in metadata.tables.values()
 
