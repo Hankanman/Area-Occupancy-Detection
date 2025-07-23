@@ -1062,6 +1062,69 @@ class TestPriorTimeBasedCalculations:
         assert prior_value == MIN_PRIOR
         assert data == {}
 
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
+    async def test_calculate_prior_for_entities_multiple_sensors(
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
+    ) -> None:
+        """Test _calculate_prior_for_entities with multiple sensors."""
+        mock_coordinator.config.sensors.motion = [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+        mock_coordinator.entry_id = "test_entry"
+
+        prior = Prior(mock_coordinator)
+
+        base_time = dt_util.utcnow() - timedelta(days=1)
+        intervals1 = [
+            {
+                "state": "on",
+                "start": base_time,
+                "end": base_time + timedelta(hours=8),
+            },
+        ]
+        intervals2 = [
+            {
+                "state": "on",
+                "start": base_time,
+                "end": base_time + timedelta(hours=2),
+            },
+        ]
+
+        from datetime import datetime
+
+        async def side_effect(
+            entity_id: str, start_time: datetime, end_time: datetime
+        ) -> list[dict[str, datetime]]:
+            if entity_id == "binary_sensor.motion1":
+                return intervals1
+            if entity_id == "binary_sensor.motion2":
+                return intervals2
+            return []
+
+        mock_get_historical_intervals.side_effect = side_effect
+        mock_coordinator.sqlite_store.get_historical_intervals.side_effect = side_effect
+
+        start_time = dt_util.utcnow() - timedelta(days=1)
+        end_time = dt_util.utcnow()
+        total_seconds = 24 * 3600
+
+        prior_value, data = await prior._calculate_prior_for_entities(
+            ["binary_sensor.motion1", "binary_sensor.motion2"],
+            start_time,
+            end_time,
+            total_seconds,
+        )
+
+        expected = ((8 / 24) + (2 / 24)) / 2 * 1.05
+        assert abs(prior_value - expected) < 0.001
+        assert set(data.keys()) == {
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        }
+
 
 class TestPriorEdgeCases:
     """Test edge cases and error conditions for Prior class."""
