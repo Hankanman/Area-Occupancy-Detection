@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
+from ..const import HA_RECORDER_DAYS
 from ..utils import StateInterval, get_intervals_hybrid, validate_prob
 
 if TYPE_CHECKING:
@@ -41,8 +42,7 @@ class Likelihood:
         self.default_prob_true = default_prob_true
         self.default_prob_false = default_prob_false
         self.weight = weight  # Store weight for applying to calculations
-        self.days = coordinator.config.history.period
-        self.history_enabled = coordinator.config.history.enabled
+        self.days = HA_RECORDER_DAYS
         self.hass = coordinator.hass
         self.coordinator = coordinator
         self.last_updated: datetime | None = None
@@ -147,9 +147,6 @@ class Likelihood:
             Tuple of (prob_given_true, prob_given_false) weighted values
 
         """
-        if not self.history_enabled:
-            return self.prob_given_true, self.prob_given_false  # type: ignore[return-value]
-
         # Check if we can use cached values
         if not force and self._is_cache_valid():
             _LOGGER.debug(

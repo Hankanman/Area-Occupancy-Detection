@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from ..const import HA_RECORDER_DAYS
 from ..schema import AreaTimePriorRecord
 from ..utils import (
     StateInterval,
@@ -40,7 +41,7 @@ class Prior:  # exported name must stay identical
         """Initialize the Prior class."""
         self.coordinator = coordinator
         self.sensor_ids = coordinator.config.sensors.motion
-        self.days = coordinator.config.history.period
+        self.days = HA_RECORDER_DAYS
         self.hass = coordinator.hass
         self.cache_ttl = timedelta(hours=2)
         self._current_value: float | None = None
