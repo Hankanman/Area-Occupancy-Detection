@@ -9,8 +9,6 @@ import logging
 from typing import Any
 
 # Third Party
-import sqlalchemy as sa
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -38,8 +36,6 @@ from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
 from .sqlite_storage import AreaOccupancyStorage
-
-# from .storage import AreaOccupancyStore  # Replaced with SQLite storage
 from .utils import conditional_sorted_probability
 
 _LOGGER = logging.getLogger(__name__)
@@ -428,7 +424,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Cleanup old data (yearly retention)
                 await self.sqlite_store.cleanup_old_intervals(retention_days=365)
 
-        except (sa.exc.SQLAlchemyError, OSError) as err:
+        except (ValueError, OSError) as err:
             _LOGGER.error("Historical data import failed: %s", err)
 
         # Schedule next run (24 hours)
@@ -452,22 +448,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entity_ids = [eid for eid in set(entity_ids) if eid]
 
             if entity_ids:
-                _LOGGER.info(
-                    "Importing initial data for %d entities from recorder (last 10 days)",
-                    len(entity_ids),
-                )
-
-                import_counts = await self.sqlite_store.import_intervals_from_recorder(
+                await self.sqlite_store.import_intervals_from_recorder(
                     entity_ids, days=10
                 )
-                total_imported = sum(import_counts.values())
 
-                _LOGGER.info("Import results by entity: %s", import_counts)
-                _LOGGER.info(
-                    "Populated state intervals table for instance %s with %d intervals.",
-                    self.entry_id,
-                    total_imported,
-                )
             else:
                 _LOGGER.warning(
                     "No entity IDs found in configuration to populate state intervals table for instance %s.",

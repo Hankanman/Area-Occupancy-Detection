@@ -29,7 +29,7 @@ from .schema import (
     metadata_table,
     state_intervals_table,
 )
-from .utils import StateInterval, _get_intervals_from_recorder
+from .utils import StateInterval, get_intervals_from_recorder
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -652,7 +652,7 @@ class AreaOccupancyStorage:
                 _LOGGER.debug("Processing entity %s for import", entity_id)
 
                 # Get intervals from recorder
-                intervals = await _get_intervals_from_recorder(
+                intervals = await get_intervals_from_recorder(
                     self.hass, entity_id, start_time, end_time
                 )
 
