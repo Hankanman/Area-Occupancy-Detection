@@ -192,19 +192,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.entry_id,
                 )
 
-            # Calculate initial area baseline prior (this is fast and needed immediately)
-            if self.config.history.enabled:
-                await self.prior.update()
+            await self.prior.update()
 
-                # Defer time-based prior calculation to background task to avoid blocking startup
-                self.hass.async_create_task(
-                    self._calculate_time_priors_async(initial_setup=True)
-                )
+            # Defer time-based prior calculation to background task to avoid blocking startup
+            self.hass.async_create_task(
+                self._calculate_time_priors_async(initial_setup=True)
+            )
 
-                # Defer likelihood updates to background task to avoid blocking startup
-                self.hass.async_create_task(
-                    self._update_likelihoods_async(initial_setup=True)
-                )
+            # Defer likelihood updates to background task to avoid blocking startup
+            self.hass.async_create_task(self._update_likelihoods_async())
 
             # Save current state to storage
             await self.sqlite_store.async_save_data(force=True)
@@ -344,47 +340,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle the prior update timer."""
         self._global_prior_timer = None
 
-        history_period = self.config.history.period
+        # Always update learned priors (historical analysis always enabled)
+        await self.prior.update()
+        # Calculate time-based priors every 4th run (default: every 4 hours)
+        if not hasattr(self, "_prior_timer_count"):
+            self._prior_timer_count = 0
+        self._prior_timer_count += 1
+        if self._prior_timer_count % 4 == 0:
+            self.hass.async_create_task(self._calculate_time_priors_async())
 
-        # Update learned priors if history is enabled
-        if self.config.history.enabled:
-            # Update area baseline prior separately (unweighted)
-            await self.prior.update()
+        # Check if we should update likelihoods based on frequency
+        if not hasattr(self, "_likelihood_timer_count"):
+            self._likelihood_timer_count = 0
+        self._likelihood_timer_count += 1
 
-            # Calculate time-based priors (this is more intensive, so do it less frequently)
-            # Use configurable frequency (default: every 4th run = 4 hours)
-            if not hasattr(self, "_prior_timer_count"):
-                self._prior_timer_count = 0
-            self._prior_timer_count += 1
-
-            if (
-                self._prior_timer_count
-                % self.config.history.time_based_priors_frequency
-                == 0
-            ):
-                # Use the async method to avoid blocking
-                self.hass.async_create_task(
-                    self._calculate_time_priors_async(initial_setup=False)
-                )
-
-            # Update individual sensor likelihoods
-            if self.config.history.likelihood_updates_enabled:
-                # Check if we should update likelihoods based on frequency
-                if not hasattr(self, "_likelihood_timer_count"):
-                    self._likelihood_timer_count = 0
-                self._likelihood_timer_count += 1
-
-                if (
-                    self._likelihood_timer_count
-                    % self.config.history.likelihood_updates_frequency
-                    == 0
-                ):
-                    # Use background task to avoid blocking
-                    self.hass.async_create_task(
-                        self._update_likelihoods_async(
-                            history_period, initial_setup=False
-                        )
-                    )
+        if self._likelihood_timer_count % 4 == 0:
+            # Use background task to avoid blocking
+            self.hass.async_create_task(
+                self._update_likelihoods_async(history_period=10)
+            )
 
         # Reschedule the timer
         self._start_prior_timer()
@@ -449,9 +423,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # Recalculate priors with new data
                     await self.prior.update(force=True)
                     # Use background task for likelihood updates
-                    self.hass.async_create_task(
-                        self._update_likelihoods_async(initial_setup=False)
-                    )
+                    self.hass.async_create_task(self._update_likelihoods_async())
 
                 # Cleanup old data (yearly retention)
                 await self.sqlite_store.cleanup_old_intervals(retention_days=365)
@@ -519,12 +491,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             initial_setup: If True, this is the initial setup calculation
 
         """
-        if (
-            not self.config.history.enabled
-            or not self.config.history.time_based_priors_enabled
-        ):
-            return
-
         try:
             # Check if we already have recent time-based priors
             if not initial_setup:
@@ -546,7 +512,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     async def _update_likelihoods_async(
-        self, history_period: int | None = None, initial_setup: bool = False
+        self, history_period: int | None = None
     ) -> None:
         """Update entity likelihoods asynchronously without blocking.
 
@@ -555,12 +521,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             initial_setup: If True, this is the initial setup calculation
 
         """
-        if (
-            not self.config.history.enabled
-            or not self.config.history.likelihood_updates_enabled
-        ):
-            return
-
+        # Always enabled
         try:
             await self.entities.update_all_entity_likelihoods(
                 history_period=history_period

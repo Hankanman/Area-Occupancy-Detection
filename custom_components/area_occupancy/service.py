@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, HA_RECORDER_DAYS
 from .utils import get_current_time_slot, get_time_slot_name
 
 if TYPE_CHECKING:
@@ -34,8 +34,7 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        # Remove history_period handling, always use coordinator.config.history.period
-        history_period = coordinator.config.history.period
+        history_period = HA_RECORDER_DAYS
 
         _LOGGER.info(
             "Updating area baseline prior for entry %s with %d days history",
@@ -133,8 +132,7 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        # Remove history_period handling, always use coordinator.config.history.period
-        history_period = coordinator.config.history.period
+        history_period = HA_RECORDER_DAYS
 
         _LOGGER.info(
             "Updating sensor likelihoods for entry %s with %d days history",
@@ -191,8 +189,7 @@ async def _update_time_based_priors(
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        # Use coordinator's history period
-        history_period = coordinator.config.history.period
+        history_period = HA_RECORDER_DAYS
 
         _LOGGER.info(
             "Starting time-based priors update for entry %s with %d days history",
@@ -681,7 +678,7 @@ async def _debug_import_intervals(
 ) -> dict[str, Any]:
     """Debug service to manually trigger state intervals import."""
     entry_id = call.data["entry_id"]
-    days = call.data.get("days", 10)
+    days = HA_RECORDER_DAYS
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
@@ -841,8 +838,6 @@ async def _debug_database_state(
             },
             "configuration": {
                 "entity_ids": coordinator.config.entity_ids,
-                "history_enabled": coordinator.config.history.enabled,
-                "history_period": coordinator.config.history.period,
             },
         }
 

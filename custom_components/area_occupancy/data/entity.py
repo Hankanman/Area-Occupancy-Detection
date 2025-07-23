@@ -398,11 +398,7 @@ class EntityManager:
             int: Number of entities updated
 
         """
-        # Ensure area baseline prior is calculated first since likelihood calculations depend on it
-        if self.coordinator.config.history.enabled:
-            await self.coordinator.prior.update(
-                force=force, history_period=history_period
-            )
+        await self.coordinator.prior.update(force=force, history_period=history_period)
 
         if not self._entities:
             _LOGGER.debug("No entities to update likelihoods for")

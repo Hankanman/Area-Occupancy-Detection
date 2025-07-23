@@ -23,6 +23,7 @@ DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.7.2"
 CONF_VERSION: Final = 9
 CONF_VERSION_MINOR: Final = 3
+HA_RECORDER_DAYS: Final = 10  # days
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -40,10 +41,8 @@ CONF_WINDOW_SENSORS: Final = "window_sensors"
 CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
 CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
 CONF_THRESHOLD: Final = "threshold"
-CONF_HISTORY_PERIOD: Final = "history_period"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
-CONF_HISTORICAL_ANALYSIS_ENABLED: Final = "historical_analysis_enabled"
 CONF_DEVICE_STATES: Final = "device_states"
 CONF_AREA_ID: Final = "area_id"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
@@ -62,10 +61,8 @@ CONF_WEIGHT_WASP: Final = "weight_wasp"
 # Default values
 DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_PURPOSE: Final = "social"  # Default area purpose
-DEFAULT_HISTORY_PERIOD: Final = 7  # days
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_HALF_LIFE: Final = 120  # seconds (2 minutes)
-DEFAULT_HISTORICAL_ANALYSIS_ENABLED: Final = True
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
