@@ -3,10 +3,14 @@
 Computes *overlap* of each sensor's active intervals with the area's
 ground-truth occupied intervals, giving informative likelihoods that
 differ between H and ¬H.
+
+For numeric sensors, uses statistical analysis to calculate likelihood
+of sensor readings indicating occupancy based on historical patterns.
 """
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -32,10 +36,14 @@ MAX_INTERVAL_SECONDS = (
     13 * 3600
 )  # Exclude intervals longer than 13 hours (stuck sensors)
 
+# Statistical significance thresholds for numeric sensors
+MIN_OCCUPANCY_DELTA_THRESHOLD = 0.1  # Minimum meaningful occupancy delta
+MIN_CONFIDENCE_THRESHOLD = 0.1  # Minimum statistical confidence required
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 class Likelihood:
-    """Learn conditional probabilities for a single binary sensor."""
+    """Learn conditional probabilities for binary and numeric sensors."""
 
     def __init__(
         self,
@@ -81,6 +89,15 @@ class Likelihood:
         self.max_filtered_duration_seconds: float | None = (
             None  # Longest filtered interval duration
         )
+
+        # Numeric sensor statistics
+        self.is_numeric_sensor = not bool(active_states)
+        self.statistics_based_calculation = False
+
+    @property
+    def is_numeric(self) -> bool:
+        """Check if this is a numeric sensor (no active_states defined)."""
+        return self.is_numeric_sensor
 
     def _is_cache_valid(self) -> bool:
         """Check if the cached likelihood values are still valid.
@@ -176,9 +193,15 @@ class Likelihood:
         )
 
         try:
-            active_ratio, inactive_ratio = await self.calculate(
-                history_period=history_period
-            )
+            # Use different calculation methods for numeric vs binary sensors
+            if self.is_numeric:
+                active_ratio, inactive_ratio = await self.calculate_numeric_likelihood(
+                    history_period=history_period
+                )
+            else:
+                active_ratio, inactive_ratio = await self.calculate(
+                    history_period=history_period
+                )
         except Exception:  # pragma: no cover
             _LOGGER.exception(
                 "Likelihood calculation failed, using default %.2f",
@@ -194,6 +217,164 @@ class Likelihood:
 
         # Return the WEIGHTED values for immediate use
         return self.prob_given_true, self.prob_given_false
+
+    async def calculate_numeric_likelihood(
+        self, history_period: int | None = None
+    ) -> tuple[float, float]:
+        """Calculate likelihood for numeric sensors using statistical analysis.
+
+        This method leverages the Statistics class calculations to determine
+        P(sensor_indicates_occupancy|occupied) and P(sensor_indicates_occupancy|unoccupied).
+
+        Args:
+            history_period: Period in days for historical data (overrides coordinator default)
+
+        Returns:
+            Tuple of (prob_given_true, prob_given_false)
+
+        """
+        # Try to get statistics from the entity (if it has them)
+        entity = None
+        with contextlib.suppress(ValueError):
+            entity = self.coordinator.entities.get_entity(self.entity_id)
+
+        if not entity or not entity.statistics or not entity.statistics.statistics:
+            _LOGGER.warning(
+                "No statistics available for numeric sensor %s, using defaults",
+                self.entity_id,
+            )
+            return self.default_prob_true, self.default_prob_false
+
+        stats = entity.statistics.statistics
+
+        # Check if we have sufficient data for meaningful calculations
+        if (
+            stats.occupied_samples < 50
+            or stats.bounds_confidence < MIN_CONFIDENCE_THRESHOLD
+        ):
+            return self.default_prob_true, self.default_prob_false
+
+        # Calculate likelihood based on occupancy delta and statistical distributions
+        occupancy_delta = stats.occupancy_delta
+        if (
+            occupancy_delta is None
+            or abs(occupancy_delta) < MIN_OCCUPANCY_DELTA_THRESHOLD
+        ):
+            return self.default_prob_true, self.default_prob_false
+
+        # Determine sensor type for specialized calculations
+        sensor_type = entity.statistics.sensor_type
+
+        try:
+            prob_given_true, prob_given_false = self._calculate_statistical_likelihood(
+                stats, sensor_type, occupancy_delta
+            )
+
+            self.statistics_based_calculation = True
+
+        except (ValueError, TypeError, ZeroDivisionError, AttributeError) as err:
+            _LOGGER.warning(
+                "Failed to calculate statistical likelihood for %s: %s",
+                self.entity_id,
+                err,
+            )
+            return self.default_prob_true, self.default_prob_false
+        else:
+            return prob_given_true, prob_given_false
+
+    def _calculate_statistical_likelihood(
+        self, stats, sensor_type: str, occupancy_delta: float
+    ) -> tuple[float, float]:
+        """Calculate likelihood using statistical distributions.
+
+        Args:
+            stats: NumericStatistics object with occupancy analysis
+            sensor_type: Type of sensor (illuminance, humidity, temperature, etc.)
+            occupancy_delta: Difference between occupied and unoccupied averages
+
+        Returns:
+            Tuple of (prob_given_true, prob_given_false)
+
+        """
+        std_dev = max(stats.std_dev, 0.1)  # Prevent division by zero
+
+        # Calculate normalized effect sizes
+        effect_size = abs(occupancy_delta) / std_dev
+
+        # Base probabilities on statistical significance
+        if effect_size < 0.5:  # Small effect
+            base_prob_active_occupied = 0.15
+            base_prob_active_unoccupied = 0.10
+        elif effect_size < 1.0:  # Medium effect
+            base_prob_active_occupied = 0.30
+            base_prob_active_unoccupied = 0.15
+        elif effect_size < 2.0:  # Large effect
+            base_prob_active_occupied = 0.50
+            base_prob_active_unoccupied = 0.20
+        else:  # Very large effect
+            base_prob_active_occupied = 0.70
+            base_prob_active_unoccupied = 0.25
+
+        # Apply sensor-specific adjustments
+        if sensor_type == "illuminance":
+            # For illuminance, occupancy typically means lower values (lights dimmed/off)
+            if occupancy_delta < 0:  # Occupied is dimmer than unoccupied
+                # Higher probability of "darkness" indicating occupancy
+                prob_active_occupied = min(0.8, base_prob_active_occupied + 0.2)
+                prob_active_unoccupied = max(0.05, base_prob_active_unoccupied - 0.05)
+            else:  # Occupied is brighter than unoccupied (lights on)
+                # Higher probability of "brightness" indicating occupancy
+                prob_active_occupied = min(0.8, base_prob_active_occupied + 0.1)
+                prob_active_unoccupied = max(0.05, base_prob_active_unoccupied)
+
+        elif sensor_type == "humidity":
+            # For humidity, occupancy typically means higher values (human presence, showers)
+            if occupancy_delta > 0:  # Occupied is more humid
+                # Higher probability of elevated humidity indicating occupancy
+                prob_active_occupied = min(0.85, base_prob_active_occupied + 0.3)
+                prob_active_unoccupied = max(0.03, base_prob_active_unoccupied - 0.02)
+            else:  # Occupied is less humid (unusual)
+                prob_active_occupied = base_prob_active_occupied
+                prob_active_unoccupied = base_prob_active_unoccupied
+
+        elif sensor_type == "temperature":
+            # For temperature, occupancy typically means slightly higher values (body heat)
+            if occupancy_delta > 0:  # Occupied is warmer
+                # Higher probability of warming indicating occupancy
+                prob_active_occupied = min(0.7, base_prob_active_occupied + 0.2)
+                prob_active_unoccupied = max(0.05, base_prob_active_unoccupied - 0.03)
+            else:  # Occupied is cooler (unusual but possible with AC)
+                prob_active_occupied = base_prob_active_occupied
+                prob_active_unoccupied = base_prob_active_unoccupied
+
+        else:  # Generic sensor
+            # Use base probabilities with confidence adjustment
+            confidence_multiplier = min(1.5, stats.bounds_confidence + 0.5)
+            prob_active_occupied = min(
+                0.8, base_prob_active_occupied * confidence_multiplier
+            )
+            prob_active_unoccupied = max(
+                0.02, base_prob_active_unoccupied / confidence_multiplier
+            )
+
+        # Apply sample size confidence adjustment
+        sample_confidence = min(
+            1.0, stats.occupied_samples / 200.0
+        )  # Full confidence at 200+ samples
+        prob_active_occupied = (
+            self.default_prob_true * (1 - sample_confidence)
+            + prob_active_occupied * sample_confidence
+        )
+        prob_active_unoccupied = (
+            self.default_prob_false * (1 - sample_confidence)
+            + prob_active_unoccupied * sample_confidence
+        )
+
+        # Final bounds checking
+        prob_active_occupied = max(0.01, min(0.99, prob_active_occupied))
+        prob_active_unoccupied = max(0.001, min(0.98, prob_active_unoccupied))
+
+        return prob_active_occupied, prob_active_unoccupied
 
     async def calculate(self, history_period: int | None = None) -> tuple[float, float]:
         """Calculate the likelihood with anomaly filtering, considering only intervals within prior_intervals.
@@ -363,6 +544,11 @@ class Likelihood:
             "filtered_long_intervals": self.filtered_long_intervals,
             "valid_intervals": self.valid_intervals,
             "max_filtered_duration_seconds": self.max_filtered_duration_seconds,
+            # Store numeric sensor metadata
+            "is_numeric_sensor": self.is_numeric_sensor,
+            "statistics_based_calculation": getattr(
+                self, "statistics_based_calculation", False
+            ),
         }
 
     # ------------------------------------------------------------------ #
@@ -401,5 +587,12 @@ class Likelihood:
         likelihood.valid_intervals = data.get("valid_intervals")
         likelihood.max_filtered_duration_seconds = data.get(
             "max_filtered_duration_seconds"
+        )
+        # Load numeric sensor metadata
+        likelihood.is_numeric_sensor = data.get(
+            "is_numeric_sensor", not bool(active_states)
+        )
+        likelihood.statistics_based_calculation = data.get(
+            "statistics_based_calculation", False
         )
         return likelihood

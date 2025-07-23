@@ -5,12 +5,14 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.helpers.entity import get_unit_of_measurement
 from homeassistant.util import dt as dt_util
 
-from ..utils import bayesian_probability
+from ..utils import bayesian_probability, get_device_class_with_fallback
 from .decay import Decay
 from .entity_type import EntityType, InputType
 from .likelihood import Likelihood
+from .statistics import Statistics
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -32,11 +34,27 @@ class Entity:
     previous_evidence: bool | None
     previous_probability: float
 
+    # --- Optional Components ---
+    statistics: Statistics | None = None  # Only for numeric sensors with active_range
+
     @property
     def name(self) -> str | None:
         """Get the entity name from Home Assistant state."""
         ha_state = self.coordinator.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
+
+    @property
+    def entity_class(self) -> str:
+        """Get the entity class from Home Assistant state with intelligent fallback."""
+
+        return get_device_class_with_fallback(self.coordinator.hass, self.entity_id)
+
+    @property
+    def unit_of_measurement(self) -> str:
+        """Get the unit of measurement from Home Assistant state."""
+        return (
+            get_unit_of_measurement(self.coordinator.hass, self.entity_id) or "Unknown"
+        )
 
     @property
     def probability(self) -> float:
@@ -90,11 +108,21 @@ class Entity:
         if self.active_states:
             return str(self.state) in self.active_states
         if self.active_range:
-            min_val, max_val = self.active_range
             try:
-                return min_val <= float(self.state) <= max_val
+                current_value = float(self.state)
+
+                # Use intelligent activity detection for entities with statistics
+                if self.statistics and self.statistics.statistics:
+                    return self.statistics.detect_current_activity_sync(current_value)
+
+                # Fall back to simple range check for entities without statistics
+                min_val, max_val = self.active_range
+                result = min_val <= current_value <= max_val
+
             except (ValueError, TypeError):
                 return False
+            else:
+                return result
 
         return None
 
@@ -111,6 +139,9 @@ class Entity:
     @property
     def active_range(self) -> tuple[float, float] | None:
         """Get the active range for the entity."""
+        # Use calculated statistics bounds if available, otherwise fall back to type defaults
+        if self.statistics:
+            return self.statistics.active_range
         return self.type.active_range
 
     @property
@@ -197,7 +228,7 @@ class Entity:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entity to dictionary for storage."""
-        return {
+        data = {
             "entity_id": self.entity_id,
             "type": self.type.to_dict(),
             "likelihood": self.likelihood.to_dict(),
@@ -206,6 +237,12 @@ class Entity:
             "previous_evidence": self.previous_evidence,
             "previous_probability": self.previous_probability,
         }
+
+        # Include statistics if available
+        if self.statistics:
+            data["statistics"] = self.statistics.to_dict()
+
+        return data
 
     @classmethod
     def from_dict(
@@ -226,6 +263,13 @@ class Entity:
             weight=entity_type.weight,
         )
 
+        # Create statistics if available
+        statistics = None
+        if "statistics" in data:
+            statistics = Statistics.from_dict(
+                data["statistics"], coordinator, data["entity_id"]
+            )
+
         # Create the entity
         return cls(
             entity_id=data["entity_id"],
@@ -236,6 +280,7 @@ class Entity:
             last_updated=datetime.fromisoformat(data["last_updated"]),
             previous_evidence=data["previous_evidence"],
             previous_probability=data["previous_probability"],
+            statistics=statistics,
         )
 
 
@@ -389,6 +434,16 @@ class EntityManager:
             weight=entity_type.weight,
         )
 
+        # Create statistics for numeric sensors (those with active_range)
+        statistics = None
+        if entity_type.active_range is not None:
+            statistics = Statistics(
+                coordinator=self.coordinator,
+                entity_id=entity_id,
+                default_lower=entity_type.active_range[0],
+                default_upper=entity_type.active_range[1],
+            )
+
         return Entity(
             entity_id=entity_id,
             type=entity_type,
@@ -398,6 +453,7 @@ class EntityManager:
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
             previous_probability=0.0,
+            statistics=statistics,
         )
 
     def build_sensor_type_mappings(self) -> dict[InputType, list[str]]:
@@ -464,6 +520,59 @@ class EntityManager:
         )
         return updated_count
 
+    async def update_all_entity_statistics(
+        self, history_period: int | None = None, force: bool = False
+    ) -> int:
+        """Update all entity statistics for numeric sensors.
+
+        Args:
+            history_period: Period in days for historical data
+            force: If True, bypass cache validation and force recalculation
+
+        Returns:
+            int: Number of entities updated
+
+        """
+        # Ensure area baseline prior is calculated first since statistics calculations depend on it
+        if self.coordinator.config.history.enabled:
+            await self.coordinator.prior.update(
+                force=force, history_period=history_period
+            )
+
+        updated_count = 0
+        for entity in self._entities.values():
+            # Only update statistics for entities that have them (numeric sensors)
+            if entity.statistics:
+                try:
+                    await entity.statistics.update(
+                        force=force, history_period=history_period
+                    )
+                    updated_count += 1
+                    _LOGGER.debug(
+                        "Updated statistics for entity %s: bounds=(%.2f, %.2f), confidence=%.2f",
+                        entity.entity_id,
+                        entity.statistics.active_range[0],
+                        entity.statistics.active_range[1],
+                        (
+                            entity.statistics.statistics.bounds_confidence
+                            if entity.statistics.statistics
+                            else 0.0
+                        ),
+                    )
+                except (ValueError, TypeError) as err:
+                    _LOGGER.warning(
+                        "Failed to update statistics for entity %s: %s",
+                        entity.entity_id,
+                        err,
+                    )
+
+        _LOGGER.info(
+            "Updated statistics for %d out of %d numeric sensor entities",
+            updated_count,
+            len([e for e in self._entities.values() if e.statistics]),
+        )
+        return updated_count
+
     async def _update_entities_from_config(self) -> None:
         """Update existing entities with current configuration."""
         config_entities = await self._get_config_entity_mapping()
@@ -500,6 +609,28 @@ class EntityManager:
                 restored_entity.type.weight = current_type.weight
                 restored_entity.type.active_states = current_type.active_states
                 restored_entity.type.active_range = current_type.active_range
+
+                # Create or update statistics for numeric sensors
+                if current_type.active_range is not None:
+                    if restored_entity.statistics is None:
+                        # Create new statistics if entity now has active_range
+                        restored_entity.statistics = Statistics(
+                            coordinator=self.coordinator,
+                            entity_id=entity_id,
+                            default_lower=current_type.active_range[0],
+                            default_upper=current_type.active_range[1],
+                        )
+                    else:
+                        # Update existing statistics with new defaults
+                        restored_entity.statistics.default_lower = (
+                            current_type.active_range[0]
+                        )
+                        restored_entity.statistics.default_upper = (
+                            current_type.active_range[1]
+                        )
+                else:
+                    # Remove statistics if entity no longer has active_range
+                    restored_entity.statistics = None
 
                 updated_entities[entity_id] = restored_entity
                 del config_entities[entity_id]  # Mark as processed

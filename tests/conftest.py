@@ -147,23 +147,9 @@ def mock_hass() -> Mock:
     hass.async_add_executor_job = AsyncMock()
     hass.async_add_job = AsyncMock()
     hass.async_run_job = AsyncMock()
-
-    # Create cancellable mocks for timer functions
-    def create_cancellable_timer():
-        mock_timer = Mock()
-        mock_timer.cancel = Mock()
-        mock_timer.cancelled = Mock(return_value=True)
-        return mock_timer
-
-    hass.async_call_later = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.async_track_time_interval = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.async_track_point_in_time = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
+    hass.async_call_later = Mock(return_value=Mock())
+    hass.async_track_time_interval = Mock(return_value=Mock())
+    hass.async_track_point_in_time = Mock(return_value=Mock())
 
     # Storage system
     hass.helpers = Mock()
@@ -185,12 +171,8 @@ def mock_hass() -> Mock:
 
     # Event helpers
     hass.helpers.event = Mock()
-    hass.helpers.event.async_track_point_in_time = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.helpers.event.async_track_time_interval = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
+    hass.helpers.event.async_track_point_in_time = Mock(return_value=Mock())
+    hass.helpers.event.async_track_time_interval = Mock(return_value=Mock())
 
     return hass
 
@@ -1140,41 +1122,10 @@ def mock_significant_states_globally():
 
 @pytest.fixture(autouse=True)
 def mock_track_point_in_time_globally():
-    """Automatically mock timer-related functions for all tests."""
-
-    class CancellableTimerMock:
-        """Mock timer that properly handles cleanup verification."""
-
-        def __init__(self, *args, **kwargs):
-            self._cancelled = True
-            self._args = args
-            self._callback = args[1] if len(args) > 1 else None
-
-        def cancel(self):
-            self._cancelled = True
-
-        def cancelled(self):
-            return True
-
-        def __repr__(self):
-            return f"<MockTimerHandle cancelled={self._cancelled}>"
-
-    def create_timer_mock(*args, **kwargs):
-        return CancellableTimerMock(*args, **kwargs)
-
-    # Mock both high-level helpers and low-level event loop methods
-    with (
-        patch(
-            "homeassistant.helpers.event.async_track_point_in_time", create_timer_mock
-        ),
-        patch(
-            "homeassistant.helpers.event.async_track_time_interval", create_timer_mock
-        ),
-        patch("homeassistant.helpers.event.async_call_later", create_timer_mock),
-        patch.object(asyncio.AbstractEventLoop, "call_later", create_timer_mock),
-        patch.object(asyncio.AbstractEventLoop, "call_at", create_timer_mock),
-    ):
-        yield
+    """Automatically mock async_track_point_in_time for all tests."""
+    with patch("homeassistant.helpers.event.async_track_point_in_time") as mock_track:
+        mock_track.return_value = Mock()
+        yield mock_track
 
 
 @pytest.fixture

@@ -144,3 +144,31 @@ get_entity_type_learned_data:
       selector:
         config_entry:
           integration: area_occupancy
+
+update_numeric_sensor_statistics:
+  name: Update Numeric Sensor Statistics
+  description: "Update active_range bounds for numeric sensors (illuminance, humidity, temperature, etc.) based on occupied periods analysis with comprehensive statistics."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to update numeric sensor statistics for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    history_period:
+      name: History Period
+      description: "Number of days of history to analyze (defaults to configured history period)"
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 90
+          step: 1
+    force:
+      name: Force Update
+      description: "Bypass cache and force recalculation of statistics."
+      required: false
+      default: false
+      selector:
+        boolean:

@@ -25,7 +25,7 @@
       "settings": {
         "files.eol": "\n",
         "editor.tabSize": 4,
-        
+
         "python.terminal.activateEnvInCurrentTerminal": true,
         "editor.formatOnPaste": true,
         "editor.formatOnSave": true,
