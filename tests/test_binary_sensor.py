@@ -14,7 +14,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 # Add marker for tests that may have lingering timers due to HA internals
-pytestmark = [pytest.mark.expected_lingering_timers(True)]
+pytestmark = [pytest.mark.parametrize("expected_lingering_timers", [True])]
 
 
 # ruff: noqa: SLF001
@@ -77,7 +77,6 @@ class TestOccupancy:
         assert entity.is_on is False
 
 
-@pytest.mark.expected_lingering_timers(True)
 class TestWaspInBoxSensor:
     """Test WaspInBoxSensor binary sensor entity."""
 
@@ -536,7 +535,6 @@ class TestAsyncSetupEntry:
         assert isinstance(entities[0], Occupancy)
 
 
-@pytest.mark.expected_lingering_timers(True)
 class TestWaspInBoxIntegration:
     """Test WaspInBoxSensor integration scenarios."""
 
