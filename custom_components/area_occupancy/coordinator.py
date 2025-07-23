@@ -81,6 +81,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
         self._historical_timer: CALLBACK_TYPE | None = None
+        self.initializing: bool = False  # True if DB is being populated in background
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -160,7 +161,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.sqlite_store.async_initialize()
 
             # Check if this is a new database and populate immediately if needed
-            await self._check_and_populate_new_database()
+            is_empty = await self.sqlite_store.is_state_intervals_empty()
+            if is_empty:
+                self.initializing = True
+                self.hass.async_create_task(self._background_populate_and_finalize())
+                _LOGGER.info(
+                    "Initial database population (if needed) is running in the background and will not block Home Assistant startup."
+                )
+            else:
+                self.initializing = False
 
             loaded_data = await self.sqlite_store.async_load_data()
 
@@ -492,6 +501,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "No entity IDs found in configuration to populate state intervals table for instance %s.",
                     self.entry_id,
                 )
+
+    async def _background_populate_and_finalize(self) -> None:
+        """Populate the DB in the background, then finalize setup."""
+        await self._check_and_populate_new_database()
+        self.initializing = False
+        _LOGGER.info(
+            "Initial database population complete for %s. Triggering refresh.",
+            self.entry_id,
+        )
+        await self.async_refresh()
 
     async def _calculate_time_priors_async(self, initial_setup: bool = False) -> None:
         """Calculate time-based priors asynchronously without blocking startup.
