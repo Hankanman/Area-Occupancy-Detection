@@ -19,7 +19,6 @@ from ..schema import AreaTimePriorRecord
 from ..utils import (
     StateInterval,
     get_current_time_slot,
-    get_intervals_hybrid,
     get_time_slot_name,
     time_slot_to_datetime_range,
 )
@@ -483,11 +482,13 @@ class Prior:  # exported name must stay identical
         for entity_id in entity_ids:
             try:
                 # Get intervals for this entity during the analysis period
-                intervals = await get_intervals_hybrid(
-                    self.coordinator,
-                    entity_id,
-                    start_time,
-                    end_time,
+                intervals = (
+                    await self.coordinator.sqlite_store.get_historical_intervals(
+                        self.coordinator,
+                        entity_id,
+                        start_time,
+                        end_time,
+                    )
                 )
 
                 if not intervals:
@@ -564,22 +565,18 @@ class Prior:  # exported name must stay identical
         if not entity_ids:
             return MIN_PRIOR, {}
         for entity_id in entity_ids:
-            # Get intervals using hybrid approach - checks our DB first, then recorder
-            intervals = await get_intervals_hybrid(
-                self.coordinator,
+            # Get intervals using only our DB
+            intervals = await self.coordinator.sqlite_store.get_historical_intervals(
                 entity_id,
                 start_time,
                 end_time,
             )
 
-            # Intervals are already filtered by get_intervals_hybrid
-            valid_intervals = intervals
-
-            if valid_intervals:
+            if intervals:
                 occupied_seconds = int(
                     sum(
                         (interval["end"] - interval["start"]).total_seconds()
-                        for interval in valid_intervals
+                        for interval in intervals
                     )
                 )
 
@@ -587,10 +584,8 @@ class Prior:  # exported name must stay identical
                     "entity_id": entity_id,
                     "start_time": start_time,
                     "end_time": end_time,
-                    "states_count": len(
-                        valid_intervals
-                    ),  # Number of intervals instead of states
-                    "intervals": valid_intervals,  # Store filtered intervals, not raw
+                    "states_count": len(intervals),
+                    "intervals": intervals,
                     "occupied_seconds": occupied_seconds,
                     "ratio": occupied_seconds / total_seconds,
                 }

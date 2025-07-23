@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.util import dt as dt_util
 
 from ..const import HA_RECORDER_DAYS
-from ..utils import StateInterval, get_intervals_hybrid, validate_prob
+from ..utils import StateInterval, validate_prob
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -193,9 +193,8 @@ class Likelihood:
         self.start_time = dt_util.utcnow() - timedelta(days=days_to_use)
         self.end_time = dt_util.utcnow()
 
-        # Use hybrid approach - checks our DB first, then recorder
-        intervals = await get_intervals_hybrid(
-            self.coordinator,
+        # Use only our DB for interval retrieval
+        intervals = await self.coordinator.sqlite_store.get_historical_intervals(
             self.entity_id,
             self.start_time,
             self.end_time,
@@ -215,9 +214,6 @@ class Likelihood:
         )
 
         if intervals and prior_intervals:
-            # Intervals are already filtered by get_intervals_hybrid
-            filtered_intervals = intervals
-
             # Calculate total analysis period
             total_seconds = (self.end_time - self.start_time).total_seconds()
 
@@ -243,7 +239,7 @@ class Likelihood:
 
                 # Process intervals in chunks to avoid blocking
                 chunk_size = 50
-                for i, interval in enumerate(filtered_intervals):
+                for i, interval in enumerate(intervals):
                     duration = (interval["end"] - interval["start"]).total_seconds()
 
                     if interval["state"] in self.active_states:

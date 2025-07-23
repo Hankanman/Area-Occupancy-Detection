@@ -415,7 +415,7 @@ class EntityManager:
             # Create tasks for parallel processing
             tasks = []
             for entity in chunk:
-                task = self._update_entity_likelihood_safe(
+                task = self._update_entity_likelihood(
                     entity, force=force, history_period=history_period
                 )
                 tasks.append(task)
@@ -440,7 +440,7 @@ class EntityManager:
         )
         return updated_count
 
-    async def _update_entity_likelihood_safe(
+    async def _update_entity_likelihood(
         self, entity: Entity, force: bool = False, history_period: int | None = None
     ) -> int:
         """Safely update a single entity's likelihood with error handling.
