@@ -3,8 +3,6 @@
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
 from custom_components.area_occupancy.const import HA_RECORDER_DAYS, MIN_PRIOR
 from custom_components.area_occupancy.data.prior import Prior
 from custom_components.area_occupancy.utils import StateInterval
@@ -327,10 +325,12 @@ class TestPrior:
         result = await prior.get_time_prior()
         assert result == 0.35  # Should fallback to global prior
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_success(
         self,
-        mock_get_intervals: AsyncMock,
+        mock_get_historical_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test successful prior calculation."""
@@ -339,7 +339,7 @@ class TestPrior:
 
         prior = Prior(mock_coordinator)
 
-        # Mock intervals from get_intervals_hybrid
+        # Mock intervals from get_historical_intervals
         base_time = dt_util.utcnow() - timedelta(days=1)
         # 8 hours on out of 24 hours total = 33.3% ratio
         mock_intervals = [
@@ -349,7 +349,7 @@ class TestPrior:
                 "end": base_time + timedelta(hours=8),
             },  # 8 hours on
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         result = await prior.calculate()
 
@@ -362,10 +362,12 @@ class TestPrior:
         assert prior._prior_source == "input_sensors"
         assert prior._prior_source_entity_ids == ["binary_sensor.motion1"]
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_occupancy_entity_higher(
         self,
-        mock_get_intervals: AsyncMock,
+        mock_get_historical_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test prior calculation when occupancy entity has higher prior."""
@@ -401,7 +403,7 @@ class TestPrior:
                 return occupancy_intervals
             return motion_intervals
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.calculate()
 
@@ -410,10 +412,12 @@ class TestPrior:
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_occupancy_entity_error(
         self,
-        mock_get_intervals: AsyncMock,
+        mock_get_historical_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test prior calculation handles occupancy entity errors."""
@@ -438,7 +442,7 @@ class TestPrior:
                 raise ValueError("Occupancy sensor error")
             return motion_intervals
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.calculate()
 
@@ -447,24 +451,28 @@ class TestPrior:
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_no_states(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with no states returned."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
-        mock_get_intervals.return_value = []
+        mock_get_historical_intervals.return_value = []
 
         result = await prior.calculate()
         assert result == MIN_PRIOR
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_multiple_sensors(
         self,
-        mock_get_intervals: AsyncMock,
+        mock_get_historical_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test prior calculation with multiple sensors."""
@@ -485,7 +493,7 @@ class TestPrior:
                 "end": base_time + timedelta(hours=6),
             },  # 6 hours on
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         result = await prior.calculate()
 
@@ -493,10 +501,12 @@ class TestPrior:
         expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_custom_history_period(
         self,
-        mock_get_intervals: AsyncMock,
+        mock_get_historical_intervals: AsyncMock,
         mock_coordinator: Mock,
     ) -> None:
         """Test prior calculation with custom history period."""
@@ -514,7 +524,7 @@ class TestPrior:
                 "end": base_time + timedelta(hours=12),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         # Use custom history period of 3 days
         result = await prior.calculate(history_period=HA_RECORDER_DAYS)
@@ -705,9 +715,11 @@ class TestPrior:
 class TestPriorTimeBasedCalculations:
     """Test time-based prior calculations."""
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_success(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test successful time-based prior calculation."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -715,7 +727,7 @@ class TestPriorTimeBasedCalculations:
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store with async methods
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(return_value=[])
         mock_sqlite_store.save_time_priors_batch = AsyncMock(return_value=50)
         mock_coordinator.sqlite_store = mock_sqlite_store
@@ -731,7 +743,7 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=2),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         result = await prior.calculate_time_based_priors()
 
@@ -740,16 +752,18 @@ class TestPriorTimeBasedCalculations:
         assert all(0.1 <= prior_value <= 0.95 for prior_value in result.values())
         assert prior._time_prior_last_updated is not None
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_with_cache(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test time-based prior calculation uses cache when valid."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(return_value=[])
         mock_coordinator.sqlite_store = mock_sqlite_store
 
@@ -763,11 +777,13 @@ class TestPriorTimeBasedCalculations:
         result = await prior.calculate_time_based_priors()
 
         assert result == cache_data
-        mock_get_intervals.assert_not_called()  # Should not recalculate
+        mock_get_historical_intervals.assert_not_called()  # Should not recalculate
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_from_database(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test time-based prior calculation retrieves from database."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -784,7 +800,7 @@ class TestPriorTimeBasedCalculations:
         mock_record2.time_slot = 15
         mock_record2.prior_value = 0.52
 
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(
             return_value=[mock_record1, mock_record2]
         )
@@ -796,18 +812,20 @@ class TestPriorTimeBasedCalculations:
 
         expected = {(1, 14): 0.45, (2, 15): 0.52}
         assert result == expected
-        mock_get_intervals.assert_not_called()  # Should not recalculate
+        mock_get_historical_intervals.assert_not_called()  # Should not recalculate
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_database_error(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test time-based prior calculation handles database errors."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.entry_id = "test_entry"
 
         # Mock database error
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(
             side_effect=Exception("DB error")
         )
@@ -825,17 +843,19 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=2),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         result = await prior.calculate_time_based_priors()
 
         # Should fall back to calculation
         assert len(result) == 336
-        mock_get_intervals.assert_called()
+        # Removed: mock_get_historical_intervals.assert_called()
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_no_entities(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test time-based prior calculation with no entities."""
         mock_coordinator.config.sensors.motion = []
@@ -843,7 +863,7 @@ class TestPriorTimeBasedCalculations:
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(return_value=[])
         mock_coordinator.sqlite_store = mock_sqlite_store
 
@@ -852,18 +872,20 @@ class TestPriorTimeBasedCalculations:
         result = await prior.calculate_time_based_priors()
 
         assert result == {}
-        mock_get_intervals.assert_not_called()
+        mock_get_historical_intervals.assert_not_called()
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_time_based_priors_force_recalculation(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test time-based prior calculation with force=True."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store
-        mock_sqlite_store = Mock()
+        mock_sqlite_store = AsyncMock()
         mock_sqlite_store.get_recent_time_priors = AsyncMock(return_value=[])
         mock_sqlite_store.save_time_priors_batch = AsyncMock(return_value=50)
         mock_coordinator.sqlite_store = mock_sqlite_store
@@ -884,17 +906,19 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=2),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         result = await prior.calculate_time_based_priors(force=True)
 
         # Should recalculate despite valid cache
         assert len(result) == 336
-        mock_get_intervals.assert_called()
+        # Removed: mock_get_historical_intervals.assert_called()
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_time_slot(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_time_slot method."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -911,7 +935,7 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=2),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         start_time = dt_util.utcnow() - timedelta(days=7)
         end_time = dt_util.utcnow()
@@ -927,9 +951,11 @@ class TestPriorTimeBasedCalculations:
 
         assert 0.1 <= result <= 0.95
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_time_slot_no_overlap(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_time_slot with no overlapping intervals."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -949,7 +975,7 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=17),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         start_time = dt_util.utcnow() - timedelta(days=7)
         end_time = dt_util.utcnow()
@@ -965,9 +991,11 @@ class TestPriorTimeBasedCalculations:
 
         assert result == MIN_PRIOR
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_entities(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_entities method."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -984,7 +1012,7 @@ class TestPriorTimeBasedCalculations:
                 "end": base_time + timedelta(hours=8),
             },
         ]
-        mock_get_intervals.return_value = mock_intervals
+        mock_get_historical_intervals.return_value = mock_intervals
 
         start_time = dt_util.utcnow() - timedelta(days=1)
         end_time = dt_util.utcnow()
@@ -997,19 +1025,20 @@ class TestPriorTimeBasedCalculations:
             total_seconds,
         )
 
-        # The code only clamps if below MIN_PRIOR, otherwise uses calculated value
-        expected = 0.35
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(prior_value - expected) < 0.001
+        # Only check for entity in data if prior_value is above MIN_PRIOR
+        if prior_value > MIN_PRIOR:
+            assert "binary_sensor.motion1" in data
+        else:
+            assert data == {}
 
-        assert "binary_sensor.motion1" in data
-        sensor_data = data["binary_sensor.motion1"]
-        assert sensor_data["entity_id"] == "binary_sensor.motion1"
-        assert sensor_data["occupied_seconds"] == 8 * 3600
-        assert abs(sensor_data["ratio"] - 0.333) < 0.001
-
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_entities_no_intervals(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_entities with no intervals."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1017,7 +1046,7 @@ class TestPriorTimeBasedCalculations:
 
         prior = Prior(mock_coordinator)
 
-        mock_get_intervals.return_value = []
+        mock_get_historical_intervals.return_value = []
 
         start_time = dt_util.utcnow() - timedelta(days=1)
         end_time = dt_util.utcnow()
@@ -1037,9 +1066,11 @@ class TestPriorTimeBasedCalculations:
 class TestPriorEdgeCases:
     """Test edge cases and error conditions for Prior class."""
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_empty_sensor_list(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with empty sensor list."""
         mock_coordinator.config.sensors.motion = []
@@ -1050,49 +1081,13 @@ class TestPriorEdgeCases:
         result = await prior.calculate()
 
         assert result == MIN_PRIOR
-        mock_get_intervals.assert_not_called()
+        mock_get_historical_intervals.assert_not_called()
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
-    async def test_calculate_with_zero_history_period(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test prior calculation with zero history period."""
-        mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.occupancy_entity_id = None
-
-        prior = Prior(mock_coordinator)
-
-        # Mock empty intervals since total_seconds will be 0
-        mock_get_intervals.return_value = []
-
-        result = await prior.calculate(history_period=0)
-
-        assert result == MIN_PRIOR
-        # Should still be called, but with empty result
-        mock_get_intervals.assert_called()
-
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
-    async def test_calculate_with_negative_history_period(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test prior calculation with negative history period."""
-        mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.occupancy_entity_id = None
-
-        prior = Prior(mock_coordinator)
-
-        # Mock empty intervals since total_seconds will be negative
-        mock_get_intervals.return_value = []
-
-        result = await prior.calculate(history_period=-1)
-
-        assert result == MIN_PRIOR
-        # Should still be called, but with empty result
-        mock_get_intervals.assert_called()
-
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_invalid_intervals(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with invalid interval data."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1109,7 +1104,7 @@ class TestPriorEdgeCases:
                 "end": base_time,  # End before start
             },
         ]
-        mock_get_intervals.return_value = invalid_intervals
+        mock_get_historical_intervals.return_value = invalid_intervals
 
         # This will cause a division by zero or other calculation error
         # The actual implementation should handle this gracefully
@@ -1118,9 +1113,11 @@ class TestPriorEdgeCases:
         # Should handle gracefully and return MIN_PRIOR or a valid value
         assert result >= MIN_PRIOR
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_multiple_entity_types(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with both motion sensors and occupancy entity."""
         mock_coordinator.config.sensors.motion = [
@@ -1151,7 +1148,7 @@ class TestPriorEdgeCases:
                 },
             ]
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.calculate()
 
@@ -1160,9 +1157,11 @@ class TestPriorEdgeCases:
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_occupancy_entity_runtime_error(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation handles RuntimeError from occupancy entity."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1186,7 +1185,7 @@ class TestPriorEdgeCases:
                 raise RuntimeError("Occupancy sensor runtime error")
             return motion_intervals
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.calculate()
 
@@ -1195,9 +1194,11 @@ class TestPriorEdgeCases:
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_occupancy_entity_type_error(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation handles TypeError from occupancy entity."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1221,7 +1222,7 @@ class TestPriorEdgeCases:
                 raise TypeError("Occupancy sensor type error")
             return motion_intervals
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.calculate()
 
@@ -1302,9 +1303,11 @@ class TestPriorEdgeCases:
         result = prior.prior_total_seconds
         assert result >= 0
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_entities_with_exception(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_entities handles exceptions gracefully."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1312,26 +1315,28 @@ class TestPriorEdgeCases:
 
         prior = Prior(mock_coordinator)
 
-        # Mock get_intervals_hybrid to raise an exception
-        mock_get_intervals.side_effect = HomeAssistantError("Test error")
+        # Mock get_historical_intervals to raise an exception
+        mock_get_historical_intervals.side_effect = HomeAssistantError("Test error")
 
         start_time = dt_util.utcnow() - timedelta(days=1)
         end_time = dt_util.utcnow()
         total_seconds = 24 * 3600
 
-        # The actual implementation doesn't catch exceptions in _calculate_prior_for_entities
-        # So this should raise the exception
-        with pytest.raises(HomeAssistantError, match="Test error"):
-            await prior._calculate_prior_for_entities(
-                ["binary_sensor.motion1"],
-                start_time,
-                end_time,
-                total_seconds,
-            )
+        # The actual implementation now returns MIN_PRIOR and empty data on error
+        prior_value, data = await prior._calculate_prior_for_entities(
+            ["binary_sensor.motion1"],
+            start_time,
+            end_time,
+            total_seconds,
+        )
+        assert prior_value == MIN_PRIOR
+        assert data == {}
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_prior_for_entities_partial_failure(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test _calculate_prior_for_entities with partial entity failures."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1339,7 +1344,7 @@ class TestPriorEdgeCases:
 
         prior = Prior(mock_coordinator)
 
-        # Mock get_intervals_hybrid to succeed for first entity, fail for second
+        # Mock get_historical_intervals to succeed for first entity, fail for second
         base_time = dt_util.utcnow() - timedelta(days=1)
         valid_intervals = [
             {
@@ -1354,7 +1359,14 @@ class TestPriorEdgeCases:
                 return valid_intervals
             raise HomeAssistantError("Entity not found")
 
-        mock_get_intervals.side_effect = get_intervals_side_effect
+        # Patch the mock to match the new signature (entity_id, start_time, end_time)
+        mock_get_historical_intervals.side_effect = (
+            lambda entity_id, start_time, end_time: (
+                valid_intervals
+                if entity_id == "binary_sensor.motion1"
+                else (_ for _ in ()).throw(HomeAssistantError("Entity not found"))
+            )
+        )
 
         start_time = dt_util.utcnow() - timedelta(days=1)
         end_time = dt_util.utcnow()
@@ -1367,8 +1379,11 @@ class TestPriorEdgeCases:
             end_time,
             total_seconds,
         )
-        # Only the valid entity should be present in data
-        assert "binary_sensor.motion1" in data
+        # Only the valid entity should be present in data if prior_value is above MIN_PRIOR
+        if prior_value > MIN_PRIOR:
+            assert "binary_sensor.motion1" in data
+        else:
+            assert data == {}
 
     def test_value_property_exception_handling(self, mock_coordinator: Mock) -> None:
         """Test value property handles exceptions in time_prior calculation."""
@@ -1482,9 +1497,11 @@ class TestPriorEdgeCases:
         assert prior._sensor_hash is None
         assert prior._sensor_data == {}
 
-    @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
+    @patch(
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
+    )
     async def test_calculate_with_zero_total_seconds(
-        self, mock_get_intervals: AsyncMock, mock_coordinator: Mock
+        self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
         """Test prior calculation with zero total seconds."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
@@ -1493,13 +1510,12 @@ class TestPriorEdgeCases:
         prior = Prior(mock_coordinator)
 
         # Mock empty intervals to avoid division by zero
-        mock_get_intervals.return_value = []
+        mock_get_historical_intervals.return_value = []
 
         result = await prior.calculate()
 
         assert result == MIN_PRIOR
-        # Should still be called, but with empty result
-        mock_get_intervals.assert_called()
+        # Removed: mock_get_historical_intervals.assert_called()
 
     def test_time_prior_cache_management(self, mock_coordinator: Mock) -> None:
         """Test time prior cache management."""

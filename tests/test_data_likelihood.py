@@ -514,13 +514,14 @@ class TestLikelihoodEdgeCases:
                 "end": base - timedelta(minutes=2),
             },
         ]
-        with patch(
-            "custom_components.area_occupancy.data.likelihood.get_intervals_hybrid",
-            return_value=intervals,
-        ):
-            active_ratio, inactive_ratio = await likelihood.calculate(
-                history_period=HA_RECORDER_DAYS
-            )
+        # Mock the async method on the coordinator's sqlite_store
+        mock_sqlite_store = Mock()
+        mock_sqlite_store.get_historical_intervals = AsyncMock(return_value=intervals)
+        mock_coordinator.sqlite_store = mock_sqlite_store
+
+        active_ratio, inactive_ratio = await likelihood.calculate(
+            history_period=HA_RECORDER_DAYS
+        )
 
         assert active_ratio == pytest.approx(0.625, rel=1e-3)
         assert inactive_ratio == pytest.approx(0.00013897, rel=1e-3)
