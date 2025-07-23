@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -28,6 +28,14 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Interval filtering thresholds to exclude anomalous data
+# Exclude intervals shorter than 10 seconds (false triggers)
+MIN_INTERVAL_SECONDS = 10
+# Exclude intervals longer than 13 hours (stuck sensors)
+MAX_INTERVAL_SECONDS = 13 * 3600
+# States to exclude from intervals
+INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
+
 
 class Interval(TypedDict):
     """Time interval with state information."""
@@ -37,15 +45,10 @@ class Interval(TypedDict):
 
 
 class StateInterval(Interval):
-    """Time interval with state information."""
-
-    state: str
-
-
-class TimeInterval(Interval):
     """Time interval with time information."""
 
     state: str
+    entity_id: str
 
 
 class PriorInterval:
@@ -99,6 +102,11 @@ class LikelihoodInterval(Interval):
     prob_given_false: float
 
 
+def is_valid_state(state: Any) -> bool:
+    """Check if a state is valid."""
+    return state not in INVALID_STATES
+
+
 async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
     """Initialize times of day for a given entity as 24 hourly intervals."""
     return [
@@ -114,7 +122,170 @@ async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
     ]
 
 
+# ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
+
+
+def datetime_to_time_slot(dt: datetime) -> tuple[int, int]:
+    """Convert datetime to day of week and time slot.
+
+    Args:
+        dt: Datetime to convert
+
+    Returns:
+        Tuple of (day_of_week, time_slot) where:
+        - day_of_week: 0=Monday, 6=Sunday
+        - time_slot: 0-47 (30-minute intervals, 00:00-00:29=0, 00:30-00:59=1, etc.)
+
+    """
+    # weekday() already returns Monday=0, Tuesday=1, ..., Sunday=6
+    day_of_week = dt.weekday()
+
+    # Calculate time slot (0-47 for 30-minute intervals)
+    hour = dt.hour
+    minute = dt.minute
+    time_slot = hour * 2 + (1 if minute >= 30 else 0)
+
+    return day_of_week, time_slot
+
+
+def time_slot_to_datetime_range(
+    day_of_week: int, time_slot: int, base_date: datetime | None = None
+) -> tuple[datetime, datetime]:
+    """Convert day of week and time slot to datetime range.
+
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
+        base_date: Base date to use (defaults to current date)
+
+    Returns:
+        Tuple of (start_datetime, end_datetime) for the 30-minute slot
+
+    """
+    if base_date is None:
+        base_date = dt_util.utcnow()
+
+    # Calculate start hour and minute
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
+
+    # Calculate end hour and minute
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
+    else:
+        end_hour = start_hour
+        end_minute = 30
+
+    # Find the target day of week
+    current_weekday = base_date.weekday()  # weekday() already returns Monday=0
+    days_diff = (day_of_week - current_weekday) % 7
+
+    # Calculate target date
+    target_date = base_date.date() + timedelta(days=days_diff)
+
+    # Create start and end datetimes
+    start_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=start_hour, minute=start_minute)
+    )
+    end_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=end_hour, minute=end_minute)
+    )
+
+    return start_dt, end_dt
+
+
+def get_current_time_slot() -> tuple[int, int]:
+    """Get the current day of week and time slot.
+
+    Returns:
+        Tuple of (day_of_week, time_slot) for current time
+
+    """
+    return datetime_to_time_slot(dt_util.utcnow())
+
+
+def get_time_slot_name(day_of_week: int, time_slot: int) -> str:
+    """Get a human-readable name for a time slot.
+
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
+
+    Returns:
+        Human-readable time slot name (e.g., "Monday 13:00-13:29")
+
+    """
+    day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
+
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
+    else:
+        end_hour = start_hour
+        end_minute = 30
+
+    return f"{day_names[day_of_week]} {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d}"
+
+
+def get_all_time_slots() -> list[tuple[int, int]]:
+    """Get all possible day of week and time slot combinations.
+
+    Returns:
+        List of (day_of_week, time_slot) tuples for all 336 slots (7 days × 48 slots)
+
+    """
+    return [(day, slot) for day in range(7) for slot in range(48)]
+
+
 # ──────────────────────────────────── History Utilities ──────────────────────────────────
+async def get_intervals_from_recorder(
+    hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
+) -> list[StateInterval]:
+    """Get intervals from HA recorder."""
+    _LOGGER.debug(
+        "Getting intervals from recorder for %s from %s to %s",
+        entity_id,
+        start_time,
+        end_time,
+    )
+
+    states = await get_states_from_recorder(hass, entity_id, start_time, end_time)
+
+    _LOGGER.debug(
+        "Got %d states from recorder for %s", len(states) if states else 0, entity_id
+    )
+
+    if not states:
+        _LOGGER.debug("No states found in recorder for %s", entity_id)
+        return []
+
+    # Filter to only State objects and exclude unavailable/unknown states
+    state_objects: list[State] = [
+        s for s in states if isinstance(s, State) and is_valid_state(s.state)
+    ]
+
+    _LOGGER.debug(
+        "Filtered to %d valid State objects for %s", len(state_objects), entity_id
+    )
+
+    intervals = await states_to_intervals(state_objects, start_time, end_time)
+
+    _LOGGER.debug("Converted to %d intervals for %s", len(intervals), entity_id)
+
+    return filter_intervals(intervals)
+
+
 async def get_states_from_recorder(
     hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
 ) -> list[State | dict[str, Any]] | None:
@@ -143,6 +314,7 @@ async def get_states_from_recorder(
         return None
 
     try:
+        _LOGGER.debug("Executing recorder query for %s", entity_id)
         states = await recorder.async_add_executor_job(
             lambda: get_significant_states(
                 hass,
@@ -153,12 +325,13 @@ async def get_states_from_recorder(
             )
         )
 
+        _LOGGER.debug("Recorder query completed for %s, processing results", entity_id)
         entity_states = states.get(entity_id) if states else None
 
         if entity_states:
             _LOGGER.debug("Found %d states for %s", len(entity_states), entity_id)
         else:
-            _LOGGER.debug("No states found for %s", entity_id)
+            _LOGGER.debug("No states found for %s in recorder query result", entity_id)
 
     except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
         _LOGGER.error("Error getting states for %s: %s", entity_id, err)
@@ -171,7 +344,7 @@ async def get_states_from_recorder(
 
 async def states_to_intervals(
     states: Sequence[State], start: datetime, end: datetime
-) -> list[TimeInterval]:
+) -> list[StateInterval]:
     """Convert state history to time intervals.
 
     Args:
@@ -180,15 +353,22 @@ async def states_to_intervals(
         end: End time for analysis
 
     Returns:
-        List of TimeInterval objects
+        List of StateInterval objects
 
     """
-    intervals: list[TimeInterval] = []
+    intervals: list[StateInterval] = []
     if not states:
         return intervals
 
+    # Filter out any invalid states that might have slipped through
+    valid_states = [state for state in states if is_valid_state(state.state)]
+
+    if not valid_states:
+        _LOGGER.debug("No valid states after filtering unavailable/unknown")
+        return intervals
+
     # Sort states chronologically
-    sorted_states = sorted(states, key=lambda x: x.last_changed)
+    sorted_states = sorted(valid_states, key=lambda x: x.last_changed)
 
     # Determine the state that was active at the start time
     current_state = sorted_states[0].state
@@ -206,18 +386,61 @@ async def states_to_intervals(
             continue
         if state.last_changed > end:
             break
-        intervals.append(
-            TimeInterval(
-                start=current_time, end=state.last_changed, state=current_state
+
+        # Only create intervals for valid states
+        if is_valid_state(current_state):
+            intervals.append(
+                StateInterval(
+                    start=current_time,
+                    end=state.last_changed,
+                    state=current_state,
+                    entity_id=state.entity_id,
+                )
             )
-        )
         current_state = state.state
         current_time = state.last_changed
 
-    # Final interval until end
-    intervals.append(TimeInterval(start=current_time, end=end, state=current_state))
+    # Final interval until end (only if state is valid)
+    if is_valid_state(current_state):
+        intervals.append(
+            StateInterval(
+                start=current_time,
+                end=end,
+                state=current_state,
+                entity_id=state.entity_id,
+            )
+        )
 
     return intervals
+
+
+def filter_intervals(
+    intervals: list[StateInterval],
+) -> list[StateInterval]:
+    """Filter intervals to remove anomalous data and invalid states.
+
+    - For binary sensors ("on" state): filter out intervals that are too short or too long.
+    - For numeric sensors and other valid states: only remove intervals with invalid states, do not filter by duration.
+    """
+    # Remove intervals with invalid states
+    valid_intervals = [
+        interval for interval in intervals if is_valid_state(interval["state"])
+    ]
+
+    filtered_intervals = []
+    for interval in valid_intervals:
+        state = interval["state"]
+        # Only apply duration filtering to binary "on" state
+        if state == "on":
+            duration_seconds = (interval["end"] - interval["start"]).total_seconds()
+            if MIN_INTERVAL_SECONDS <= duration_seconds <= MAX_INTERVAL_SECONDS:
+                filtered_intervals.append(interval)
+            # else: skip this interval (too short/long)
+        else:
+            # For all other states (including numerics), keep as long as state is valid
+            filtered_intervals.append(interval)
+
+    return filtered_intervals
 
 
 # ───────────────────────────────────────── Validation ────────────────────────

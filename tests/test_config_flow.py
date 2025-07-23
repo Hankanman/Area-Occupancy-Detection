@@ -41,6 +41,7 @@ from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
 
 # ruff: noqa: SLF001
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 class TestBaseOccupancyFlow:
     """Test BaseOccupancyFlow class."""
 

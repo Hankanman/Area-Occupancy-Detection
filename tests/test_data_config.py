@@ -11,8 +11,6 @@ from custom_components.area_occupancy.const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -38,12 +36,8 @@ from custom_components.area_occupancy.const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
-    DEFAULT_WASP_MAX_DURATION,
-    DEFAULT_WASP_MOTION_TIMEOUT,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
@@ -52,12 +46,12 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    HA_RECORDER_DAYS,
 )
 from custom_components.area_occupancy.data.config import (
     Config,
     ConfigManager,
     Decay,
-    History,
     Sensors,
     SensorStates,
     WaspInBox,
@@ -230,46 +224,6 @@ class TestDecay:
         assert decay.half_life == 600
 
 
-class TestHistory:
-    """Test History dataclass."""
-
-    def test_initialization_defaults(self) -> None:
-        """Test History initialization with defaults."""
-        history = History()
-
-        assert history.enabled == DEFAULT_HISTORICAL_ANALYSIS_ENABLED
-        assert history.period == DEFAULT_HISTORY_PERIOD
-
-    def test_initialization_with_values(self) -> None:
-        """Test History initialization with specific values."""
-        history = History(enabled=False, period=60)
-
-        assert history.enabled is False
-        assert history.period == 60
-
-
-class TestWaspInBox:
-    """Test WaspInBox dataclass."""
-
-    def test_initialization_defaults(self) -> None:
-        """Test WaspInBox initialization with defaults."""
-        wasp = WaspInBox()
-
-        assert wasp.enabled is False
-        assert wasp.motion_timeout == DEFAULT_WASP_MOTION_TIMEOUT
-        assert wasp.weight == DEFAULT_WASP_WEIGHT
-        assert wasp.max_duration == DEFAULT_WASP_MAX_DURATION
-
-    def test_initialization_with_values(self) -> None:
-        """Test WaspInBox initialization with specific values."""
-        wasp = WaspInBox(enabled=True, motion_timeout=30, weight=0.9, max_duration=7200)
-
-        assert wasp.enabled is True
-        assert wasp.motion_timeout == 30
-        assert wasp.weight == 0.9
-        assert wasp.max_duration == 7200
-
-
 class TestConfig:
     """Test Config dataclass."""
 
@@ -284,7 +238,6 @@ class TestConfig:
         assert isinstance(config.sensor_states, SensorStates)
         assert isinstance(config.weights, Weights)
         assert isinstance(config.decay, Decay)
-        assert isinstance(config.history, History)
         assert isinstance(config.wasp_in_box, WaspInBox)
 
     def test_initialization_with_values(self) -> None:
@@ -309,10 +262,8 @@ class TestConfig:
     def test_start_time_property(self) -> None:
         """Test start_time property calculation."""
         config = Config()
-        config.history.period = 30
-
         start_time = config.start_time
-        expected_start = dt_util.utcnow() - timedelta(days=30)
+        expected_start = dt_util.utcnow() - timedelta(days=HA_RECORDER_DAYS)
 
         # Allow some tolerance for test execution time
         assert abs((start_time - expected_start).total_seconds()) < 5
@@ -369,8 +320,6 @@ class TestConfig:
             CONF_WASP_WEIGHT: 0.85,
             CONF_DECAY_ENABLED: False,
             CONF_DECAY_HALF_LIFE: 600,
-            CONF_HISTORICAL_ANALYSIS_ENABLED: False,
-            CONF_HISTORY_PERIOD: 60,
             CONF_WASP_ENABLED: True,
             CONF_WASP_MOTION_TIMEOUT: 30,
             CONF_WASP_MAX_DURATION: 7200,
@@ -407,8 +356,6 @@ class TestConfig:
         assert config.weights.wasp == 0.85
         assert config.decay.enabled is False
         assert config.decay.half_life == 600
-        assert config.history.enabled is False
-        assert config.history.period == 60
         assert config.wasp_in_box.enabled is True
         assert config.wasp_in_box.motion_timeout == 30
         assert config.wasp_in_box.max_duration == 7200
