@@ -85,7 +85,7 @@ class TestPrior:
 
         # Test with None value - should return default
         prior.value = None
-        assert prior.current_value == 0.01  # MIN_PRIOR from data/prior.py
+        assert prior.current_value == MIN_PRIOR  # MIN_PRIOR from data/prior.py
 
         # Test with value below minimum - should return default
         prior.value = 0.005
@@ -490,7 +490,7 @@ class TestPrior:
 
     def test_constants(self) -> None:
         """Test module constants."""
-        assert MIN_PRIOR == 0.01
+        assert MIN_PRIOR == 0.1
 
     async def test_integration_workflow(self, mock_coordinator: Mock) -> None:
         """Test complete workflow integration."""

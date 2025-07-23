@@ -70,7 +70,7 @@ class Entity:
             prob_given_true=self.likelihood.prob_given_true,
             prob_given_false=self.likelihood.prob_given_false,
             evidence=True,
-            decay_factor=self.decay.decay_factor,
+            decay_factor=self.decay_factor,
         )
 
     @property
@@ -127,6 +127,11 @@ class Entity:
         return None
 
     @property
+    def active(self) -> bool:
+        """Get the entity active status."""
+        return self.evidence or self.decay.is_decaying
+
+    @property
     def active_states(self) -> list[str] | None:
         """Get the active states for the entity."""
         return self.type.active_states
@@ -138,6 +143,17 @@ class Entity:
         if self.statistics:
             return self.statistics.active_range
         return self.type.active_range
+
+    @property
+    def decay_factor(self) -> float:
+        """Get decay factor that considers current evidence state.
+
+        Returns 1.0 if evidence is currently True, otherwise returns the normal decay factor.
+        This prevents inconsistent states where evidence is True but decay is being applied.
+        """
+        if self.evidence is True:
+            return 1.0
+        return self.decay.decay_factor
 
     def has_new_evidence(self) -> bool:
         """Update decay and probability on actual evidence transitions.
@@ -165,6 +181,14 @@ class Entity:
             # Update previous evidence even if skipping to prevent false transitions later
             self.previous_evidence = current_evidence
             return False
+
+        # Fix inconsistent state: if evidence is True but decay is running, stop decay
+        if current_evidence and self.decay.is_decaying:
+            _LOGGER.debug(
+                "Entity %s: fixing inconsistent state - evidence is True but decay is running, stopping decay",
+                self.entity_id,
+            )
+            self.decay.stop_decay()
 
         # Check for evidence transitions
         transition_occurred = current_evidence != previous_evidence
@@ -445,9 +469,9 @@ class EntityManager:
             InputType.APPLIANCE: self.config.sensors.appliances,
             InputType.DOOR: self.config.sensors.doors,
             InputType.WINDOW: self.config.sensors.windows,
-            InputType.ENVIRONMENTAL: self.config.sensors.illuminance
-            + self.config.sensors.humidity
-            + self.config.sensors.temperature,
+            InputType.ILLUMINANCE: self.config.sensors.illuminance,
+            InputType.HUMIDITY: self.config.sensors.humidity,
+            InputType.TEMPERATURE: self.config.sensors.temperature,
         }
 
     async def update_all_entity_likelihoods(

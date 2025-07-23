@@ -6,6 +6,14 @@ from unittest.mock import Mock
 
 import pytest
 
+from custom_components.area_occupancy.const import (
+    DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
+)
 from custom_components.area_occupancy.data.entity_type import (
     EntityType,
     EntityTypeManager,
@@ -317,6 +325,40 @@ class TestEntityTypeManagerOverrides:
         manager._apply_weight(InputType.MOTION, params)
         assert params["weight"] == 0.4
 
+    def test_apply_weight_environmental_sensors(self) -> None:
+        """Test that environmental sensor types use the environmental weight."""
+        config = SimpleNamespace(weights=SimpleNamespace(environmental=0.25))
+        manager = self._make_manager(config)
+
+        # Test each environmental sensor type
+        for input_type in [
+            InputType.ILLUMINANCE,
+            InputType.HUMIDITY,
+            InputType.TEMPERATURE,
+        ]:
+            params = {"weight": 0.8}
+            manager._apply_weight(input_type, params)
+            assert params["weight"] == 0.25, f"Failed for {input_type}"
+
+    def test_apply_weight_environmental_sensors_no_config(self) -> None:
+        """Test that environmental sensor types don't change weight when no environmental config."""
+        config = SimpleNamespace(
+            weights=SimpleNamespace(motion=0.4)
+        )  # No environmental weight
+        manager = self._make_manager(config)
+
+        # Test each environmental sensor type
+        for input_type in [
+            InputType.ILLUMINANCE,
+            InputType.HUMIDITY,
+            InputType.TEMPERATURE,
+        ]:
+            params = {"weight": 0.8}
+            manager._apply_weight(input_type, params)
+            assert params["weight"] == 0.8, (
+                f"Should not change for {input_type} when no environmental config"
+            )
+
     def test_apply_weight_invalid(self) -> None:
         config = SimpleNamespace(weights=SimpleNamespace(motion=1.5))
         manager = self._make_manager(config)
@@ -376,7 +418,62 @@ class TestEntityTypeManagerOverrides:
             EntityTypeManager.from_dict(bad_data, mock_coordinator)
 
     def test_cleanup(self) -> None:
-        manager = self._make_manager(SimpleNamespace())
-        manager._entity_types = {InputType.MOTION: Mock()}
+        """Test cleanup method."""
+        manager = self._make_manager(None)
+        manager._entity_types = {"test": "data"}
         manager.cleanup()
-        assert manager.entity_types == {}
+        assert manager._entity_types == {}
+
+    def test_build_entity_types_with_environmental_weight(self) -> None:
+        """Test that environmental sensor types get the correct weight from config."""
+        # Create a config with custom environmental weight
+        config = SimpleNamespace(
+            weights=SimpleNamespace(
+                motion=0.9,
+                media=0.8,
+                appliance=0.7,
+                door=0.6,
+                window=0.5,
+                environmental=0.25,  # Custom environmental weight
+                wasp=0.85,
+            )
+        )
+        manager = self._make_manager(config)
+
+        # Build entity types
+        entity_types = manager._build_entity_types()
+
+        # Check that environmental sensor types use the environmental weight
+        assert entity_types[InputType.ILLUMINANCE].weight == 0.25
+        assert entity_types[InputType.HUMIDITY].weight == 0.25
+        assert entity_types[InputType.TEMPERATURE].weight == 0.25
+
+        # Check that other types use their specific weights
+        assert entity_types[InputType.MOTION].weight == 0.9
+        assert entity_types[InputType.MEDIA].weight == 0.8
+        assert entity_types[InputType.APPLIANCE].weight == 0.7
+        assert entity_types[InputType.DOOR].weight == 0.6
+        assert entity_types[InputType.WINDOW].weight == 0.5
+
+    def test_build_entity_types_without_config_uses_defaults(self) -> None:
+        """Test that entity types use default weights when no config is provided."""
+        manager = self._make_manager(None)
+
+        # Build entity types
+        entity_types = manager._build_entity_types()
+
+        # Check that all types use their default weights from constants
+        assert entity_types[InputType.MOTION].weight == DEFAULT_WEIGHT_MOTION
+        assert entity_types[InputType.MEDIA].weight == DEFAULT_WEIGHT_MEDIA
+        assert entity_types[InputType.APPLIANCE].weight == DEFAULT_WEIGHT_APPLIANCE
+        assert entity_types[InputType.DOOR].weight == DEFAULT_WEIGHT_DOOR
+        assert entity_types[InputType.WINDOW].weight == DEFAULT_WEIGHT_WINDOW
+
+        # Check that environmental sensor types use the environmental default
+        assert (
+            entity_types[InputType.ILLUMINANCE].weight == DEFAULT_WEIGHT_ENVIRONMENTAL
+        )
+        assert entity_types[InputType.HUMIDITY].weight == DEFAULT_WEIGHT_ENVIRONMENTAL
+        assert (
+            entity_types[InputType.TEMPERATURE].weight == DEFAULT_WEIGHT_ENVIRONMENTAL
+        )

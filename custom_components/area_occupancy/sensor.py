@@ -20,7 +20,7 @@ from .utils import format_float, format_percentage
 NAME_PRIORS_SENSOR = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_PROBABILITY_SENSOR = "Occupancy Probability"
-NAME_ENTITIES_SENSOR = "Entities"
+NAME_EVIDENCE_SENSOR = "Evidence"
 
 
 class AreaOccupancySensorBase(
@@ -89,17 +89,17 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         super()._handle_coordinator_update()
 
 
-class EntitiesSensor(AreaOccupancySensorBase):
-    """Sensor for all entities."""
+class EvidenceSensor(AreaOccupancySensorBase):
+    """Sensor for all evidence."""
 
     _unrecorded_attributes = frozenset({"evidence", "no_evidence", "total", "details"})
 
     def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
         """Initialize the entities sensor."""
         super().__init__(coordinator, entry_id)
-        self._attr_name = NAME_ENTITIES_SENSOR
+        self._attr_name = NAME_EVIDENCE_SENSOR
         self._attr_unique_id = (
-            f"{entry_id}_{NAME_ENTITIES_SENSOR.lower().replace(' ', '_')}"
+            f"{entry_id}_{NAME_EVIDENCE_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -114,44 +114,39 @@ class EntitiesSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            active_entity_names = [
-                entity.name
-                for entity in self.coordinator.entities.active_entities
-                if entity.name
-            ]
-            inactive_entity_names = [
-                entity.name
-                for entity in self.coordinator.entities.inactive_entities
-                if entity.name
-            ]
+            active_entity_names = ", ".join(
+                [
+                    entity.name
+                    for entity in self.coordinator.entities.active_entities
+                    if entity.name
+                ]
+            )
+            inactive_entity_names = ", ".join(
+                [
+                    entity.name
+                    for entity in self.coordinator.entities.inactive_entities
+                    if entity.name
+                ]
+            )
             return {
-                "evidence": ", ".join(active_entity_names),
-                "no_evidence": ", ".join(inactive_entity_names),
+                "evidence": active_entity_names,
+                "no_evidence": inactive_entity_names,
                 "total": len(self.coordinator.entities.entities),
-                "details": {
-                    "active": [
-                        {
-                            "id": {entity.entity_id},
-                            "name": {entity.name},
-                            "state": {entity.state},
-                            "decaying": {entity.decay.is_decaying},
-                            "evidence": {entity.evidence},
-                            "probability": {format_percentage(entity.probability)},
-                        }
-                        for entity in self.coordinator.entities.active_entities
-                    ],
-                    "inactive": [
-                        {
-                            "id": {entity.entity_id},
-                            "name": {entity.name},
-                            "state": {entity.state},
-                            "decaying": {entity.decay.is_decaying},
-                            "evidence": {entity.evidence},
-                            "probability": {format_percentage(entity.probability)},
-                        }
-                        for entity in self.coordinator.entities.inactive_entities
-                    ],
-                },
+                "details": [
+                    {
+                        "id": entity.entity_id,
+                        "evidence": entity.evidence,
+                        "probability": entity.probability,
+                        "weight": entity.type.weight,
+                        "name": entity.name,
+                        "state": entity.state,
+                        "decaying": entity.decay.is_decaying,
+                    }
+                    for entity in sorted(
+                        self.coordinator.entities.entities.values(),
+                        key=lambda x: (not x.evidence, -x.type.weight),
+                    )
+                ],
             }
         except (TypeError, AttributeError, KeyError):
             return {}
@@ -205,7 +200,7 @@ async def async_setup_entry(
         ProbabilitySensor(coordinator, entry.entry_id),
         DecaySensor(coordinator, entry.entry_id),
         PriorsSensor(coordinator, entry.entry_id),
-        EntitiesSensor(coordinator, entry.entry_id),
+        EvidenceSensor(coordinator, entry.entry_id),
     ]
 
     async_add_entities(entities, update_before_add=True)

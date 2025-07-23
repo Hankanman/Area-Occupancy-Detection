@@ -1,7 +1,1 @@
-pytest
-pytest-cov
-pytest-asyncio
-pytest-homeassistant-custom-component
-astroid
-pylint
-sqlalchemy
+pytest-homeassistant-custom-component==0.13.214

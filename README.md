@@ -3,6 +3,7 @@
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?branch=main)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=tests)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?branch=main&label=docs)
+![Downloads](https://img.shields.io/badge/Downloads-259-blue)
 
 
 
@@ -22,6 +23,8 @@ This integration provides advanced room occupancy detection by combining multipl
 - **Configurable Time Decay**: Gradually reduces occupancy probability if no new triggers occur
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability
+- **Sensor Likelihoods**: Learns how reliable each sensor is and lets you recalculate those values via service call
+- **Purpose-Based Defaults**: Selecting a room purpose automatically sets a sensible decay half life
 
 ## Documentation
 
@@ -87,7 +90,7 @@ The setup wizard will guide you through:
    - Occupancy Threshold: Percentage at which binary sensor indicates occupancy (default: 50%)
    - History Period: Days of history to analyze for learning (default: 7 days)
    - Enable Time Decay: Whether probability should decay over time
-   - Decay Window: How long until probability fully decays (default: 600 seconds)
+   - Decay Half Life: Time for probability to halve when no activity is detected (default: 600 seconds)
    - Enable Historical Analysis: Whether to learn from historical data
 
    *Note: The Decay Minimum Delay parameter has been removed as of version 9.2. Existing configurations are migrated automatically.*
@@ -104,8 +107,8 @@ The setup wizard will guide you through:
 ### Time Decay
 
 - Uses an exponential decay function with λ = 0.866433976
-- This decay rate reduces probability to 25% at half of the decay window
-- Example: With default 600s window, probability reduces to 25% after 300s
+- The probability drops to 25% at one decay half life
+- Example: With the default 600 s half life the probability reduces to 25% after 300 s
 
 ### Historical Analysis
 
@@ -150,7 +153,7 @@ The integration creates several entities, all prefixed with your configured area
   - Attributes:
     - `decay_start_time`: When decay began
     - `original_probability`: Probability before decay started
-    - `decay_window`: Current decay window setting
+    - `decay_half_life`: Current decay half life setting
 
 ### Number
 - `number.[name]_occupancy_threshold`: Adjustable threshold for occupancy determination
@@ -167,6 +170,16 @@ Service Data:
 ```yaml
 entry_id: "<config_entry_id>"  # Required: ID of the Area Occupancy instance
 history_period: 7              # Optional: Days of history to analyze (1-30 days)
+```
+
+### area_occupancy.update_likelihoods
+
+Recalculate the stored sensor likelihoods. Use this after changing sensors or if you want to refresh how reliable each sensor is considered.
+
+Service Data:
+```yaml
+entry_id: "<config_entry_id>"  # Required: ID of the Area Occupancy instance
+history_period: 7              # Optional: Days of history to analyse
 ```
 
 ## Example Automations

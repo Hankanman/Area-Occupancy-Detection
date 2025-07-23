@@ -860,10 +860,18 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
                     purpose_default = _get_default_decay_half_life(selected_purpose)
 
-                    # If no explicit decay half-life or it matches the default, use purpose-based default
+                    # Get all purpose-based half-life values to check if current value was auto-set
+                    purpose_half_lives = {
+                        purpose_def.half_life
+                        for purpose_def in PURPOSE_DEFINITIONS.values()
+                    }
+                    purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
+
+                    # If no explicit decay half-life, or it matches any purpose default (indicating it was auto-set)
                     if (
                         user_set_decay is None
                         or user_set_decay == DEFAULT_DECAY_HALF_LIFE
+                        or user_set_decay in purpose_half_lives
                     ):
                         flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
                         _LOGGER.debug(
@@ -972,16 +980,22 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
                     purpose_default = _get_default_decay_half_life(selected_purpose)
 
-                    # For options flow, also check against current config values
-                    current_decay = self.config_entry.data.get(
-                        CONF_DECAY_HALF_LIFE
-                    ) or self.config_entry.options.get(CONF_DECAY_HALF_LIFE)
+                    # Get all purpose-based half-life values to check if current value was auto-set
+                    purpose_half_lives = {
+                        purpose_def.half_life
+                        for purpose_def in PURPOSE_DEFINITIONS.values()
+                    }
+                    purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
 
-                    # If no explicit decay half-life or it matches the default, use purpose-based default
-                    if user_set_decay in (DEFAULT_DECAY_HALF_LIFE, current_decay):
+                    # If no explicit decay half-life, or it matches any purpose default (indicating it was auto-set)
+                    if (
+                        user_set_decay is None
+                        or user_set_decay == DEFAULT_DECAY_HALF_LIFE
+                        or user_set_decay in purpose_half_lives
+                    ):
                         flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
                         _LOGGER.debug(
-                            "Auto-setting decay half-life to %s seconds for purpose %s (options flow)",
+                            "Auto-setting decay half-life to %s seconds for purpose %s",
                             purpose_default,
                             selected_purpose,
                         )

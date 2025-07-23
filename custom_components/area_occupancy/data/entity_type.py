@@ -13,6 +13,14 @@ from homeassistant.const import (
     STATE_STANDBY,
 )
 
+from ..const import (
+    DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_MEDIA,
+    DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_WINDOW,
+)
 from ..utils import validate_prior, validate_prob, validate_weight
 
 if TYPE_CHECKING:
@@ -27,6 +35,9 @@ class InputType(StrEnum):
     APPLIANCE = "appliance"
     DOOR = "door"
     WINDOW = "window"
+    TEMPERATURE = "temperature"
+    HUMIDITY = "humidity"
+    ILLUMINANCE = "illuminance"
     ENVIRONMENTAL = "environmental"
 
 
@@ -170,7 +181,16 @@ class EntityTypeManager:
         if not weights:
             return
 
-        weight_attr = getattr(weights, input_type.value, None)
+        # Handle environmental sensor types - they all use the environmental weight
+        if input_type in [
+            InputType.ILLUMINANCE,
+            InputType.HUMIDITY,
+            InputType.TEMPERATURE,
+        ]:
+            weight_attr = getattr(weights, "environmental", None)
+        else:
+            weight_attr = getattr(weights, input_type.value, None)
+
         if weight_attr is None:
             return
 
@@ -214,7 +234,7 @@ class EntityTypeManager:
 # Central definition of types—add or change defaults here.
 _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
-        "weight": 0.95,
+        "weight": DEFAULT_WEIGHT_MOTION,
         "prob_true": 0.25,
         "prob_false": 0.05,
         "prior": 0.35,
@@ -222,7 +242,7 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "active_range": None,
     },
     InputType.MEDIA: {
-        "weight": 0.8,
+        "weight": DEFAULT_WEIGHT_MEDIA,
         "prob_true": 0.25,
         "prob_false": 0.02,
         "prior": 0.3,
@@ -230,7 +250,7 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "active_range": None,
     },
     InputType.APPLIANCE: {
-        "weight": 0.6,
+        "weight": DEFAULT_WEIGHT_APPLIANCE,
         "prob_true": 0.2,
         "prob_false": 0.02,
         "prior": 0.2356,
@@ -238,7 +258,7 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "active_range": None,
     },
     InputType.DOOR: {
-        "weight": 0.5,
+        "weight": DEFAULT_WEIGHT_DOOR,
         "prob_true": 0.2,
         "prob_false": 0.02,
         "prior": 0.1356,
@@ -246,15 +266,39 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "active_range": None,
     },
     InputType.WINDOW: {
-        "weight": 0.4,
+        "weight": DEFAULT_WEIGHT_WINDOW,
         "prob_true": 0.2,
         "prob_false": 0.02,
         "prior": 0.1569,
         "active_states": [STATE_OPEN],
         "active_range": None,
     },
+    InputType.TEMPERATURE: {
+        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
+        "prob_true": 0.09,
+        "prob_false": 0.01,
+        "prior": 0.0769,
+        "active_states": None,
+        "active_range": (18.0, 24.0),
+    },
+    InputType.HUMIDITY: {
+        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
+        "prob_true": 0.09,
+        "prob_false": 0.01,
+        "prior": 0.0769,
+        "active_states": None,
+        "active_range": (70.0, 100.0),
+    },
+    InputType.ILLUMINANCE: {
+        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
+        "prob_true": 0.09,
+        "prob_false": 0.01,
+        "prior": 0.0769,
+        "active_states": None,
+        "active_range": (30.00, 100000.0),
+    },
     InputType.ENVIRONMENTAL: {
-        "weight": 0.3,
+        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
         "prob_true": 0.09,
         "prob_false": 0.01,
         "prior": 0.0769,

@@ -5,29 +5,80 @@ set -o pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "🔧 Setting up Area Occupancy Detection development environment..."
+RECREATE_VENV=false
+for arg in "$@"; do
+    if [[ "$arg" == "--recreate-venv" ]]; then
+        RECREATE_VENV=true
+    fi
+done
 
-# Ensure we're using the right Python
+# Detect python executable
+if command -v python3 &>/dev/null; then
+    PYTHON_BIN="python3"
+elif command -v python &>/dev/null; then
+    PYTHON_BIN="python"
+else
+    echo "❌ Python is not installed. Please install Python 3.7+ and try again."
+    exit 1
+fi
+
+# Check for requirements files
+REQ_FILES=(requirements.txt requirements_test.txt)
+MISSING_REQS=()
+for req in "${REQ_FILES[@]}"; do
+    if [[ ! -f "$req" ]]; then
+        MISSING_REQS+=("$req")
+    fi
+done
+if [[ ${#MISSING_REQS[@]} -gt 0 ]]; then
+    echo "❌ Missing required file(s): ${MISSING_REQS[*]}"
+    exit 1
+fi
+
+# Handle virtual environment
 if [[ -n "$VIRTUAL_ENV" ]]; then
-    echo "✅ Using virtual environment: $VIRTUAL_ENV"
+    echo "✅ Using existing virtual environment: $VIRTUAL_ENV"
     PYTHON_CMD="python"
 else
-    echo "⚠️  No virtual environment detected, using system Python"
-    PYTHON_CMD="python3"
+    if [[ "$RECREATE_VENV" == true && -d ".venv" ]]; then
+        echo "♻️  Removing existing .venv as --recreate-venv was specified..."
+        rm -rf .venv
+    fi
+    if [[ ! -d ".venv" ]]; then
+        echo "📁 Creating virtual environment in .venv..."
+        $PYTHON_BIN -m venv .venv
+    fi
+    echo "🔄 Activating virtual environment..."
+    source .venv/bin/activate
+    echo "✅ Virtual environment activated: $(which python)"
+    PYTHON_CMD="python"
+fi
+
+# Check pip
+if ! $PYTHON_CMD -m pip --version &>/dev/null; then
+    echo "❌ pip is not available in the virtual environment. Attempting to install..."
+    $PYTHON_CMD -m ensurepip --upgrade || true
+    $PYTHON_CMD -m pip install --upgrade pip
+    if ! $PYTHON_CMD -m pip --version &>/dev/null; then
+        echo "❌ pip could not be installed. Exiting."
+        exit 1
+    fi
 fi
 
 echo "📦 Installing dependencies..."
 $PYTHON_CMD -m pip install --upgrade pip
 $PYTHON_CMD -m pip install -r requirements.txt -r requirements_test.txt
 
-echo "🔍 Validating environment..."
-if [[ -f "scripts/validate-env" ]]; then
-    $PYTHON_CMD scripts/validate-env
-else
-    echo "⚠️  Environment validation script not found"
-fi
+cat <<EOF
 
-echo "✅ Setup complete! You can now run:"
-echo "   pytest                    # Run tests"
-echo "   ./scripts/validate-env    # Validate environment"
-echo "   ./scripts/test-ci-local   # Run CI-like tests"
+✅ Setup complete!
+
+You can now run:
+   source .venv/bin/activate  # Activate environment (if not already active)
+   pytest                     # Run tests
+
+Summary:
+- Python used: $($PYTHON_CMD --version)
+- Virtual env: $(realpath .venv)
+- Requirements: requirements.txt, requirements_test.txt
+EOF

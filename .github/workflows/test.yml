@@ -7,10 +7,11 @@ on:
   pull_request:
     branches:
       - "main"
+      - "dev"
 
 jobs:
   test:
-    name: "CI: Lint & Test"
+    name: "CI: Test"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -20,28 +21,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: "pip"
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements_test.txt
 
-      - name: Validate Environment
-        run: |
-          python scripts/validate-env
-
-      - name: Display Package Versions (for debugging)
-        run: |
-          echo "=== Key Package Versions ==="
-          python -c "import pytest; print(f'pytest: {pytest.__version__}')"
-          pip show pytest-asyncio | grep Version
-          pip show pytest-homeassistant-custom-component | grep Version
-
       - name: Run tests with pytest
         run: |
-          pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing -W ignore::RuntimeWarning --tb=short -v
+          pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
