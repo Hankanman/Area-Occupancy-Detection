@@ -624,13 +624,13 @@ class TestTimeBasedPriorUtilities:
     def test_get_time_slot_name(self) -> None:
         """Test time slot name generation."""
         name = get_time_slot_name(0, 28)  # Monday 14:00-14:29
-        assert name == "Monday 14:00-14:30"  # Fixed: end time should be 14:30
+        assert name == "Monday 14:00-14:30"
 
         name = get_time_slot_name(6, 47)  # Sunday 23:30-23:59
         assert name == "Sunday 23:30-00:00"
 
         name = get_time_slot_name(3, 0)  # Thursday 00:00-00:29
-        assert name == "Thursday 00:00-00:30"  # Fixed: end time should be 00:30
+        assert name == "Thursday 00:00-00:30"
 
     def test_get_all_time_slots(self) -> None:
         """Test getting all time slots."""
