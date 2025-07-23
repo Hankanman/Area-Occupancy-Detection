@@ -702,6 +702,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_historical_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -738,6 +739,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_historical_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -772,6 +774,9 @@ class TestCoordinatorSetupScenarios:
                 "async_initialize",
                 side_effect=HomeAssistantError("Entity init failed"),
             ),
+            patch.object(coordinator, "_start_prior_timer"),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_historical_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -804,6 +809,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_historical_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
