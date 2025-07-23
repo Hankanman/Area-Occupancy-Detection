@@ -659,7 +659,7 @@ async def _update_numeric_sensor_statistics(
                         "outliers_removed": stats.outliers_removed,
                     },
                     "confidence_metrics": {
-                        "bounds_confidence": stats.bounds_confidence,
+                        "bounds_confidence": stats.bounds_confidence
                     },
                     "sensor_type": entity.statistics.sensor_type,
                 }

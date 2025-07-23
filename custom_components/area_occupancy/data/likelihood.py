@@ -105,28 +105,14 @@ class Likelihood:
             Weighted probability
 
         """
-        # For very low weights, be more aggressive in discounting calculated probabilities
-        if self.weight <= 0.2:
-            # Low weight sensors should have calculated values heavily discounted
-            # Interpolate between default and neutral, weighted by the calculated value strength
-            neutral_prob = 0.5
+        # Threshold for meaningful calculated data
+        LOW_PROB_THRESHOLD = 0.05  # 5%
 
-            # Calculate how "strong" the calculated probability is compared to neutral
-            prob_strength = abs(prob - neutral_prob) / 0.5  # Normalize to 0-1 range
-
-            # For low weights, primarily use the default but allow some influence from calculated values
-            base_prob = (
-                default_prob + (neutral_prob - default_prob) * self.weight * 2
-            )  # Scale up weight effect for defaults
-
-            # Apply calculated probability influence scaled by weight and strength
-            weighted_prob = base_prob + (prob - base_prob) * self.weight * prob_strength
-
-        elif prob < 0.05:  # Threshold for meaningful calculated data
+        if prob < LOW_PROB_THRESHOLD:
             # No meaningful calculated data - apply weight as multiplier to defaults
             weighted_prob = default_prob * self.weight
         else:
-            # Good calculated data with reasonable weight - apply weight as interpolation from neutral
+            # Good calculated data - apply weight as interpolation from neutral
             neutral_prob = 0.5
             weighted_prob = neutral_prob + (prob - neutral_prob) * self.weight
 
@@ -269,8 +255,6 @@ class Likelihood:
             Tuple of (prob_given_true, prob_given_false)
 
         """
-        _LOGGER.info("Numeric likelihood calculation for %s", self.entity_id)
-
         # Try to get statistics from the entity (if it has them)
         entity = None
         with contextlib.suppress(ValueError):
@@ -290,12 +274,6 @@ class Likelihood:
             stats.occupied_samples < 50
             or stats.bounds_confidence < MIN_CONFIDENCE_THRESHOLD
         ):
-            _LOGGER.info(
-                "Insufficient statistical data for %s (samples: %d, confidence: %.2f), using defaults",
-                self.entity_id,
-                stats.occupied_samples,
-                stats.bounds_confidence,
-            )
             return self.default_prob_true, self.default_prob_false
 
         # Calculate likelihood based on occupancy delta and statistical distributions
@@ -304,11 +282,6 @@ class Likelihood:
             occupancy_delta is None
             or abs(occupancy_delta) < MIN_OCCUPANCY_DELTA_THRESHOLD
         ):
-            _LOGGER.info(
-                "No significant occupancy pattern for %s (delta: %s), using defaults",
-                self.entity_id,
-                occupancy_delta,
-            )
             return self.default_prob_true, self.default_prob_false
 
         # Determine sensor type for specialized calculations
@@ -320,15 +293,6 @@ class Likelihood:
             )
 
             self.statistics_based_calculation = True
-
-            _LOGGER.info(
-                "Calculated numeric likelihood for %s (%s): P(active|occupied)=%.3f, P(active|unoccupied)=%.3f, delta=%.2f",
-                self.entity_id,
-                sensor_type,
-                prob_given_true,
-                prob_given_false,
-                occupancy_delta,
-            )
 
         except (ValueError, TypeError, ZeroDivisionError, AttributeError) as err:
             _LOGGER.warning(

@@ -25,7 +25,6 @@
       "settings": {
         "files.eol": "\n",
         "editor.tabSize": 4,
-        
         "python.terminal.activateEnvInCurrentTerminal": true,
         "editor.formatOnPaste": true,
         "editor.formatOnSave": true,
@@ -33,8 +32,7 @@
         "files.trimTrailingWhitespace": true,
         "python.analysis.typeCheckingMode": "basic",
         "python.analysis.autoImportCompletions": true,
-        "python.defaultInterpreterPath": ".venv/bin/python",
-        "python.venvPath": ".venv",
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
         "[python]": {
           "editor.defaultFormatter": "charliermarsh.ruff"
         }
@@ -43,7 +41,6 @@
   },
   "remoteUser": "vscode",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
       "packages": ["ffmpeg", "libturbojpeg0", "libpcap-dev"]
     },
@@ -55,8 +52,5 @@
       "pnpmVersion": "latest",
       "nvmVersion": "latest"
     }
-  },
-  "containerEnv": {
-    "VIRTUAL_ENV": "/workspaces/Area-Occupancy-Detection/.venv"
   }
 }

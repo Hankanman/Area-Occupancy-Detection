@@ -216,59 +216,6 @@ def format_percentage(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
-def apply_decay(
-    prob_given_true: float, prob_given_false: float, decay_factor: float
-) -> tuple[float, float]:
-    """Apply decay factor to likelihood probabilities.
-
-    This maintains mathematical equivalence with applying decay as an exponent
-    to the Bayes factor in the original bayesian_probability function.
-
-    Args:
-        prob_given_true: Original probability given true
-        prob_given_false: Original probability given false
-        decay_factor: Decay factor (0.0 = full decay, 1.0 = no decay)
-
-    Returns:
-        Tuple of (effective_prob_given_true, effective_prob_given_false)
-
-    """
-    if decay_factor == 1.0:
-        return prob_given_true, prob_given_false
-
-    if decay_factor == 0.0:
-        # Full decay - return neutral probabilities
-        return 0.5, 0.5
-
-    # Ensure inputs are in valid range
-    prob_given_true = max(0.001, min(prob_given_true, 0.999))
-    prob_given_false = max(0.001, min(prob_given_false, 0.999))
-
-    # Calculate the original bayes factor
-    original_bf = prob_given_true / prob_given_false
-
-    # Apply decay to the bayes factor (this is what bayesian_probability was doing)
-    decayed_bf = original_bf**decay_factor
-
-    # Calculate geometric mean to preserve overall magnitude
-    geo_mean = (prob_given_true * prob_given_false) ** 0.5
-
-    # Calculate new probabilities that give the decayed bayes factor
-    # p_t_eff / p_f_eff = decayed_bf
-    # p_t_eff * p_f_eff = geo_mean^2 (preserve geometric mean)
-    # Solving: p_t_eff = geo_mean * sqrt(decayed_bf), p_f_eff = geo_mean / sqrt(decayed_bf)
-
-    sqrt_bf = decayed_bf**0.5
-    p_true_eff = geo_mean * sqrt_bf
-    p_false_eff = geo_mean / sqrt_bf
-
-    # Ensure probabilities are in valid range
-    p_true_eff = max(0.001, min(0.999, p_true_eff))
-    p_false_eff = max(0.001, min(0.999, p_false_eff))
-
-    return p_true_eff, p_false_eff
-
-
 EPS = 1e-12
 
 
@@ -279,23 +226,22 @@ def bayesian_probability(
     prob_given_true: float,
     prob_given_false: float,
     evidence: bool | None,
+    decay_factor: float,  # Remove weight parameter
 ) -> float:
-    """Pure Bayesian probability update.
-
-    This function now focuses solely on Bayesian calculation.
-    Decay should be applied to prob_given_true and prob_given_false before calling this.
+    """Simplified Bayesian update - weight is already applied in likelihood values.
 
     Args:
         prior: Prior probability
-        prob_given_true: Probability of evidence given true (decay already applied if needed)
-        prob_given_false: Probability of evidence given false (decay already applied if needed)
-        evidence: Evidence (True/False/None)
+        prob_given_true: Weighted probability of evidence given true
+        prob_given_false: Weighted probability of evidence given false
+        evidence: Evidence
+        decay_factor: Decay factor
 
     Returns:
         Posterior probability
 
     """
-    if evidence is None:
+    if evidence is None or decay_factor == 0:
         return prior
 
     # Validate inputs first
@@ -312,6 +258,10 @@ def bayesian_probability(
 
     # Ensure bayes_factor is positive to avoid complex numbers
     bayes_factor = max(EPS, bayes_factor)
+
+    # Apply only decay factor (weight already applied in likelihood)
+    if decay_factor != 1.0:
+        bayes_factor = bayes_factor**decay_factor
 
     # Calculate posterior odds
     odds = prior / (1.0 - prior + EPS)
@@ -335,12 +285,12 @@ def overall_probability(entities: dict[str, Entity], prior: float) -> float:
 
     product = 1.0
     for e in contributing_entities:
-        # Use Entity's effective probabilities (decay already applied)
         posterior = bayesian_probability(
             prior=prior,
-            prob_given_true=e.effective_prob_given_true,
-            prob_given_false=e.effective_prob_given_false,
+            prob_given_true=e.likelihood.prob_given_true,
+            prob_given_false=e.likelihood.prob_given_false,
             evidence=True,
+            decay_factor=e.decay.decay_factor if e.decay.is_decaying else 1.0,
         )
         product *= 1 - posterior
 
@@ -873,9 +823,7 @@ def _fuzzy_match_number(
     return None
 
 
-def detect_entity_type_from_device_class(
-    device_class: str | None,
-) -> InputType | None:
+def detect_entity_type_from_device_class(device_class: str | None) -> InputType | None:
     """Map Home Assistant device class to our internal InputType enum."""
     # Import here to avoid circular import
     from .data.entity_type import InputType  # noqa: PLC0415
@@ -955,9 +903,9 @@ def get_entity_type_description(hass: HomeAssistant, entity_id: str) -> dict[str
         "ha_device_class": ha_device_class or "Unknown",
         "fallback_device_class": fallback_device_class or "Unknown",
         "unit_of_measurement": unit or "Unknown",
-        "detected_input_type": detected_input_type.value
-        if detected_input_type
-        else "Unknown",
+        "detected_input_type": (
+            detected_input_type.value if detected_input_type else "Unknown"
+        ),
         "extracted_keywords": entity_words,
         "current_state": ha_state.state if ha_state else "Unknown",
         "available": ha_state is not None

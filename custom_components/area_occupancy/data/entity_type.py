@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import (
@@ -18,8 +17,6 @@ from ..utils import validate_prior, validate_prob, validate_weight
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class InputType(StrEnum):

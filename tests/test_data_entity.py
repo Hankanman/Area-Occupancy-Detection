@@ -698,7 +698,7 @@ class TestEntityPropertiesAndMethods:
             previous_probability=0.0,
         )
 
-        # Test when not decaying - effective probabilities should equal original probabilities
+        # Test when not decaying
         mock_decay.is_decaying = False
         type(mock_decay).decay_factor = PropertyMock(return_value=1.0)
         mock_bayesian_prob.return_value = 0.8
@@ -706,30 +706,25 @@ class TestEntityPropertiesAndMethods:
         assert entity.probability == 0.8
         mock_bayesian_prob.assert_called_with(
             prior=0.3,
-            prob_given_true=0.8,  # Should use effective probabilities (same as original when no decay)
+            prob_given_true=0.8,
             prob_given_false=0.1,
             evidence=True,
+            decay_factor=1.0,
         )
 
-        # Test when decaying - effective probabilities should be different from original
+        # Test when decaying
         mock_decay.is_decaying = True
         type(mock_decay).decay_factor = PropertyMock(return_value=0.9)
         mock_bayesian_prob.return_value = 0.73
 
-        # Reset mock to check the new call
-        mock_bayesian_prob.reset_mock()
-
         assert entity.probability == 0.73
-        # The effective probabilities will be calculated by apply_decay
-        # so we just verify that bayesian_probability is called without decay_factor
-        mock_bayesian_prob.assert_called_once()
-        call_args = mock_bayesian_prob.call_args
-        assert call_args[1]["prior"] == 0.3
-        assert call_args[1]["evidence"] is True
-        # The effective probabilities should be different from original due to decay
-        assert (
-            "decay_factor" not in call_args[1]
-        )  # Should not have decay_factor parameter
+        mock_bayesian_prob.assert_called_with(
+            prior=0.3,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            evidence=True,
+            decay_factor=0.9,
+        )
 
     def test_effective_probability_property(
         self,
