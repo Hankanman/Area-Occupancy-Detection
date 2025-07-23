@@ -38,6 +38,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Database constants
 DB_NAME = "area_occupancy.db"
+# Default retention for state interval cleanup
+DEFAULT_RETENTION_DAYS = 365
 
 
 class AreaOccupancyStorage:
@@ -80,11 +82,22 @@ class AreaOccupancyStorage:
             "SQLite storage initialized for entry %s at %s", entry_id, self.db_path
         )
 
+    def _enable_wal_mode(self) -> None:
+        """Enable SQLite WAL mode for better concurrent writes."""
+        if not self.engine:
+            return
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+        except sa.exc.SQLAlchemyError as err:
+            _LOGGER.debug("Failed to enable WAL mode: %s", err)
+
     async def async_initialize(self) -> None:
         """Initialize the database schema using SQLAlchemy."""
 
         def _create_schema():
             try:
+                self._enable_wal_mode()
                 # Check which tables already exist
                 with self.engine.connect() as conn:
                     existing_tables = {
@@ -455,8 +468,8 @@ class AreaOccupancyStorage:
                         conn.execute(
                             sa.text(
                                 """
-                                INSERT OR IGNORE INTO entities (entity_id, domain, last_seen, created_at)
-                                VALUES (:entity_id, 'unknown', :now, :now)
+                                INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
+                                VALUES (:entity_id, :now, :now)
                                 """
                             ),
                             entity_values,
@@ -575,8 +588,14 @@ class AreaOccupancyStorage:
 
         return await self.hass.async_add_executor_job(_get)
 
-    async def cleanup_old_intervals(self, retention_days: int = 365) -> int:
-        """Remove state intervals older than retention period."""
+    async def cleanup_old_intervals(
+        self, retention_days: int = DEFAULT_RETENTION_DAYS
+    ) -> int:
+        """Remove state intervals older than the retention period.
+
+        The default retention period keeps roughly one year of history to
+        balance accuracy with storage size.
+        """
         cutoff_date = dt_util.utcnow() - timedelta(days=retention_days)
 
         def _cleanup():
@@ -598,12 +617,23 @@ class AreaOccupancyStorage:
         )
         return deleted_count
 
+    async def vacuum_database(self) -> None:
+        """Run SQLite VACUUM to reclaim space."""
+
+        def _vacuum() -> None:
+            with self.engine.connect() as conn:
+                conn.execute(sa.text("VACUUM"))
+
+        await self.hass.async_add_executor_job(_vacuum)
+
     async def import_intervals_from_recorder(
         self, entity_ids: list[str], days: int = 10
     ) -> dict[str, int]:
-        """Import state intervals from HA recorder to global table.
+        """Import state intervals from recorder into the global table.
 
-        Automatically filters out 'unavailable' and 'unknown' states to avoid storing useless data.
+        The default range of 10 days mirrors Home Assistant's typical recorder
+        retention. Intervals with ``unavailable`` or ``unknown`` states are
+        ignored to keep the database small.
         """
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=days)
@@ -869,3 +899,12 @@ class AreaOccupancyStorage:
     async def async_get_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
         return await self.get_stats()
+
+    async def async_close(self) -> None:
+        """Dispose the SQLAlchemy engine."""
+
+        def _dispose() -> None:
+            if self.engine:
+                self.engine.dispose()
+
+        await self.hass.async_add_executor_job(_dispose)
