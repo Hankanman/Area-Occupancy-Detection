@@ -1259,9 +1259,12 @@ class TestCoordinatorAsyncHelpers:
         coordinator.config.history.time_based_priors_enabled = True
         coordinator.config.history.time_based_priors_frequency = 1
 
-        with patch.object(coordinator.prior, "get_time_prior", return_value=0), patch.object(
-            coordinator.prior, "calculate_time_based_priors", new=AsyncMock()
-        ) as mock_calc:
+        with (
+            patch.object(coordinator.prior, "get_time_prior", return_value=0),
+            patch.object(
+                coordinator.prior, "calculate_time_based_priors", new=AsyncMock()
+            ) as mock_calc,
+        ):
             await coordinator._calculate_time_priors_async(initial_setup=False)
             mock_calc.assert_called_once()
 

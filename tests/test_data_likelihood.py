@@ -526,8 +526,16 @@ class TestLikelihoodEdgeCases:
         mock_coordinator.prior.state_intervals = prior_intervals
 
         intervals = [
-            {"state": "on", "start": base - timedelta(minutes=10), "end": base - timedelta(minutes=5)},
-            {"state": "on", "start": base - timedelta(minutes=4), "end": base - timedelta(minutes=2)},
+            {
+                "state": "on",
+                "start": base - timedelta(minutes=10),
+                "end": base - timedelta(minutes=5),
+            },
+            {
+                "state": "on",
+                "start": base - timedelta(minutes=4),
+                "end": base - timedelta(minutes=2),
+            },
         ]
         with patch(
             "custom_components.area_occupancy.data.likelihood.get_intervals_hybrid",
@@ -556,8 +564,16 @@ class TestLikelihoodEdgeCases:
         ]
         sorted_prior = sorted(prior, key=lambda x: x["start"])
 
-        overlapping = {"start": base - timedelta(minutes=3), "end": base - timedelta(minutes=1)}
-        non_overlapping = {"start": base - timedelta(minutes=20), "end": base - timedelta(minutes=18)}
+        overlapping = {
+            "start": base - timedelta(minutes=3),
+            "end": base - timedelta(minutes=1),
+        }
+        non_overlapping = {
+            "start": base - timedelta(minutes=20),
+            "end": base - timedelta(minutes=18),
+        }
 
         assert likelihood._interval_overlaps_prior_optimized(overlapping, sorted_prior)
-        assert not likelihood._interval_overlaps_prior_optimized(non_overlapping, sorted_prior)
+        assert not likelihood._interval_overlaps_prior_optimized(
+            non_overlapping, sorted_prior
+        )

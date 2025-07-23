@@ -145,6 +145,11 @@ indexes = [
         state_intervals_table.c.start_time,
         state_intervals_table.c.end_time,
     ),
+    # Additional timestamp index for efficient cleanup and queries
+    sa.Index(
+        "idx_state_intervals_end_time",
+        state_intervals_table.c.end_time,
+    ),
     # Area entity config primary lookup
     sa.Index("idx_area_entity_entry", area_entity_config_table.c.entry_id),
     # Area time priors lookup
@@ -154,6 +159,10 @@ indexes = [
         area_time_priors_table.c.entry_id,
         area_time_priors_table.c.day_of_week,
         area_time_priors_table.c.time_slot,
+    ),
+    sa.Index(
+        "idx_area_time_priors_last_updated",
+        area_time_priors_table.c.last_updated,
     ),
 ]
 
