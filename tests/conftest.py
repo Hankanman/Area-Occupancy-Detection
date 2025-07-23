@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Generator
+import contextlib
 from datetime import datetime, timedelta
 import tempfile
 import time
@@ -1665,3 +1666,62 @@ def mock_realistic_config_entry():
     entry.async_remove = AsyncMock()
     entry.async_update = AsyncMock()
     return entry
+
+
+# Global patch for custom_components.area_occupancy.utils.get_instance
+@pytest.fixture(autouse=True)
+def mock_utils_get_instance_globally():
+    """Automatically mock custom_components.area_occupancy.utils.get_instance for all tests."""
+    with patch(
+        "custom_components.area_occupancy.utils.get_instance"
+    ) as mock_get_instance:
+        mock_instance = Mock()
+        mock_instance.async_add_executor_job = AsyncMock(return_value={})
+        mock_get_instance.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture(autouse=True)
+def auto_cancel_timers(monkeypatch):
+    """Automatically track and cancel all timers created during a test."""
+    loop = asyncio.get_event_loop()
+    original_call_later = loop.call_later
+    original_call_at = loop.call_at
+    timer_handles = []
+
+    def tracking_call_later(delay, callback, *args, **kwargs):
+        handle = original_call_later(delay, callback, *args, **kwargs)
+        timer_handles.append(handle)
+        return handle
+
+    def tracking_call_at(when, callback, *args, **kwargs):
+        handle = original_call_at(when, callback, *args, **kwargs)
+        timer_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(loop, "call_later", tracking_call_later)
+    monkeypatch.setattr(loop, "call_at", tracking_call_at)
+
+    # Patch async_track_point_in_time if used directly
+    try:
+        from homeassistant.helpers.event import async_track_point_in_time
+
+        orig_async_track_point_in_time = async_track_point_in_time
+
+        def tracking_async_track_point_in_time(hass, action, point_in_time):
+            handle = orig_async_track_point_in_time(hass, action, point_in_time)
+            timer_handles.append(handle)
+            return handle
+
+        monkeypatch.setattr(
+            "homeassistant.helpers.event.async_track_point_in_time",
+            tracking_async_track_point_in_time,
+        )
+    except ImportError:
+        pass
+
+    yield
+
+    for handle in timer_handles:
+        with contextlib.suppress(Exception):
+            handle.cancel()
