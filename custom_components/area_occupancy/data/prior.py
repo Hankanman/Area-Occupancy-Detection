@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from ..const import HA_RECORDER_DAYS
+from ..const import HA_RECORDER_DAYS, MIN_PRIOR
 from ..schema import AreaTimePriorRecord
 from ..utils import (
     StateInterval,
@@ -28,9 +28,6 @@ if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-# Minimum prior value to avoid division by zero (1%)
-MIN_PRIOR = 0.1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,24 +54,24 @@ class Prior:  # exported name must stay identical
     # --------------------------------------------------------------------- #
     @property
     def value(self) -> float:
-        """Return the time-based prior if available, then fallback to global prior, then fallback to min prior."""
-        # Try to get time-based prior for current time slot
+        """Return the best available prior: time-based, global, or minimum."""
         try:
             time_prior = self.time_prior
-            if time_prior >= MIN_PRIOR:
-                return time_prior
-        except:  # noqa: E722
-            pass  # Fall through to global prior
+        except Exception:  # noqa: BLE001
+            time_prior = None
 
-        # Fallback to global prior
-        return self.global_prior
+        if time_prior is not None and time_prior >= MIN_PRIOR:
+            return time_prior
+
+        global_prior = self.global_prior
+        return max(global_prior, MIN_PRIOR)
 
     @property
     def global_prior(self) -> float:
         """Return the current cached global prior value, or default if not yet calculated."""
-        if self._current_value is None or self._current_value < MIN_PRIOR:
+        if self._current_value is None:
             return MIN_PRIOR
-        return self._current_value
+        return max(self._current_value, MIN_PRIOR)
 
     @property
     def time_prior(self) -> float:
@@ -564,6 +561,8 @@ class Prior:  # exported name must stay identical
 
         """
         data = {}
+        if not entity_ids:
+            return MIN_PRIOR, {}
         for entity_id in entity_ids:
             # Get intervals using hybrid approach - checks our DB first, then recorder
             intervals = await get_intervals_hybrid(
@@ -595,11 +594,13 @@ class Prior:  # exported name must stay identical
                     "occupied_seconds": occupied_seconds,
                     "ratio": occupied_seconds / total_seconds,
                 }
-        if data:
-            prior = (sum(d["ratio"] for d in data.values()) / len(data)) * 1.05
-        else:
-            prior = MIN_PRIOR
-        return prior, data
+            if data:
+                prior = (sum(d["ratio"] for d in data.values()) / len(data)) * 1.05
+                prior = max(prior, MIN_PRIOR)
+            else:
+                prior = MIN_PRIOR
+            return prior, data
+        return MIN_PRIOR, {}
 
     # ------------------------------------------------------------------ #
     def _is_cache_valid(self) -> bool:
