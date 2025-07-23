@@ -681,6 +681,7 @@ class TestCoordinatorAdvancedTimerManagement:
             await mock_coordinator._handle_decay_timer(test_time)
 
 
+@pytest.mark.expected_lingering_timers(True)
 class TestCoordinatorSetupScenarios:
     """Test various coordinator setup scenarios for better coverage."""
 

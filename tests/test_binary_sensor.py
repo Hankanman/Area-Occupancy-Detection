@@ -77,6 +77,7 @@ class TestOccupancy:
         assert entity.is_on is False
 
 
+@pytest.mark.expected_lingering_timers(True)
 class TestWaspInBoxSensor:
     """Test WaspInBoxSensor binary sensor entity."""
 
@@ -535,6 +536,7 @@ class TestAsyncSetupEntry:
         assert isinstance(entities[0], Occupancy)
 
 
+@pytest.mark.expected_lingering_timers(True)
 class TestWaspInBoxIntegration:
     """Test WaspInBoxSensor integration scenarios."""
 
