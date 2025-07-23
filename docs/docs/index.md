@@ -1,8 +1,97 @@
-# Home Assistant - Area Occupancy Detection
+# Area Occupancy Detection Documentation
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?branch=main)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=tests)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?branch=main&label=docs)
+Welcome to the Area Occupancy Detection documentation. This integration provides advanced room occupancy detection by combining multiple sensors through Bayesian probability calculations.
+
+## Overview
+
+Area Occupancy Detection aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data. It uses Bayesian probability to calculate the likelihood of an area being occupied based on multiple sensor inputs and learned patterns.
+
+![Probability Cards](images/probability-cards.png)
+
+## Features
+
+### Core Features
+
+- **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
+- **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
+- **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
+- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, light, appliance, and environmental sensors
+- **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
+
+### Advanced Features
+
+- **[Time-Based Priors](features/time-based-priors.md)**: Advanced feature that learns occupancy patterns for specific times of day and days of the week
+- **[Sensor Likelihoods](features/likelihood.md)**: Learns how reliable each sensor is for occupancy detection
+- **[Purpose-Based Configuration](features/purpose.md)**: Automatic configuration based on room purpose
+
+### User Interface
+
+- **[Services](features/services.md)**: Available service calls for automation and control
+- **[Entities](features/entities.md)**: Created entities and their attributes
+
+## Getting Started
+
+### Installation
+
+- **[Installation Guide](getting-started/installation.md)**: How to install the integration via HACS or manual installation
+
+### Configuration
+
+- **[Configuration Guide](getting-started/configuration.md)**: Step-by-step configuration instructions
+- **[Basic Usage](getting-started/basic-usage.md)**: How to use the integration after setup
+
+## Key Concepts
+
+### Bayesian Probability
+
+The integration uses Bayes' theorem to update occupancy probability based on sensor evidence:
+
+1. **Prior Belief**: Baseline probability of occupancy (learned from history)
+2. **Sensor Evidence**: Current state of configured sensors
+3. **Likelihood**: How reliable each sensor is (learned from history)
+4. **Posterior**: Updated probability after considering new evidence
+
+### Time-Based Priors
+
+The new time-based priors feature extends traditional prior learning by:
+
+- **336 Time Slots**: 30-minute intervals for each day of the week
+- **Context-Aware Detection**: Different baseline probabilities for different times
+- **Automatic Learning**: Continuously learns and adapts to your schedule
+- **Graceful Fallback**: Falls back to global priors when time-based data isn't available
+
+### Sensor Types
+
+The integration supports multiple sensor types with different default weights:
+
+- **Motion Sensors** (0.85): High reliability for occupancy detection
+- **Media Devices** (0.70): Good indicator of active use
+- **Appliances** (0.40): Moderate reliability
+- **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
+- **Window Sensors** (0.20): Minimal influence
+- **Lights** (0.20): Can indicate activity
+- **Environmental** (0.10): Very low influence
+
+## Example Use Cases
+
+### Living Room
+
+- **Sensors**: Motion sensors, TV, lights, door sensors
+- **Patterns**: High occupancy in evenings, low during work hours
+- **Automation**: Turn on lights when occupied, dim when low probability
+
+### Office
+
+- **Sensors**: Motion sensors, computer, lights, door sensors
+- **Patterns**: High occupancy during work hours, low on weekends
+- **Automation**: Turn on/off lights based on occupancy, adjust HVAC
+
+### Bathroom
+
+- **Sensors**: Motion sensors, door sensors, lights
+- **Wasp in Box**: Maintain occupancy when door is closed
+- **Automation**: Turn on lights when occupied, turn off when unoccupied
+
 
 **Intelligent room occupancy detection using Bayesian probability.**
 
@@ -39,10 +128,6 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 *   **UI Configuration:** Easy setup and management through the Home Assistant UI.
 *   **Manual Prior Update Service:** Trigger the prior learning process on demand.
 
-## Screenshots
-
-![Probability Cards](images/probability-cards.png)
-
 ## How It Works
 
 1.  **Configuration:** You select various sensors associated with an area (motion, doors, lights, media players, etc.) and configure parameters like weights and the history period for learning.
@@ -56,6 +141,29 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 5.  **Output:** The final calculated probability is exposed. If it crosses the configured threshold, the Occupancy Status sensor turns "on".
 6.  **Decay:** If the probability starts decreasing (fewer active sensors), an exponential decay function gradually lowers the probability over a configured time window, unless new sensor activity pushes it back up.
 
-## Getting Started
 
-See the [Installation](getting-started/installation.md) and [Configuration](getting-started/configuration.md) guides.
+## Common Issues
+
+1. **No Occupancy Detection**:
+   - Verify sensors are working correctly
+   - Check threshold setting
+   - Ensure sensors are properly configured
+   - Adjust sensor weights
+
+2. **False Positives**:
+   - Lower weights for less reliable sensors
+   - Increase occupancy threshold
+   - Adjust decay settings
+   - Review time-based priors
+
+3. **False Negatives**:
+   - Increase weights for reliable sensors
+   - Lower occupancy threshold
+   - Add additional sensors
+   - Check time-based prior patterns
+
+## Support
+
+- **GitHub Issues**: [Report bugs and request features](https://github.com/Hankanman/Area-Occupancy-Detection/issues)
+- **Community Discussion**: [Ask questions and share experiences](https://github.com/Hankanman/Area-Occupancy-Detection/discussions)
+- **GitHub Releases**: [Check for updates and changelog](https://github.com/Hankanman/Area-Occupancy-Detection/releases)

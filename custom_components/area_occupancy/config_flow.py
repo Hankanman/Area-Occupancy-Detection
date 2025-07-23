@@ -45,8 +45,6 @@ from .const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -72,8 +70,6 @@ from .const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -102,10 +98,6 @@ WEIGHT_MAX = 1
 THRESHOLD_STEP = 1
 THRESHOLD_MIN = 1
 THRESHOLD_MAX = 100
-
-HISTORY_PERIOD_STEP = 1
-HISTORY_PERIOD_MIN = 1
-HISTORY_PERIOD_MAX = 30
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -499,18 +491,6 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 )
             ),
             vol.Optional(
-                CONF_HISTORY_PERIOD,
-                default=defaults.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=HISTORY_PERIOD_MIN,
-                    max=HISTORY_PERIOD_MAX,
-                    step=HISTORY_PERIOD_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                    unit_of_measurement="days",
-                )
-            ),
-            vol.Optional(
                 CONF_DECAY_ENABLED,
                 default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
             ): BooleanSelector(),
@@ -525,13 +505,6 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     unit_of_measurement="seconds",
                 )
             ),
-            vol.Optional(
-                CONF_HISTORICAL_ANALYSIS_ENABLED,
-                default=defaults.get(
-                    CONF_HISTORICAL_ANALYSIS_ENABLED,
-                    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                ),
-            ): BooleanSelector(),
         }
     )
 

@@ -3,8 +3,10 @@
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
+from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.data.likelihood import Likelihood
-from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 
@@ -94,28 +96,8 @@ class TestLikelihood:
         assert likelihood.prob_given_true_raw == 0.6
         assert likelihood.prob_given_false_raw == 0.05
 
-    async def test_update_history_disabled(self, mock_coordinator: Mock) -> None:
-        """Test update method when history is disabled."""
-        mock_coordinator.config.history.enabled = False
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        prob_true, prob_false = await likelihood.update()
-
-        # Should return weighted default values
-        assert prob_true == likelihood.prob_given_true
-        assert prob_false == likelihood.prob_given_false
-
     async def test_update_history_enabled_success(self, mock_coordinator: Mock) -> None:
         """Test update method when history is enabled and calculation succeeds."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -145,7 +127,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test update method when calculation raises exception."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -171,7 +152,6 @@ class TestLikelihood:
 
     async def test_update_uses_cache_when_valid(self, mock_coordinator: Mock) -> None:
         """Test that update() uses cached values when cache is valid."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -204,7 +184,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test that update() recalculates when cache is stale."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -240,7 +219,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test that update() recalculates when no cached values exist."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -321,123 +299,6 @@ class TestLikelihood:
         likelihood.last_updated = dt_util.utcnow() - timedelta(hours=3)
 
         assert not likelihood._is_cache_valid()
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.likelihood.states_to_intervals")
-    async def test_calculate_with_prior_intervals(
-        self,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test calculate method with prior intervals and states."""
-        # Set up mock coordinator with prior intervals
-        mock_coordinator.prior.prior_intervals = [
-            {
-                "start": dt_util.utcnow() - timedelta(hours=2),
-                "end": dt_util.utcnow() - timedelta(hours=1),
-                "state": "on",
-            }
-        ]
-        mock_coordinator.config.history.period = 1  # 1 day
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock states from recorder
-        now = dt_util.utcnow()
-        mock_states = [
-            State(
-                "binary_sensor.motion", "on", last_changed=now - timedelta(hours=1.5)
-            ),
-            State(
-                "binary_sensor.motion", "off", last_changed=now - timedelta(hours=0.5)
-            ),
-        ]
-        mock_get_states.return_value = mock_states
-
-        # Mock intervals
-        mock_intervals = [
-            {
-                "start": now - timedelta(hours=2),
-                "end": now - timedelta(hours=1),
-                "state": "on",
-            },
-            {"start": now - timedelta(hours=1), "end": now, "state": "off"},
-        ]
-        mock_states_to_intervals.return_value = mock_intervals
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Verify calls
-        mock_get_states.assert_called_once()
-        mock_states_to_intervals.assert_called_once()
-
-        # Should calculate based on overlap with prior intervals
-        assert isinstance(active_ratio, float)
-        assert isinstance(inactive_ratio, float)
-        assert 0 <= active_ratio <= 1
-        assert 0 <= inactive_ratio <= 1
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    async def test_calculate_no_states(
-        self, mock_get_states: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test calculate method when no states are available."""
-        mock_coordinator.prior.prior_intervals = []
-        mock_coordinator.config.history.period = 1
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock no states
-        mock_get_states.return_value = []
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Should return defaults
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1
-
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    async def test_calculate_no_prior_intervals(
-        self, mock_get_states: AsyncMock, mock_coordinator: Mock
-    ) -> None:
-        """Test calculate method when no prior intervals are available."""
-        mock_coordinator.prior.prior_intervals = []
-        mock_coordinator.config.history.period = 1
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Mock some states
-        mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
-        ]
-
-        active_ratio, inactive_ratio = await likelihood.calculate()
-
-        # Should return defaults when no prior intervals
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1
 
     def test_to_dict(self, mock_coordinator: Mock) -> None:
         """Test converting likelihood to dictionary."""
@@ -623,34 +484,76 @@ class TestLikelihoodEdgeCases:
         assert likelihood.prob_given_true <= 0.999
         assert likelihood.prob_given_false >= 0.001
 
-    @patch("custom_components.area_occupancy.data.likelihood.get_states_from_recorder")
-    @patch("custom_components.area_occupancy.data.likelihood.states_to_intervals")
-    async def test_calculate_with_zero_time_periods(
-        self,
-        mock_states_to_intervals: AsyncMock,
-        mock_get_states: AsyncMock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test calculate method when occupied or not-occupied time is zero."""
-        # Set up mock coordinator with no prior intervals (zero occupied time)
-        mock_coordinator.prior.prior_intervals = []
-        mock_coordinator.config.history.period = 1
-
+    async def test_calculate_basic(self, mock_coordinator: Mock, freeze_time) -> None:
+        """Test calculate() computes ratios from intervals and prior data."""
         likelihood = Likelihood(
             coordinator=mock_coordinator,
             entity_id="binary_sensor.motion",
             active_states=["on"],
             default_prob_true=0.8,
             default_prob_false=0.1,
-            weight=0.7,
+            weight=1.0,
         )
 
-        mock_get_states.return_value = [
-            State("binary_sensor.motion", "on", last_changed=dt_util.utcnow())
+        base = freeze_time
+        # Prior intervals representing occupancy
+        prior_intervals = [
+            {"start": base - timedelta(minutes=15), "end": base - timedelta(minutes=7)}
         ]
+        mock_coordinator.prior.state_intervals = prior_intervals
 
-        active_ratio, inactive_ratio = await likelihood.calculate()
+        intervals = [
+            {
+                "state": "on",
+                "start": base - timedelta(minutes=10),
+                "end": base - timedelta(minutes=5),
+            },
+            {
+                "state": "on",
+                "start": base - timedelta(minutes=4),
+                "end": base - timedelta(minutes=2),
+            },
+        ]
+        # Mock the async method on the coordinator's sqlite_store
+        mock_sqlite_store = Mock()
+        mock_sqlite_store.get_historical_intervals = AsyncMock(return_value=intervals)
+        mock_coordinator.sqlite_store = mock_sqlite_store
 
-        # Should fall back to defaults when time periods are invalid
-        assert active_ratio == 0.8
-        assert inactive_ratio == 0.1
+        active_ratio, inactive_ratio = await likelihood.calculate(
+            history_period=HA_RECORDER_DAYS
+        )
+
+        assert active_ratio == pytest.approx(0.625, rel=1e-3)
+        assert inactive_ratio == pytest.approx(0.00013897, rel=1e-3)
+
+    def test_interval_overlap_helper(self, mock_coordinator: Mock, freeze_time) -> None:
+        """Test the optimized interval overlap helper."""
+        likelihood = Likelihood(
+            coordinator=mock_coordinator,
+            entity_id="binary_sensor.motion",
+            active_states=["on"],
+            default_prob_true=0.8,
+            default_prob_false=0.1,
+            weight=1.0,
+        )
+
+        base = freeze_time
+        prior = [
+            {"start": base - timedelta(minutes=10), "end": base - timedelta(minutes=5)},
+            {"start": base - timedelta(minutes=4), "end": base - timedelta(minutes=2)},
+        ]
+        sorted_prior = sorted(prior, key=lambda x: x["start"])
+
+        overlapping = {
+            "start": base - timedelta(minutes=3),
+            "end": base - timedelta(minutes=1),
+        }
+        non_overlapping = {
+            "start": base - timedelta(minutes=20),
+            "end": base - timedelta(minutes=18),
+        }
+
+        assert likelihood._interval_overlaps_prior_optimized(overlapping, sorted_prior)
+        assert not likelihood._interval_overlaps_prior_optimized(
+            non_overlapping, sorted_prior
+        )

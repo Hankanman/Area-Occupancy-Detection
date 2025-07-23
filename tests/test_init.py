@@ -27,7 +27,7 @@ class TestAsyncSetupEntry:
         """Test setup failure during coordinator initialization."""
         with (
             patch(
-                "custom_components.area_occupancy.__init__.AreaOccupancyCoordinator",
+                "custom_components.area_occupancy.AreaOccupancyCoordinator",
                 side_effect=Exception("Init failed"),
             ),
             pytest.raises(ConfigEntryNotReady),
@@ -61,7 +61,7 @@ class TestAsyncSetupEntry:
     ) -> None:
         """Test setup failure during first refresh."""
         with patch(
-            "custom_components.area_occupancy.__init__.AreaOccupancyCoordinator"
+            "custom_components.area_occupancy.AreaOccupancyCoordinator"
         ) as mock_coordinator_class:
             mock_coordinator = Mock()
             mock_coordinator.async_config_entry_first_refresh = AsyncMock(
@@ -211,36 +211,36 @@ class TestAsyncRemoveEntry:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Ensure stored runtime data is used."""
-        store = Mock(async_remove=AsyncMock())
-        mock_config_entry.runtime_data = Mock(store=store)
+        sqlite_store = Mock(async_reset=AsyncMock())
+        mock_config_entry.runtime_data = Mock(sqlite_store=sqlite_store)
         from custom_components.area_occupancy import async_remove_entry
 
         await async_remove_entry(mock_hass, mock_config_entry)
-        store.async_remove.assert_awaited_once()
+        sqlite_store.async_reset.assert_awaited_once()
 
     async def test_remove_entry_without_runtime_data(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Ensure a temporary coordinator is used when runtime_data missing."""
-        store = Mock(async_remove=AsyncMock())
+        sqlite_store = Mock(async_reset=AsyncMock())
         with patch(
             "custom_components.area_occupancy.AreaOccupancyCoordinator",
-            return_value=Mock(store=store),
+            return_value=Mock(sqlite_store=sqlite_store),
         ) as mock_coord:
             mock_config_entry.runtime_data = None
             from custom_components.area_occupancy import async_remove_entry
 
             await async_remove_entry(mock_hass, mock_config_entry)
             mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
-            store.async_remove.assert_awaited_once()
+            sqlite_store.async_reset.assert_awaited_once()
 
     async def test_remove_entry_handles_error(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Errors from the store should be logged but not raised."""
-        store = Mock(async_remove=AsyncMock(side_effect=Exception("fail")))
-        mock_config_entry.runtime_data = Mock(store=store)
+        sqlite_store = Mock(async_reset=AsyncMock(side_effect=Exception("fail")))
+        mock_config_entry.runtime_data = Mock(sqlite_store=sqlite_store)
         from custom_components.area_occupancy import async_remove_entry
 
         await async_remove_entry(mock_hass, mock_config_entry)
-        store.async_remove.assert_awaited_once()
+        sqlite_store.async_reset.assert_awaited_once()

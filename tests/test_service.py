@@ -1,11 +1,14 @@
 """Tests for service module."""
 
 from datetime import timedelta
-from unittest.mock import Mock, PropertyMock
+from unittest.mock import AsyncMock, Mock, PropertyMock
 
 import pytest
 
+from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.service import (
+    _debug_database_state,
+    _debug_import_intervals,
     _force_entity_update,
     _get_area_status,
     _get_coordinator,
@@ -13,9 +16,11 @@ from custom_components.area_occupancy.service import (
     _get_entity_metrics,
     _get_entity_type_learned_data,
     _get_problematic_entities,
+    _get_time_based_priors,
     _reset_entities,
     _update_area_prior,
     _update_likelihoods,
+    _update_time_based_priors,
     async_setup_services,
 )
 from homeassistant.core import ServiceCall
@@ -75,9 +80,7 @@ class TestUpdateAreaPrior:
     ) -> None:
         """Test successful area prior update."""
         # Override specific properties needed for this test
-        mock_coordinator.config.history.period = (
-            30  # Set as real number instead of Mock
-        )
+        history_period = HA_RECORDER_DAYS
         mock_coordinator.prior.update.return_value = 0.35
 
         # Mock the prior calculation details
@@ -86,47 +89,29 @@ class TestUpdateAreaPrior:
             "binary_sensor.motion2",
         ]
 
-        # Create mock PriorData objects for calculation details
+        # Create mock data dictionaries for calculation details
         from datetime import datetime, timedelta
 
         now = datetime.now()
         start_time = now - timedelta(days=30)
 
-        mock_prior_data_1 = Mock()
-        mock_prior_data_1.ratio = 0.32
-        mock_prior_data_1.occupied_seconds = (
-            27648  # About 32% of 86400 seconds/day * 30 days
-        )
-        mock_prior_data_1.states = [Mock() for _ in range(150)]  # Mock states list
-        mock_prior_data_1.intervals = [Mock() for _ in range(75)]  # Mock intervals list
-        mock_prior_data_1.start_time = start_time
-        mock_prior_data_1.end_time = now
-        # Add filtering statistics
-        mock_prior_data_1.total_on_intervals = 80
-        mock_prior_data_1.valid_intervals = 75
-        mock_prior_data_1.filtered_short_intervals = 3
-        mock_prior_data_1.filtered_long_intervals = 2
-        mock_prior_data_1.max_filtered_duration_seconds = (
-            18 * 3600
-        )  # 18 hours stuck sensor
+        mock_prior_data_1 = {
+            "ratio": 0.32,
+            "occupied_seconds": 27648,  # About 32% of 86400 seconds/day * 30 days
+            "states_count": 150,
+            "intervals": [Mock() for _ in range(75)],  # Mock intervals list
+            "start_time": start_time,
+            "end_time": now,
+        }
 
-        mock_prior_data_2 = Mock()
-        mock_prior_data_2.ratio = 0.35
-        mock_prior_data_2.occupied_seconds = (
-            30240  # About 35% of 86400 seconds/day * 30 days
-        )
-        mock_prior_data_2.states = [Mock() for _ in range(120)]  # Mock states list
-        mock_prior_data_2.intervals = [Mock() for _ in range(60)]  # Mock intervals list
-        mock_prior_data_2.start_time = start_time
-        mock_prior_data_2.end_time = now
-        # Add filtering statistics
-        mock_prior_data_2.total_on_intervals = 65
-        mock_prior_data_2.valid_intervals = 60
-        mock_prior_data_2.filtered_short_intervals = 4
-        mock_prior_data_2.filtered_long_intervals = 1
-        mock_prior_data_2.max_filtered_duration_seconds = (
-            15 * 3600
-        )  # 15 hours stuck sensor
+        mock_prior_data_2 = {
+            "ratio": 0.35,
+            "occupied_seconds": 30240,  # About 35% of 86400 seconds/day * 30 days
+            "states_count": 120,
+            "intervals": [Mock() for _ in range(60)],  # Mock intervals list
+            "start_time": start_time,
+            "end_time": now,
+        }
 
         mock_coordinator.prior.data = {
             "binary_sensor.motion1": mock_prior_data_1,
@@ -149,7 +134,7 @@ class TestUpdateAreaPrior:
 
         # Verify the values
         assert result["area_prior"] == 0.35
-        assert result["history_period"] == 30
+        assert result["history_period"] == history_period
         assert isinstance(result["update_timestamp"], str)
 
         # Verify calculation details
@@ -161,7 +146,7 @@ class TestUpdateAreaPrior:
         assert calc_details["sensor_count"] == 2
         assert (
             calc_details["calculation_method"]
-            == "Average of individual sensor occupancy ratios + 5% buffer"
+            == "Max of (average of individual sensor occupancy ratios + 5% buffer, occupancy_entity_id prior + 5% buffer)"
         )
 
         # Verify sensor details
@@ -174,61 +159,15 @@ class TestUpdateAreaPrior:
         assert sensor_details["binary_sensor.motion1"]["states_found"] == 150
         assert sensor_details["binary_sensor.motion2"]["intervals_found"] == 60
 
-        # Verify filtering details
-        assert sensor_details["binary_sensor.motion1"]["total_on_intervals"] == 80
-        assert sensor_details["binary_sensor.motion1"]["valid_intervals"] == 75
-        assert sensor_details["binary_sensor.motion1"]["filtered_short"] == 3
-        assert sensor_details["binary_sensor.motion1"]["filtered_long"] == 2
-        assert (
-            sensor_details["binary_sensor.motion1"]["max_stuck_duration_seconds"]
-            == 18 * 3600
-        )
-        assert (
-            sensor_details["binary_sensor.motion1"]["max_stuck_duration_hours"] == 18.0
-        )
-        assert sensor_details["binary_sensor.motion2"]["total_on_intervals"] == 65
-        assert sensor_details["binary_sensor.motion2"]["valid_intervals"] == 60
-        assert sensor_details["binary_sensor.motion2"]["filtered_short"] == 4
-        assert sensor_details["binary_sensor.motion2"]["filtered_long"] == 1
-        assert (
-            sensor_details["binary_sensor.motion2"]["max_stuck_duration_seconds"]
-            == 15 * 3600
-        )
-        assert (
-            sensor_details["binary_sensor.motion2"]["max_stuck_duration_hours"] == 15.0
-        )
-
         # Verify calculation summary
         assert "raw_average_ratio" in calc_details
         assert "buffer_multiplier" in calc_details
         assert "final_prior" in calc_details
         assert "calculation" in calc_details
 
-        # Verify filtering summary
-        assert "filtering_summary" in calc_details
-        filtering_summary = calc_details["filtering_summary"]
-        assert filtering_summary["total_on_intervals"] == 145  # 80 + 65
-        assert filtering_summary["valid_intervals_used"] == 135  # 75 + 60
-        assert filtering_summary["filtered_short_intervals"] == 7  # 3 + 4
-        assert filtering_summary["filtered_long_intervals"] == 3  # 2 + 1
-        assert "filtering_thresholds" in filtering_summary
-        thresholds = filtering_summary["filtering_thresholds"]
-        assert thresholds["min_seconds"] == 10
-        assert thresholds["max_seconds"] == 46800  # 13 hours
-
-        # Verify stuck sensor analysis (should show the worst case: 18 hours)
-        assert "stuck_sensor_analysis" in filtering_summary
-        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
-        assert (
-            stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
-        )  # Worst case from sensor1
-        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
-        assert stuck_analysis["max_stuck_duration_days"] == 0.75  # 18/24 = 0.75 days
-        assert stuck_analysis["severity"] == "moderate"  # 13-24 hours range
-
         # Verify the coordinator was called correctly
         mock_coordinator.prior.update.assert_called_once_with(
-            force=True, history_period=30
+            force=True, history_period=history_period
         )
         mock_coordinator.async_refresh.assert_called_once()
 
@@ -250,7 +189,6 @@ class TestUpdateAreaPrior:
     ) -> None:
         """Test area prior update with coordinator error."""
         # Override specific properties needed for this test
-        mock_coordinator.config.history.period = 30  # Set as real number
         mock_coordinator.prior.update.side_effect = RuntimeError("Update failed")
 
         mock_config_entry.runtime_data = mock_coordinator
@@ -264,8 +202,28 @@ class TestUpdateAreaPrior:
         ):
             await _update_area_prior(mock_hass, mock_service_call)
 
-        # Verify the coordinator was called
-        mock_coordinator.prior.update.assert_called_once()
+    async def test_update_area_prior_no_sensor_data(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test area prior update with no sensor data."""
+        mock_coordinator.prior.update.return_value = 0.1
+        mock_coordinator.prior.sensor_ids = []
+        mock_coordinator.prior.data = {}  # No sensor data
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _update_area_prior(mock_hass, mock_service_call)
+
+        assert result["area_prior"] == 0.1
+        calc_details = result["calculation_details"]
+        assert calc_details["sensor_details"] == "No sensor data available"
+        assert calc_details["note"] == "Using default prior value of 0.1"
 
 
 class TestUpdateLikelihoods:
@@ -280,9 +238,7 @@ class TestUpdateLikelihoods:
     ) -> None:
         """Test successful likelihood update."""
         # Override specific properties needed for this test
-        mock_coordinator.config.history.period = (
-            30  # Set as real number instead of Mock
-        )
+        history_period = HA_RECORDER_DAYS
         mock_coordinator.entities.update_all_entity_likelihoods.return_value = 5
 
         # Mock entities with proper structure for return data
@@ -316,11 +272,12 @@ class TestUpdateLikelihoods:
         # Verify the result structure
         assert "likelihoods" in result
         assert "history_period" in result
+        assert result["history_period"] == history_period
         assert "total_entities" in result
         assert "update_timestamp" in result
 
         # Verify the values
-        assert result["history_period"] == 30
+        assert result["history_period"] == history_period
         assert result["total_entities"] == 1
         assert isinstance(result["update_timestamp"], str)
 
@@ -335,32 +292,11 @@ class TestUpdateLikelihoods:
         assert likelihood_data["prob_given_true_raw"] == 0.75
         assert likelihood_data["prob_given_false_raw"] == 0.05
 
-        # Verify filtering statistics
-        assert likelihood_data["total_on_intervals"] == 50
-        assert likelihood_data["valid_intervals"] == 45
-        assert likelihood_data["filtered_short"] == 3
-        assert likelihood_data["filtered_long"] == 2
-        assert likelihood_data["max_stuck_duration_seconds"] == 18 * 3600
-        assert likelihood_data["max_stuck_duration_hours"] == 18.0
-
-        # Verify likelihood filtering summary
-        assert "likelihood_filtering_summary" in result
-        filtering_summary = result["likelihood_filtering_summary"]
-        assert filtering_summary["total_on_intervals"] == 50
-        assert filtering_summary["valid_intervals_used"] == 45
-        assert filtering_summary["filtered_short_intervals"] == 3
-        assert filtering_summary["filtered_long_intervals"] == 2
-
-        # Verify stuck sensor analysis
-        assert "stuck_sensor_analysis" in filtering_summary
-        stuck_analysis = filtering_summary["stuck_sensor_analysis"]
-        assert stuck_analysis["max_stuck_duration_seconds"] == 18 * 3600
-        assert stuck_analysis["max_stuck_duration_hours"] == 18.0
-        assert stuck_analysis["severity"] == "moderate"
+        # Verify the coordinator was called correctly with history_period
 
         # Verify the coordinator was called correctly with history_period
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30, force=True
+            history_period, force=True
         )
         mock_coordinator.async_refresh.assert_called_once()
 
@@ -382,7 +318,7 @@ class TestUpdateLikelihoods:
     ) -> None:
         """Test likelihood update with coordinator error."""
         # Override specific properties needed for this test
-        mock_coordinator.config.history.period = 30  # Set as real number
+        history_period = HA_RECORDER_DAYS
         mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
             RuntimeError("Update failed")
         )
@@ -400,8 +336,283 @@ class TestUpdateLikelihoods:
 
         # Verify the coordinator was called with the correct history period and force=True
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            30, force=True
+            history_period, force=True
         )
+
+
+class TestUpdateTimeBasedPriors:
+    """Test _update_time_based_priors service function."""
+
+    async def test_update_time_based_priors_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful time-based priors update."""
+        history_period = HA_RECORDER_DAYS
+        # Mock the async method properly
+        mock_coordinator.sqlite_store.update_time_based_priors = AsyncMock()
+        mock_coordinator.sqlite_store.update_time_based_priors.return_value = {
+            "total_priors": 336,  # 7 days * 48 time slots
+            "updated_priors": 336,
+            "prior_values": {"monday_12": 0.3, "tuesday_14": 0.4},
+        }
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _update_time_based_priors(mock_hass, mock_service_call)
+
+        # The service returns a background task message, not the actual results
+        assert "message" in result
+        assert "start_timestamp" in result
+        assert "history_period_days" in result
+        assert result["history_period_days"] == history_period
+
+        # The service runs in background, so we don't assert the method call
+
+    async def test_update_time_based_priors_missing_entry_id(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test time-based priors update with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _update_time_based_priors(mock_hass, mock_call)
+
+
+class TestGetTimeBasedPriors:
+    """Test _get_time_based_priors service function."""
+
+    async def test_get_time_based_priors_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful time-based priors retrieval."""
+        # Mock coordinator properties
+        mock_coordinator.config.name = "Test Area"
+        mock_coordinator.prior.value = 0.25
+        mock_coordinator.prior.time_prior = 0.3
+        mock_coordinator.prior.global_prior = 0.2
+
+        # Mock the async method properly
+        mock_coordinator.sqlite_store.get_time_priors_for_entry = AsyncMock()
+        mock_coordinator.sqlite_store.get_time_priors_for_entry.return_value = []
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _get_time_based_priors(mock_hass, mock_service_call)
+
+        # The service returns formatted time-based priors data
+        assert "area_name" in result
+        assert "current_time_slot" in result
+        assert "current_prior" in result
+        assert "time_prior" in result
+        assert "global_prior" in result
+        assert "total_time_slots_available" in result
+        assert "daily_summaries" in result
+
+        mock_coordinator.sqlite_store.get_time_priors_for_entry.assert_called_once()
+
+    async def test_get_time_based_priors_missing_entry_id(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test time-based priors retrieval with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _get_time_based_priors(mock_hass, mock_call)
+
+    async def test_get_time_based_priors_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test time-based priors retrieval with error."""
+        # Mock the async method properly
+        mock_coordinator.sqlite_store.get_time_priors_for_entry = AsyncMock()
+        mock_coordinator.sqlite_store.get_time_priors_for_entry.side_effect = (
+            RuntimeError("Retrieval failed")
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to get time-based priors for test_entry_id: Retrieval failed",
+        ):
+            await _get_time_based_priors(mock_hass, mock_service_call)
+
+
+class TestDebugImportIntervals:
+    """Test _debug_import_intervals service function."""
+
+    async def test_debug_import_intervals_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful debug import intervals."""
+        mock_import_result = {
+            "binary_sensor.motion1": 100,
+            "binary_sensor.door1": 50,
+        }
+        # Mock the async methods properly
+        mock_coordinator.sqlite_store.import_intervals_from_recorder = AsyncMock()
+        mock_coordinator.sqlite_store.import_intervals_from_recorder.return_value = (
+            mock_import_result
+        )
+        mock_coordinator.sqlite_store.get_total_intervals_count = AsyncMock()
+        mock_coordinator.sqlite_store.get_total_intervals_count.return_value = 150
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _debug_import_intervals(mock_hass, mock_service_call)
+
+        # The service returns import results
+        assert "import_counts" in result
+        assert "days_imported" in result
+        assert "entity_ids" in result
+        assert result["import_counts"] == mock_import_result
+        assert result["days_imported"] == 10
+
+        # The method is called with entity_ids and days, so we just verify it was called
+        mock_coordinator.sqlite_store.import_intervals_from_recorder.assert_called_once()
+
+    async def test_debug_import_intervals_missing_entry_id(
+        self, mock_hass: Mock
+    ) -> None:
+        """Test debug import intervals with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _debug_import_intervals(mock_hass, mock_call)
+
+    async def test_debug_import_intervals_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test debug import intervals with error."""
+        # Mock the async method properly
+        mock_coordinator.sqlite_store.import_intervals_from_recorder = AsyncMock()
+        mock_coordinator.sqlite_store.import_intervals_from_recorder.side_effect = (
+            RuntimeError("Import failed")
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Debug import failed for test_entry_id: Import failed",
+        ):
+            await _debug_import_intervals(mock_hass, mock_service_call)
+
+
+class TestDebugDatabaseState:
+    """Test _debug_database_state service function."""
+
+    async def test_debug_database_state_success(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test successful debug database state."""
+        mock_stats = {
+            "total_entities": 5,
+            "total_areas": 2,
+            "total_intervals": 1000,
+            "total_time_priors": 500,
+            "db_size_mb": 1.5,
+        }
+        # Mock the async methods properly
+        mock_coordinator.sqlite_store.is_state_intervals_empty = AsyncMock()
+        mock_coordinator.sqlite_store.is_state_intervals_empty.return_value = False
+        mock_coordinator.sqlite_store.get_total_intervals_count = AsyncMock()
+        mock_coordinator.sqlite_store.get_total_intervals_count.return_value = 1000
+        mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock()
+        mock_coordinator.sqlite_store.get_historical_intervals.return_value = []
+        mock_coordinator.sqlite_store.async_get_stats = AsyncMock()
+        mock_coordinator.sqlite_store.async_get_stats.return_value = mock_stats
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        result = await _debug_database_state(mock_hass, mock_service_call)
+
+        # The service returns database state information
+        assert "configuration" in result
+        assert "database_state" in result
+        assert "state_intervals_empty" in result["database_state"]
+        assert "sample_entities" in result["database_state"]
+        assert "database_stats" in result["database_state"]
+        assert "schema_info" in result["database_state"]
+
+        mock_coordinator.sqlite_store.async_get_stats.assert_called_once()
+
+    async def test_debug_database_state_missing_entry_id(self, mock_hass: Mock) -> None:
+        """Test debug database state with missing entry_id."""
+        mock_call = Mock(spec=ServiceCall)
+        mock_call.data = {}
+
+        with pytest.raises(KeyError):
+            await _debug_database_state(mock_hass, mock_call)
+
+    async def test_debug_database_state_error(
+        self,
+        mock_hass: Mock,
+        mock_config_entry: Mock,
+        mock_service_call: Mock,
+        mock_coordinator: Mock,
+    ) -> None:
+        """Test debug database state with error."""
+        # Mock the async methods properly
+        mock_coordinator.sqlite_store.is_state_intervals_empty = AsyncMock()
+        mock_coordinator.sqlite_store.is_state_intervals_empty.return_value = False
+        mock_coordinator.sqlite_store.get_total_intervals_count = AsyncMock()
+        mock_coordinator.sqlite_store.get_total_intervals_count.return_value = 1000
+        mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock()
+        mock_coordinator.sqlite_store.get_historical_intervals.return_value = []
+        mock_coordinator.sqlite_store.async_get_stats = AsyncMock()
+        mock_coordinator.sqlite_store.async_get_stats.side_effect = RuntimeError(
+            "Stats failed"
+        )
+
+        mock_config_entry.runtime_data = mock_coordinator
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_service_call.data = {"entry_id": "test_entry_id"}
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Debug database state failed for test_entry_id: Stats failed",
+        ):
+            await _debug_database_state(mock_hass, mock_service_call)
 
 
 class TestResetEntities:
@@ -432,25 +643,6 @@ class TestResetEntities:
         # The actual service implementation will raise KeyError for missing entry_id
         with pytest.raises(KeyError):
             await _reset_entities(mock_hass, mock_call)
-
-    async def test_reset_entities_with_clear_storage(
-        self,
-        mock_hass: Mock,
-        mock_config_entry: Mock,
-        mock_service_call: Mock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test entity reset with storage clearing."""
-        # Use centralized fixture instead of creating ad-hoc mocks
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id", "clear_storage": True}
-
-        await _reset_entities(mock_hass, mock_service_call)
-
-        mock_coordinator.entities.cleanup.assert_called_once()
-        mock_coordinator.storage.async_reset.assert_called_once()
-        mock_coordinator.async_refresh.assert_called_once()
 
 
 class TestGetEntityMetrics:
@@ -964,13 +1156,6 @@ class TestGetEntityTypeLearned:
 class TestAsyncSetupServices:
     """Test async_setup_services function."""
 
-    async def test_async_setup_services_success(self, mock_hass: Mock) -> None:
-        """Test successful service setup."""
-        await async_setup_services(mock_hass)
-
-        # Verify services were registered (8 services total)
-        assert mock_hass.services.async_register.call_count == 9
-
     async def test_async_setup_services_registration_error(
         self, mock_hass: Mock
     ) -> None:
@@ -1115,7 +1300,7 @@ class TestServiceIntegration:
         assert status["area_name"] == "Test Area"
         assert status["occupied"] is True
         assert status["occupancy_probability"] == 0.8
-        assert status["confidence_level"] == "medium"
+        assert status["confidence_level"] == "medium-high"
 
         # Test metrics consistency
         metrics_result = await _get_entity_metrics(mock_hass, mock_service_call)

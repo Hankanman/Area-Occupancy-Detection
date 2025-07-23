@@ -121,17 +121,13 @@
                         "description": "Configure advanced parameters for occupancy detection",
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
-                            "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life (seconds)",
-                            "historical_analysis_enabled": "Enable Historical Analysis"
+                            "decay_half_life": "Decay Half Life (seconds)"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
-                            "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
-                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
                         }
                     }
                 }
@@ -254,17 +250,13 @@
                         "description": "Configure advanced parameters for occupancy detection",
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
-                            "history_period": "History Period (days)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life (seconds)",
-                            "historical_analysis_enabled": "Enable Historical Analysis"
+                            "decay_half_life": "Decay Half Life (seconds)"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
-                            "history_period": "Number of days of history to analyze for determining probabilities.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
-                            "historical_analysis_enabled": "Whether to enable analysis of historical data for probability calculations."
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
                         }
                     }
                 }

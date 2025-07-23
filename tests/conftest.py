@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Generator
+import contextlib
 from datetime import datetime, timedelta
 import tempfile
 import time
@@ -22,8 +23,6 @@ from custom_components.area_occupancy.const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -51,8 +50,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
@@ -71,7 +68,6 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.config import (
     Config,
     Decay,
-    History,
     Sensors,
     SensorStates,
     WaspInBox,
@@ -81,6 +77,7 @@ from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
+from custom_components.area_occupancy.sqlite_storage import AreaOccupancyStorage
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -215,8 +212,6 @@ def mock_config_entry() -> Mock:
         CONF_THRESHOLD: DEFAULT_THRESHOLD,
         CONF_DECAY_ENABLED: DEFAULT_DECAY_ENABLED,
         CONF_DECAY_HALF_LIFE: DEFAULT_DECAY_HALF_LIFE,
-        CONF_HISTORICAL_ANALYSIS_ENABLED: DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-        CONF_HISTORY_PERIOD: DEFAULT_HISTORY_PERIOD,
         CONF_DOOR_SENSORS: [],
         CONF_WINDOW_SENSORS: [],
         CONF_MEDIA_DEVICES: [],
@@ -254,6 +249,40 @@ def mock_config_entry() -> Mock:
     entry.async_update = AsyncMock()
 
     return entry
+
+
+@pytest.fixture
+def mock_time_prior_data() -> dict[str, Any]:
+    """Create mock time-based prior data for testing."""
+    return {
+        "hour": 14,
+        "day_of_week": 2,  # Tuesday
+        "prior_value": 0.35,
+        "total_seconds": 3600,
+        "last_updated": dt_util.utcnow().isoformat(),
+    }
+
+
+@pytest.fixture
+def mock_historical_intervals() -> list[dict[str, Any]]:
+    """Create mock historical intervals for testing."""
+    base_time = dt_util.utcnow() - timedelta(days=1)
+    return [
+        {
+            "entity_id": "binary_sensor.motion1",
+            "state": "on",
+            "start": base_time.isoformat(),
+            "end": (base_time + timedelta(hours=2)).isoformat(),
+            "duration_seconds": 7200,
+        },
+        {
+            "entity_id": "binary_sensor.motion1",
+            "state": "off",
+            "start": (base_time + timedelta(hours=2)).isoformat(),
+            "end": (base_time + timedelta(hours=4)).isoformat(),
+            "duration_seconds": 7200,
+        },
+    ]
 
 
 @pytest.fixture
@@ -378,22 +407,19 @@ def mock_coordinator(
     coordinator.likelihoods = Mock()
     coordinator.likelihoods.calculate = AsyncMock(return_value=Mock(prior=0.35))
 
-    # Store - keep as a simple mock unless you want to inject a fixture
-    coordinator.store = Mock()
-    coordinator.store.async_save_coordinator_data = Mock()
-    coordinator.store.async_load_coordinator_data = AsyncMock(return_value=None)
-    coordinator.store.async_load_with_compatibility_check = AsyncMock(
-        return_value=(None, False)
-    )
-    coordinator.store.async_load = AsyncMock(return_value=None)
-    coordinator.store.async_save = AsyncMock()
-    coordinator.store.async_remove = AsyncMock()
-    coordinator.store.async_save_data = AsyncMock()
-    coordinator.store.async_load_data = AsyncMock(return_value=None)
-    coordinator.store.async_reset = AsyncMock()
+    # SQLite Store - use the new AreaOccupancyStorage system
+    coordinator.sqlite_store = Mock()
+    coordinator.sqlite_store.async_save_data = AsyncMock()
+    coordinator.sqlite_store.async_load_data = AsyncMock(return_value=None)
+    coordinator.sqlite_store.async_reset = AsyncMock()
+    coordinator.sqlite_store.async_get_stats = AsyncMock(return_value={})
+    coordinator.sqlite_store.get_time_prior = AsyncMock(return_value=None)
+    coordinator.sqlite_store.save_time_priors_batch = AsyncMock(return_value=0)
+    coordinator.sqlite_store.get_historical_intervals = AsyncMock(return_value=[])
 
-    # Add storage alias for compatibility with service calls
-    coordinator.storage = coordinator.store
+    # Legacy store for backward compatibility
+    coordinator.store = coordinator.sqlite_store
+    coordinator.storage = coordinator.sqlite_store
 
     # Config manager
     coordinator.config_manager = Mock()
@@ -949,7 +975,7 @@ def mock_prior() -> Mock:
     """Create a mock Prior instance for backward compatibility with tests."""
     prior = Mock()
     prior.value = 0.35
-    prior.current_value = 0.35
+    prior._current_value = 0.35
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.35)
     prior.calculate = AsyncMock(return_value=0.35)
@@ -965,17 +991,31 @@ def mock_prior() -> Mock:
 def mock_area_prior() -> Mock:
     """Create a mock Prior instance for area-level prior."""
     prior = Mock(spec=PriorClass)
-    prior.current_value = 0.3
+    prior._current_value = 0.3
     prior.value = 0.3
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.3)
     prior.calculate = AsyncMock(return_value=0.3)
     prior.prior_intervals = []
     prior.prior_total_seconds = 0
+
+    # Add time-based prior properties
+    prior.time_prior_value = 0.25
+    prior.time_prior_last_updated = dt_util.utcnow()
+    prior.time_prior_intervals = []
+    prior.time_prior_total_seconds = 0
+
+    # Add methods for time-based priors
+    prior.update_time_prior = AsyncMock(return_value=0.25)
+    prior.calculate_time_prior = AsyncMock(return_value=0.25)
+    prior.get_time_prior = AsyncMock(return_value=0.25)
+
     prior.to_dict.return_value = {
         "value": 0.3,
         "last_updated": prior.last_updated.isoformat(),
         "sensor_hash": None,
+        "time_prior_value": 0.25,
+        "time_prior_last_updated": prior.time_prior_last_updated.isoformat(),
     }
     return prior
 
@@ -1209,18 +1249,18 @@ def mock_entity_for_likelihood_tests() -> Mock:
 
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_store_globally():
-    """Automatically mock AreaOccupancyStore for all tests."""
+    """Automatically mock AreaOccupancySQLiteStore for all tests."""
     with patch(
-        "custom_components.area_occupancy.storage.AreaOccupancyStore"
+        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage"
     ) as mock_store_class:
         mock_store = Mock()
-        mock_store.async_save_coordinator_data = Mock()
-        mock_store.async_load_coordinator_data = AsyncMock(return_value=None)
-        mock_store.async_load = AsyncMock(return_value=None)
-        mock_store.async_save = AsyncMock()
-        mock_store.async_remove = AsyncMock()
-        mock_store.async_delay_save = Mock()
+        mock_store.async_save_data = AsyncMock()
+        mock_store.async_load_data = AsyncMock(return_value=None)
         mock_store.async_reset = AsyncMock()
+        mock_store.async_get_stats = AsyncMock(return_value={})
+        mock_store.get_time_prior = AsyncMock(return_value=None)
+        mock_store.save_time_priors_batch = AsyncMock(return_value=0)
+        mock_store.get_historical_intervals = AsyncMock(return_value=[])
         mock_store_class.return_value = mock_store
         yield mock_store
 
@@ -1467,17 +1507,15 @@ def mock_area_occupancy_storage_data():
 
 @pytest.fixture
 def mock_area_occupancy_store(mock_area_occupancy_storage_data) -> Mock:
-    """Mock AreaOccupancyStore with async methods returning the provided storage data."""
-    from custom_components.area_occupancy.storage import AreaOccupancyStore
-
-    store = Mock(spec=AreaOccupancyStore)
+    """Mock AreaOccupancySQLiteStore with async methods returning the provided storage data."""
+    store = Mock(spec=AreaOccupancyStorage)
     store.async_save_data = AsyncMock()
     store.async_load_data = AsyncMock(return_value=mock_area_occupancy_storage_data)
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(return_value=mock_area_occupancy_storage_data)
-    store.async_remove = AsyncMock()
-    store.async_delay_save = Mock()
     store.async_reset = AsyncMock()
+    store.async_get_stats = AsyncMock(return_value={})
+    store.get_time_prior = AsyncMock(return_value=None)
+    store.save_time_priors_batch = AsyncMock(return_value=0)
+    store.get_historical_intervals = AsyncMock(return_value=[])
     return store
 
 
@@ -1515,7 +1553,6 @@ def mock_config():
             wasp=0.8,
         ),
         decay=Decay(enabled=True, half_life=300),
-        history=History(enabled=True, period=30),
         wasp_in_box=WaspInBox(
             enabled=False, motion_timeout=60, weight=0.8, max_duration=600
         ),
@@ -1554,8 +1591,6 @@ def mock_realistic_config_entry():
         "decay_half_life": 600.0,
         "door_active_state": "open",
         "door_sensors": ["binary_sensor.door_sensor"],
-        "historical_analysis_enabled": True,
-        "history_period": 1.0,
         "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
         "illuminance_sensors": [
             "sensor.illuminance_sensor_1",
@@ -1594,8 +1629,6 @@ def mock_realistic_config_entry():
         "decay_half_life": 300.0,
         "door_active_state": "closed",
         "door_sensors": ["binary_sensor.door_sensor"],
-        "historical_analysis_enabled": True,
-        "history_period": 30.0,
         "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
         "illuminance_sensors": [
             "sensor.illuminance_sensor_1",
@@ -1633,3 +1666,62 @@ def mock_realistic_config_entry():
     entry.async_remove = AsyncMock()
     entry.async_update = AsyncMock()
     return entry
+
+
+# Global patch for custom_components.area_occupancy.utils.get_instance
+@pytest.fixture(autouse=True)
+def mock_utils_get_instance_globally():
+    """Automatically mock custom_components.area_occupancy.utils.get_instance for all tests."""
+    with patch(
+        "custom_components.area_occupancy.utils.get_instance"
+    ) as mock_get_instance:
+        mock_instance = Mock()
+        mock_instance.async_add_executor_job = AsyncMock(return_value={})
+        mock_get_instance.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture(autouse=True)
+def auto_cancel_timers(monkeypatch):
+    """Automatically track and cancel all timers created during a test."""
+    loop = asyncio.get_event_loop()
+    original_call_later = loop.call_later
+    original_call_at = loop.call_at
+    timer_handles = []
+
+    def tracking_call_later(delay, callback, *args, **kwargs):
+        handle = original_call_later(delay, callback, *args, **kwargs)
+        timer_handles.append(handle)
+        return handle
+
+    def tracking_call_at(when, callback, *args, **kwargs):
+        handle = original_call_at(when, callback, *args, **kwargs)
+        timer_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(loop, "call_later", tracking_call_later)
+    monkeypatch.setattr(loop, "call_at", tracking_call_at)
+
+    # Patch async_track_point_in_time if used directly
+    try:
+        from homeassistant.helpers.event import async_track_point_in_time
+
+        orig_async_track_point_in_time = async_track_point_in_time
+
+        def tracking_async_track_point_in_time(hass, action, point_in_time):
+            handle = orig_async_track_point_in_time(hass, action, point_in_time)
+            timer_handles.append(handle)
+            return handle
+
+        monkeypatch.setattr(
+            "homeassistant.helpers.event.async_track_point_in_time",
+            tracking_async_track_point_in_time,
+        )
+    except ImportError:
+        pass
+
+    yield
+
+    for handle in timer_handles:
+        with contextlib.suppress(Exception):
+            handle.cancel()
