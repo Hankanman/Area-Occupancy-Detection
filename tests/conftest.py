@@ -22,8 +22,6 @@ from custom_components.area_occupancy.const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -51,8 +49,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
@@ -71,7 +67,6 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.config import (
     Config,
     Decay,
-    History,
     Sensors,
     SensorStates,
     WaspInBox,
@@ -216,8 +211,6 @@ def mock_config_entry() -> Mock:
         CONF_THRESHOLD: DEFAULT_THRESHOLD,
         CONF_DECAY_ENABLED: DEFAULT_DECAY_ENABLED,
         CONF_DECAY_HALF_LIFE: DEFAULT_DECAY_HALF_LIFE,
-        CONF_HISTORICAL_ANALYSIS_ENABLED: DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-        CONF_HISTORY_PERIOD: DEFAULT_HISTORY_PERIOD,
         CONF_DOOR_SENSORS: [],
         CONF_WINDOW_SENSORS: [],
         CONF_MEDIA_DEVICES: [],
@@ -1559,14 +1552,6 @@ def mock_config():
             wasp=0.8,
         ),
         decay=Decay(enabled=True, half_life=300),
-        history=History(
-            enabled=True,
-            period=30,
-            time_based_priors_enabled=True,
-            time_based_priors_frequency=4,
-            likelihood_updates_enabled=True,
-            likelihood_updates_frequency=2,
-        ),
         wasp_in_box=WaspInBox(
             enabled=False, motion_timeout=60, weight=0.8, max_duration=600
         ),
@@ -1605,8 +1590,6 @@ def mock_realistic_config_entry():
         "decay_half_life": 600.0,
         "door_active_state": "open",
         "door_sensors": ["binary_sensor.door_sensor"],
-        "historical_analysis_enabled": True,
-        "history_period": 1.0,
         "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
         "illuminance_sensors": [
             "sensor.illuminance_sensor_1",
@@ -1645,8 +1628,6 @@ def mock_realistic_config_entry():
         "decay_half_life": 300.0,
         "door_active_state": "closed",
         "door_sensors": ["binary_sensor.door_sensor"],
-        "historical_analysis_enabled": True,
-        "history_period": 30.0,
         "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
         "illuminance_sensors": [
             "sensor.illuminance_sensor_1",

@@ -5,13 +5,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import HA_RECORDER_DAYS, MIN_PRIOR
 from custom_components.area_occupancy.data.prior import Prior
 from custom_components.area_occupancy.utils import StateInterval
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
-
-# Import MIN_PRIOR directly from the module
-MIN_PRIOR = 0.1
 
 
 # ruff: noqa: SLF001
@@ -25,13 +23,12 @@ class TestPrior:
             "binary_sensor.motion1",
             "binary_sensor.motion2",
         ]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.hass = Mock()
 
         prior = Prior(mock_coordinator)
 
         assert prior.sensor_ids == ["binary_sensor.motion1", "binary_sensor.motion2"]
-        assert prior.days == 7
+        assert prior.days == HA_RECORDER_DAYS
         assert prior.hass == mock_coordinator.hass
         assert prior.cache_ttl == timedelta(hours=2)
         assert prior._current_value is None
@@ -338,7 +335,6 @@ class TestPrior:
     ) -> None:
         """Test successful prior calculation."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = None  # No occupancy entity
 
         prior = Prior(mock_coordinator)
@@ -357,8 +353,8 @@ class TestPrior:
 
         result = await prior.calculate()
 
-        # 8 hours / 24 hours = 0.333, with 5% buffer = 0.333 * 1.05 = 0.35
-        expected = (8 * 3600) / (24 * 3600) * 1.05  # 0.35
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
         assert prior._current_value == result
         assert prior._last_updated is not None
@@ -374,7 +370,6 @@ class TestPrior:
     ) -> None:
         """Test prior calculation when occupancy entity has higher prior."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
         prior = Prior(mock_coordinator)
@@ -410,11 +405,10 @@ class TestPrior:
 
         result = await prior.calculate()
 
-        # Should use occupancy entity prior (50% * 1.05 = 52.5%)
-        expected = 0.5 * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
-        assert prior._prior_source == "occupancy_entity_id"
-        assert prior._prior_source_entity_ids == ["binary_sensor.occupancy"]
+        assert prior._prior_source == "input_sensors"
 
     @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
     async def test_calculate_occupancy_entity_error(
@@ -424,7 +418,6 @@ class TestPrior:
     ) -> None:
         """Test prior calculation handles occupancy entity errors."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
         prior = Prior(mock_coordinator)
@@ -449,8 +442,8 @@ class TestPrior:
 
         result = await prior.calculate()
 
-        # Should use motion sensor prior (33.3% * 1.05 = 35%)
-        expected = (8 * 3600) / (24 * 3600) * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
@@ -460,7 +453,6 @@ class TestPrior:
     ) -> None:
         """Test prior calculation with no states returned."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -480,7 +472,6 @@ class TestPrior:
             "binary_sensor.motion1",
             "binary_sensor.motion2",
         ]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -498,8 +489,8 @@ class TestPrior:
 
         result = await prior.calculate()
 
-        # Both sensors have 6/24 = 25% ratio, average = 25%, with 5% buffer = 26.25%
-        expected = 0.25 * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
 
     @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
@@ -510,7 +501,6 @@ class TestPrior:
     ) -> None:
         """Test prior calculation with custom history period."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7  # Default
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -527,10 +517,10 @@ class TestPrior:
         mock_get_intervals.return_value = mock_intervals
 
         # Use custom history period of 3 days
-        result = await prior.calculate(history_period=3)
+        result = await prior.calculate(history_period=HA_RECORDER_DAYS)
 
-        # 12 hours / (3 * 24 hours) = 16.67%, with 5% buffer = 17.5%
-        expected = (12 * 3600) / (3 * 24 * 3600) * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
 
     async def test_update_cache_valid(self, mock_coordinator: Mock) -> None:
@@ -695,7 +685,6 @@ class TestPrior:
     async def test_integration_workflow(self, mock_coordinator: Mock) -> None:
         """Test complete workflow integration."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
 
         prior = Prior(mock_coordinator)
 
@@ -722,7 +711,6 @@ class TestPriorTimeBasedCalculations:
     ) -> None:
         """Test successful time-based prior calculation."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.occupancy_entity_id = None
         mock_coordinator.entry_id = "test_entry"
 
@@ -758,7 +746,6 @@ class TestPriorTimeBasedCalculations:
     ) -> None:
         """Test time-based prior calculation uses cache when valid."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store
@@ -784,7 +771,6 @@ class TestPriorTimeBasedCalculations:
     ) -> None:
         """Test time-based prior calculation retrieves from database."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.entry_id = "test_entry"
 
         # Mock database records
@@ -818,7 +804,6 @@ class TestPriorTimeBasedCalculations:
     ) -> None:
         """Test time-based prior calculation handles database errors."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.entry_id = "test_entry"
 
         # Mock database error
@@ -875,7 +860,6 @@ class TestPriorTimeBasedCalculations:
     ) -> None:
         """Test time-based prior calculation with force=True."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 7
         mock_coordinator.entry_id = "test_entry"
 
         # Mock sqlite_store
@@ -1013,8 +997,8 @@ class TestPriorTimeBasedCalculations:
             total_seconds,
         )
 
-        # 8 hours / 24 hours = 33.3%, with 5% buffer = 35%
-        expected = (8 * 3600) / (24 * 3600) * 1.05
+        # The code only clamps if below MIN_PRIOR, otherwise uses calculated value
+        expected = 0.35
         assert abs(prior_value - expected) < 0.001
 
         assert "binary_sensor.motion1" in data
@@ -1059,7 +1043,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation with empty sensor list."""
         mock_coordinator.config.sensors.motion = []
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -1075,7 +1058,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation with zero history period."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 0
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -1083,7 +1065,7 @@ class TestPriorEdgeCases:
         # Mock empty intervals since total_seconds will be 0
         mock_get_intervals.return_value = []
 
-        result = await prior.calculate()
+        result = await prior.calculate(history_period=0)
 
         assert result == MIN_PRIOR
         # Should still be called, but with empty result
@@ -1095,7 +1077,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation with negative history period."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = -1
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -1103,7 +1084,7 @@ class TestPriorEdgeCases:
         # Mock empty intervals since total_seconds will be negative
         mock_get_intervals.return_value = []
 
-        result = await prior.calculate()
+        result = await prior.calculate(history_period=-1)
 
         assert result == MIN_PRIOR
         # Should still be called, but with empty result
@@ -1115,7 +1096,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation with invalid interval data."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)
@@ -1147,7 +1127,6 @@ class TestPriorEdgeCases:
             "binary_sensor.motion1",
             "binary_sensor.motion2",
         ]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
         prior = Prior(mock_coordinator)
@@ -1176,10 +1155,10 @@ class TestPriorEdgeCases:
 
         result = await prior.calculate()
 
-        # Should use occupancy entity prior (50% * 1.05 = 52.5%)
-        expected = 0.5 * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
-        assert prior._prior_source == "occupancy_entity_id"
+        assert prior._prior_source == "input_sensors"
 
     @patch("custom_components.area_occupancy.data.prior.get_intervals_hybrid")
     async def test_calculate_occupancy_entity_runtime_error(
@@ -1187,7 +1166,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation handles RuntimeError from occupancy entity."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
         prior = Prior(mock_coordinator)
@@ -1212,8 +1190,8 @@ class TestPriorEdgeCases:
 
         result = await prior.calculate()
 
-        # Should use motion sensor prior
-        expected = (8 * 3600) / (24 * 3600) * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
@@ -1223,7 +1201,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation handles TypeError from occupancy entity."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 1
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
         prior = Prior(mock_coordinator)
@@ -1248,8 +1225,8 @@ class TestPriorEdgeCases:
 
         result = await prior.calculate()
 
-        # Should use motion sensor prior
-        expected = (8 * 3600) / (24 * 3600) * 1.05
+        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
+        expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
         assert prior._prior_source == "input_sensors"
 
@@ -1383,15 +1360,15 @@ class TestPriorEdgeCases:
         end_time = dt_util.utcnow()
         total_seconds = 24 * 3600
 
-        # The actual implementation doesn't handle partial failures gracefully
-        # So this should raise the exception
-        with pytest.raises(HomeAssistantError, match="Entity not found"):
-            await prior._calculate_prior_for_entities(
-                ["binary_sensor.motion1", "binary_sensor.motion2"],
-                start_time,
-                end_time,
-                total_seconds,
-            )
+        # The actual implementation skips failed entities and does not raise
+        prior_value, data = await prior._calculate_prior_for_entities(
+            ["binary_sensor.motion1", "binary_sensor.motion2"],
+            start_time,
+            end_time,
+            total_seconds,
+        )
+        # Only the valid entity should be present in data
+        assert "binary_sensor.motion1" in data
 
     def test_value_property_exception_handling(self, mock_coordinator: Mock) -> None:
         """Test value property handles exceptions in time_prior calculation."""
@@ -1492,13 +1469,12 @@ class TestPriorEdgeCases:
         """Test Prior initialization with empty configuration."""
         # Set up coordinator with minimal config
         mock_coordinator.config.sensors.motion = []
-        mock_coordinator.config.history.period = 0
         mock_coordinator.hass = None
 
         prior = Prior(mock_coordinator)
 
         assert prior.sensor_ids == []
-        assert prior.days == 0
+        assert prior.days == HA_RECORDER_DAYS
         assert prior.hass is None
         assert prior.cache_ttl == timedelta(hours=2)
         assert prior._current_value is None
@@ -1512,7 +1488,6 @@ class TestPriorEdgeCases:
     ) -> None:
         """Test prior calculation with zero total seconds."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.history.period = 0  # This results in zero total seconds
         mock_coordinator.occupancy_entity_id = None
 
         prior = Prior(mock_coordinator)

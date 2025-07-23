@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.util import dt as dt_util
 
@@ -95,28 +96,8 @@ class TestLikelihood:
         assert likelihood.prob_given_true_raw == 0.6
         assert likelihood.prob_given_false_raw == 0.05
 
-    async def test_update_history_disabled(self, mock_coordinator: Mock) -> None:
-        """Test update method when history is disabled."""
-        mock_coordinator.config.history.enabled = False
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        prob_true, prob_false = await likelihood.update()
-
-        # Should return weighted default values
-        assert prob_true == likelihood.prob_given_true
-        assert prob_false == likelihood.prob_given_false
-
     async def test_update_history_enabled_success(self, mock_coordinator: Mock) -> None:
         """Test update method when history is enabled and calculation succeeds."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -146,7 +127,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test update method when calculation raises exception."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -172,7 +152,6 @@ class TestLikelihood:
 
     async def test_update_uses_cache_when_valid(self, mock_coordinator: Mock) -> None:
         """Test that update() uses cached values when cache is valid."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -205,7 +184,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test that update() recalculates when cache is stale."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -241,7 +219,6 @@ class TestLikelihood:
         self, mock_coordinator: Mock
     ) -> None:
         """Test that update() recalculates when no cached values exist."""
-        mock_coordinator.config.history.enabled = True
 
         likelihood = Likelihood(
             coordinator=mock_coordinator,
@@ -541,10 +518,12 @@ class TestLikelihoodEdgeCases:
             "custom_components.area_occupancy.data.likelihood.get_intervals_hybrid",
             return_value=intervals,
         ):
-            active_ratio, inactive_ratio = await likelihood.calculate(history_period=1)
+            active_ratio, inactive_ratio = await likelihood.calculate(
+                history_period=HA_RECORDER_DAYS
+            )
 
         assert active_ratio == pytest.approx(0.625, rel=1e-3)
-        assert inactive_ratio == pytest.approx(0.001396, rel=1e-3)
+        assert inactive_ratio == pytest.approx(0.00013897, rel=1e-3)
 
     def test_interval_overlap_helper(self, mock_coordinator: Mock, freeze_time) -> None:
         """Test the optimized interval overlap helper."""

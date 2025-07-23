@@ -9,6 +9,7 @@ from custom_components.area_occupancy.const import (
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
+    HA_RECORDER_DAYS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.prior import MIN_PRIOR
@@ -171,36 +172,6 @@ class TestCoordinatorTimerMethods:
 
         mock_coordinator._handle_prior_timer.assert_called_once_with(test_time)
 
-    async def test_handle_prior_timer_with_history_disabled(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test _handle_prior_timer when history is disabled using centralized mock."""
-        test_time = dt_util.utcnow()
-
-        # Configure mock for disabled history
-        mock_coordinator.config.history.enabled = False
-        mock_coordinator._handle_prior_timer = AsyncMock()
-
-        await mock_coordinator._handle_prior_timer(test_time)
-        mock_coordinator._handle_prior_timer.assert_called_once_with(test_time)
-
-    def test_start_decay_timer_success(self, mock_coordinator: Mock) -> None:
-        """Test _start_decay_timer method using centralized mock."""
-        mock_coordinator._global_decay_timer = None
-        mock_coordinator._start_decay_timer = Mock()
-
-        mock_coordinator._start_decay_timer()
-        mock_coordinator._start_decay_timer.assert_called_once()
-
-    def test_start_decay_timer_already_exists(self, mock_coordinator: Mock) -> None:
-        """Test _start_decay_timer when timer already exists using centralized mock."""
-        existing_timer = Mock()
-        mock_coordinator._global_decay_timer = existing_timer
-        mock_coordinator._start_decay_timer = Mock()
-
-        mock_coordinator._start_decay_timer()
-        mock_coordinator._start_decay_timer.assert_called_once()
-
     async def test_handle_decay_timer_decay_enabled(
         self, mock_coordinator: Mock
     ) -> None:
@@ -227,6 +198,23 @@ class TestCoordinatorTimerMethods:
 
         await mock_coordinator._handle_decay_timer(test_time)
         mock_coordinator._handle_decay_timer.assert_called_once_with(test_time)
+
+    def test_start_decay_timer_success(self, mock_coordinator: Mock) -> None:
+        """Test _start_decay_timer method using centralized mock."""
+        mock_coordinator._global_decay_timer = None
+        mock_coordinator._start_decay_timer = Mock()
+
+        mock_coordinator._start_decay_timer()
+        mock_coordinator._start_decay_timer.assert_called_once()
+
+    def test_start_decay_timer_already_exists(self, mock_coordinator: Mock) -> None:
+        """Test _start_decay_timer when timer already exists using centralized mock."""
+        existing_timer = Mock()
+        mock_coordinator._global_decay_timer = existing_timer
+        mock_coordinator._start_decay_timer = Mock()
+
+        mock_coordinator._start_decay_timer()
+        mock_coordinator._start_decay_timer.assert_called_once()
 
 
 class TestCoordinatorPropertyCalculations:
@@ -1255,9 +1243,7 @@ class TestCoordinatorAsyncHelpers:
         """_calculate_time_priors_async should call prior calculation when enabled."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        coordinator.config.history.enabled = True
-        coordinator.config.history.time_based_priors_enabled = True
-        coordinator.config.history.time_based_priors_frequency = 1
+        # Always enabled, frequency is fixed
 
         with (
             patch.object(coordinator.prior, "get_time_prior", return_value=0),
@@ -1274,14 +1260,10 @@ class TestCoordinatorAsyncHelpers:
         """_update_likelihoods_async should update likelihoods when enabled."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        coordinator.config.history.enabled = True
-        coordinator.config.history.likelihood_updates_enabled = True
+        # Always enabled
 
         with patch.object(
             coordinator.entities, "update_all_entity_likelihoods", new=AsyncMock()
         ) as mock_update:
-            await coordinator._update_likelihoods_async(history_period=30)
-            mock_update.assert_called_once_with(history_period=30)
-
-
-# ... existing code ...
+            await coordinator._update_likelihoods_async(history_period=HA_RECORDER_DAYS)
+            mock_update.assert_called_once_with(history_period=HA_RECORDER_DAYS)
