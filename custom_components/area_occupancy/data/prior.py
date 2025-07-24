@@ -589,13 +589,14 @@ class Prior:  # exported name must stay identical
                     "occupied_seconds": occupied_seconds,
                     "ratio": occupied_seconds / total_seconds,
                 }
-            if data:
-                prior = (sum(d["ratio"] for d in data.values()) / len(data)) * 1.05
-                prior = max(prior, MIN_PRIOR)
-            else:
-                prior = MIN_PRIOR
-            return prior, data
-        return MIN_PRIOR, {}
+
+        if data:
+            prior = (sum(d["ratio"] for d in data.values()) / len(data)) * 1.05
+            prior = max(prior, MIN_PRIOR)
+        else:
+            prior = MIN_PRIOR
+
+        return prior, data
 
     # ------------------------------------------------------------------ #
     def _is_cache_valid(self) -> bool:
