@@ -12,7 +12,7 @@ from custom_components.area_occupancy.schema import (
     AreaTimePriorRecord,
 )
 from custom_components.area_occupancy.sqlite_storage import AreaOccupancyStorage
-from custom_components.area_occupancy.utils import StateInterval
+from custom_components.area_occupancy.state_intervals import StateInterval
 from homeassistant.util import dt as dt_util
 
 
