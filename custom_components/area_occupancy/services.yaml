@@ -155,3 +155,32 @@ update_time_based_priors:
       selector:
         config_entry:
           integration: area_occupancy
+
+purge_intervals:
+  name: Purge State Intervals
+  description: "Purge the state_intervals table based on filter_intervals and a retention period. Optionally filter by entity_ids. Removes intervals older than the retention period that do not pass filter_intervals."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to purge intervals for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    retention_days:
+      name: Retention Days
+      description: "Number of days to retain intervals (intervals older than this may be purged). Default is 365."
+      required: false
+      default: 365
+      selector:
+        number:
+          min: 1
+          max: 3650
+          mode: box
+    entity_ids:
+      name: Entity IDs
+      description: "List of entity IDs to purge (leave empty for all configured entities)."
+      required: false
+      selector:
+        entity:
+          multiple: true
