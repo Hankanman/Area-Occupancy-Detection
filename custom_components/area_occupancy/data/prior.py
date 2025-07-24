@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+MIN_PRIOR_OCCUPIED_SECONDS = (
+    120  # Minimum occupied seconds required for a prior to be considered valid
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 class Prior:  # exported name must stay identical
@@ -53,17 +57,20 @@ class Prior:  # exported name must stay identical
     # --------------------------------------------------------------------- #
     @property
     def value(self) -> float:
-        """Return the best available prior: time-based, global, or minimum."""
-        try:
-            time_prior = self.time_prior
-        except Exception:  # noqa: BLE001
-            time_prior = None
-
-        if time_prior is not None and time_prior >= MIN_PRIOR:
-            return time_prior
-
-        global_prior = self.global_prior
-        return max(global_prior, MIN_PRIOR)
+        """Return the best available prior: time-based, day, global, or minimum."""
+        # 1. Try time slot prior
+        slot_prior, slot_occupied = self.get_time_slot_prior_with_occupied()
+        if slot_occupied >= MIN_PRIOR_OCCUPIED_SECONDS and slot_prior >= MIN_PRIOR:
+            return slot_prior
+        # 2. Try day prior
+        day_prior, day_occupied = self.get_day_prior_with_occupied()
+        if day_occupied >= MIN_PRIOR_OCCUPIED_SECONDS and day_prior >= MIN_PRIOR:
+            return day_prior
+        # 3. Try global prior
+        if self.global_prior >= MIN_PRIOR:
+            return self.global_prior
+        # 4. Fallback to MIN_PRIOR
+        return MIN_PRIOR
 
     @property
     def global_prior(self) -> float:
@@ -94,6 +101,106 @@ class Prior:  # exported name must stay identical
 
         # Fallback to global prior
         return self.global_prior
+
+    def get_time_slot_prior_with_occupied(self) -> tuple[float, int]:
+        """Return the time slot prior and its occupied seconds for the current slot."""
+        day_of_week, time_slot = get_current_time_slot()
+        cache_key = (day_of_week, time_slot)
+        if (
+            cache_key in self._time_prior_cache
+            and self._time_prior_last_updated
+            and (dt_util.utcnow() - self._time_prior_last_updated)
+            < self._time_prior_cache_ttl
+        ):
+            prior = self._time_prior_cache[cache_key]
+            occupied = self._time_prior_cache.get((cache_key, "occupied"), 0)
+            return prior, occupied
+        # If not cached, fallback to async method (sync fallback)
+        return self.global_prior, 0
+
+    def get_day_prior_with_occupied(self) -> tuple[float, int]:
+        """Return the day prior and its occupied seconds for the current day of week."""
+        day_of_week, _ = get_current_time_slot()
+        if (
+            hasattr(self, "_day_prior_cache")
+            and self._day_prior_cache_last_updated
+            and (dt_util.utcnow() - self._day_prior_cache_last_updated)
+            < self._time_prior_cache_ttl
+        ):
+            prior = self._day_prior_cache.get(day_of_week, MIN_PRIOR)
+            occupied = self._day_prior_cache.get((day_of_week, "occupied"), 0)
+            return prior, occupied
+        # If not cached, fallback to async method (sync fallback)
+        return self.global_prior, 0
+
+    async def calculate_day_priors(
+        self, history_period: int | None = None, force: bool = False
+    ) -> dict[int, float]:
+        """Calculate day-of-week priors for all days from historical data."""
+        if (
+            hasattr(self, "_day_prior_cache")
+            and not force
+            and self._day_prior_cache_last_updated
+            and (dt_util.utcnow() - self._day_prior_cache_last_updated)
+            < self._time_prior_cache_ttl
+        ):
+            return self._day_prior_cache
+        days_to_use = history_period if history_period is not None else self.days
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=days_to_use)
+        entity_ids = self.sensor_ids.copy()
+        if self.coordinator.occupancy_entity_id:
+            entity_ids.append(self.coordinator.occupancy_entity_id)
+        if not entity_ids:
+            return {}
+        day_priors: dict[int, float] = {}
+        for day_of_week in range(7):
+            total_occupied_seconds = 0
+            total_analyzed_seconds = 0
+            for entity_id in entity_ids:
+                intervals = (
+                    await self.coordinator.sqlite_store.get_historical_intervals(
+                        entity_id,
+                        start_time,
+                        end_time,
+                    )
+                )
+                if not intervals:
+                    continue
+                for interval in intervals:
+                    interval_start = interval["start"]
+                    interval_end = interval["end"]
+                    if interval_start.weekday() == day_of_week:
+                        day_start = interval_start.replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        )
+                        day_end = day_start + timedelta(days=1)
+                        overlap_start = max(interval_start, day_start)
+                        overlap_end = min(interval_end, day_end)
+                        if overlap_start < overlap_end:
+                            overlap_seconds = (
+                                overlap_end - overlap_start
+                            ).total_seconds()
+                            total_occupied_seconds += overlap_seconds
+                # Each day is 86400 seconds
+                total_analyzed_seconds += 86400 * (days_to_use // 7)
+            alpha = 6.0
+            global_prior = self.global_prior
+            max_prior = min(global_prior * 1.2, 0.95)
+            if total_analyzed_seconds > 0:
+                smoothed_prior = (
+                    total_occupied_seconds
+                    + alpha * global_prior * total_analyzed_seconds
+                ) / (total_analyzed_seconds + alpha * total_analyzed_seconds)
+                smoothed_prior = smoothed_prior * 1.05
+                prior = max(MIN_PRIOR, min(smoothed_prior, max_prior))
+            else:
+                prior = global_prior
+            day_priors[day_of_week] = prior
+            day_priors[(day_of_week, "occupied")] = total_occupied_seconds
+        self._day_prior_cache = day_priors
+        self._day_prior_cache_last_updated = dt_util.utcnow()
+        return day_priors
 
     @property
     def state_intervals(self) -> list[StateInterval]:
@@ -463,25 +570,50 @@ class Prior:  # exported name must stay identical
             Prior value for the time slot
 
         """
-        # Get the time range for this slot
-        slot_start, slot_end = time_slot_to_datetime_range(
+
+        # Get the time range for this slot (as time objects)
+        slot_start_time, slot_end_time = time_slot_to_datetime_range(
             day_of_week, time_slot, start_time
         )
+        slot_start_time = slot_start_time.time()
+        slot_end_time = slot_end_time.time()
 
-        # Calculate how many occurrences of this time slot are in the analysis period
-        # Each week has one occurrence of each time slot
-        weeks_in_period = days_to_use / 7.0
-        expected_occurrences = max(1, int(weeks_in_period))
+        # Find all slot occurrences in the analysis period
+        slot_occurrences = []
+        current = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        while current <= end_time:
+            if current.weekday() == day_of_week:
+                slot_start_dt = current.replace(
+                    hour=slot_start_time.hour,
+                    minute=slot_start_time.minute,
+                    second=slot_start_time.second,
+                    microsecond=0,
+                )
+                slot_end_dt = current.replace(
+                    hour=slot_end_time.hour,
+                    minute=slot_end_time.minute,
+                    second=slot_end_time.second,
+                    microsecond=0,
+                )
+                # If slot_end_dt < slot_start_dt, it means the slot crosses midnight
+                if slot_end_dt <= slot_start_dt:
+                    slot_end_dt += timedelta(days=1)
+                # Only include slots within the analysis period
+                if slot_end_dt >= start_time and slot_start_dt <= end_time:
+                    slot_occurrences.append(
+                        (
+                            max(slot_start_dt, start_time),
+                            min(slot_end_dt, end_time),
+                        )
+                    )
+            current += timedelta(days=1)
 
-        # Analyze occupancy during this time slot across the period
         total_occupied_seconds = 0
         total_analyzed_seconds = 0
         data_points = 0
 
-        # Batch process entities to reduce database overhead
         for entity_id in entity_ids:
             try:
-                # Get intervals for this entity during the analysis period
                 intervals = (
                     await self.coordinator.sqlite_store.get_historical_intervals(
                         entity_id,
@@ -489,48 +621,25 @@ class Prior:  # exported name must stay identical
                         end_time,
                     )
                 )
-
                 if not intervals:
                     continue
 
-                # Filter intervals to only include the specific time slot more efficiently
-                slot_start_time = slot_start.time()
-                slot_end_time = slot_end.time()
-
-                for interval in intervals:
-                    # Check if interval overlaps with the time slot
-                    interval_start = interval["start"]
-                    interval_end = interval["end"]
-
-                    # Convert interval times to the same day of week as the slot
-                    interval_day_of_week = interval_start.weekday()
-
-                    if interval_day_of_week == day_of_week:
-                        # Check if the interval overlaps with the time slot
-                        interval_start_time = interval_start.time()
-                        interval_end_time = interval_end.time()
-
-                        # Calculate overlap
-                        overlap_start = max(slot_start_time, interval_start_time)
-                        overlap_end = min(slot_end_time, interval_end_time)
-
+                for slot_start_dt, slot_end_dt in slot_occurrences:
+                    slot_duration = (slot_end_dt - slot_start_dt).total_seconds()
+                    total_analyzed_seconds += slot_duration
+                    for interval in intervals:
+                        interval_start = interval["start"]
+                        interval_end = interval["end"]
+                        # Find overlap between interval and slot
+                        overlap_start = max(slot_start_dt, interval_start)
+                        overlap_end = min(slot_end_dt, interval_end)
                         if overlap_start < overlap_end:
-                            # There's an overlap, calculate duration
                             overlap_seconds = (
-                                datetime.combine(datetime.min, overlap_end)
-                                - datetime.combine(datetime.min, overlap_start)
+                                overlap_end - overlap_start
                             ).total_seconds()
-
                             total_occupied_seconds += overlap_seconds
                             data_points += 1
-
-                # Add the total time for this slot across all occurrences
-                slot_duration = (slot_end - slot_start).total_seconds()
-                total_analyzed_seconds += slot_duration * expected_occurrences
-
-                # Yield control periodically to avoid blocking
-                await asyncio.sleep(0)
-
+                    await asyncio.sleep(0)  # Yield control
             except HomeAssistantError as err:
                 _LOGGER.debug(
                     "Failed to analyze entity %s for time slot %s: %s",
@@ -540,12 +649,19 @@ class Prior:  # exported name must stay identical
                 )
 
         # Calculate prior
-        if total_analyzed_seconds > 0 and data_points > 0:
-            prior = (
-                total_occupied_seconds / total_analyzed_seconds
-            ) * 1.05  # 5% buffer
-            return max(MIN_PRIOR, min(prior, 0.95))  # Clamp between MIN_PRIOR and 0.95
-        return MIN_PRIOR
+        alpha = 6.0  # Smoothing parameter: 1.0 = one virtual week of global prior
+        global_prior = self.global_prior  # Use the cached global prior
+        max_prior = min(global_prior * 1.2, 0.95)
+
+        if total_analyzed_seconds > 0:
+            smoothed_prior = (
+                total_occupied_seconds + alpha * global_prior * total_analyzed_seconds
+            ) / (total_analyzed_seconds + alpha * total_analyzed_seconds)
+            smoothed_prior = (
+                smoothed_prior * 1.05
+            )  # Optional: keep the 5% buffer if desired
+            return max(MIN_PRIOR, min(smoothed_prior, max_prior))
+        return global_prior  # Fallback to global prior if no data
 
     async def _calculate_prior_for_entities(
         self,
