@@ -10,7 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestPrior:
     """Test Prior class."""
 
