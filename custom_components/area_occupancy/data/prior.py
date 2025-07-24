@@ -67,28 +67,32 @@ class Prior:  # exported name must stay identical
     @property
     def value(self) -> float:
         """Return the best available prior: time-based, day, global, or minimum."""
-        # 1. Try time slot prior
-        slot = self.get_time_slot_prior()
-        if (
-            slot
-            and slot.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
-            and slot.prior >= MIN_PRIOR
-        ):
-            return slot.prior
-        # 2. Try day prior
-        day = self.get_day_prior()
-        if (
-            day
-            and day.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
-            and day.prior >= MIN_PRIOR
-        ):
-            return day.prior
-        # 3. Try global prior
-        global_ = self.get_global_prior()
-        if global_ and global_.prior >= MIN_PRIOR:
-            return global_.prior
-        # 4. Fallback to MIN_PRIOR
-        return MIN_PRIOR
+        try:
+            # 1. Try time slot prior
+            slot = self.get_time_slot_prior()
+            if (
+                slot
+                and slot.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
+                and slot.prior >= MIN_PRIOR
+            ):
+                return slot.prior
+            # 2. Try day prior
+            day = self.get_day_prior()
+            if (
+                day
+                and day.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
+                and day.prior >= MIN_PRIOR
+            ):
+                return day.prior
+            # 3. Try global prior
+            global_ = self.get_global_prior()
+            if global_ and global_.prior >= MIN_PRIOR:
+                return global_.prior
+        except ValueError:
+            # On any error, fallback to MIN_PRIOR
+            return MIN_PRIOR
+        else:
+            return MIN_PRIOR
 
     @property
     def global_prior(self) -> float:

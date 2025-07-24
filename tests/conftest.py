@@ -948,9 +948,6 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
     mock_coordinator.entities.decaying_entities = decaying_entities
     mock_coordinator.decaying_entities = decaying_entities  # Add both for compatibility
 
-    # Note: _calculate_entity_aggregates was removed from coordinator
-    # The properties calculate values directly from entities
-
     return mock_coordinator
 
 
@@ -1669,16 +1666,6 @@ def mock_realistic_config_entry():
 
 
 # Global patch for custom_components.area_occupancy.utils.get_instance
-@pytest.fixture(autouse=True)
-def mock_utils_get_instance_globally():
-    """Automatically mock custom_components.area_occupancy.utils.get_instance for all tests."""
-    with patch(
-        "custom_components.area_occupancy.utils.get_instance"
-    ) as mock_get_instance:
-        mock_instance = Mock()
-        mock_instance.async_add_executor_job = AsyncMock(return_value={})
-        mock_get_instance.return_value = mock_instance
-        yield mock_instance
 
 
 @pytest.fixture(autouse=True)

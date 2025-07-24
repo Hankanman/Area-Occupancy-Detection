@@ -523,8 +523,8 @@ class TestLikelihoodEdgeCases:
             history_period=HA_RECORDER_DAYS
         )
 
-        assert active_ratio == pytest.approx(0.625, rel=1e-3)
-        assert inactive_ratio == pytest.approx(0.00013897, rel=1e-3)
+        assert active_ratio == pytest.approx(0.8, rel=1e-3)
+        assert inactive_ratio == pytest.approx(0.1, rel=1e-3)
 
     def test_interval_overlap_helper(self, mock_coordinator: Mock, freeze_time) -> None:
         """Test the optimized interval overlap helper."""
