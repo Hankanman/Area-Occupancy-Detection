@@ -11,6 +11,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, HA_RECORDER_DAYS
+from .schema import state_intervals_table
+from .state_intervals import filter_intervals
 from .utils import get_current_time_slot, get_time_slot_name
 
 if TYPE_CHECKING:
@@ -781,6 +783,122 @@ async def _debug_database_state(
         }
 
 
+async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Purge state_intervals table based on filter_intervals and retention period."""
+    entry_id = call.data["entry_id"]
+    retention_days = call.data.get("retention_days", 365)
+    entity_ids = call.data.get("entity_ids", [])
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+        sqlite_store = coordinator.sqlite_store
+        cutoff_date = dt_util.utcnow() - timedelta(days=retention_days)
+
+        if not entity_ids:
+            entity_ids = coordinator.config.entity_ids
+
+        # Count all intervals in the db for this entry_id (across all entity_ids)
+        def _count_all_intervals():
+            with sqlite_store.engine.connect() as conn:
+                result = conn.execute(
+                    state_intervals_table.select().where(
+                        state_intervals_table.c.entity_id.in_(entity_ids)
+                    )
+                )
+                return len(result.fetchall())
+
+        total_intervals_in_db = await hass.async_add_executor_job(_count_all_intervals)
+
+        # 1. Delete all intervals older than the retention period
+        def _delete_old():
+            with sqlite_store.engine.connect() as conn:
+                result = conn.execute(
+                    state_intervals_table.delete().where(
+                        state_intervals_table.c.entity_id.in_(entity_ids)
+                        & (state_intervals_table.c.end_time < cutoff_date)
+                    )
+                )
+                conn.commit()
+                return result.rowcount
+
+        total_deleted_old = await hass.async_add_executor_job(_delete_old)
+
+        # 2. For intervals within retention, filter and delete those that don't pass
+        total_checked = 0
+        total_deleted_filtered = 0
+        total_kept = 0
+        details = {}
+        for entity_id in entity_ids:
+            # Fetch intervals within retention
+            intervals = await sqlite_store.get_historical_intervals(
+                entity_id,
+                start_time=cutoff_date,
+                end_time=None,
+                limit=None,
+                page_size=1000,
+            )
+            total_checked += len(intervals)
+            filtered = filter_intervals(intervals)
+            to_delete = [iv for iv in intervals if iv not in filtered]
+            total_deleted_filtered += len(to_delete)
+            total_kept += len(filtered)
+
+            if to_delete:
+
+                def _delete(to_delete=to_delete):
+                    with sqlite_store.engine.connect() as conn:
+                        for iv in to_delete:
+                            conn.execute(
+                                state_intervals_table.delete().where(
+                                    (
+                                        state_intervals_table.c.entity_id
+                                        == iv["entity_id"]
+                                    )
+                                    & (
+                                        state_intervals_table.c.start_time
+                                        == iv["start"]
+                                    )
+                                    & (state_intervals_table.c.end_time == iv["end"])
+                                    & (state_intervals_table.c.state == iv["state"])
+                                )
+                            )
+                        conn.commit()
+
+                await hass.async_add_executor_job(_delete)
+
+            details[entity_id] = {
+                "intervals_checked": len(intervals),
+                "intervals_deleted_filtered": len(to_delete),
+                "intervals_kept": len(filtered),
+            }
+
+        _LOGGER.info(
+            "Purged intervals for entry %s: deleted old %d, checked %d, deleted filtered %d, kept %d",
+            entry_id,
+            total_deleted_old,
+            total_checked,
+            total_deleted_filtered,
+            total_kept,
+        )
+
+    except Exception as err:
+        error_msg = f"Failed to purge intervals for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return {
+            "entry_id": entry_id,
+            "retention_days": retention_days,
+            "entity_ids": entity_ids,
+            "total_deleted_old": total_deleted_old,
+            "total_checked": total_checked,
+            "total_deleted_filtered": total_deleted_filtered,
+            "total_kept": total_kept,
+            "details": details,
+            "total_intervals_in_db": total_intervals_in_db,
+        }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -815,6 +933,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
+
+    purge_intervals_schema = vol.Schema(
+        {
+            vol.Required("entry_id"): str,
+            vol.Optional("retention_days", default=365): int,
+            vol.Optional("entity_ids", default=[]): [str],
+        }
+    )
 
     # Create async wrapper functions to properly handle the service calls
     async def handle_update_area_prior(call: ServiceCall) -> dict[str, Any]:
@@ -852,6 +978,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_debug_database_state(call: ServiceCall) -> dict[str, Any]:
         return await _debug_database_state(hass, call)
+
+    async def handle_purge_intervals(call: ServiceCall) -> dict[str, Any]:
+        return await _purge_intervals(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -952,6 +1081,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 vol.Required("entry_id"): str,
             }
         ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "purge_intervals",
+        handle_purge_intervals,
+        schema=purge_intervals_schema,
         supports_response=SupportsResponse.ONLY,
     )
 
