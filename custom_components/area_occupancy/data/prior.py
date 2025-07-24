@@ -302,7 +302,9 @@ class Prior:  # exported name must stay identical
                                 overlap_end - overlap_start
                             ).total_seconds()
                             total_occupied_seconds += overlap_seconds
-                total_analyzed_seconds += 86400 * (days_to_use // 7)
+                # Only add analyzed seconds once per day, not per entity
+                if entity_id == entity_ids[0]:
+                    total_analyzed_seconds += 86400 * (days_to_use // 7)
             global_prior = self.global_prior
             max_prior = min(global_prior * GLOBAL_PRIOR_FACTOR, MAX_PRIOR)
             if total_analyzed_seconds > 0:
@@ -436,6 +438,7 @@ class Prior:  # exported name must stay identical
 
         """
         data = {}
+        all_intervals = []
         if not entity_ids:
             return MIN_PRIOR, {}, []
         for entity_id in entity_ids:
@@ -445,7 +448,7 @@ class Prior:  # exported name must stay identical
                 start_time,
                 end_time,
             )
-
+            all_intervals.extend(intervals)
             if intervals:
                 occupied_seconds = int(
                     sum(
@@ -470,7 +473,7 @@ class Prior:  # exported name must stay identical
         else:
             prior = MIN_PRIOR
 
-        return prior, data, intervals
+        return prior, data, all_intervals
 
     # ------------------------------------------------------------------ #
     def _is_cache_valid(self) -> bool:
