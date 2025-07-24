@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.util import dt as dt_util
 
 from ..const import HA_RECORDER_DAYS
-from ..utils import StateInterval, validate_prob
+from ..state_intervals import StateInterval
+from ..utils import validate_prob
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator

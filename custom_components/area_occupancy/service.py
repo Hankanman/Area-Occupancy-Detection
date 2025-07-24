@@ -183,7 +183,7 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
 async def _update_time_based_priors(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
-    """Manually trigger an update of time-based priors."""
+    """Manually trigger an update of time-based priors and return the current priors in a human-readable format."""
     entry_id = call.data["entry_id"]
 
     try:
@@ -197,74 +197,13 @@ async def _update_time_based_priors(
             history_period,
         )
 
-        # Start the calculation in a background task to avoid blocking
-        async def _calculate_in_background():
-            """Calculate time-based priors in background."""
-            try:
-                # Calculate time-based priors with forced recalculation
-                time_priors = await coordinator.prior.calculate_time_based_priors(
-                    history_period=history_period, force=True
-                )
+        # Calculate time-based priors with forced recalculation
+        await coordinator.prior.calculate_time_based_priors(
+            history_period=history_period, force=True
+        )
+        await coordinator.async_refresh()
 
-                current_day, current_slot = get_current_time_slot()
-                current_prior = time_priors.get(
-                    (current_day, current_slot), coordinator.prior.value
-                )
-
-                await coordinator.async_refresh()
-
-                _LOGGER.info(
-                    "Time-based priors update completed successfully for entry %s",
-                    entry_id,
-                )
-
-                return {
-                    "status": "completed",
-                    "time_priors_calculated": len(time_priors),
-                    "current_time_prior": current_prior,
-                    "history_period": history_period,
-                    "completion_timestamp": dt_util.utcnow().isoformat(),
-                }
-
-            except HomeAssistantError as err:
-                _LOGGER.error(
-                    "Background time-based priors calculation failed for entry %s: %s",
-                    entry_id,
-                    err,
-                )
-                return {
-                    "status": "failed",
-                    "error": str(err),
-                    "completion_timestamp": dt_util.utcnow().isoformat(),
-                }
-
-        # Start the background task
-        hass.async_create_task(_calculate_in_background())
-
-        # Return immediately with status
-        return {
-            "status": "started",
-            "message": f"Time-based priors calculation started for entry {entry_id}",
-            "history_period_days": history_period,
-            "start_timestamp": dt_util.utcnow().isoformat(),
-            "note": "This is a background operation. Check logs for completion status.",
-        }
-
-    except (HomeAssistantError, ValueError, RuntimeError) as err:
-        error_msg = f"Failed to start time-based priors update for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-
-async def _get_time_based_priors(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Get current time-based priors in a human-readable format."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
+        # Now, return the current time-based priors in a human-readable format (moved from _get_time_based_priors)
         current_day, current_slot = get_current_time_slot()
 
         # Get all time-based priors from database
@@ -387,8 +326,8 @@ async def _get_time_based_priors(
             "note": "Time-based priors show the learned occupancy probability for specific times of day and days of the week.",
         }
 
-    except Exception as err:
-        error_msg = f"Failed to get time-based priors for {entry_id}: {err}"
+    except (HomeAssistantError, ValueError, RuntimeError) as err:
+        error_msg = f"Failed to update and get time-based priors for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
 
@@ -887,9 +826,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_update_time_based_priors(call: ServiceCall) -> dict[str, Any]:
         return await _update_time_based_priors(hass, call)
 
-    async def handle_get_time_based_priors(call: ServiceCall) -> dict[str, Any]:
-        return await _get_time_based_priors(hass, call)
-
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
 
@@ -938,14 +874,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         "update_time_based_priors",
         handle_update_time_based_priors,
-        schema=vol.Schema({vol.Required("entry_id"): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "get_time_based_priors",
-        handle_get_time_based_priors,
         schema=vol.Schema({vol.Required("entry_id"): str}),
         supports_response=SupportsResponse.ONLY,
     )
