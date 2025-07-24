@@ -146,23 +146,11 @@ debug_database_state:
 
 update_time_based_priors:
   name: Update Time Based Priors
-  description: "Update the time-based priors for the area occupancy detection (runs in background)."
+  description: "Update the time-based priors for the area occupancy detection and return the current priors in a human-readable format."
   fields:
     entry_id:
       name: Entry ID
       description: "Select the Area Occupancy instance to update time-based priors for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-
-get_time_based_priors:
-  name: Get Time Based Priors
-  description: "Get current time-based priors in a human-readable format."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to get time-based priors for."
       required: true
       selector:
         config_entry:
