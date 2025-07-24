@@ -16,8 +16,8 @@ from homeassistant.util import dt as dt_util
 
 from ..const import HA_RECORDER_DAYS, MIN_PRIOR
 from ..schema import AreaTimePriorRecord
+from ..state_intervals import StateInterval
 from ..utils import (
-    StateInterval,
     get_current_time_slot,
     get_time_slot_name,
     time_slot_to_datetime_range,
