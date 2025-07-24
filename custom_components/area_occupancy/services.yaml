@@ -144,18 +144,6 @@ debug_database_state:
         config_entry:
           integration: area_occupancy
 
-update_time_based_priors:
-  name: Update Time Based Priors
-  description: "Update the time-based priors for the area occupancy detection and return the current priors in a human-readable format."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to update time-based priors for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-
 purge_intervals:
   name: Purge State Intervals
   description: "Purge the state_intervals table based on filter_intervals and a retention period. Optionally filter by entity_ids. Removes intervals older than the retention period that do not pass filter_intervals."

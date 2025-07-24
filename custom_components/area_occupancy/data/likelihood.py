@@ -201,7 +201,7 @@ class Likelihood:
             self.end_time,
         )
 
-        prior_intervals = self.coordinator.prior.state_intervals
+        prior_intervals = self.coordinator.prior.prior_intervals
 
         active_ratio = self.default_prob_true
         inactive_ratio = self.default_prob_false

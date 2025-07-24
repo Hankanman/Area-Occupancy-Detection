@@ -398,8 +398,6 @@ class EntityManager:
             int: Number of entities updated
 
         """
-        await self.coordinator.prior.update(force=force, history_period=history_period)
-
         if not self._entities:
             _LOGGER.debug("No entities to update likelihoods for")
             return 0

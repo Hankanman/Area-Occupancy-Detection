@@ -191,9 +191,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.prior.update()
 
             # Defer time-based prior calculation to background task to avoid blocking startup
-            self.hass.async_create_task(
-                self._calculate_time_priors_async(initial_setup=True)
-            )
+            # No longer needed: all priors are updated together
 
             # Defer likelihood updates to background task to avoid blocking startup
             self.hass.async_create_task(self._update_likelihoods_async())
@@ -337,13 +335,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_prior_timer = None
 
         # Always update learned priors (historical analysis always enabled)
-        await self.prior.update()
-        # Calculate time-based priors every 4th run (default: every 4 hours)
-        if not hasattr(self, "_prior_timer_count"):
-            self._prior_timer_count = 0
-        self._prior_timer_count += 1
-        if self._prior_timer_count % 4 == 0:
-            self.hass.async_create_task(self._calculate_time_priors_async())
+        await self.prior.update(force=True)
 
         # Check if we should update likelihoods based on frequency
         if not hasattr(self, "_likelihood_timer_count"):
@@ -475,25 +467,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             initial_setup: If True, this is the initial setup calculation
 
         """
-        try:
-            # Check if we already have recent time-based priors
-            if not initial_setup:
-                try:
-                    current_prior = await self.prior.get_time_prior()
-                    if current_prior > 0:
-                        return
-                except HomeAssistantError:
-                    pass  # Continue with calculation if check fails
-
-            # Calculate time-based priors in background
-            await self.prior.calculate_time_based_priors()
-
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Failed to calculate time-based priors for entry %s: %s",
-                self.entry_id,
-                err,
-            )
+        # No longer needed: all priors are updated together
 
     async def _update_likelihoods_async(
         self, history_period: int | None = None

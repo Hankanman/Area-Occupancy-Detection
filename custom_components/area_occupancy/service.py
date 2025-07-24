@@ -29,104 +29,6 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
-async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Manually trigger an update of the area baseline prior."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        history_period = HA_RECORDER_DAYS
-
-        _LOGGER.info(
-            "Updating area baseline prior for entry %s with %d days history",
-            entry_id,
-            history_period,
-        )
-
-        # Update area baseline prior with forced recalculation
-        area_baseline_prior = await coordinator.prior.update(
-            force=True, history_period=history_period
-        )
-
-        # Determine which prior was used (occupancy_entity or sensors)
-        all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
-        occupancy_entity_prior = getattr(
-            coordinator.prior, "_occupancy_entity_prior", None
-        )
-        prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
-
-        # Collect calculation details
-        calculation_details = {
-            "motion_sensors": coordinator.prior.sensor_ids,
-            "sensor_count": len(coordinator.prior.sensor_ids),
-            "calculation_method": "Max of (average of individual sensor occupancy ratios + 5% buffer, occupancy_entity_id prior + 5% buffer)",
-            "all_sensors_prior": all_sensors_prior,
-            "occupancy_entity_prior": occupancy_entity_prior,
-            "prior_source": prior_source,
-        }
-
-        # Add per-sensor details if data is available
-        if coordinator.prior.data:
-            sensor_details = {}
-            total_ratio = 0.0
-
-            for sensor_id, sensor_data in coordinator.prior.data.items():
-                total_seconds = (
-                    sensor_data["end_time"] - sensor_data["start_time"]
-                ).total_seconds()
-
-                sensor_details[sensor_id] = {
-                    "occupancy_ratio": round(sensor_data["ratio"], 4),
-                    "occupied_seconds": sensor_data["occupied_seconds"],
-                    "total_seconds": int(total_seconds),
-                    "states_found": sensor_data["states_count"],
-                    "intervals_found": len(sensor_data["intervals"]),
-                }
-
-                total_ratio += sensor_data["ratio"]
-
-            raw_average = (
-                total_ratio / len(coordinator.prior.data)
-                if coordinator.prior.data
-                else 0.0
-            )
-
-            calculation_details.update(
-                {
-                    "sensor_details": sensor_details,
-                    "raw_average_ratio": round(raw_average, 4),
-                    "buffer_multiplier": 1.05,
-                    "final_prior": round(area_baseline_prior, 4),
-                    "calculation": f"({raw_average:.4f} average) × 1.05 buffer = {area_baseline_prior:.4f}",
-                }
-            )
-        else:
-            calculation_details.update(
-                {
-                    "sensor_details": "No sensor data available",
-                    "note": f"Using default prior value of {area_baseline_prior}",
-                }
-            )
-
-        await coordinator.async_refresh()
-
-        _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
-
-        return {
-            "area_prior": area_baseline_prior,
-            "history_period": history_period,
-            "update_timestamp": dt_util.utcnow().isoformat(),
-            "prior_source": prior_source,
-            "calculation_details": calculation_details,
-        }
-
-    except (HomeAssistantError, ValueError, RuntimeError) as err:
-        error_msg = f"Failed to update area prior for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-
 async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Manually trigger an update of sensor likelihoods."""
     entry_id = call.data["entry_id"]
@@ -182,9 +84,7 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
         return response_data
 
 
-async def _update_time_based_priors(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
+async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Manually trigger an update of time-based priors and return the current priors in a human-readable format."""
     entry_id = call.data["entry_id"]
 
@@ -199,11 +99,18 @@ async def _update_time_based_priors(
             history_period,
         )
 
-        # Calculate time-based priors with forced recalculation
-        await coordinator.prior.calculate_time_based_priors(
-            history_period=history_period, force=True
-        )
+        # Calculate all priors with forced recalculation
+        await coordinator.prior.update(force=True, history_period=history_period)
         await coordinator.async_refresh()
+
+        # Determine which prior was used (occupancy_entity or sensors)
+        all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
+        occupancy_entity_prior = getattr(
+            coordinator.prior, "_occupancy_entity_prior", None
+        )
+        prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
+
+        _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
 
         # Now, return the current time-based priors in a human-readable format (moved from _get_time_based_priors)
         current_day, current_slot = get_current_time_slot()
@@ -318,14 +225,19 @@ async def _update_time_based_priors(
 
         return {
             "area_name": coordinator.config.name,
-            "current_time_slot": get_time_slot_name(current_day, current_slot),
-            "current_prior": round(coordinator.prior.value, 4),
-            "time_prior": round(coordinator.prior.time_prior, 4),
-            "global_prior": round(coordinator.prior.global_prior, 4),
+            "area_prior": coordinator.prior.value,
+            "day_prior": coordinator.prior.get_day_prior().prior,
+            "time_prior": coordinator.prior.get_time_slot_prior().prior,
+            "global_prior": coordinator.prior.get_global_prior().prior,
+            "primary_sensors": coordinator.prior.sensor_ids,
+            "all_sensors_prior": all_sensors_prior,
+            "occupancy_entity_prior": occupancy_entity_prior,
+            "prior_source": prior_source,
+            "last_updated": coordinator.prior.last_updated.isoformat(),
             "total_time_slots_available": len(time_priors),
+            "current_time_slot": get_time_slot_name(current_day, current_slot),
             "daily_summaries": daily_summaries,
             "key_periods": key_periods,
-            "note": "Time-based priors show the learned occupancy probability for specific times of day and days of the week.",
         }
 
     except (HomeAssistantError, ValueError, RuntimeError) as err:
@@ -949,9 +861,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_update_likelihoods(call: ServiceCall) -> dict[str, Any]:
         return await _update_likelihoods(hass, call)
 
-    async def handle_update_time_based_priors(call: ServiceCall) -> dict[str, Any]:
-        return await _update_time_based_priors(hass, call)
-
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
 
@@ -996,14 +905,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "update_likelihoods",
         handle_update_likelihoods,
         schema=update_likelihoods_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "update_time_based_priors",
-        handle_update_time_based_priors,
-        schema=vol.Schema({vol.Required("entry_id"): str}),
         supports_response=SupportsResponse.ONLY,
     )
 
