@@ -6,27 +6,39 @@ defensive default when data are sparse or sensors are being re-configured.
 
 from __future__ import annotations
 
-import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import HA_RECORDER_DAYS, MIN_PRIOR
-from ..schema import AreaTimePriorRecord
 from ..state_intervals import StateInterval
-from ..utils import (
-    get_current_time_slot,
-    get_time_slot_name,
-    time_slot_to_datetime_range,
-)
+from ..utils import get_current_time_slot, time_slot_to_datetime_range
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+MIN_PRIOR_OCCUPIED_SECONDS = (
+    120  # Minimum occupied seconds required for a prior to be considered valid
+)
+
+SMOOTHING_FACTOR = 1.0
+MAX_PRIOR = 0.95
+GLOBAL_PRIOR_FACTOR = 1.2
+PRIOR_BUFFER_FACTOR = 1.05
+
+
+@dataclass
+class PriorCacheEntry:
+    """Cache entry for a prior value."""
+
+    prior: float
+    occupied_seconds: int
+    total_seconds: int
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,29 +53,46 @@ class Prior:  # exported name must stay identical
         self.hass = coordinator.hass
         self.cache_ttl = timedelta(hours=2)
         self._current_value: float | None = None
+        self._prior_intervals: list[StateInterval] | None = None
         self._last_updated: datetime | None = None
         self._sensor_hash: int | None = None
-        self._sensor_data: dict[str, dict[str, Any]] = {}
-
         # Time-based prior cache
-        self._time_prior_cache: dict[tuple[int, int], float] = {}
-        self._time_prior_cache_ttl = timedelta(minutes=30)
-        self._time_prior_last_updated: datetime | None = None
+        self._time_prior_cache: dict[tuple[int, int], PriorCacheEntry] = {}
+        # Day-based prior cache
+        self._day_prior_cache: dict[int, PriorCacheEntry] = {}
+        # Global prior cache
+        self._global_prior_cache: PriorCacheEntry | None = None
 
     # --------------------------------------------------------------------- #
     @property
     def value(self) -> float:
-        """Return the best available prior: time-based, global, or minimum."""
+        """Return the best available prior: time-based, day, global, or minimum."""
         try:
-            time_prior = self.time_prior
+            # 1. Try time slot prior
+            slot = self.get_time_slot_prior()
+            if (
+                slot
+                and slot.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
+                and slot.prior >= MIN_PRIOR
+            ):
+                return slot.prior
+            # 2. Try day prior
+            day = self.get_day_prior()
+            if (
+                day
+                and day.occupied_seconds >= MIN_PRIOR_OCCUPIED_SECONDS
+                and day.prior >= MIN_PRIOR
+            ):
+                return day.prior
+            # 3. Try global prior
+            global_ = self.get_global_prior()
+            if global_ and global_.prior >= MIN_PRIOR:
+                return global_.prior
         except Exception:  # noqa: BLE001
-            time_prior = None
-
-        if time_prior is not None and time_prior >= MIN_PRIOR:
-            return time_prior
-
-        global_prior = self.global_prior
-        return max(global_prior, MIN_PRIOR)
+            # On any error, fallback to MIN_PRIOR
+            return MIN_PRIOR
+        else:
+            return MIN_PRIOR
 
     @property
     def global_prior(self) -> float:
@@ -82,13 +111,12 @@ class Prior:  # exported name must stay identical
             # Check if we have a cached time-based prior
             if (
                 cache_key in self._time_prior_cache
-                and self._time_prior_last_updated
-                and (dt_util.utcnow() - self._time_prior_last_updated)
-                < self._time_prior_cache_ttl
+                and self._last_updated
+                and (dt_util.utcnow() - self._last_updated) < self.cache_ttl
             ):
-                time_prior = self._time_prior_cache[cache_key]
-                if time_prior >= MIN_PRIOR:
-                    return time_prior
+                entry = self._time_prior_cache[cache_key]
+                if entry.prior >= MIN_PRIOR:
+                    return entry.prior
         except Exception:  # noqa: BLE001
             pass  # Fall through to global prior
 
@@ -96,134 +124,96 @@ class Prior:  # exported name must stay identical
         return self.global_prior
 
     @property
-    def state_intervals(self) -> list[StateInterval]:
-        """Return the merged occupied intervals (state='on') deduplicated across all motion sensors with anomaly filtering."""
-        # Collect all intervals from all sensors (already filtered during calculation)
-        all_intervals = []
-        for data in self._sensor_data.values():
-            all_intervals.extend(data.get("intervals", []))
-
-        if not all_intervals:
-            return []
-
-        # Sort intervals by start time
-        sorted_intervals = sorted(all_intervals, key=lambda x: x["start"])
-
-        # Merge overlapping or contiguous intervals
-        merged: list[StateInterval] = []
-        for interval in sorted_intervals:
-            if not merged:
-                merged.append(interval.copy())
-            else:
-                last = merged[-1]
-                # If current interval starts before or at the end of the last, merge them
-                if interval["start"] <= last["end"]:
-                    last["end"] = max(last["end"], interval["end"])
-                else:
-                    merged.append(interval.copy())
-        return merged
+    def last_updated(self) -> datetime | None:
+        """Return the last updated timestamp."""
+        return self._last_updated
 
     @property
-    def prior_total_seconds(self) -> int:
-        """Return the total duration of the prior intervals."""
-        return int(
-            sum(
-                (interval["end"] - interval["start"]).total_seconds()
-                for interval in self.state_intervals
-            )
-        )
+    def prior_intervals(self) -> list[StateInterval] | None:
+        """Return the prior intervals."""
+        return self._prior_intervals
 
-    @property
-    def data(self) -> dict[str, Any]:
-        """Return the data for the prior."""
-        return self._sensor_data
-
-    async def get_time_prior(self) -> float:
-        """Get the prior for a specific time slot.
-
-        Args:
-            day_of_week: 0=Monday, 6=Sunday
-            time_slot: 0-47 (30-minute intervals)
-
-        Returns:
-            Prior value for the specified time slot
-
-        """
+    def get_time_slot_prior(self) -> PriorCacheEntry | None:
+        """Return the time slot prior, its occupied seconds, and total seconds for the current slot, or None if not cached/valid."""
         day_of_week, time_slot = get_current_time_slot()
-        # Check cache first
         cache_key = (day_of_week, time_slot)
-        if (
-            cache_key in self._time_prior_cache
-            and self._time_prior_last_updated
-            and (dt_util.utcnow() - self._time_prior_last_updated)
-            < self._time_prior_cache_ttl
-        ):
-            return self._time_prior_cache[cache_key]
+        return self._get_cached_entry(self._time_prior_cache, cache_key)
 
-        # Try to get from database
-        if self.coordinator.sqlite_store:
-            try:
-                record = await self.coordinator.sqlite_store.get_time_prior(
-                    self.coordinator.entry_id, day_of_week, time_slot
-                )
-                if record and record.data_points > 0:
-                    prior_value = record.prior_value
-                    # Cache the result
-                    self._time_prior_cache[cache_key] = prior_value
-                    return prior_value
-            except Exception:  # noqa: BLE001
-                _LOGGER.debug(
-                    "Failed to get time prior for %s, using fallback",
-                    get_time_slot_name(day_of_week, time_slot),
-                )
+    def get_day_prior(self) -> PriorCacheEntry | None:
+        """Return the day prior, its occupied seconds, and total seconds for the current day of week, or None if not cached/valid."""
+        day_of_week, _ = get_current_time_slot()
+        return self._get_cached_entry(self._day_prior_cache, day_of_week)
 
-        # Fallback to current global prior
-        return self.value
+    def get_global_prior(self) -> PriorCacheEntry | None:
+        """Return the global prior, its occupied seconds, and total seconds, or None if not cached/valid."""
+        return self._get_cached_entry(self._global_prior_cache)
 
-    # --------------------------------------------------------------------- #
     async def update(
         self, force: bool = False, history_period: int | None = None
     ) -> float:
-        """Return a baseline prior, re-computing if the cache is stale or forced.
-
-        Args:
-            force: If True, bypass cache validation and force recalculation
-            history_period: Period in days for historical data (overrides coordinator default)
-
-        Returns:
-            The calculated or cached prior value
-
-        """
+        """Unified update: calculate all prior tiers and update caches with a single timestamp."""
         if not force and self._is_cache_valid():
             return self.value  # type: ignore[return-value]
-
         try:
-            value = await self.calculate(history_period=history_period)
+            value = await self.calculate_all_priors(
+                history_period=history_period, force=force
+            )
         except Exception:  # pragma: no cover
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             value = MIN_PRIOR
-
         return value
 
-    async def calculate(self, history_period: int | None = None) -> float:
-        """Calculate the area prior with anomaly filtering.
-
-        Args:
-            history_period: Period in days for historical data (overrides coordinator default)
-
-        """
-        # Use provided history_period or fall back to coordinator default
+    async def calculate_all_priors(
+        self, history_period: int | None = None, force: bool = False
+    ) -> float:
+        """Calculate and update all prior tiers (global, day, time slot) and caches, with a single last_updated timestamp."""
         days_to_use = history_period if history_period is not None else self.days
         start_time = dt_util.utcnow() - timedelta(days=days_to_use)
         end_time = dt_util.utcnow()
         total_seconds = int((end_time - start_time).total_seconds())
 
-        # --- Standard logic: all motion sensors ---
-        all_sensors_prior, all_sensors_data = await self._calculate_prior_for_entities(
-            self.sensor_ids, start_time, end_time, total_seconds
+        # --- Global prior ---
+        global_result = await self._calculate_global_prior(
+            start_time, end_time, total_seconds
+        )
+        self._current_value = global_result["final_prior"]
+        self._prior_intervals = global_result["prior_intervals"]
+        self._prior_source = global_result["prior_source"]
+        self._prior_source_entity_ids = global_result["prior_source_entity_ids"]
+        self._sensor_hash = hash(frozenset(self._prior_source_entity_ids))
+        self._all_sensors_prior = global_result["all_sensors_prior"]
+        self._occupancy_entity_prior = global_result["occupancy_entity_prior"]
+        self._global_prior_cache = PriorCacheEntry(
+            prior=global_result["final_prior"],
+            occupied_seconds=int(global_result["global_occupied"]),
+            total_seconds=int(global_result["global_total"]),
         )
 
-        # --- Additional logic: occupancy_entity_id only ---
+        # --- Day priors ---
+        entity_ids = self.sensor_ids.copy()
+        if self.coordinator.occupancy_entity_id:
+            entity_ids.append(self.coordinator.occupancy_entity_id)
+        self._day_prior_cache = await self._calculate_day_priors(
+            entity_ids, start_time, end_time, days_to_use
+        )
+
+        # --- Time slot priors ---
+        self._time_prior_cache = await self._calculate_time_slot_priors(
+            entity_ids, start_time, end_time, days_to_use
+        )
+
+        self._last_updated = dt_util.utcnow()
+        return self._current_value
+
+    async def _calculate_global_prior(self, start_time, end_time, total_seconds):
+        """Calculate the global prior and related data."""
+        (
+            all_sensors_prior,
+            all_sensors_data,
+            all_sensors_intervals,
+        ) = await self._calculate_prior_for_entities(
+            self.sensor_ids, start_time, end_time, total_seconds
+        )
         occupancy_entity_id = self.coordinator.occupancy_entity_id
         occupancy_entity_data = {}
         if occupancy_entity_id:
@@ -231,6 +221,7 @@ class Prior:  # exported name must stay identical
                 (
                     occupancy_entity_prior,
                     occupancy_entity_data,
+                    occupancy_entity_intervals,
                 ) = await self._calculate_prior_for_entities(
                     [occupancy_entity_id], start_time, end_time, total_seconds
                 )
@@ -243,245 +234,54 @@ class Prior:  # exported name must stay identical
         else:
             occupancy_entity_prior = MIN_PRIOR
 
-        # Take the max of both priors and store the corresponding data
         if occupancy_entity_prior > all_sensors_prior:
             final_prior = occupancy_entity_prior
-            self._sensor_data = occupancy_entity_data
-            self._prior_source = "occupancy_entity_id"
-            self._prior_source_entity_ids = (
+            prior_intervals = occupancy_entity_intervals
+            prior_source = "occupancy_entity_id"
+            prior_source_entity_ids = (
                 [occupancy_entity_id] if occupancy_entity_id else []
+            )
+            global_occupied = sum(
+                d["occupied_seconds"] for d in occupancy_entity_data.values()
+            )
+            global_total = sum(
+                (d["end_time"] - d["start_time"]).total_seconds()
+                for d in occupancy_entity_data.values()
             )
         else:
             final_prior = all_sensors_prior
-            self._sensor_data = all_sensors_data
-            self._prior_source = "input_sensors"
-            self._prior_source_entity_ids = self.sensor_ids
-
-        self._current_value = final_prior
-        self._last_updated = dt_util.utcnow()
-        self._sensor_hash = hash(frozenset(self._prior_source_entity_ids))
-
-        # Store for debugging
-        self._all_sensors_prior = all_sensors_prior
-        self._occupancy_entity_prior = occupancy_entity_prior
-
-        for sensor_id, data in self._sensor_data.items():
-            _LOGGER.debug(
-                "Sensor %s: %.3f (used %d intervals)",
-                sensor_id,
-                data["ratio"],
-                len(data["intervals"]),
+            prior_intervals = all_sensors_intervals
+            prior_source = "input_sensors"
+            prior_source_entity_ids = self.sensor_ids
+            global_occupied = sum(
+                d["occupied_seconds"] for d in all_sensors_data.values()
             )
-
-        _LOGGER.debug(
-            "Calculated new area prior: %d sensors, %.3f (all_sensors_prior=%.3f, occupancy_entity_prior=%.3f, source=%s)",
-            len(self._sensor_data),
-            self._current_value,
-            all_sensors_prior,
-            occupancy_entity_prior,
-            self._prior_source,
-        )
-
-        return self._current_value
-
-    async def calculate_time_based_priors(
-        self, history_period: int | None = None, force: bool = False
-    ) -> dict[tuple[int, int], float]:
-        """Calculate time-based priors for all time slots from historical data.
-
-        Args:
-            history_period: Period in days for historical data (overrides coordinator default)
-            force: If True, bypass cache validation and force recalculation
-
-        Returns:
-            Dictionary mapping (day_of_week, time_slot) to prior values
-
-        """
-        # Check cache first (unless forced)
-        if (
-            not force
-            and self._time_prior_last_updated
-            and (dt_util.utcnow() - self._time_prior_last_updated)
-            < self._time_prior_cache_ttl
-        ):
-            _LOGGER.debug(
-                "Using cached time-based priors for entry %s", self.coordinator.entry_id
+            global_total = sum(
+                (d["end_time"] - d["start_time"]).total_seconds()
+                for d in all_sensors_data.values()
             )
-            return self._time_prior_cache
+        return {
+            "final_prior": final_prior,
+            "prior_intervals": prior_intervals,
+            "prior_source": prior_source,
+            "prior_source_entity_ids": prior_source_entity_ids,
+            "all_sensors_prior": all_sensors_prior,
+            "occupancy_entity_prior": occupancy_entity_prior,
+            "global_occupied": global_occupied,
+            "global_total": global_total,
+            "all_sensors_data": all_sensors_data,
+            "occupancy_entity_data": occupancy_entity_data,
+        }
 
-        # Check if we have recent data in the database first
-        if not force:
-            try:
-                recent_priors = (
-                    await self.coordinator.sqlite_store.get_recent_time_priors(
-                        self.coordinator.entry_id, hours=24
-                    )
-                )
-                if recent_priors:
-                    _LOGGER.debug(
-                        "Found %d recent time-based priors in database for entry %s",
-                        len(recent_priors),
-                        self.coordinator.entry_id,
-                    )
-                    # Convert to cache format and return
-                    cache_data = {
-                        (record.day_of_week, record.time_slot): record.prior_value
-                        for record in recent_priors
-                    }
-                    self._time_prior_cache = cache_data
-                    self._time_prior_last_updated = dt_util.utcnow()
-                    return cache_data
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Failed to get recent time priors from database: %s", err)
-
-        _LOGGER.info(
-            "Calculating time-based priors for entry %s", self.coordinator.entry_id
-        )
-
-        # Use provided history_period or fall back to coordinator default
-        days_to_use = history_period if history_period is not None else self.days
-        end_time = dt_util.utcnow()
-        start_time = end_time - timedelta(days=days_to_use)
-
-        # Get all entity IDs to analyze
-        entity_ids = self.sensor_ids.copy()
-        if self.coordinator.occupancy_entity_id:
-            entity_ids.append(self.coordinator.occupancy_entity_id)
-
-        if not entity_ids:
-            _LOGGER.warning("No entities available for time-based prior calculation")
-            return {}
-
-        # Calculate priors in chunks to avoid blocking for too long
-        time_priors: dict[tuple[int, int], float] = {}
-        time_prior_records: list[AreaTimePriorRecord] = []
-
-        # Process in smaller chunks to avoid blocking
-        chunk_size = 12  # Process 12 time slots at a time (6 hours worth)
-        processed_slots = 0
-
+    async def _calculate_day_priors(
+        self, entity_ids, start_time, end_time, days_to_use
+    ):
+        """Calculate day priors for each day of the week."""
+        day_priors: dict[int, PriorCacheEntry] = {}
         for day_of_week in range(7):
-            for time_slot in range(48):
-                try:
-                    prior_value = await self._calculate_prior_for_time_slot(
-                        entity_ids,
-                        day_of_week,
-                        time_slot,
-                        start_time,
-                        end_time,
-                        days_to_use,
-                    )
-
-                    time_priors[(day_of_week, time_slot)] = prior_value
-
-                    # Create record for database storage
-                    record = AreaTimePriorRecord(
-                        entry_id=self.coordinator.entry_id,
-                        day_of_week=day_of_week,
-                        time_slot=time_slot,
-                        prior_value=prior_value,
-                        data_points=1,  # Will be updated with actual count
-                        last_updated=dt_util.utcnow(),
-                    )
-                    time_prior_records.append(record)
-
-                    processed_slots += 1
-
-                    # Yield control every chunk_size slots to avoid blocking
-                    if processed_slots % chunk_size == 0:
-                        await asyncio.sleep(0)  # Yield control to event loop
-
-                except HomeAssistantError as err:
-                    _LOGGER.warning(
-                        "Failed to calculate prior for %s: %s",
-                        get_time_slot_name(day_of_week, time_slot),
-                        err,
-                    )
-                    # Use default prior
-                    time_priors[(day_of_week, time_slot)] = MIN_PRIOR
-                    processed_slots += 1
-
-        # Store in database in batches to avoid long database operations
-        if time_prior_records and self.coordinator.sqlite_store:
-            try:
-                # Store in smaller batches
-                batch_size = 50
-                total_stored = 0
-                for i in range(0, len(time_prior_records), batch_size):
-                    batch = time_prior_records[i : i + batch_size]
-                    stored_count = (
-                        await self.coordinator.sqlite_store.save_time_priors_batch(
-                            batch
-                        )
-                    )
-                    total_stored += stored_count
-                    await asyncio.sleep(0)  # Yield control between batches
-
-                _LOGGER.info(
-                    "Stored %d time-based priors for entry %s",
-                    total_stored,
-                    self.coordinator.entry_id,
-                )
-            except HomeAssistantError as err:
-                _LOGGER.error(
-                    "Failed to store time-based priors: %s",
-                    err,
-                )
-
-        # Update cache
-        self._time_prior_cache = time_priors
-        self._time_prior_last_updated = dt_util.utcnow()
-
-        _LOGGER.info(
-            "Calculated %d time-based priors for entry %s",
-            len(time_priors),
-            self.coordinator.entry_id,
-        )
-
-        return time_priors
-
-    async def _calculate_prior_for_time_slot(
-        self,
-        entity_ids: list[str],
-        day_of_week: int,
-        time_slot: int,
-        start_time: datetime,
-        end_time: datetime,
-        days_to_use: int,
-    ) -> float:
-        """Calculate prior for a specific time slot.
-
-        Args:
-            entity_ids: List of entity IDs to analyze
-            day_of_week: 0=Monday, 6=Sunday
-            time_slot: 0-47 (30-minute intervals)
-            start_time: Start of analysis period
-            end_time: End of analysis period
-            days_to_use: Number of days in analysis period
-
-        Returns:
-            Prior value for the time slot
-
-        """
-        # Get the time range for this slot
-        slot_start, slot_end = time_slot_to_datetime_range(
-            day_of_week, time_slot, start_time
-        )
-
-        # Calculate how many occurrences of this time slot are in the analysis period
-        # Each week has one occurrence of each time slot
-        weeks_in_period = days_to_use / 7.0
-        expected_occurrences = max(1, int(weeks_in_period))
-
-        # Analyze occupancy during this time slot across the period
-        total_occupied_seconds = 0
-        total_analyzed_seconds = 0
-        data_points = 0
-
-        # Batch process entities to reduce database overhead
-        for entity_id in entity_ids:
-            try:
-                # Get intervals for this entity during the analysis period
+            total_occupied_seconds = 0
+            total_analyzed_seconds = 0
+            for entity_id in entity_ids:
                 intervals = (
                     await self.coordinator.sqlite_store.get_historical_intervals(
                         entity_id,
@@ -489,63 +289,144 @@ class Prior:  # exported name must stay identical
                         end_time,
                     )
                 )
-
                 if not intervals:
                     continue
-
-                # Filter intervals to only include the specific time slot more efficiently
-                slot_start_time = slot_start.time()
-                slot_end_time = slot_end.time()
-
                 for interval in intervals:
-                    # Check if interval overlaps with the time slot
                     interval_start = interval["start"]
                     interval_end = interval["end"]
-
-                    # Convert interval times to the same day of week as the slot
-                    interval_day_of_week = interval_start.weekday()
-
-                    if interval_day_of_week == day_of_week:
-                        # Check if the interval overlaps with the time slot
-                        interval_start_time = interval_start.time()
-                        interval_end_time = interval_end.time()
-
-                        # Calculate overlap
-                        overlap_start = max(slot_start_time, interval_start_time)
-                        overlap_end = min(slot_end_time, interval_end_time)
-
+                    if interval_start.weekday() == day_of_week:
+                        day_start = interval_start.replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        )
+                        day_end = day_start + timedelta(days=1)
+                        overlap_start = max(interval_start, day_start)
+                        overlap_end = min(interval_end, day_end)
                         if overlap_start < overlap_end:
-                            # There's an overlap, calculate duration
                             overlap_seconds = (
-                                datetime.combine(datetime.min, overlap_end)
-                                - datetime.combine(datetime.min, overlap_start)
+                                overlap_end - overlap_start
                             ).total_seconds()
-
                             total_occupied_seconds += overlap_seconds
-                            data_points += 1
+                # Only add analyzed seconds once per day, not per entity
+                if entity_id == entity_ids[0]:
+                    total_analyzed_seconds += 86400 * (days_to_use // 7)
+            global_prior = self.global_prior
+            max_prior = min(global_prior * GLOBAL_PRIOR_FACTOR, MAX_PRIOR)
+            if total_analyzed_seconds > 0:
+                smoothed_prior = (
+                    total_occupied_seconds
+                    + SMOOTHING_FACTOR * global_prior * total_analyzed_seconds
+                ) / (total_analyzed_seconds + SMOOTHING_FACTOR * total_analyzed_seconds)
+                smoothed_prior = smoothed_prior * PRIOR_BUFFER_FACTOR
+                prior = max(MIN_PRIOR, min(smoothed_prior, max_prior))
+            else:
+                prior = global_prior
+            day_priors[day_of_week] = PriorCacheEntry(
+                prior=prior,
+                occupied_seconds=int(total_occupied_seconds),
+                total_seconds=int(total_analyzed_seconds),
+            )
+        return day_priors
 
-                # Add the total time for this slot across all occurrences
-                slot_duration = (slot_end - slot_start).total_seconds()
-                total_analyzed_seconds += slot_duration * expected_occurrences
-
-                # Yield control periodically to avoid blocking
-                await asyncio.sleep(0)
-
-            except HomeAssistantError as err:
-                _LOGGER.debug(
-                    "Failed to analyze entity %s for time slot %s: %s",
-                    entity_id,
-                    get_time_slot_name(day_of_week, time_slot),
-                    err,
+    async def _calculate_time_slot_priors(
+        self, entity_ids, start_time, end_time, days_to_use
+    ):
+        """Calculate time slot priors for each day and slot."""
+        time_priors: dict[tuple[int, int], PriorCacheEntry] = {}
+        for day_of_week in range(7):
+            for time_slot in range(48):
+                (
+                    prior_value,
+                    occupied,
+                    total,
+                ) = await self._calculate_prior_for_time_slot_full(
+                    entity_ids,
+                    day_of_week,
+                    time_slot,
+                    start_time,
+                    end_time,
+                    days_to_use,
                 )
+                time_priors[(day_of_week, time_slot)] = PriorCacheEntry(
+                    prior=prior_value,
+                    occupied_seconds=occupied,
+                    total_seconds=total,
+                )
+        return time_priors
 
-        # Calculate prior
-        if total_analyzed_seconds > 0 and data_points > 0:
-            prior = (
-                total_occupied_seconds / total_analyzed_seconds
-            ) * 1.05  # 5% buffer
-            return max(MIN_PRIOR, min(prior, 0.95))  # Clamp between MIN_PRIOR and 0.95
-        return MIN_PRIOR
+    async def _calculate_prior_for_time_slot_full(
+        self,
+        entity_ids: list[str],
+        day_of_week: int,
+        time_slot: int,
+        start_time: datetime,
+        end_time: datetime,
+        days_to_use: int,
+    ) -> tuple[float, int, int]:
+        """Calculate prior, occupied seconds, and total seconds for a specific time slot."""
+        slot_start_time, slot_end_time = time_slot_to_datetime_range(
+            day_of_week, time_slot, start_time
+        )
+        slot_start_time = slot_start_time.time()
+        slot_end_time = slot_end_time.time()
+        slot_occurrences = []
+        current = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        while current <= end_time:
+            if current.weekday() == day_of_week:
+                slot_start_dt = current.replace(
+                    hour=slot_start_time.hour,
+                    minute=slot_start_time.minute,
+                    second=slot_start_time.second,
+                    microsecond=0,
+                )
+                slot_end_dt = current.replace(
+                    hour=slot_end_time.hour,
+                    minute=slot_end_time.minute,
+                    second=slot_end_time.second,
+                    microsecond=0,
+                )
+                if slot_end_dt <= slot_start_dt:
+                    slot_end_dt += timedelta(days=1)
+                if slot_end_dt >= start_time and slot_start_dt <= end_time:
+                    slot_occurrences.append(
+                        (
+                            max(slot_start_dt, start_time),
+                            min(slot_end_dt, end_time),
+                        )
+                    )
+            current += timedelta(days=1)
+        total_occupied_seconds = 0
+        total_analyzed_seconds = 0
+        for entity_id in entity_ids:
+            intervals = await self.coordinator.sqlite_store.get_historical_intervals(
+                entity_id,
+                start_time,
+                end_time,
+            )
+            if not intervals:
+                continue
+            for slot_start_dt, slot_end_dt in slot_occurrences:
+                slot_duration = (slot_end_dt - slot_start_dt).total_seconds()
+                total_analyzed_seconds += slot_duration
+                for interval in intervals:
+                    interval_start = interval["start"]
+                    interval_end = interval["end"]
+                    overlap_start = max(slot_start_dt, interval_start)
+                    overlap_end = min(slot_end_dt, interval_end)
+                    if overlap_start < overlap_end:
+                        overlap_seconds = (overlap_end - overlap_start).total_seconds()
+                        total_occupied_seconds += overlap_seconds
+        global_prior = self.global_prior
+        max_prior = min(global_prior * GLOBAL_PRIOR_FACTOR, MAX_PRIOR)
+        if total_analyzed_seconds > 0:
+            smoothed_prior = (
+                total_occupied_seconds
+                + SMOOTHING_FACTOR * global_prior * total_analyzed_seconds
+            ) / (total_analyzed_seconds + SMOOTHING_FACTOR * total_analyzed_seconds)
+            smoothed_prior = smoothed_prior * PRIOR_BUFFER_FACTOR
+            prior = max(MIN_PRIOR, min(smoothed_prior, max_prior))
+        else:
+            prior = global_prior
+        return prior, int(total_occupied_seconds), int(total_analyzed_seconds)
 
     async def _calculate_prior_for_entities(
         self,
@@ -553,7 +434,7 @@ class Prior:  # exported name must stay identical
         start_time: datetime,
         end_time: datetime,
         total_seconds: int,
-    ) -> tuple[float, dict[str, dict[str, Any]]]:
+    ) -> tuple[float, dict[str, dict[str, Any]], list[StateInterval]]:
         """Calculate the prior for a given list of entity_ids.
 
         Returns:
@@ -561,8 +442,9 @@ class Prior:  # exported name must stay identical
 
         """
         data = {}
+        all_intervals = []
         if not entity_ids:
-            return MIN_PRIOR, {}
+            return MIN_PRIOR, {}, []
         for entity_id in entity_ids:
             # Get intervals using only our DB
             intervals = await self.coordinator.sqlite_store.get_historical_intervals(
@@ -570,7 +452,7 @@ class Prior:  # exported name must stay identical
                 start_time,
                 end_time,
             )
-
+            all_intervals.extend(intervals)
             if intervals:
                 occupied_seconds = int(
                     sum(
@@ -595,7 +477,7 @@ class Prior:  # exported name must stay identical
         else:
             prior = MIN_PRIOR
 
-        return prior, data
+        return prior, data, all_intervals
 
     # ------------------------------------------------------------------ #
     def _is_cache_valid(self) -> bool:
@@ -605,6 +487,16 @@ class Prior:  # exported name must stay identical
             return False
         # in case sensors were added/removed
         return self._sensor_hash == hash(frozenset(self.sensor_ids))
+
+    def _get_cached_entry(self, cache, key=None):
+        entry = cache.get(key) if key is not None else (cache if cache else None)
+        if (
+            entry
+            and self._last_updated
+            and (dt_util.utcnow() - self._last_updated) < self.cache_ttl
+        ):
+            return entry
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""

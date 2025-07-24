@@ -20,7 +20,7 @@ from custom_components.area_occupancy.schema import (
     metadata_table,
     state_intervals_table,
 )
-from custom_components.area_occupancy.utils import StateInterval
+from custom_components.area_occupancy.state_intervals import StateInterval
 
 
 # ruff: noqa: PLC0415

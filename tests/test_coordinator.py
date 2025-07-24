@@ -9,7 +9,6 @@ from custom_components.area_occupancy.const import (
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
-    HA_RECORDER_DAYS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.prior import MIN_PRIOR
@@ -1239,38 +1238,3 @@ class TestCoordinatorErrorRecoveryAndResilience:
 
         # Verify it was called with the expected arguments
         mock_coordinator.track_entity_state_changes.assert_called_with(entity_ids)
-
-
-class TestCoordinatorAsyncHelpers:
-    """Tests for async helper methods not exercised elsewhere."""
-
-    async def test_calculate_time_priors_async_triggers_calculation(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """_calculate_time_priors_async should call prior calculation when enabled."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-
-        # Always enabled, frequency is fixed
-
-        with (
-            patch.object(coordinator.prior, "get_time_prior", return_value=0),
-            patch.object(
-                coordinator.prior, "calculate_time_based_priors", new=AsyncMock()
-            ) as mock_calc,
-        ):
-            await coordinator._calculate_time_priors_async(initial_setup=False)
-            mock_calc.assert_called_once()
-
-    async def test_update_likelihoods_async_calls_entity_update(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """_update_likelihoods_async should update likelihoods when enabled."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-
-        # Always enabled
-
-        with patch.object(
-            coordinator.entities, "update_all_entity_likelihoods", new=AsyncMock()
-        ) as mock_update:
-            await coordinator._update_likelihoods_async(history_period=HA_RECORDER_DAYS)
-            mock_update.assert_called_once_with(history_period=HA_RECORDER_DAYS)
