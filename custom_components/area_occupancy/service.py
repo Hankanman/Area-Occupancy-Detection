@@ -44,10 +44,9 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
             history_period,
         )
 
-        # Update area baseline prior with forced recalculation
-        area_baseline_prior = await coordinator.prior.update(
-            force=True, history_period=history_period
-        )
+        # Update area baseline prior with forced recalculation (all tiers)
+        await coordinator.prior.update(force=True, history_period=history_period)
+        await coordinator.async_refresh()
 
         # Determine which prior was used (occupancy_entity or sensors)
         all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
@@ -56,69 +55,20 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         )
         prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
 
-        # Collect calculation details
-        calculation_details = {
-            "motion_sensors": coordinator.prior.sensor_ids,
-            "sensor_count": len(coordinator.prior.sensor_ids),
-            "calculation_method": "Max of (average of individual sensor occupancy ratios + 5% buffer, occupancy_entity_id prior + 5% buffer)",
-            "all_sensors_prior": all_sensors_prior,
-            "occupancy_entity_prior": occupancy_entity_prior,
-            "prior_source": prior_source,
-        }
-
-        # Add per-sensor details if data is available
-        if coordinator.prior.data:
-            sensor_details = {}
-            total_ratio = 0.0
-
-            for sensor_id, sensor_data in coordinator.prior.data.items():
-                total_seconds = (
-                    sensor_data["end_time"] - sensor_data["start_time"]
-                ).total_seconds()
-
-                sensor_details[sensor_id] = {
-                    "occupancy_ratio": round(sensor_data["ratio"], 4),
-                    "occupied_seconds": sensor_data["occupied_seconds"],
-                    "total_seconds": int(total_seconds),
-                    "states_found": sensor_data["states_count"],
-                    "intervals_found": len(sensor_data["intervals"]),
-                }
-
-                total_ratio += sensor_data["ratio"]
-
-            raw_average = (
-                total_ratio / len(coordinator.prior.data)
-                if coordinator.prior.data
-                else 0.0
-            )
-
-            calculation_details.update(
-                {
-                    "sensor_details": sensor_details,
-                    "raw_average_ratio": round(raw_average, 4),
-                    "buffer_multiplier": 1.05,
-                    "final_prior": round(area_baseline_prior, 4),
-                    "calculation": f"({raw_average:.4f} average) × 1.05 buffer = {area_baseline_prior:.4f}",
-                }
-            )
-        else:
-            calculation_details.update(
-                {
-                    "sensor_details": "No sensor data available",
-                    "note": f"Using default prior value of {area_baseline_prior}",
-                }
-            )
-
-        await coordinator.async_refresh()
-
         _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
 
         return {
-            "area_prior": area_baseline_prior,
-            "history_period": history_period,
-            "update_timestamp": dt_util.utcnow().isoformat(),
+            "area_prior": coordinator.prior.value,
+            "day_prior": coordinator.prior.get_day_prior().prior,
+            "time_prior": coordinator.prior.get_time_slot_prior().prior,
+            "global_prior": coordinator.prior.get_global_prior().prior,
+            "primary_sensors": coordinator.prior.sensor_ids,
+            "all_sensors_prior": all_sensors_prior,
+            "occupancy_entity_prior": occupancy_entity_prior,
             "prior_source": prior_source,
-            "calculation_details": calculation_details,
+            "last_updated": coordinator.prior.last_updated.isoformat()
+            if coordinator.prior.last_updated
+            else None,
         }
 
     except (HomeAssistantError, ValueError, RuntimeError) as err:
@@ -199,10 +149,8 @@ async def _update_time_based_priors(
             history_period,
         )
 
-        # Calculate time-based priors with forced recalculation
-        await coordinator.prior.calculate_time_based_priors(
-            history_period=history_period, force=True
-        )
+        # Calculate all priors with forced recalculation
+        await coordinator.prior.update(force=True, history_period=history_period)
         await coordinator.async_refresh()
 
         # Now, return the current time-based priors in a human-readable format (moved from _get_time_based_priors)
@@ -322,6 +270,9 @@ async def _update_time_based_priors(
             "current_prior": round(coordinator.prior.value, 4),
             "time_prior": round(coordinator.prior.time_prior, 4),
             "global_prior": round(coordinator.prior.global_prior, 4),
+            "priors_last_updated": coordinator.prior.last_updated.isoformat()
+            if coordinator.prior.last_updated
+            else None,
             "total_time_slots_available": len(time_priors),
             "daily_summaries": daily_summaries,
             "key_periods": key_periods,
