@@ -88,7 +88,7 @@ class Prior:  # exported name must stay identical
             global_ = self.get_global_prior()
             if global_ and global_.prior >= MIN_PRIOR:
                 return global_.prior
-        except ValueError:
+        except Exception:  # noqa: BLE001
             # On any error, fallback to MIN_PRIOR
             return MIN_PRIOR
         else:
