@@ -24,7 +24,7 @@ from sqlalchemy.dialects import sqlite
 
 from homeassistant.util import dt as dt_util
 
-from .utils import StateInterval
+from .state_intervals import StateInterval
 
 # Database metadata
 metadata = MetaData()
