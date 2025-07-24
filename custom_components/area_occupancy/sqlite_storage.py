@@ -24,7 +24,6 @@ from .schema import (
     area_occupancy_table,
     area_time_priors_table,
     entities_table,
-    indexes,
     metadata,
     metadata_table,
     state_intervals_table,
@@ -109,23 +108,8 @@ class AreaOccupancyStorage:
 
                     _LOGGER.debug("Existing tables: %s", existing_tables)
 
-                # Create tables individually if they don't exist
-                for table_name, table in metadata.tables.items():
-                    if table_name not in existing_tables:
-                        _LOGGER.debug("Creating table: %s", table_name)
-                        table.create(self.engine)
-                    else:
-                        _LOGGER.debug("Table %s already exists, skipping", table_name)
-
-                # Create all indexes
-                with self.engine.connect() as conn:
-                    for index in indexes:
-                        try:
-                            index.create(conn, checkfirst=True)
-                        except sa.exc.SQLAlchemyError as idx_err:
-                            _LOGGER.debug(
-                                "Index creation skipped (likely exists): %s", idx_err
-                            )
+                # Create all tables and indexes in one call
+                metadata.create_all(self.engine, checkfirst=True)
 
                 # Initialize/check version metadata
                 with self.engine.connect() as conn:
