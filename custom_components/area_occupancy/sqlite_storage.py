@@ -28,7 +28,7 @@ from .schema import (
     metadata_table,
     state_intervals_table,
 )
-from .utils import StateInterval, get_intervals_from_recorder
+from .state_intervals import StateInterval, get_intervals_from_recorder
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
