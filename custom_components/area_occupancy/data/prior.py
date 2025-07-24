@@ -484,7 +484,6 @@ class Prior:  # exported name must stay identical
                 # Get intervals for this entity during the analysis period
                 intervals = (
                     await self.coordinator.sqlite_store.get_historical_intervals(
-                        self.coordinator,
                         entity_id,
                         start_time,
                         end_time,
