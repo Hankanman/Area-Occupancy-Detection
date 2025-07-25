@@ -210,7 +210,6 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         return {
             "area_name": coordinator.config.name,
             "area_prior": coordinator.prior.value,
-            "day_prior": getattr(coordinator.prior.get_day_prior(), "prior", None),
             "time_prior": getattr(
                 coordinator.prior.get_time_slot_prior(), "prior", None
             ),
