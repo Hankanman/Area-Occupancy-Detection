@@ -137,40 +137,6 @@ class TestAreaOccupancyCoordinator:
 class TestCoordinatorTimerMethods:
     """Test coordinator timer methods comprehensively using centralized mocks."""
 
-    def test_start_prior_timer_success(self, mock_coordinator: Mock) -> None:
-        """Test _start_prior_timer method using centralized mock."""
-        # Reset timer state
-        mock_coordinator._global_prior_timer = None
-
-        # Mock the method call
-        mock_coordinator._start_prior_timer = Mock()
-        mock_coordinator._start_prior_timer()
-
-        mock_coordinator._start_prior_timer.assert_called_once()
-
-    def test_start_prior_timer_already_exists(self, mock_coordinator: Mock) -> None:
-        """Test _start_prior_timer when timer already exists using centralized mock."""
-        # Set existing timer
-        mock_timer = Mock()
-        mock_coordinator._global_prior_timer = mock_timer
-
-        # Mock the method to simulate no-op behavior
-        mock_coordinator._start_prior_timer = Mock()
-        mock_coordinator._start_prior_timer()
-
-        # Should still be called (mock doesn't implement real logic)
-        mock_coordinator._start_prior_timer.assert_called_once()
-
-    async def test_handle_prior_timer_success(self, mock_coordinator: Mock) -> None:
-        """Test _handle_prior_timer method using centralized mock."""
-        test_time = dt_util.utcnow()
-
-        # Mock the method
-        mock_coordinator._handle_prior_timer = AsyncMock()
-        await mock_coordinator._handle_prior_timer(test_time)
-
-        mock_coordinator._handle_prior_timer.assert_called_once_with(test_time)
-
     async def test_handle_decay_timer_decay_enabled(
         self, mock_coordinator: Mock
     ) -> None:
@@ -624,21 +590,17 @@ class TestCoordinatorAdvancedTimerManagement:
             mock_get_entity_type.return_value = mock_entity_type
 
             # Test all timers are None initially
-            assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
 
             # Start timers
-            coordinator._start_prior_timer()
             coordinator._start_decay_timer()
 
             # Verify timers are set
-            assert coordinator._global_prior_timer is not None
             assert coordinator._global_decay_timer is not None
 
             # Test shutdown cancels all timers
             await coordinator.async_shutdown()
 
-        assert coordinator._global_prior_timer is None
         assert coordinator._global_decay_timer is None
 
     def test_timer_start_with_missing_hass(
@@ -650,10 +612,8 @@ class TestCoordinatorAdvancedTimerManagement:
         # Mock hass to be falsy for timer check
         with patch.object(coordinator, "hass", None):
             # Should not start timers when hass is None
-            coordinator._start_prior_timer()
             coordinator._start_decay_timer()
 
-            assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
 
     async def test_timer_error_handling_during_callbacks(
@@ -661,15 +621,6 @@ class TestCoordinatorAdvancedTimerManagement:
     ) -> None:
         """Test timer callback error handling."""
         test_time = dt_util.utcnow()
-
-        # Test prior timer error handling
-        mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
-            HomeAssistantError("Likelihood update failed")
-        )
-
-        # Should not raise exception, but handle gracefully
-        with patch.object(mock_coordinator, "_start_prior_timer"):
-            await mock_coordinator._handle_prior_timer(test_time)
 
         # Test decay timer error handling
         mock_coordinator.async_refresh.side_effect = HomeAssistantError(
@@ -699,9 +650,8 @@ class TestCoordinatorSetupScenarios:
         # Mock entity types to prevent KeyError during entity creation
         with (
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_historical_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -719,7 +669,8 @@ class TestCoordinatorSetupScenarios:
         # Verify initialization sequence
         coordinator.entity_types.async_initialize.assert_called_once()
         # EntityManager.__post_init__ is called automatically during object creation, not by setup
-        coordinator.sqlite_store.async_save_data.assert_called_once_with(force=True)
+        coordinator.sqlite_store.async_save_data.assert_any_call(force=True)
+        assert coordinator.sqlite_store.async_save_data.call_count == 2
 
     async def test_setup_with_stored_data_restoration(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -736,9 +687,8 @@ class TestCoordinatorSetupScenarios:
                 "custom_components.area_occupancy.data.entity.EntityManager.from_dict"
             ) as mock_from_dict,
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_historical_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -773,9 +723,8 @@ class TestCoordinatorSetupScenarios:
                 "async_initialize",
                 side_effect=HomeAssistantError("Entity init failed"),
             ),
-            patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_historical_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -806,9 +755,8 @@ class TestCoordinatorSetupScenarios:
 
         with (
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_historical_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -928,7 +876,6 @@ class TestCoordinatorResourceManagement:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         # Set up some timers to test cleanup
-        coordinator._global_prior_timer = Mock()
         coordinator._global_decay_timer = Mock()
         coordinator._remove_state_listener = Mock()
 
@@ -954,7 +901,6 @@ class TestCoordinatorResourceManagement:
             await coordinator.async_shutdown()
 
             # Verify resources were cleaned up
-            assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
             assert coordinator._remove_state_listener is None
 
@@ -965,7 +911,6 @@ class TestCoordinatorResourceManagement:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         # Resources already None - should not crash
-        coordinator._global_prior_timer = None
         coordinator._global_decay_timer = None
         coordinator._remove_state_listener = None
 
@@ -991,7 +936,6 @@ class TestCoordinatorResourceManagement:
             await coordinator.async_shutdown()
 
             # Verify they remain None
-            assert coordinator._global_prior_timer is None
             assert coordinator._global_decay_timer is None
             assert coordinator._remove_state_listener is None
 
@@ -1018,7 +962,6 @@ class TestCoordinatorIntegrationFlows:
             ),
             patch.object(coordinator.sqlite_store, "async_save_data", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_prior_timer"),
             patch.object(coordinator, "_start_decay_timer"),
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
@@ -1214,17 +1157,6 @@ class TestCoordinatorErrorRecoveryAndResilience:
         assert "probability" in update_data
         assert "occupied" in update_data
         assert "last_updated" in update_data
-
-    async def test_timer_method_existence(self, mock_coordinator: Mock) -> None:
-        """Test timer method existence and basic structure."""
-        test_time = dt_util.utcnow()
-
-        # Test that timer handling methods exist
-        assert hasattr(mock_coordinator, "_handle_prior_timer")
-        assert hasattr(mock_coordinator, "_start_prior_timer")
-
-        # Test methods can be called
-        await mock_coordinator._handle_prior_timer(test_time)
 
     async def test_state_tracking_method_structure(
         self, mock_coordinator: Mock
