@@ -103,12 +103,13 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         await coordinator.prior.update(force=True, history_period=history_period)
         await coordinator.async_refresh()
 
+        # Remove references to attributes that no longer exist in Prior
         # Determine which prior was used (occupancy_entity or sensors)
-        all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
-        occupancy_entity_prior = getattr(
-            coordinator.prior, "_occupancy_entity_prior", None
-        )
-        prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
+        # all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
+        # occupancy_entity_prior = getattr(
+        #     coordinator.prior, "_occupancy_entity_prior", None
+        # )
+        # prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
 
         _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
 
@@ -226,14 +227,17 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         return {
             "area_name": coordinator.config.name,
             "area_prior": coordinator.prior.value,
-            "day_prior": coordinator.prior.get_day_prior().prior,
-            "time_prior": coordinator.prior.get_time_slot_prior().prior,
-            "global_prior": coordinator.prior.get_global_prior().prior,
+            "day_prior": getattr(coordinator.prior.get_day_prior(), "prior", None),
+            "time_prior": getattr(
+                coordinator.prior.get_time_slot_prior(), "prior", None
+            ),
+            "global_prior": getattr(
+                coordinator.prior.get_global_prior(), "prior", None
+            ),
             "primary_sensors": coordinator.prior.sensor_ids,
-            "all_sensors_prior": all_sensors_prior,
-            "occupancy_entity_prior": occupancy_entity_prior,
-            "prior_source": prior_source,
-            "last_updated": coordinator.prior.last_updated.isoformat(),
+            "last_updated": coordinator.prior.last_updated.isoformat()
+            if coordinator.prior.last_updated
+            else None,
             "total_time_slots_available": len(time_priors),
             "current_time_slot": get_time_slot_name(current_day, current_slot),
             "daily_summaries": daily_summaries,
