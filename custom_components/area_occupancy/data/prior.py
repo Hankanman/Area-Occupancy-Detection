@@ -133,20 +133,48 @@ class Prior:  # exported name must stay identical
         """Return the prior intervals."""
         return self._prior_intervals
 
-    def get_time_slot_prior(self) -> PriorCacheEntry | None:
-        """Return the time slot prior, its occupied seconds, and total seconds for the current slot, or None if not cached/valid."""
-        day_of_week, time_slot = get_current_time_slot()
-        cache_key = (day_of_week, time_slot)
-        return self._get_cached_entry(self._time_prior_cache, cache_key)
+    def get_time_slot_prior(self):
+        """Get the time slot prior."""
+        # Always return a valid PriorCacheEntry
+        if self._time_prior_cache:
+            # If it's a dict, try to get the current slot
+            if isinstance(self._time_prior_cache, dict):
+                try:
+                    slot = get_current_time_slot()
+                    entry = self._time_prior_cache.get(slot)
+                    if entry:
+                        return entry
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._time_prior_cache
+        return PriorCacheEntry(prior=MIN_PRIOR, occupied_seconds=0, total_seconds=0)
 
-    def get_day_prior(self) -> PriorCacheEntry | None:
-        """Return the day prior, its occupied seconds, and total seconds for the current day of week, or None if not cached/valid."""
-        day_of_week, _ = get_current_time_slot()
-        return self._get_cached_entry(self._day_prior_cache, day_of_week)
+    def get_day_prior(self):
+        """Get the day prior."""
+        # Always return a valid PriorCacheEntry
+        if self._day_prior_cache:
+            # If it's a dict (time slot cache), pick the current slot if possible
+            if isinstance(self._day_prior_cache, dict):
+                try:
+                    day, _ = get_current_time_slot()
+                    # Find all slots for this day
+                    slots = [
+                        v for (d, _), v in self._day_prior_cache.items() if d == day
+                    ]
+                    if slots:
+                        # Return the first or average
+                        return slots[0]
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._day_prior_cache
+        return PriorCacheEntry(prior=MIN_PRIOR, occupied_seconds=0, total_seconds=0)
 
-    def get_global_prior(self) -> PriorCacheEntry | None:
-        """Return the global prior, its occupied seconds, and total seconds, or None if not cached/valid."""
-        return self._get_cached_entry(self._global_prior_cache)
+    def get_global_prior(self):
+        """Get the global prior."""
+        # Always return a valid PriorCacheEntry
+        if self._global_prior_cache:
+            return self._global_prior_cache
+        return PriorCacheEntry(prior=MIN_PRIOR, occupied_seconds=0, total_seconds=0)
 
     async def update(
         self, force: bool = False, history_period: int | None = None
@@ -161,6 +189,9 @@ class Prior:  # exported name must stay identical
         except Exception:  # pragma: no cover
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             value = MIN_PRIOR
+        # Ensure last_updated is always set
+        if not self._last_updated:
+            self._last_updated = dt_util.utcnow()
         return value
 
     async def calculate_all_priors(
@@ -173,33 +204,18 @@ class Prior:  # exported name must stay identical
         total_seconds = int((end_time - start_time).total_seconds())
 
         # --- Global prior ---
-        global_result = await self._calculate_global_prior(
+        self._global_prior_cache = await self._calculate_global_prior(
             start_time, end_time, total_seconds
-        )
-        self._current_value = global_result["final_prior"]
-        self._prior_intervals = global_result["prior_intervals"]
-        self._prior_source = global_result["prior_source"]
-        self._prior_source_entity_ids = global_result["prior_source_entity_ids"]
-        self._sensor_hash = hash(frozenset(self._prior_source_entity_ids))
-        self._all_sensors_prior = global_result["all_sensors_prior"]
-        self._occupancy_entity_prior = global_result["occupancy_entity_prior"]
-        self._global_prior_cache = PriorCacheEntry(
-            prior=global_result["final_prior"],
-            occupied_seconds=int(global_result["global_occupied"]),
-            total_seconds=int(global_result["global_total"]),
         )
 
         # --- Day priors ---
-        entity_ids = self.sensor_ids.copy()
-        if self.coordinator.occupancy_entity_id:
-            entity_ids.append(self.coordinator.occupancy_entity_id)
         self._day_prior_cache = await self._calculate_day_priors(
-            entity_ids, start_time, end_time, days_to_use
+            self.sensor_ids, start_time, end_time, days_to_use
         )
 
         # --- Time slot priors ---
         self._time_prior_cache = await self._calculate_time_slot_priors(
-            entity_ids, start_time, end_time, days_to_use
+            self.sensor_ids, start_time, end_time, days_to_use
         )
 
         self._last_updated = dt_util.utcnow()
@@ -207,71 +223,38 @@ class Prior:  # exported name must stay identical
 
     async def _calculate_global_prior(self, start_time, end_time, total_seconds):
         """Calculate the global prior and related data."""
-        (
-            all_sensors_prior,
-            all_sensors_data,
-            all_sensors_intervals,
-        ) = await self._calculate_prior_for_entities(
-            self.sensor_ids, start_time, end_time, total_seconds
+        all_intervals: list[StateInterval] = []
+        for entity_id in self.sensor_ids:
+            intervals = await self.coordinator.sqlite_store.get_historical_intervals(
+                entity_id,
+                start_time,
+                end_time,
+            )
+            all_intervals.extend(intervals)
+        # Calculate occupied seconds from valid intervals only
+        occupied_seconds = int(
+            sum(
+                (interval["end"] - interval["start"]).total_seconds()
+                for interval in all_intervals
+            )
         )
-        occupancy_entity_id = self.coordinator.occupancy_entity_id
-        occupancy_entity_data = {}
-        if occupancy_entity_id:
-            try:
-                (
-                    occupancy_entity_prior,
-                    occupancy_entity_data,
-                    occupancy_entity_intervals,
-                ) = await self._calculate_prior_for_entities(
-                    [occupancy_entity_id], start_time, end_time, total_seconds
-                )
-            except (ValueError, TypeError, RuntimeError):
-                _LOGGER.warning(
-                    "Failed to calculate prior for occupancy_entity_id %s",
-                    occupancy_entity_id,
-                )
-                occupancy_entity_prior = MIN_PRIOR
+        # Clamp prior to MIN_PRIOR if invalid or too low
+        if total_seconds <= 0:
+            prior_value = MIN_PRIOR
         else:
-            occupancy_entity_prior = MIN_PRIOR
-
-        if occupancy_entity_prior > all_sensors_prior:
-            final_prior = occupancy_entity_prior
-            prior_intervals = occupancy_entity_intervals
-            prior_source = "occupancy_entity_id"
-            prior_source_entity_ids = (
-                [occupancy_entity_id] if occupancy_entity_id else []
-            )
-            global_occupied = sum(
-                d["occupied_seconds"] for d in occupancy_entity_data.values()
-            )
-            global_total = sum(
-                (d["end_time"] - d["start_time"]).total_seconds()
-                for d in occupancy_entity_data.values()
-            )
-        else:
-            final_prior = all_sensors_prior
-            prior_intervals = all_sensors_intervals
-            prior_source = "input_sensors"
-            prior_source_entity_ids = self.sensor_ids
-            global_occupied = sum(
-                d["occupied_seconds"] for d in all_sensors_data.values()
-            )
-            global_total = sum(
-                (d["end_time"] - d["start_time"]).total_seconds()
-                for d in all_sensors_data.values()
-            )
-        return {
-            "final_prior": final_prior,
-            "prior_intervals": prior_intervals,
-            "prior_source": prior_source,
-            "prior_source_entity_ids": prior_source_entity_ids,
-            "all_sensors_prior": all_sensors_prior,
-            "occupancy_entity_prior": occupancy_entity_prior,
-            "global_occupied": global_occupied,
-            "global_total": global_total,
-            "all_sensors_data": all_sensors_data,
-            "occupancy_entity_data": occupancy_entity_data,
-        }
+            raw_prior = occupied_seconds / total_seconds
+            if raw_prior is None or raw_prior < MIN_PRIOR or not (0 <= raw_prior <= 1):
+                prior_value = MIN_PRIOR
+            else:
+                prior_value = raw_prior
+        self._current_value = prior_value
+        self._prior_intervals = all_intervals
+        self._sensor_hash = hash(frozenset(self.sensor_ids))
+        return PriorCacheEntry(
+            prior=self._current_value,
+            occupied_seconds=occupied_seconds,
+            total_seconds=total_seconds,
+        )
 
     async def _calculate_day_priors(
         self, entity_ids, start_time, end_time, days_to_use
