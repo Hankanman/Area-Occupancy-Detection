@@ -135,28 +135,17 @@ class Likelihood:
             else self.default_prob_false
         )
 
-    async def update(
-        self, force: bool = False, history_period: int | None = None
-    ) -> tuple[float, float]:
-        """Return a likelihood, re-computing if the cache is stale or forced.
+    async def update(self, history_period: int | None = None) -> tuple[float, float]:
+        """Return a likelihood, always re-computing (cache is always stale/forced).
 
         Args:
-            force: If True, bypass cache validation and force recalculation
             history_period: Period in days for historical data (overrides coordinator default)
 
         Returns:
             Tuple of (prob_given_true, prob_given_false) weighted values
 
         """
-        # Check if we can use cached values
-        if not force and self._is_cache_valid():
-            _LOGGER.debug(
-                "Using cached likelihood values for %s (last updated: %s)",
-                self.entity_id,
-                self.last_updated,
-            )
-            return self.prob_given_true, self.prob_given_false
-
+        # Always recalculate
         _LOGGER.debug(
             "Recalculating likelihood for %s (cache invalid or stale)", self.entity_id
         )

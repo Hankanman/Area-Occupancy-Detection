@@ -89,25 +89,6 @@ get_entity_details:
         entity:
           multiple: true
 
-force_entity_update:
-  name: Force Entity Update
-  description: "Force immediate probability recalculation for specific entities."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-    entity_ids:
-      name: Entity IDs
-      description: "List of entity IDs to force update (leave empty for all entities)."
-      required: false
-      selector:
-        entity:
-          multiple: true
-
 get_entity_type_learned_data:
   name: Get Entity Type Learned Data
   description: "Get the current learned prior, prob_true, and prob_false for each entity type. Useful for diagnostics and monitoring the learning process."

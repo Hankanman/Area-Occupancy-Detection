@@ -8,7 +8,6 @@ import pytest
 from custom_components.area_occupancy.service import (
     _debug_database_state,
     _debug_import_intervals,
-    _force_entity_update,
     _get_area_status,
     _get_coordinator,
     _get_entity_details,
@@ -744,103 +743,6 @@ class TestGetEntityDetails:
             result["entity_details"]["binary_sensor.motion1"]["error"]
             == "Entity not found"
         )
-
-
-class TestForceEntityUpdate:
-    """Test _force_entity_update service function."""
-
-    async def test_force_entity_update_success(
-        self,
-        mock_hass: Mock,
-        mock_config_entry: Mock,
-        mock_service_call_with_entity: Mock,
-        mock_coordinator: Mock,
-        mock_active_entity: Mock,
-        mock_empty_entity_manager: Mock,
-    ) -> None:
-        """Test successful entity update."""
-        # Use centralized active entity fixture
-        mock_empty_entity_manager.get_entity.side_effect = (
-            None  # Clear the default side_effect
-        )
-        mock_empty_entity_manager.get_entity.return_value = mock_active_entity
-        mock_empty_entity_manager.entities = {
-            "binary_sensor.motion1": mock_active_entity
-        }
-        mock_coordinator.entities = mock_empty_entity_manager
-
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call_with_entity.data = {
-            "entry_id": "test_entry_id",
-            "entity_ids": ["binary_sensor.motion1"],
-        }
-
-        result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
-
-        assert mock_active_entity.probability
-        mock_coordinator.async_refresh.assert_called_once()
-        assert result["updated_entities"] == 1
-
-    async def test_force_entity_update_all_entities(
-        self,
-        mock_hass: Mock,
-        mock_config_entry: Mock,
-        mock_service_call: Mock,
-        mock_coordinator: Mock,
-        mock_active_entity: Mock,
-        mock_inactive_entity: Mock,
-        mock_empty_entity_manager: Mock,
-    ) -> None:
-        """Test force update for all entities."""
-        # Use centralized entity fixtures
-        # Note: side_effect with list will return different values for each call
-        mock_empty_entity_manager.get_entity.side_effect = [
-            mock_active_entity,
-            mock_inactive_entity,
-        ]
-        mock_empty_entity_manager.entities = {
-            "binary_sensor.motion1": mock_active_entity,
-            "binary_sensor.appliance": mock_inactive_entity,
-        }
-        mock_coordinator.entities = mock_empty_entity_manager
-
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
-
-        result = await _force_entity_update(mock_hass, mock_service_call)
-
-        assert mock_active_entity.probability
-        assert mock_inactive_entity.probability
-        mock_coordinator.async_refresh.assert_called_once()
-        assert result["updated_entities"] == 2
-
-    async def test_force_entity_update_entity_not_found(
-        self,
-        mock_hass: Mock,
-        mock_config_entry: Mock,
-        mock_service_call_with_entity: Mock,
-        mock_coordinator: Mock,
-    ) -> None:
-        """Test force update with entity not found."""
-        mock_entities = Mock()
-        mock_entities.get_entity.side_effect = ValueError("Entity not found")
-        mock_entities.entities = ["binary_sensor.motion1"]
-        mock_coordinator.entities = mock_entities
-
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call_with_entity.data = {
-            "entry_id": "test_entry_id",
-            "entity_ids": ["binary_sensor.motion1"],
-        }
-
-        result = await _force_entity_update(mock_hass, mock_service_call_with_entity)
-
-        # Service doesn't actually validate entities - it just counts the entity_ids passed
-        mock_coordinator.async_refresh.assert_called_once()
-        assert result["updated_entities"] == 1  # Returns count of entity_ids provided
 
 
 class TestGetAreaStatus:
