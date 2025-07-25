@@ -36,18 +36,13 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        history_period = HA_RECORDER_DAYS
-
         _LOGGER.info(
-            "Updating sensor likelihoods for entry %s with %d days history",
+            "Updating sensor likelihoods for entry %s",
             entry_id,
-            history_period,
         )
 
         # Update individual sensor likelihoods with forced recalculation
-        updated_count = await coordinator.entities.update_all_entity_likelihoods(
-            history_period, force=True
-        )
+        updated_count = await coordinator.entities.update_all_entity_likelihoods()
         await coordinator.async_refresh()
 
         # Collect the updated likelihoods to return
@@ -69,7 +64,6 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
         response_data = {
             "updated_entities": updated_count,
-            "history_period": history_period,
             "total_entities": len(coordinator.entities.entities),
             "update_timestamp": dt_util.utcnow().isoformat(),
             "prior": coordinator.area_prior,
@@ -91,25 +85,14 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        history_period = HA_RECORDER_DAYS
-
         _LOGGER.info(
-            "Starting time-based priors update for entry %s with %d days history",
+            "Starting time-based priors update for entry %s",
             entry_id,
-            history_period,
         )
 
         # Calculate all priors with forced recalculation
-        await coordinator.prior.update(force=True, history_period=history_period)
+        await coordinator.prior.update()
         await coordinator.async_refresh()
-
-        # Remove references to attributes that no longer exist in Prior
-        # Determine which prior was used (occupancy_entity or sensors)
-        # all_sensors_prior = getattr(coordinator.prior, "_all_sensors_prior", None)
-        # occupancy_entity_prior = getattr(
-        #     coordinator.prior, "_occupancy_entity_prior", None
-        # )
-        # prior_source = getattr(coordinator.prior, "_prior_source", "unknown")
 
         _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
 
@@ -535,7 +518,6 @@ async def _debug_import_intervals(
 ) -> dict[str, Any]:
     """Debug service to manually trigger state intervals import."""
     entry_id = call.data["entry_id"]
-    days = HA_RECORDER_DAYS
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
@@ -577,7 +559,7 @@ async def _debug_import_intervals(
 
         # Perform import
         import_counts = await coordinator.sqlite_store.import_intervals_from_recorder(
-            entity_ids, days=days
+            entity_ids, days=HA_RECORDER_DAYS
         )
         total_imported = sum(import_counts.values())
 
@@ -597,7 +579,7 @@ async def _debug_import_intervals(
             "import_counts": import_counts,
             "total_imported": total_imported,
             "total_intervals_in_db": total_intervals,
-            "days_imported": days,
+            "days_imported": HA_RECORDER_DAYS,
         }
 
 

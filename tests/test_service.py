@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock, PropertyMock
 
 import pytest
 
-from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.service import (
     _debug_database_state,
     _debug_import_intervals,
@@ -78,7 +77,6 @@ class TestUpdateAreaPrior:
     ) -> None:
         """Test successful area prior update."""
         # Override specific properties needed for this test
-        history_period = HA_RECORDER_DAYS
         mock_coordinator.prior.update.return_value = 0.35
 
         # Mock the prior calculation details
@@ -141,9 +139,7 @@ class TestUpdateAreaPrior:
         assert isinstance(result["last_updated"], str)
 
         # Verify the coordinator was called correctly
-        mock_coordinator.prior.update.assert_called_once_with(
-            force=True, history_period=history_period
-        )
+        mock_coordinator.prior.update.assert_called_once_with()
         mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_area_prior_missing_entry_id(self, mock_hass: Mock) -> None:
@@ -190,7 +186,6 @@ class TestUpdateLikelihoods:
     ) -> None:
         """Test successful likelihood update."""
         # Override specific properties needed for this test
-        history_period = HA_RECORDER_DAYS
         mock_coordinator.entities.update_all_entity_likelihoods.return_value = 5
 
         # Mock entities with proper structure for return data
@@ -223,13 +218,10 @@ class TestUpdateLikelihoods:
 
         # Verify the result structure
         assert "likelihoods" in result
-        assert "history_period" in result
-        assert result["history_period"] == history_period
         assert "total_entities" in result
         assert "update_timestamp" in result
 
         # Verify the values
-        assert result["history_period"] == history_period
         assert result["total_entities"] == 1
         assert isinstance(result["update_timestamp"], str)
 
@@ -247,9 +239,7 @@ class TestUpdateLikelihoods:
         # Verify the coordinator was called correctly with history_period
 
         # Verify the coordinator was called correctly with history_period
-        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            history_period, force=True
-        )
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with()
         mock_coordinator.async_refresh.assert_called_once()
 
     async def test_update_likelihoods_missing_entry_id(self, mock_hass: Mock) -> None:
@@ -270,7 +260,6 @@ class TestUpdateLikelihoods:
     ) -> None:
         """Test likelihood update with coordinator error."""
         # Override specific properties needed for this test
-        history_period = HA_RECORDER_DAYS
         mock_coordinator.entities.update_all_entity_likelihoods.side_effect = (
             RuntimeError("Update failed")
         )
@@ -287,9 +276,7 @@ class TestUpdateLikelihoods:
             await _update_likelihoods(mock_hass, mock_service_call)
 
         # Verify the coordinator was called with the correct history period and force=True
-        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with(
-            history_period, force=True
-        )
+        mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with()
 
 
 class TestDebugImportIntervals:
