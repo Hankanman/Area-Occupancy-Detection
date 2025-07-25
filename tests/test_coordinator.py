@@ -669,7 +669,7 @@ class TestCoordinatorSetupScenarios:
         # Verify initialization sequence
         coordinator.entity_types.async_initialize.assert_called_once()
         # EntityManager.__post_init__ is called automatically during object creation, not by setup
-        coordinator.sqlite_store.async_save_data.assert_any_call(force=True)
+        coordinator.sqlite_store.async_save_data.assert_any_call()
         assert coordinator.sqlite_store.async_save_data.call_count == 2
 
     async def test_setup_with_stored_data_restoration(

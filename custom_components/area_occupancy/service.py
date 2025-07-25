@@ -210,7 +210,6 @@ async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str
         return {
             "area_name": coordinator.config.name,
             "area_prior": coordinator.prior.value,
-            "day_prior": getattr(coordinator.prior.get_day_prior(), "prior", None),
             "time_prior": getattr(
                 coordinator.prior.get_time_slot_prior(), "prior", None
             ),
@@ -384,34 +383,6 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall) -> dict[st
         raise HomeAssistantError(error_msg) from err
     else:
         return {"entity_details": details}
-
-
-async def _force_entity_update(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Force immediate update of specific entities."""
-    entry_id = call.data["entry_id"]
-    entity_ids = call.data.get("entity_ids", [])
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        entities = coordinator.entities
-
-        if not entity_ids:
-            entity_ids = list(entities.entities.keys())
-
-        updated_count = len(entity_ids)
-
-        await coordinator.async_refresh()
-
-        _LOGGER.info("Force updated %d entities in entry %s", updated_count, entry_id)
-
-    except Exception as err:
-        error_msg = f"Failed to force entity updates for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {"updated_entities": updated_count}
 
 
 async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
@@ -803,7 +774,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
 
-    # Remove history_period from schemas
     update_area_prior_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,
@@ -823,10 +793,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     entity_details_schema = vol.Schema(
-        {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
-    )
-
-    force_update_schema = vol.Schema(
         {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
     )
 
@@ -858,9 +824,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_get_entity_details(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_details(hass, call)
-
-    async def handle_force_entity_update(call: ServiceCall) -> dict[str, Any]:
-        return await _force_entity_update(hass, call)
 
     async def handle_get_area_status(call: ServiceCall) -> dict[str, Any]:
         return await _get_area_status(hass, call)
@@ -919,14 +882,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "get_entity_details",
         handle_get_entity_details,
         schema=entity_details_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "force_entity_update",
-        handle_force_entity_update,
-        schema=force_update_schema,
         supports_response=SupportsResponse.ONLY,
     )
 

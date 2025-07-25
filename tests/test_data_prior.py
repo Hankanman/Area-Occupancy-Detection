@@ -197,17 +197,7 @@ class TestPrior:
         """Test update method with invalid cache triggers recalculation."""
         prior = Prior(mock_coordinator)
         prior._current_value = None
-        result = await prior.update(force=True)
-        assert result == prior.value
-
-    async def test_update_force_recalculation(self, mock_coordinator: Mock) -> None:
-        """Test update method with force=True always recalculates."""
-        mock_coordinator.config.sensors.motion = ["sensor1"]
-        prior = Prior(mock_coordinator)
-        prior._current_value = 0.4
-        prior._last_updated = dt_util.utcnow() - timedelta(minutes=30)
-        prior._sensor_hash = hash(frozenset(["sensor1"]))
-        result = await prior.update(force=True)
+        result = await prior.update()
         assert result == prior.value
 
     async def test_update_calculation_error(self, mock_coordinator: Mock) -> None:
@@ -288,6 +278,9 @@ class TestPrior:
         result = prior.to_dict()
 
         expected = {"value": None, "last_updated": None, "sensor_hash": None}
+        assert result["sensor_hash"] is None
+        assert expected["sensor_hash"] is None
+        result["sensor_hash"] = None
         assert result == expected
 
     def test_from_dict(self, mock_coordinator: Mock) -> None:
@@ -515,7 +508,6 @@ class TestPriorEdgeCases:
 
         # The actual implementation now returns MIN_PRIOR and empty data on error
         prior_value, data, all_intervals = await prior._calculate_prior_for_entities(
-            ["binary_sensor.motion1"],
             start_time,
             end_time,
             total_seconds,
@@ -566,7 +558,6 @@ class TestPriorEdgeCases:
 
         # The actual implementation skips failed entities and does not raise
         prior_value, data, all_intervals = await prior._calculate_prior_for_entities(
-            ["binary_sensor.motion1", "binary_sensor.motion2"],
             start_time,
             end_time,
             total_seconds,

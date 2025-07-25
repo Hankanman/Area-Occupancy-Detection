@@ -773,7 +773,7 @@ class AreaOccupancyStorage:
 
         return await self.hass.async_add_executor_job(_get_count)
 
-    async def async_save_data(self, force: bool = False) -> None:
+    async def async_save_data(self) -> None:
         """Save coordinator data to SQLite storage using normalized schema."""
         if not self.coordinator:
             raise RuntimeError("Coordinator is required for async_save_data")
