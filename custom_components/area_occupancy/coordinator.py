@@ -179,9 +179,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entities = EntityManager(self)
                 await self.entities.__post_init__()
             # Calculate priors and likelihoods
-            await self.prior.update(force=True)
+            await self.prior.update()
             await self.entities.update_all_entity_likelihoods()
-            await self.sqlite_store.async_save_data(force=True)
+            await self.sqlite_store.async_save_data()
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
             # Start timers only after everything is ready
@@ -229,7 +229,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer()
             self._analysis_timer = None
 
-        await self.sqlite_store.async_save_data(force=True)
+        await self.sqlite_store.async_save_data()
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -264,7 +264,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.track_entity_state_changes(self.entities.entity_ids)
 
         # Force immediate save after configuration changes
-        await self.sqlite_store.async_save_data(force=True)
+        await self.sqlite_store.async_save_data()
 
         await self.async_request_refresh()
 
@@ -344,7 +344,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
                     # Recalculate priors with new data
-                    await self.prior.update(force=True)
+                    await self.prior.update()
 
                     # Recalculate likelihoods with new data
                     await self.entities.update_all_entity_likelihoods()

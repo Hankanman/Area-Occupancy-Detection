@@ -176,16 +176,10 @@ class Prior:  # exported name must stay identical
             return self._global_prior_cache
         return PriorCacheEntry(prior=MIN_PRIOR, occupied_seconds=0, total_seconds=0)
 
-    async def update(
-        self, force: bool = False, history_period: int | None = None
-    ) -> float:
+    async def update(self, history_period: int | None = None) -> float:
         """Unified update: calculate all prior tiers and update caches with a single timestamp."""
-        if not force and self._is_cache_valid():
-            return self.value  # type: ignore[return-value]
         try:
-            value = await self.calculate_all_priors(
-                history_period=history_period, force=force
-            )
+            value = await self.calculate_all_priors(history_period=history_period)
         except Exception:  # pragma: no cover
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             value = MIN_PRIOR
@@ -194,9 +188,7 @@ class Prior:  # exported name must stay identical
             self._last_updated = dt_util.utcnow()
         return value
 
-    async def calculate_all_priors(
-        self, history_period: int | None = None, force: bool = False
-    ) -> float:
+    async def calculate_all_priors(self, history_period: int | None = None) -> float:
         """Calculate and update all prior tiers (global, day, time slot) and caches, with a single last_updated timestamp."""
         days_to_use = history_period if history_period is not None else self.days
         start_time = dt_util.utcnow() - timedelta(days=days_to_use)

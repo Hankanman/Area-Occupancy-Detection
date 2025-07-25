@@ -386,13 +386,12 @@ class EntityManager:
         }
 
     async def update_all_entity_likelihoods(
-        self, history_period: int | None = None, force: bool = False
+        self, history_period: int | None = None
     ) -> int:
         """Update all entity likelihoods.
 
         Args:
             history_period: Period in days for historical data
-            force: If True, bypass cache validation and force recalculation
 
         Returns:
             int: Number of entities updated
@@ -414,7 +413,7 @@ class EntityManager:
             tasks = []
             for entity in chunk:
                 task = self._update_entity_likelihood(
-                    entity, force=force, history_period=history_period
+                    entity, history_period=history_period
                 )
                 tasks.append(task)
 
@@ -439,13 +438,12 @@ class EntityManager:
         return updated_count
 
     async def _update_entity_likelihood(
-        self, entity: Entity, force: bool = False, history_period: int | None = None
+        self, entity: Entity, history_period: int | None = None
     ) -> int:
         """Safely update a single entity's likelihood with error handling.
 
         Args:
             entity: The entity to update
-            force: If True, bypass cache validation and force recalculation
             history_period: Period in days for historical data
 
         Returns:
@@ -453,7 +451,7 @@ class EntityManager:
 
         """
         try:
-            await entity.likelihood.update(force=force, history_period=history_period)
+            await entity.likelihood.update(history_period=history_period)
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Failed to update likelihood for entity %s: %s",

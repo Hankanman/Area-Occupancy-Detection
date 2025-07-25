@@ -197,17 +197,7 @@ class TestPrior:
         """Test update method with invalid cache triggers recalculation."""
         prior = Prior(mock_coordinator)
         prior._current_value = None
-        result = await prior.update(force=True)
-        assert result == prior.value
-
-    async def test_update_force_recalculation(self, mock_coordinator: Mock) -> None:
-        """Test update method with force=True always recalculates."""
-        mock_coordinator.config.sensors.motion = ["sensor1"]
-        prior = Prior(mock_coordinator)
-        prior._current_value = 0.4
-        prior._last_updated = dt_util.utcnow() - timedelta(minutes=30)
-        prior._sensor_hash = hash(frozenset(["sensor1"]))
-        result = await prior.update(force=True)
+        result = await prior.update()
         assert result == prior.value
 
     async def test_update_calculation_error(self, mock_coordinator: Mock) -> None:
