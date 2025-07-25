@@ -395,7 +395,7 @@ class TestPriorEdgeCases:
     async def test_calculate_with_multiple_entity_types(
         self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
-        """Test prior calculation with both motion sensors and occupancy entity."""
+        """Test prior calculation with both motion sensors and occupancy entity (now only input sensors are used)."""
         mock_coordinator.config.sensors.motion = [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
@@ -408,14 +408,7 @@ class TestPriorEdgeCases:
         base_time = dt_util.utcnow() - timedelta(days=1)
 
         def get_intervals_side_effect(entity_id, start_time, end_time):
-            if entity_id == "binary_sensor.occupancy":
-                return [
-                    {
-                        "state": "on",
-                        "start": base_time,
-                        "end": base_time + timedelta(hours=12),  # 50% ratio
-                    },
-                ]
+            # Only input sensors are used now
             return [
                 {
                     "state": "on",
@@ -431,7 +424,7 @@ class TestPriorEdgeCases:
         # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
         expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
-        assert prior._prior_source == "input_sensors"
+        # _prior_source is no longer set; no assertion on it
 
     @patch(
         "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
@@ -439,7 +432,7 @@ class TestPriorEdgeCases:
     async def test_calculate_occupancy_entity_runtime_error(
         self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
-        """Test prior calculation handles RuntimeError from occupancy entity."""
+        """Test prior calculation handles RuntimeError from occupancy entity (now ignored)."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
@@ -455,20 +448,17 @@ class TestPriorEdgeCases:
             },
         ]
 
-        # Return intervals for motion, RuntimeError for occupancy
+        # Only input sensors are used now
         def get_intervals_side_effect(entity_id, start_time, end_time):
-            if entity_id == "binary_sensor.occupancy":
-                raise RuntimeError("Occupancy sensor runtime error")
             return motion_intervals
 
         mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.update()
 
-        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
         expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
-        assert prior._prior_source == "input_sensors"
+        # _prior_source is no longer set; no assertion on it
 
     @patch(
         "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
@@ -476,7 +466,7 @@ class TestPriorEdgeCases:
     async def test_calculate_occupancy_entity_type_error(
         self, mock_get_historical_intervals: AsyncMock, mock_coordinator: Mock
     ) -> None:
-        """Test prior calculation handles TypeError from occupancy entity."""
+        """Test prior calculation handles TypeError from occupancy entity (now ignored)."""
         mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
         mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
 
@@ -492,20 +482,17 @@ class TestPriorEdgeCases:
             },
         ]
 
-        # Return intervals for motion, TypeError for occupancy
+        # Only input sensors are used now
         def get_intervals_side_effect(entity_id, start_time, end_time):
-            if entity_id == "binary_sensor.occupancy":
-                raise TypeError("Occupancy sensor type error")
             return motion_intervals
 
         mock_get_historical_intervals.side_effect = get_intervals_side_effect
 
         result = await prior.update()
 
-        # The code clamps to MIN_PRIOR if calculated prior is below MIN_PRIOR
         expected = MIN_PRIOR
         assert abs(result - expected) < 0.001
-        assert prior._prior_source == "input_sensors"
+        # _prior_source is no longer set; no assertion on it
 
     @patch(
         "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage.get_historical_intervals"
