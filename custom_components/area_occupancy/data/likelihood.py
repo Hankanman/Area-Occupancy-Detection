@@ -135,36 +135,20 @@ class Likelihood:
             else self.default_prob_false
         )
 
-    async def update(
-        self, force: bool = False, history_period: int | None = None
-    ) -> tuple[float, float]:
-        """Return a likelihood, re-computing if the cache is stale or forced.
-
-        Args:
-            force: If True, bypass cache validation and force recalculation
-            history_period: Period in days for historical data (overrides coordinator default)
+    async def update(self) -> tuple[float, float]:
+        """Return a likelihood, always re-computing (cache is always stale/forced).
 
         Returns:
             Tuple of (prob_given_true, prob_given_false) weighted values
 
         """
-        # Check if we can use cached values
-        if not force and self._is_cache_valid():
-            _LOGGER.debug(
-                "Using cached likelihood values for %s (last updated: %s)",
-                self.entity_id,
-                self.last_updated,
-            )
-            return self.prob_given_true, self.prob_given_false
-
+        # Always recalculate
         _LOGGER.debug(
             "Recalculating likelihood for %s (cache invalid or stale)", self.entity_id
         )
 
         try:
-            active_ratio, inactive_ratio = await self.calculate(
-                history_period=history_period
-            )
+            active_ratio, inactive_ratio = await self.calculate()
         except Exception:  # pragma: no cover
             _LOGGER.exception(
                 "Likelihood calculation failed, using default %.2f",
@@ -181,17 +165,10 @@ class Likelihood:
         # Return the WEIGHTED values for immediate use
         return self.prob_given_true, self.prob_given_false
 
-    async def calculate(self, history_period: int | None = None) -> tuple[float, float]:
-        """Calculate the likelihood with anomaly filtering, considering only intervals within prior_intervals.
-
-        Args:
-            history_period: Period in days for historical data (overrides coordinator default)
-
-        """
+    async def calculate(self) -> tuple[float, float]:
+        """Calculate the likelihood with anomaly filtering, considering only intervals within prior_intervals."""
         _LOGGER.debug("Likelihood calculation for %s", self.entity_id)
-        # Use provided history_period or fall back to coordinator default
-        days_to_use = history_period if history_period is not None else self.days
-        self.start_time = dt_util.utcnow() - timedelta(days=days_to_use)
+        self.start_time = dt_util.utcnow() - timedelta(days=self.days)
         self.end_time = dt_util.utcnow()
 
         # Use only our DB for interval retrieval

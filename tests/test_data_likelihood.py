@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.util import dt as dt_util
 
@@ -149,36 +148,6 @@ class TestLikelihood:
             assert likelihood.active_ratio == 0.8
             assert likelihood.inactive_ratio == 0.1
             assert likelihood.last_updated is not None
-
-    async def test_update_uses_cache_when_valid(self, mock_coordinator: Mock) -> None:
-        """Test that update() uses cached values when cache is valid."""
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.motion",
-            active_states=["on"],
-            default_prob_true=0.8,
-            default_prob_false=0.1,
-            weight=0.7,
-        )
-
-        # Set cached values that are fresh
-        likelihood.active_ratio = 0.6
-        likelihood.inactive_ratio = 0.05
-        likelihood.last_updated = dt_util.utcnow()
-
-        # Mock calculate method to ensure it's not called
-        with patch.object(
-            likelihood, "calculate", new_callable=AsyncMock
-        ) as mock_calculate:
-            prob_true, prob_false = await likelihood.update()
-
-            # Should not call calculate since cache is valid
-            mock_calculate.assert_not_called()
-
-            # Should return weighted values based on cached data
-            assert prob_true == likelihood.prob_given_true
-            assert prob_false == likelihood.prob_given_false
 
     async def test_update_recalculates_when_cache_stale(
         self, mock_coordinator: Mock
@@ -519,9 +488,7 @@ class TestLikelihoodEdgeCases:
         mock_sqlite_store.get_historical_intervals = AsyncMock(return_value=intervals)
         mock_coordinator.sqlite_store = mock_sqlite_store
 
-        active_ratio, inactive_ratio = await likelihood.calculate(
-            history_period=HA_RECORDER_DAYS
-        )
+        active_ratio, inactive_ratio = await likelihood.calculate()
 
         assert active_ratio == pytest.approx(0.8, rel=1e-3)
         assert inactive_ratio == pytest.approx(0.1, rel=1e-3)
