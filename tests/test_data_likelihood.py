@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from homeassistant.util import dt as dt_util
 
@@ -489,9 +488,7 @@ class TestLikelihoodEdgeCases:
         mock_sqlite_store.get_historical_intervals = AsyncMock(return_value=intervals)
         mock_coordinator.sqlite_store = mock_sqlite_store
 
-        active_ratio, inactive_ratio = await likelihood.calculate(
-            history_period=HA_RECORDER_DAYS
-        )
+        active_ratio, inactive_ratio = await likelihood.calculate()
 
         assert active_ratio == pytest.approx(0.8, rel=1e-3)
         assert inactive_ratio == pytest.approx(0.1, rel=1e-3)

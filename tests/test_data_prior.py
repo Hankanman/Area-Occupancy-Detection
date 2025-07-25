@@ -278,6 +278,9 @@ class TestPrior:
         result = prior.to_dict()
 
         expected = {"value": None, "last_updated": None, "sensor_hash": None}
+        assert result["sensor_hash"] is None
+        assert expected["sensor_hash"] is None
+        result["sensor_hash"] = None
         assert result == expected
 
     def test_from_dict(self, mock_coordinator: Mock) -> None:
@@ -505,7 +508,6 @@ class TestPriorEdgeCases:
 
         # The actual implementation now returns MIN_PRIOR and empty data on error
         prior_value, data, all_intervals = await prior._calculate_prior_for_entities(
-            ["binary_sensor.motion1"],
             start_time,
             end_time,
             total_seconds,
@@ -556,7 +558,6 @@ class TestPriorEdgeCases:
 
         # The actual implementation skips failed entities and does not raise
         prior_value, data, all_intervals = await prior._calculate_prior_for_entities(
-            ["binary_sensor.motion1", "binary_sensor.motion2"],
             start_time,
             end_time,
             total_seconds,

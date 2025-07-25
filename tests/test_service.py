@@ -235,9 +235,7 @@ class TestUpdateLikelihoods:
         assert likelihood_data["prob_given_true_raw"] == 0.75
         assert likelihood_data["prob_given_false_raw"] == 0.05
 
-        # Verify the coordinator was called correctly with history_period
-
-        # Verify the coordinator was called correctly with history_period
+        # Verify the coordinator was called correctly
         mock_coordinator.entities.update_all_entity_likelihoods.assert_called_once_with()
         mock_coordinator.async_refresh.assert_called_once()
 

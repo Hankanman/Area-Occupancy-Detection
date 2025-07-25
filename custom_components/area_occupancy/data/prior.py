@@ -56,11 +56,8 @@ class Prior:  # exported name must stay identical
         self._prior_intervals: list[StateInterval] | None = None
         self._last_updated: datetime | None = None
         self._sensor_hash: int | None = None
-        # Time-based prior cache
         self._time_prior_cache: dict[tuple[int, int], PriorCacheEntry] = {}
-        # Day-based prior cache
         self._day_prior_cache: dict[int, PriorCacheEntry] = {}
-        # Global prior cache
         self._global_prior_cache: PriorCacheEntry | None = None
 
     # --------------------------------------------------------------------- #
@@ -176,10 +173,10 @@ class Prior:  # exported name must stay identical
             return self._global_prior_cache
         return PriorCacheEntry(prior=MIN_PRIOR, occupied_seconds=0, total_seconds=0)
 
-    async def update(self, history_period: int | None = None) -> float:
+    async def update(self) -> float:
         """Unified update: calculate all prior tiers and update caches with a single timestamp."""
         try:
-            value = await self.calculate_all_priors(history_period=history_period)
+            value = await self.calculate_all_priors()
         except Exception:  # pragma: no cover
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             value = MIN_PRIOR
@@ -188,10 +185,9 @@ class Prior:  # exported name must stay identical
             self._last_updated = dt_util.utcnow()
         return value
 
-    async def calculate_all_priors(self, history_period: int | None = None) -> float:
+    async def calculate_all_priors(self) -> float:
         """Calculate and update all prior tiers (global, day, time slot) and caches, with a single last_updated timestamp."""
-        days_to_use = history_period if history_period is not None else self.days
-        start_time = dt_util.utcnow() - timedelta(days=days_to_use)
+        start_time = dt_util.utcnow() - timedelta(days=self.days)
         end_time = dt_util.utcnow()
         total_seconds = int((end_time - start_time).total_seconds())
 
@@ -201,13 +197,11 @@ class Prior:  # exported name must stay identical
         )
 
         # --- Day priors ---
-        self._day_prior_cache = await self._calculate_day_priors(
-            self.sensor_ids, start_time, end_time, days_to_use
-        )
+        self._day_prior_cache = await self._calculate_day_priors(start_time, end_time)
 
         # --- Time slot priors ---
         self._time_prior_cache = await self._calculate_time_slot_priors(
-            self.sensor_ids, start_time, end_time, days_to_use
+            start_time, end_time
         )
 
         self._last_updated = dt_util.utcnow()
@@ -248,15 +242,13 @@ class Prior:  # exported name must stay identical
             total_seconds=total_seconds,
         )
 
-    async def _calculate_day_priors(
-        self, entity_ids, start_time, end_time, days_to_use
-    ):
+    async def _calculate_day_priors(self, start_time, end_time):
         """Calculate day priors for each day of the week."""
         day_priors: dict[int, PriorCacheEntry] = {}
         for day_of_week in range(7):
             total_occupied_seconds = 0
             total_analyzed_seconds = 0
-            for entity_id in entity_ids:
+            for entity_id in self.sensor_ids:
                 intervals = (
                     await self.coordinator.sqlite_store.get_historical_intervals(
                         entity_id,
@@ -282,8 +274,8 @@ class Prior:  # exported name must stay identical
                             ).total_seconds()
                             total_occupied_seconds += overlap_seconds
                 # Only add analyzed seconds once per day, not per entity
-                if entity_id == entity_ids[0]:
-                    total_analyzed_seconds += 86400 * (days_to_use // 7)
+                if entity_id == self.sensor_ids[0]:
+                    total_analyzed_seconds += 86400 * (self.days // 7)
             global_prior = self.global_prior
             max_prior = min(global_prior * GLOBAL_PRIOR_FACTOR, MAX_PRIOR)
             if total_analyzed_seconds > 0:
@@ -302,9 +294,7 @@ class Prior:  # exported name must stay identical
             )
         return day_priors
 
-    async def _calculate_time_slot_priors(
-        self, entity_ids, start_time, end_time, days_to_use
-    ):
+    async def _calculate_time_slot_priors(self, start_time, end_time):
         """Calculate time slot priors for each day and slot."""
         time_priors: dict[tuple[int, int], PriorCacheEntry] = {}
         for day_of_week in range(7):
@@ -314,12 +304,11 @@ class Prior:  # exported name must stay identical
                     occupied,
                     total,
                 ) = await self._calculate_prior_for_time_slot_full(
-                    entity_ids,
                     day_of_week,
                     time_slot,
                     start_time,
                     end_time,
-                    days_to_use,
+                    self.days,
                 )
                 time_priors[(day_of_week, time_slot)] = PriorCacheEntry(
                     prior=prior_value,
@@ -330,12 +319,10 @@ class Prior:  # exported name must stay identical
 
     async def _calculate_prior_for_time_slot_full(
         self,
-        entity_ids: list[str],
         day_of_week: int,
         time_slot: int,
         start_time: datetime,
         end_time: datetime,
-        days_to_use: int,
     ) -> tuple[float, int, int]:
         """Calculate prior, occupied seconds, and total seconds for a specific time slot."""
         slot_start_time, slot_end_time = time_slot_to_datetime_range(
@@ -371,7 +358,7 @@ class Prior:  # exported name must stay identical
             current += timedelta(days=1)
         total_occupied_seconds = 0
         total_analyzed_seconds = 0
-        for entity_id in entity_ids:
+        for entity_id in self.sensor_ids:
             intervals = await self.coordinator.sqlite_store.get_historical_intervals(
                 entity_id,
                 start_time,
@@ -405,7 +392,6 @@ class Prior:  # exported name must stay identical
 
     async def _calculate_prior_for_entities(
         self,
-        entity_ids: list[str],
         start_time: datetime,
         end_time: datetime,
         total_seconds: int,
@@ -418,9 +404,9 @@ class Prior:  # exported name must stay identical
         """
         data = {}
         all_intervals = []
-        if not entity_ids:
+        if not self.sensor_ids:
             return MIN_PRIOR, {}, []
-        for entity_id in entity_ids:
+        for entity_id in self.sensor_ids:
             # Get intervals using only our DB
             intervals = await self.coordinator.sqlite_store.get_historical_intervals(
                 entity_id,
