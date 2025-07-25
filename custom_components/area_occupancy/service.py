@@ -775,7 +775,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
 
-    # Remove history_period from schemas
     update_area_prior_schema = vol.Schema(
         {
             vol.Required("entry_id"): str,

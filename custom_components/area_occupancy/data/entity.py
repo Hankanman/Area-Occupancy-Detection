@@ -385,13 +385,8 @@ class EntityManager:
             InputType.TEMPERATURE: self.config.sensors.temperature,
         }
 
-    async def update_all_entity_likelihoods(
-        self, history_period: int | None = None
-    ) -> int:
+    async def update_all_entity_likelihoods(self) -> int:
         """Update all entity likelihoods.
-
-        Args:
-            history_period: Period in days for historical data
 
         Returns:
             int: Number of entities updated
@@ -412,9 +407,7 @@ class EntityManager:
             # Create tasks for parallel processing
             tasks = []
             for entity in chunk:
-                task = self._update_entity_likelihood(
-                    entity, history_period=history_period
-                )
+                task = self._update_entity_likelihood(entity)
                 tasks.append(task)
 
             # Wait for all tasks in this chunk to complete
@@ -437,21 +430,18 @@ class EntityManager:
         )
         return updated_count
 
-    async def _update_entity_likelihood(
-        self, entity: Entity, history_period: int | None = None
-    ) -> int:
+    async def _update_entity_likelihood(self, entity: Entity) -> int:
         """Safely update a single entity's likelihood with error handling.
 
         Args:
             entity: The entity to update
-            history_period: Period in days for historical data
 
         Returns:
             1 if successful, 0 if failed
 
         """
         try:
-            await entity.likelihood.update(history_period=history_period)
+            await entity.likelihood.update()
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Failed to update likelihood for entity %s: %s",
