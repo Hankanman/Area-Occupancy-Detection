@@ -74,7 +74,7 @@ Time-based prior learning follows a similar process but with additional steps:
 ### Time-Based Prior Learning
 
 *   **Automatically:** Time-based priors are calculated automatically on a configurable schedule (default: every 4 hours)
-*   **Manually:** You can trigger time-based prior calculation using the `area_occupancy.update_time_based_priors` service
+*   **Manually:** You can trigger time-based prior calculation using the `area_occupancy.run_analysis` service
 *   **Startup:** Time-based prior calculations are deferred to background tasks to avoid blocking startup
 *   **Frequency Control:** The frequency of both time-based prior and likelihood updates can be configured independently
 
