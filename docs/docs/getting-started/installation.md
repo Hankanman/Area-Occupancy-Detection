@@ -9,7 +9,7 @@ There are two main ways to install the Area Occupancy Detection integration for 
 3. **Go to Integrations:** Click on "Integrations".
 4. **Explore & Add Repositories:** Click the vertical ellipsis (three dots) in the top right corner and select "Custom repositories".
 5. **Add Custom Repository:**
-    * **Repository:** Enter the URL of this integration's GitHub repository: `https://github.com/hanskohl/Area-Occupancy-Detection`
+    * **Repository:** Enter the URL of this integration's GitHub repository: `https://github.com/Hankanman/Area-Occupancy-Detection`
     * **Category:** Select `Integration`.
     * Click **Add**.
 6. **Install Integration:** Back in the main HACS Integrations view, search for "Area Occupancy Detection". Click on it and then click the **Download** button. Select the latest version and confirm.
@@ -19,7 +19,7 @@ There are two main ways to install the Area Occupancy Detection integration for 
 
 ## Method 2: Manual Installation
 
-1. **Download the Latest Release:** Go to the [Releases page](https://github.com/hanskohl/Area-Occupancy-Detection/releases) of the GitHub repository and download the `area_occupancy.zip` file from the latest release assets.
+1. **Download the Latest Release:** Go to the [Releases page](https://github.com/Hankanman/Area-Occupancy-Detection/releases) of the GitHub repository and download the `area_occupancy.zip` file from the latest release assets.
 2. **Unzip the File:** Extract the contents of the downloaded zip file. You should have a folder named `area_occupancy` containing files like `__init__.py`, `manifest.json`, etc.
 3. **Access Home Assistant Configuration Directory:** Connect to the machine running your Home Assistant instance (e.g., via Samba, SSH, or the File editor add-on).
 4. **Navigate to `custom_components`:** Inside your main Home Assistant configuration directory (where your `configuration.yaml` file is located), find or create a folder named `custom_components`.

@@ -18,8 +18,6 @@ from ..const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -46,8 +44,6 @@ from ..const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-    DEFAULT_HISTORY_PERIOD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -61,6 +57,7 @@ from ..const import (
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    HA_RECORDER_DAYS,
 )
 
 if TYPE_CHECKING:
@@ -145,14 +142,6 @@ class Decay:
 
 
 @dataclass
-class History:
-    """History configuration."""
-
-    enabled: bool = DEFAULT_HISTORICAL_ANALYSIS_ENABLED
-    period: int = DEFAULT_HISTORY_PERIOD
-
-
-@dataclass
 class WaspInBox:
     """Wasp in box configuration."""
 
@@ -174,19 +163,32 @@ class Config:
     sensor_states: SensorStates = field(default_factory=SensorStates)
     weights: Weights = field(default_factory=Weights)
     decay: Decay = field(default_factory=Decay)
-    history: History = field(default_factory=History)
     wasp_in_box: WaspInBox = field(default_factory=WaspInBox)
     _raw: dict = field(default_factory=dict, repr=False)
 
     @property
     def start_time(self) -> datetime:
-        """Return the start time of the history period."""
-        return dt_util.utcnow() - timedelta(days=self.history.period)
+        """Return the start time of the history period (always 10 days ago)."""
+        return dt_util.utcnow() - timedelta(days=HA_RECORDER_DAYS)
 
     @property
     def end_time(self) -> datetime:
-        """Return the end time of the history period."""
+        """Return the end time of the history period (now)."""
         return dt_util.utcnow()
+
+    @property
+    def entity_ids(self) -> list[str]:
+        """Return the entity ids of the sensors."""
+        return [
+            *self.sensors.motion,
+            *self.sensors.media,
+            *self.sensors.appliances,
+            *self.sensors.doors,
+            *self.sensors.windows,
+            *self.sensors.illuminance,
+            *self.sensors.humidity,
+            *self.sensors.temperature,
+        ]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -256,15 +258,6 @@ class Config:
             decay=Decay(
                 enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
                 half_life=int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)),
-            ),
-            history=History(
-                enabled=bool(
-                    data.get(
-                        CONF_HISTORICAL_ANALYSIS_ENABLED,
-                        DEFAULT_HISTORICAL_ANALYSIS_ENABLED,
-                    )
-                ),
-                period=int(data.get(CONF_HISTORY_PERIOD, DEFAULT_HISTORY_PERIOD)),
             ),
             wasp_in_box=WaspInBox(
                 enabled=bool(data.get(CONF_WASP_ENABLED, False)),

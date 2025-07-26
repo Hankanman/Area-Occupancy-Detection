@@ -1,44 +1,14 @@
-update_area_prior:
-  name: Update Area Prior
-  description: "Update the area's baseline occupancy prior from historical data."
+run_analysis:
+  name: Run Analysis
+  description: "Run the analysis for the area occupancy instance."
   fields:
     entry_id:
       name: Entry ID
-      description: "Select the Area Occupancy instance to update area prior for."
+      description: "Select the Area Occupancy instance to run analysis for."
       required: true
       selector:
         config_entry:
           integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
-
-update_likelihoods:
-  name: Update Sensor Likelihoods
-  description: "Update the learned conditional probabilities for all configured sensors."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to update sensor likelihoods for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-    history_period:
-      name: History Period
-      description: "Number of days of history to analyze (defaults to configured history period)"
-      required: false
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
 
 reset_entities:
   name: Reset Entities
@@ -51,13 +21,6 @@ reset_entities:
       selector:
         config_entry:
           integration: area_occupancy
-    clear_storage:
-      name: Clear Storage
-      description: "Also clear all stored historical data."
-      required: false
-      default: false
-      selector:
-        boolean:
 
 get_area_status:
   name: Get Area Status
@@ -114,25 +77,6 @@ get_entity_details:
         entity:
           multiple: true
 
-force_entity_update:
-  name: Force Entity Update
-  description: "Force immediate probability recalculation for specific entities."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-    entity_ids:
-      name: Entity IDs
-      description: "List of entity IDs to force update (leave empty for all entities)."
-      required: false
-      selector:
-        entity:
-          multiple: true
-
 get_entity_type_learned_data:
   name: Get Entity Type Learned Data
   description: "Get the current learned prior, prob_true, and prob_false for each entity type. Useful for diagnostics and monitoring the learning process."
@@ -144,3 +88,44 @@ get_entity_type_learned_data:
       selector:
         config_entry:
           integration: area_occupancy
+
+debug_database_state:
+  name: Debug Database State
+  description: "Check current simplified database state including intervals count, sample data, database statistics, and schema information. The database has been optimized with fewer tables and indexes for better performance."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to check database state for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+purge_intervals:
+  name: Purge State Intervals
+  description: "Purge the state_intervals table based on filter_intervals and a retention period. Optionally filter by entity_ids. Removes intervals older than the retention period that do not pass filter_intervals."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to purge intervals for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+    retention_days:
+      name: Retention Days
+      description: "Number of days to retain intervals (intervals older than this may be purged). Default is 365."
+      required: false
+      default: 365
+      selector:
+        number:
+          min: 1
+          max: 3650
+          mode: box
+    entity_ids:
+      name: Entity IDs
+      description: "List of entity IDs to purge (leave empty for all configured entities)."
+      required: false
+      selector:
+        entity:
+          multiple: true
