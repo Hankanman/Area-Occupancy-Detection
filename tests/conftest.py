@@ -990,6 +990,10 @@ def mock_area_prior() -> Mock:
     prior = Mock(spec=PriorClass)
     prior._current_value = 0.3
     prior.value = 0.3
+    prior.global_prior = 0.3
+    prior.occupancy_prior = 0.25
+    prior.primary_sensors_prior = 0.3
+    prior.sensor_ids = ["binary_sensor.motion1", "binary_sensor.motion2"]
     prior.last_updated = dt_util.utcnow()
     prior.update = AsyncMock(return_value=0.3)
     prior.calculate = AsyncMock(return_value=0.3)
