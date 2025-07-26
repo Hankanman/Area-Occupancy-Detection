@@ -22,7 +22,15 @@ def real_storage(tmp_path, mock_hass: Mock) -> AreaOccupancyStorage:
     mock_hass.config.config_dir = str(tmp_path)
     # Execute jobs synchronously
     mock_hass.async_add_executor_job.side_effect = lambda func, *a, **kw: func(*a, **kw)
-    return AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
+
+    # Create mock coordinator with entity IDs for the updated import method
+    mock_coordinator = Mock()
+    mock_coordinator.occupancy_entity_id = "binary_sensor.test_occupancy"
+    mock_coordinator.wasp_entity_id = "binary_sensor.test_wasp"
+
+    storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
+    storage.coordinator = mock_coordinator
+    return storage
 
 
 async def test_enable_wal_mode_error(real_storage: AreaOccupancyStorage):
@@ -50,25 +58,55 @@ async def test_vacuum_database_executes(real_storage: AreaOccupancyStorage):
 
 async def test_import_intervals_from_recorder(real_storage: AreaOccupancyStorage):
     """Importing intervals stores them via batch method."""
-    interval = StateInterval(
-        entity_id="sensor.demo",
-        state="on",
-        start=dt_util.utcnow() - timedelta(minutes=5),
-        end=dt_util.utcnow(),
-    )
+    # Mock get_intervals_from_recorder to avoid actual recorder calls
     with (
+        patch(
+            "custom_components.area_occupancy.sqlite_storage.get_intervals_from_recorder",
+            return_value=[],
+        ),
+    ):
+        await real_storage.import_intervals_from_recorder(["sensor.demo"], days=1)
+
+        # Check that import stats includes all processed entities
+        # The method now processes: input entities + occupancy + wasp entities
+        expected_entities = {
+            "sensor.demo",
+            "binary_sensor.test_occupancy",
+            "binary_sensor.test_wasp",
+        }
+
+        # Verify all expected entities were processed
+        for entity_id in expected_entities:
+            assert entity_id in real_storage.import_stats
+            assert (
+                real_storage.import_stats[entity_id] == 0
+            )  # No intervals returned by mock
+
+
+async def test_import_intervals_from_recorder_with_none_entities(
+    real_storage: AreaOccupancyStorage,
+):
+    """Test import when coordinator entity IDs are None."""
+    # Set coordinator entity IDs to None
+    real_storage.coordinator.occupancy_entity_id = None
+    real_storage.coordinator.wasp_entity_id = None
+
+    with (
+        patch(
+            "custom_components.area_occupancy.sqlite_storage.get_intervals_from_recorder",
+            return_value=[],
+        ),
         patch.object(
             real_storage,
             "save_state_intervals_batch",
-            side_effect=lambda intervals: len(intervals),
-        ) as save_batch,
+            return_value=0,
+        ),
     ):
         await real_storage.import_intervals_from_recorder(["sensor.demo"], days=1)
-        # Accept either 1 or 0 depending on whether intervals are actually saved
-        assert real_storage.import_stats["sensor.demo"] in (0, 1)
-        # Only check save_batch if intervals were passed
-        if real_storage.import_stats["sensor.demo"]:
-            save_batch.assert_called_once_with([interval])
+
+        # Should only process the input entity when coordinator entities are None
+        assert "sensor.demo" in real_storage.import_stats
+        assert len(real_storage.import_stats) == 1
 
 
 async def test_historical_intervals_and_cleanup(real_storage: AreaOccupancyStorage):
@@ -116,6 +154,60 @@ async def test_historical_intervals_and_cleanup(real_storage: AreaOccupancyStora
     assert deleted == 1
     count = await real_storage.get_total_intervals_count()
     assert count == 2  # two recent remain after cleanup
+
+
+async def test_historical_intervals_with_state_filter(
+    real_storage: AreaOccupancyStorage,
+):
+    """Test querying historical intervals with state filter."""
+    await real_storage.async_initialize()
+    base = dt_util.utcnow() - timedelta(hours=1)
+    intervals = [
+        StateInterval(
+            entity_id="sensor.demo",
+            state="on",
+            start=base,
+            end=base + timedelta(minutes=5),
+        ),
+        StateInterval(
+            entity_id="sensor.demo",
+            state="off",
+            start=base + timedelta(minutes=10),
+            end=base + timedelta(minutes=15),
+        ),
+        StateInterval(
+            entity_id="sensor.demo",
+            state="on",
+            start=base + timedelta(minutes=20),
+            end=base + timedelta(minutes=25),
+        ),
+    ]
+    await real_storage.save_state_intervals_batch(intervals)
+
+    # Query with state filter for "on" states only
+    result = await real_storage.get_historical_intervals(
+        "sensor.demo",
+        start_time=base - timedelta(minutes=1),
+        end_time=base + timedelta(minutes=30),
+        state_filter="on",
+    )
+
+    # Should only return the "on" state intervals
+    assert len(result) == 2
+    for interval in result:
+        assert interval["state"] == "on"
+
+    # Query with state filter for "off" states only
+    result_off = await real_storage.get_historical_intervals(
+        "sensor.demo",
+        start_time=base - timedelta(minutes=1),
+        end_time=base + timedelta(minutes=30),
+        state_filter="off",
+    )
+
+    # Should only return the "off" state interval
+    assert len(result_off) == 1
+    assert result_off[0]["state"] == "off"
 
 
 async def test_stats_with_real_data(real_storage: AreaOccupancyStorage):
