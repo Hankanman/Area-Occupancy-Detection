@@ -28,6 +28,7 @@ from .const import (
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
+    HA_RECORDER_DAYS,
     MIN_PROBABILITY,
 )
 from .data.config import ConfigManager
@@ -42,7 +43,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Global timer intervals in seconds
 DECAY_INTERVAL = 10
-ANALYSIS_INTERVAL = 86400  # 24 hours in seconds
+ANALYSIS_INTERVAL = 3600  # 1 hour in seconds
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -163,7 +164,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entity_ids = [eid for eid in set(self.config.entity_ids) if eid]
                 if entity_ids:
                     await self.sqlite_store.import_intervals_from_recorder(
-                        entity_ids, days=10
+                        entity_ids, days=HA_RECORDER_DAYS
                     )
                 else:
                     _LOGGER.warning(
@@ -322,10 +323,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         next_update = dt_util.utcnow() + timedelta(minutes=5)
 
         self._analysis_timer = async_track_point_in_time(
-            self.hass, self._handle_analysis_timer, next_update
+            self.hass, self.run_analysis, next_update
         )
 
-    async def _handle_analysis_timer(self, _now: datetime) -> None:
+    async def run_analysis(self) -> None:
         """Handle the historical data import timer."""
         self._analysis_timer = None
 
@@ -333,14 +334,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Import recent data from recorder
             entity_ids = list(self.entities.entities.keys())
             if entity_ids:
-                import_counts = await self.sqlite_store.import_intervals_from_recorder(
-                    entity_ids, days=10
+                await self.sqlite_store.import_intervals_from_recorder(
+                    entity_ids, days=HA_RECORDER_DAYS
                 )
-                total_imported = sum(import_counts.values())
+                import_stats = self.sqlite_store.import_stats
+                total_imported = sum(import_stats.values())
 
                 if total_imported > 0:
                     _LOGGER.info(
-                        "Historical import: %d intervals imported", total_imported
+                        "Historical import: %d intervals imported for %s",
+                        total_imported,
+                        self.config.name,
                     )
 
                     # Recalculate priors with new data
@@ -352,11 +356,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Cleanup old data (yearly retention)
                 await self.sqlite_store.cleanup_old_intervals(retention_days=365)
 
-        except (ValueError, OSError) as err:
-            _LOGGER.error("Historical data import failed: %s", err)
+            # Refresh the coordinator
+            await self.async_refresh()
 
-        # Schedule next run (24 hours)
+        except (ValueError, OSError) as err:
+            _LOGGER.error("Analysis failed: %s", err)
+            await self.async_refresh()
+
+        # Schedule next run (1 hour)
         next_update = dt_util.utcnow() + timedelta(seconds=ANALYSIS_INTERVAL)
+
         self._analysis_timer = async_track_point_in_time(
-            self.hass, self._handle_analysis_timer, next_update
+            self.hass, self.run_analysis, next_update
         )

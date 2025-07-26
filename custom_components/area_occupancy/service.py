@@ -10,10 +10,9 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, HA_RECORDER_DAYS
+from .const import DOMAIN
 from .schema import state_intervals_table
 from .state_intervals import filter_intervals
-from .utils import get_current_time_slot, get_time_slot_name
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -29,21 +28,29 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
-async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> None:
     """Manually trigger an update of sensor likelihoods."""
     entry_id = call.data["entry_id"]
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
-        _LOGGER.info(
-            "Updating sensor likelihoods for entry %s",
-            entry_id,
-        )
+        _LOGGER.info("Running analysis for entry %s", entry_id)
 
-        # Update individual sensor likelihoods with forced recalculation
-        updated_count = await coordinator.entities.update_all_entity_likelihoods()
-        await coordinator.async_refresh()
+        await coordinator.run_analysis()
+
+        _LOGGER.info("Analysis completed successfully for entry %s", entry_id)
+
+        entity_ids = [eid for eid in set(coordinator.config.entity_ids) if eid]
+
+        # Check entity states
+        entity_states = {}
+        for entity_id in entity_ids:
+            state = hass.states.get(entity_id)
+            if state:
+                entity_states[entity_id] = state.state
+            else:
+                entity_states[entity_id] = "NOT_FOUND"
 
         # Collect the updated likelihoods to return
         likelihood_data = {}
@@ -60,176 +67,30 @@ async def _update_likelihoods(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
             likelihood_data[entity_id] = entity_likelihood_data
 
-        _LOGGER.info("Likelihood update completed successfully for entry %s", entry_id)
+        import_stats = coordinator.sqlite_store.import_stats
+        total_imported = sum(import_stats.values())
+        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
 
         response_data = {
-            "updated_entities": updated_count,
+            "area_name": coordinator.config.name,
+            "current_prior": coordinator.area_prior,
+            "global_prior": coordinator.prior.global_prior,
+            "prior_entity_ids": coordinator.prior.sensor_ids,
             "total_entities": len(coordinator.entities.entities),
-            "update_timestamp": dt_util.utcnow().isoformat(),
-            "prior": coordinator.area_prior,
+            "import_stats": import_stats,
+            "total_imported": total_imported,
+            "total_intervals": total_intervals,
+            "entity_states": entity_states,
             "likelihoods": likelihood_data,
+            "update_timestamp": dt_util.utcnow().isoformat(),
         }
 
-    except (HomeAssistantError, ValueError, RuntimeError) as err:
-        error_msg = f"Failed to update likelihoods for {entry_id}: {err}"
+    except Exception as err:
+        error_msg = f"Failed to run analysis for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
     else:
         return response_data
-
-
-async def _update_area_prior(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Manually trigger an update of time-based priors and return the current priors in a human-readable format."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        _LOGGER.info(
-            "Starting time-based priors update for entry %s",
-            entry_id,
-        )
-
-        # Calculate all priors with forced recalculation
-        await coordinator.prior.update()
-        await coordinator.async_refresh()
-
-        _LOGGER.info("Area prior update completed successfully for entry %s", entry_id)
-
-        # Now, return the current time-based priors in a human-readable format (moved from _get_time_based_priors)
-        current_day, current_slot = get_current_time_slot()
-
-        # Get all time-based priors from database
-        time_priors = {}
-        if coordinator.sqlite_store:
-            try:
-                records = await coordinator.sqlite_store.get_time_priors_for_entry(
-                    entry_id
-                )
-                for record in records:
-                    time_priors[(record.day_of_week, record.time_slot)] = (
-                        record.prior_value
-                    )
-            except HomeAssistantError as err:
-                _LOGGER.debug("Failed to get time priors from database: %s", err)
-
-        # Format the data in a human-readable way
-        day_names = [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday",
-        ]
-
-        # Create a summary by day
-        daily_summaries = {}
-        for day_of_week in range(7):
-            day_name = day_names[day_of_week]
-            day_priors = {}
-
-            # Get priors for this day
-            for time_slot in range(48):
-                prior_value = time_priors.get((day_of_week, time_slot), None)
-                if prior_value is not None:
-                    hour = time_slot // 2
-                    minute = (time_slot % 2) * 30
-                    time_str = f"{hour:02d}:{minute:02d}"
-                    day_priors[time_str] = round(prior_value, 4)
-
-            if day_priors:
-                daily_summaries[day_name] = day_priors
-
-        # Create a summary of key time periods
-        key_periods = {
-            "Early Morning (06:00-08:00)": [],
-            "Morning (08:00-12:00)": [],
-            "Afternoon (12:00-17:00)": [],
-            "Evening (17:00-21:00)": [],
-            "Night (21:00-06:00)": [],
-        }
-
-        for day_of_week in range(7):
-            day_name = day_names[day_of_week]
-
-            # Calculate averages for key periods
-            early_morning = []
-            morning = []
-            afternoon = []
-            evening = []
-            night = []
-
-            for time_slot in range(48):
-                prior_value = time_priors.get((day_of_week, time_slot), None)
-                if prior_value is not None:
-                    hour = time_slot // 2
-                    if 6 <= hour < 8:
-                        early_morning.append(prior_value)
-                    elif 8 <= hour < 12:
-                        morning.append(prior_value)
-                    elif 12 <= hour < 17:
-                        afternoon.append(prior_value)
-                    elif 17 <= hour < 21:
-                        evening.append(prior_value)
-                    else:
-                        night.append(prior_value)
-
-            # Calculate averages
-            if early_morning:
-                key_periods["Early Morning (06:00-08:00)"].append(
-                    {
-                        "day": day_name,
-                        "average": round(sum(early_morning) / len(early_morning), 4),
-                    }
-                )
-            if morning:
-                key_periods["Morning (08:00-12:00)"].append(
-                    {"day": day_name, "average": round(sum(morning) / len(morning), 4)}
-                )
-            if afternoon:
-                key_periods["Afternoon (12:00-17:00)"].append(
-                    {
-                        "day": day_name,
-                        "average": round(sum(afternoon) / len(afternoon), 4),
-                    }
-                )
-            if evening:
-                key_periods["Evening (17:00-21:00)"].append(
-                    {"day": day_name, "average": round(sum(evening) / len(evening), 4)}
-                )
-            if night:
-                key_periods["Night (21:00-06:00)"].append(
-                    {"day": day_name, "average": round(sum(night) / len(night), 4)}
-                )
-
-        # Remove empty periods
-        key_periods = {k: v for k, v in key_periods.items() if v}
-
-        return {
-            "area_name": coordinator.config.name,
-            "area_prior": coordinator.prior.value,
-            "time_prior": getattr(
-                coordinator.prior.get_time_slot_prior(), "prior", None
-            ),
-            "global_prior": getattr(
-                coordinator.prior.get_global_prior(), "prior", None
-            ),
-            "primary_sensors": coordinator.prior.sensor_ids,
-            "last_updated": coordinator.prior.last_updated.isoformat()
-            if coordinator.prior.last_updated
-            else None,
-            "total_time_slots_available": len(time_priors),
-            "current_time_slot": get_time_slot_name(current_day, current_slot),
-            "daily_summaries": daily_summaries,
-            "key_periods": key_periods,
-        }
-
-    except (HomeAssistantError, ValueError, RuntimeError) as err:
-        error_msg = f"Failed to update and get time-based priors for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
 
 
 async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -484,76 +345,6 @@ async def _get_entity_type_learned_data(
         return {"entity_types": learned_data}
 
 
-async def _debug_import_intervals(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Debug service to manually trigger state intervals import."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        _LOGGER.info("Debug: Manual state intervals import for entry %s", entry_id)
-
-        # Get entity IDs from configuration
-        entity_ids = coordinator.config.entity_ids
-        _LOGGER.info(
-            "Debug: Found %d entity_ids in config: %s", len(entity_ids), entity_ids
-        )
-
-        # Remove duplicates and empty strings
-        entity_ids = [eid for eid in set(entity_ids) if eid]
-        _LOGGER.info(
-            "Debug: Filtered to %d entity_ids: %s", len(entity_ids), entity_ids
-        )
-
-        if not entity_ids:
-            return {
-                "error": "No entity IDs found in configuration",
-                "entity_ids": [],
-            }
-
-        # Check entity states
-        entity_states = {}
-        for entity_id in entity_ids:
-            state = hass.states.get(entity_id)
-            if state:
-                entity_states[entity_id] = state.state
-                _LOGGER.info(
-                    "Debug: Entity %s exists with state: %s", entity_id, state.state
-                )
-            else:
-                entity_states[entity_id] = "NOT_FOUND"
-                _LOGGER.warning(
-                    "Debug: Entity %s does not exist in Home Assistant", entity_id
-                )
-
-        # Perform import
-        import_counts = await coordinator.sqlite_store.import_intervals_from_recorder(
-            entity_ids, days=HA_RECORDER_DAYS
-        )
-        total_imported = sum(import_counts.values())
-
-        _LOGGER.info("Debug: Import completed with results: %s", import_counts)
-
-        # Check final state of database
-        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
-
-    except Exception as err:
-        error_msg = f"Debug import failed for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {
-            "entity_ids": entity_ids,
-            "entity_states": entity_states,
-            "import_counts": import_counts,
-            "total_imported": total_imported,
-            "total_intervals_in_db": total_intervals,
-            "days_imported": HA_RECORDER_DAYS,
-        }
-
-
 async def _debug_database_state(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
@@ -774,29 +565,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
 
-    update_area_prior_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-        }
-    )
-
-    update_likelihoods_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-        }
-    )
-
-    reset_entities_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-        }
-    )
-
     entity_details_schema = vol.Schema(
         {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
     )
-
-    entity_type_learned_schema = vol.Schema({vol.Required("entry_id"): str})
 
     purge_intervals_schema = vol.Schema(
         {
@@ -807,11 +578,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     # Create async wrapper functions to properly handle the service calls
-    async def handle_update_area_prior(call: ServiceCall) -> dict[str, Any]:
-        return await _update_area_prior(hass, call)
 
-    async def handle_update_likelihoods(call: ServiceCall) -> dict[str, Any]:
-        return await _update_likelihoods(hass, call)
+    async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
+        return await _run_analysis(hass, call)
 
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
@@ -831,9 +600,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_type_learned_data(hass, call)
 
-    async def handle_debug_import_intervals(call: ServiceCall) -> dict[str, Any]:
-        return await _debug_import_intervals(hass, call)
-
     async def handle_debug_database_state(call: ServiceCall) -> dict[str, Any]:
         return await _debug_database_state(hass, call)
 
@@ -843,22 +609,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # Register services with async wrapper functions
     hass.services.async_register(
         DOMAIN,
-        "update_area_prior",
-        handle_update_area_prior,
-        schema=update_area_prior_schema,
+        "run_analysis",
+        handle_run_analysis,
+        schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
-        DOMAIN,
-        "update_likelihoods",
-        handle_update_likelihoods,
-        schema=update_likelihoods_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN, "reset_entities", handle_reset_entities, schema=reset_entities_schema
+        DOMAIN, "reset_entities", handle_reset_entities, schema=entry_id_schema
     )
 
     hass.services.async_register(
@@ -897,20 +654,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         "get_entity_type_learned_data",
         handle_get_entity_type_learned_data,
-        schema=entity_type_learned_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "debug_import_intervals",
-        handle_debug_import_intervals,
-        schema=vol.Schema(
-            {
-                vol.Required("entry_id"): str,
-                vol.Optional("days", default=10): int,
-            }
-        ),
+        schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -934,4 +678,4 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 12, DOMAIN)
+    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)

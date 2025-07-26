@@ -220,3 +220,20 @@ def filter_intervals(
             filtered_intervals.append(interval)
 
     return filtered_intervals
+
+
+def merge_intervals(intervals: list[StateInterval]) -> list[StateInterval]:
+    """Merge overlapping intervals (dicts with 'start' and 'end' datetimes)."""
+    if not intervals:
+        return []
+    # Sort intervals by start time
+    sorted_intervals = sorted(intervals, key=lambda x: x["start"])
+    merged = [sorted_intervals[0]]
+    for current in sorted_intervals[1:]:
+        last = merged[-1]
+        if current["start"] <= last["end"]:
+            # Overlapping intervals, merge them
+            last["end"] = max(last["end"], current["end"])
+        else:
+            merged.append(current)
+    return merged
