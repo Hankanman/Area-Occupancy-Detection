@@ -129,17 +129,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
 
-    @property
-    def binary_sensor_entity_ids(self) -> dict[str, str | None]:
-        """Return the entity_ids of the binary sensors created by this integration.
-
-        Returns:
-            dict[str, str | None]: Dictionary with 'occupancy' and 'wasp' keys
-                                 containing their respective entity_ids or None if not set.
-
-        """
-        return {"occupancy": self.occupancy_entity_id, "wasp": self.wasp_entity_id}
-
     # --- Public Methods ---
     async def setup(self) -> None:
         """Initialize the coordinator and its components."""

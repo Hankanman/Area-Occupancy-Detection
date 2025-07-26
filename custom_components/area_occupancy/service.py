@@ -75,6 +75,8 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             "area_name": coordinator.config.name,
             "current_prior": coordinator.area_prior,
             "global_prior": coordinator.prior.global_prior,
+            "occupancy_prior": coordinator.prior.occupancy_prior,
+            "primary_sensors_prior": coordinator.prior.primary_sensors_prior,
             "prior_entity_ids": coordinator.prior.sensor_ids,
             "total_entities": len(coordinator.entities.entities),
             "import_stats": import_stats,

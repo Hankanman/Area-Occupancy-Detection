@@ -185,16 +185,26 @@ class TestAreaOccupancyStorage:
         """Test import_intervals_from_recorder method."""
         store = AreaOccupancyStorage(coordinator=mock_coordinator)
 
+        # Mock coordinator entity IDs
+        mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+
         entity_ids = ["sensor.test1", "sensor.test2"]
         fake_intervals = [
             StateInterval(
                 entity_id="sensor.test1",
                 state="on",
-                start_time=datetime.now(),
-                end_time=datetime.now(),
+                start=datetime.now(),
+                end=datetime.now(),
             )
         ]
-        expected_result = {"sensor.test1": 1, "sensor.test2": 0}
+        # Expected result now includes occupancy and wasp entities
+        expected_result = {
+            "sensor.test1": 1,
+            "sensor.test2": 0,
+            "binary_sensor.occupancy": 0,
+            "binary_sensor.wasp": 0,
+        }
 
         with (
             patch(
@@ -211,8 +221,8 @@ class TestAreaOccupancyStorage:
             # Mock save_state_intervals_batch to return count of saved intervals
             mock_save_batch.return_value = 1
 
-            # First entity returns intervals, second returns empty
-            mock_get_intervals.side_effect = [fake_intervals, []]
+            # First entity returns intervals, others return empty
+            mock_get_intervals.side_effect = [fake_intervals, [], [], []]
 
             await store.import_intervals_from_recorder(entity_ids, days=10)
 
@@ -222,9 +232,11 @@ class TestAreaOccupancyStorage:
             # Verify save_state_intervals_batch was called for the first entity
             mock_save_batch.assert_called_once_with(fake_intervals)
 
-            # Verify logging calls
+            # Verify logging calls (now processes 4 entities instead of 2)
             assert mock_info_logger.call_count >= 2  # Start and completion logs
-            assert mock_debug_logger.call_count >= 4  # Processing logs for each entity
+            assert (
+                mock_debug_logger.call_count >= 8
+            )  # Processing logs for each entity (4 entities * 2 logs each)
 
     async def test_cleanup_old_intervals(self, mock_coordinator: Mock) -> None:
         """Test cleanup_old_intervals method."""
@@ -448,8 +460,8 @@ class TestAreaOccupancyStorageDirect:
             StateInterval(
                 entity_id="sensor.test",
                 state="on",
-                start_time=datetime.now(),
-                end_time=datetime.now() + timedelta(minutes=5),
+                start=datetime.now(),
+                end=datetime.now() + timedelta(minutes=5),
             )
         ]
 
@@ -873,16 +885,28 @@ class TestAreaOccupancyStorageDirect:
         """Test importing intervals from recorder."""
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
 
+        # Mock coordinator entity IDs
+        mock_coordinator = Mock()
+        mock_coordinator.occupancy_entity_id = "binary_sensor.occupancy"
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+        storage.coordinator = mock_coordinator
+
         entity_ids = ["sensor.test1", "sensor.test2"]
         fake_intervals = [
             StateInterval(
                 entity_id="sensor.test1",
                 state="on",
-                start_time=datetime.now(),
-                end_time=datetime.now(),
+                start=datetime.now(),
+                end=datetime.now(),
             )
         ]
-        expected_result = {"sensor.test1": 1, "sensor.test2": 0}
+        # Expected result now includes occupancy and wasp entities
+        expected_result = {
+            "sensor.test1": 1,
+            "sensor.test2": 0,
+            "binary_sensor.occupancy": 0,
+            "binary_sensor.wasp": 0,
+        }
 
         with (
             patch(
@@ -899,8 +923,8 @@ class TestAreaOccupancyStorageDirect:
             # Mock save_state_intervals_batch to return count of saved intervals
             mock_save_batch.return_value = 1
 
-            # First entity returns intervals, second returns empty
-            mock_get_intervals.side_effect = [fake_intervals, []]
+            # First entity returns intervals, others return empty
+            mock_get_intervals.side_effect = [fake_intervals, [], [], []]
 
             await storage.import_intervals_from_recorder(
                 entity_ids, days=HA_RECORDER_DAYS
@@ -912,9 +936,11 @@ class TestAreaOccupancyStorageDirect:
             # Verify save_state_intervals_batch was called for the first entity
             mock_save_batch.assert_called_once_with(fake_intervals)
 
-            # Verify logging calls
+            # Verify logging calls (now processes 4 entities instead of 2)
             assert mock_info_logger.call_count >= 2  # Start and completion logs
-            assert mock_debug_logger.call_count >= 4  # Processing logs for each entity
+            assert (
+                mock_debug_logger.call_count >= 8
+            )  # Processing logs for each entity (4 entities * 2 logs each)
 
     async def test_reset_entry_data(self, mock_hass: Mock) -> None:
         """Test resetting entry data."""
@@ -980,14 +1006,14 @@ class TestAreaOccupancyStorageDirect:
             StateInterval(
                 entity_id="sensor.test",
                 state="on",
-                start_time=base_time,
-                end_time=base_time + timedelta(minutes=5),
+                start=base_time,
+                end=base_time + timedelta(minutes=5),
             ),
             StateInterval(
                 entity_id="sensor.test",
                 state="on",
-                start_time=base_time,
-                end_time=base_time + timedelta(minutes=5),
+                start=base_time,
+                end=base_time + timedelta(minutes=5),
             ),  # Duplicate
         ]
 
@@ -1005,8 +1031,8 @@ class TestAreaOccupancyStorageDirect:
             StateInterval(
                 entity_id="sensor.test",
                 state="on",
-                start_time=datetime.now(),
-                end_time=datetime.now() + timedelta(minutes=5),
+                start=datetime.now(),
+                end=datetime.now() + timedelta(minutes=5),
             )
         ]
 
