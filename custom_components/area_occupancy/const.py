@@ -82,7 +82,7 @@ DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 MIN_PROBABILITY: Final = 0.0
 MAX_PROBABILITY: Final = 1.0
 MIN_PRIOR: Final[float] = 0.1
-MAX_PRIOR: Final[float] = 0.9999
+MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
 

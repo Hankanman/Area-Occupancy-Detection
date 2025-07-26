@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .const import HA_RECORDER_DAYS
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
 from .schema import (
     DB_VERSION,
@@ -67,6 +68,7 @@ class AreaOccupancyStorage:
         self.coordinator = coordinator
         self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
+        self.import_stats: dict[str, int] = {}
 
         # Ensure storage directory exists
         if self.storage_path:
@@ -611,8 +613,8 @@ class AreaOccupancyStorage:
         await self.hass.async_add_executor_job(_vacuum)
 
     async def import_intervals_from_recorder(
-        self, entity_ids: list[str], days: int = 10
-    ) -> dict[str, int]:
+        self, entity_ids: list[str], days: int = HA_RECORDER_DAYS
+    ) -> None:
         """Import state intervals from recorder into the global table.
 
         The default range of 10 days mirrors Home Assistant's typical recorder
@@ -665,7 +667,7 @@ class AreaOccupancyStorage:
         total_imported = sum(import_counts.values())
         _LOGGER.info("Import completed: %d total intervals imported", total_imported)
 
-        return import_counts
+        self.import_stats = import_counts
 
     # ─────────────────── Cleanup Methods ───────────────────
 
