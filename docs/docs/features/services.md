@@ -1,86 +1,9 @@
 # Services
-
 The Area Occupancy Detection integration provides services that can be called from automations or scripts.
 
-## `area_occupancy.update_area_prior`
+## `area_occupancy.run_analysis`
 
-Manually triggers the [Prior Probability Learning](../features/prior-learning.md) process for a specific Area Occupancy instance.
-
-This is useful if you want to force the system to re-analyze historical data immediately, for example, after making significant changes to sensor configurations or room usage patterns, rather than waiting for the next scheduled automatic update.
-
-| Parameter        | Required | Description                                                                                                                                | Example Value          |
-| :--------------- | :------- | :----------------------------------------------------------------------------------------------------------------------------------------- | :--------------------- |
-| `entry_id`       | Yes      | The configuration entry ID for the Area Occupancy instance you want to update. You can find this in the Home Assistant UI under the integration details. | `a1b2c3d4e5f6...`      |
-| `history_period` | No       | The number of past days to analyze. If omitted, uses the value configured for the instance in its options, otherwise defaults to 7 days. | `14`                   |
-
-**Example Service Call (YAML):**
-
-```yaml
-service: area_occupancy.update_area_prior
-data:
-  entry_id: your_config_entry_id_here # Replace with the actual ID
-  # Optional: Specify a different history period for this run
-  # history_period: 10
-```
-
-**Returns:**
-- `area_prior`: The calculated baseline prior probability for the area
-- `history_period`: Number of days of history that were analyzed
-- `update_timestamp`: ISO timestamp of when the update was performed
-- `calculation_details`: Detailed breakdown of the calculation including:
-  - `motion_sensors`: List of sensor IDs used in the calculation
-  - `sensor_count`: Number of sensors analyzed
-  - `calculation_method`: Description of the calculation approach
-  - `sensor_details`: Per-sensor breakdown of occupancy ratios and filtering statistics
-  - `raw_average_ratio`: The raw average occupancy ratio before buffer
-  - `buffer_multiplier`: The buffer multiplier applied (typically 1.05)
-  - `final_prior`: The final calculated prior value
-  - `calculation`: Text description of the calculation formula
-  - `filtering_summary`: Statistics about interval filtering (removes false triggers and stuck sensors)
-
-**Notes:**
-
-*   Running this service can be resource-intensive as it queries the recorder database.
-*   After the area prior is updated, the coordinator will automatically refresh, potentially updating the **Prior Probability** sensor and influencing future **Occupancy Probability** calculations.
-*   The service analyzes motion sensor states over the specified history period and calculates an average occupancy ratio with a 5% buffer to establish the area's baseline occupancy probability.
-
-## `area_occupancy.update_likelihoods`
-
-Recalculates the sensor likelihood values used in the Bayesian calculation. This is similar to updating priors but focuses on the per-sensor probabilities.
-
-| Parameter | Required | Description | Example Value |
-|-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
-| `history_period` | No | Number of days of history to analyse. Defaults to the configured history period. | `7` |
-
-**Example:**
-```yaml
-service: area_occupancy.update_likelihoods
-data:
-  entry_id: your_config_entry_id_here
-```
-
-**Returns:**
-- `updated_entities`: Number of entities that had their likelihoods updated
-- `history_period`: Number of days of history that were analyzed
-- `total_entities`: Total number of entities in the system
-- `update_timestamp`: ISO timestamp of when the update was performed
-- `prior`: The current area baseline prior probability
-- `likelihoods`: Detailed likelihood data for each entity including:
-  - `type`: Entity input type (binary_sensor, sensor, etc.)
-  - `weight`: Weight factor for this entity type
-  - `prob_given_true`: Probability of entity state when area is occupied
-  - `prob_given_false`: Probability of entity state when area is unoccupied
-  - `prob_given_true_raw`: Raw probability before smoothing
-  - `prob_given_false_raw`: Raw probability before smoothing
-  - Filtering statistics (intervals processed, filtered, stuck sensor analysis)
-- `likelihood_filtering_summary`: Overall filtering statistics across all entities
-
-## `area_occupancy.update_time_based_priors`
-
-Manually triggers a recalculation of [Time-Based Priors](../features/time-based-priors.md) for a specific Area Occupancy instance.
-
-This service runs the time-based prior calculation in the background, analyzing historical data to learn occupancy patterns for different times of day and days of the week.
+Runs the historical analysis process for an Area Occupancy instance. This imports recent state data from the recorder, updates priors and likelihoods, cleans up old records and then refreshes the coordinator.
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
@@ -88,82 +11,26 @@ This service runs the time-based prior calculation in the background, analyzing 
 
 **Example:**
 ```yaml
-service: area_occupancy.update_time_based_priors
-data:
-  entry_id: your_config_entry_id_here
-```
-
-**Returns:**
-- `status`: "started" (calculation runs in background)
-- `message`: Confirmation message with entry ID
-- `history_period_days`: Number of days that will be analyzed
-- `start_timestamp`: ISO timestamp when calculation began
-- `note`: Information about background processing
-
-**Notes:**
-- This is a background operation that can take several minutes to complete
-- The service returns immediately while calculation continues in the background
-- Check the Home Assistant logs for completion status and any errors
-- Time-based priors are automatically recalculated on a schedule (default: every 4 hours)
-
-## `area_occupancy.get_time_based_priors`
-
-Retrieves current time-based priors in a human-readable format, showing learned occupancy patterns for different times of day and days of the week.
-
-| Parameter | Required | Description | Example Value |
-|-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
-
-**Example:**
-```yaml
-service: area_occupancy.get_time_based_priors
+service: area_occupancy.run_analysis
 data:
   entry_id: your_config_entry_id_here
 ```
 
 **Returns:**
 - `area_name`: Name of the area
-- `current_time_slot`: Current time slot (e.g., "Monday 14:00-14:30")
-- `current_prior`: Current time-based prior value
-- `time_prior`: Time-based prior for current slot
-- `global_prior`: Fallback global prior value
-- `total_time_slots_available`: Number of time slots with data
-- `daily_summaries`: Prior values organized by day and time
-- `key_periods`: Average priors for common time periods (Early Morning, Morning, Afternoon, Evening, Night)
-- `note`: Explanation of time-based priors
+- `current_prior`: Current global prior probability
+- `global_prior`: Global prior after analysis
+- `occupancy_prior`: Prior used for occupancy calculations
+- `prior_entity_ids`: List of entities included in analysis
+- `total_entities`: Total number of entities
+- `import_stats`: Number of state intervals imported per entity
+- `total_imported`: Total intervals imported
+- `total_intervals`: Total intervals stored
+- `entity_states`: Current states of all entities
+- `likelihoods`: Updated likelihood data per entity
+- `update_timestamp`: ISO timestamp of when the analysis completed
 
-**Example Output:**
-```json
-{
-  "area_name": "Living Room",
-  "current_time_slot": "Monday 14:00-14:30",
-  "current_prior": 0.2345,
-  "time_prior": 0.1567,
-  "global_prior": 0.2345,
-  "total_time_slots_available": 312,
-  "daily_summaries": {
-    "Monday": {
-      "08:00": 0.4567,
-      "08:30": 0.4789,
-      "18:00": 0.8234,
-      "18:30": 0.8456
-    },
-    "Saturday": {
-      "10:00": 0.3456,
-      "20:00": 0.9123
-    }
-  },
-  "key_periods": {
-    "Morning (08:00-12:00)": [
-      {"day": "Monday", "average": 0.4567}
-    ],
-    "Evening (17:00-21:00)": [
-      {"day": "Monday", "average": 0.8234},
-      {"day": "Saturday", "average": 0.9123}
-    ]
-  }
-}
-```
+
 
 ## `area_occupancy.reset_entities`
 
@@ -249,18 +116,6 @@ data:
 - Entity type configuration (weight, probabilities, active states)
 - Prior probability values
 
-## `area_occupancy.force_entity_update`
-
-Forces an immediate update of specific entities or all entities if none are specified. This can be useful for testing or when you need to refresh entity states immediately.
-
-| Parameter | Required | Description | Example Value |
-|-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
-| `entity_ids` | No | List of specific entity IDs to update. If empty, updates all entities. | `["binary_sensor.motion_sensor_1"]` |
-
-**Example:**
-```yaml
-service: area_occupancy.force_entity_update
 data:
   entry_id: your_config_entry_id_here
   entity_ids:
@@ -318,26 +173,11 @@ data:
 
 ## Debug Services
 
-### `area_occupancy.debug_import_intervals`
-
-Manually triggers state intervals import from recorder with detailed debug logging. Use this to diagnose why state intervals aren't being populated.
-
-| Parameter | Required | Description | Example Value |
-|-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
-| `days` | No | Number of days of historical data to import from recorder. Defaults to 10. | `10` |
-
-**Example:**
-```yaml
-service: area_occupancy.debug_import_intervals
-data:
-  entry_id: your_config_entry_id_here
-  days: 14
-```
+## Debug Services
 
 ### `area_occupancy.debug_database_state`
 
-Check current simplified database state including intervals count, sample data, database statistics, and schema information.
+Check current simplified database state including intervals count, sample data, database statistics and schema information.
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
@@ -350,10 +190,26 @@ data:
   entry_id: your_config_entry_id_here
 ```
 
+### `area_occupancy.purge_intervals`
+
+Purge the stored state intervals that are older than a retention period. Optionally filter by entity IDs.
+
+| Parameter | Required | Description | Example Value |
+|-----------|---------|-------------|---------------|
+| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `retention_days` | No | Number of days to retain intervals. Older intervals may be removed. | `365` |
+| `entity_ids` | No | List of entity IDs to purge. If empty, all configured entities are considered. | `["binary_sensor.motion"]` |
+
+**Example:**
+```yaml
+service: area_occupancy.purge_intervals
+data:
+  entry_id: your_config_entry_id_here
+  retention_days: 180
+```
+
 **Notes:**
 
-- All services except `reset_entities` return response data that can be used in automations or scripts
-- Services that query historical data (`update_area_prior`, `update_likelihoods`, `update_time_based_priors`) can be resource-intensive
-- The `entry_id` can be found in Home Assistant under Settings → Devices & Services → Area Occupancy Detection → (click on an instance)
-- Time-based prior services are part of the new advanced features and require historical analysis to be enabled
-
+- All services except `reset_entities` return response data that can be used in automations or scripts.
+- Services that query historical data (`run_analysis`) can be resource-intensive.
+- The `entry_id` can be found in Home Assistant under Settings → Devices & Services → Area Occupancy Detection → (click on an instance).
