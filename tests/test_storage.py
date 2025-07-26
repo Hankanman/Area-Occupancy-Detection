@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 import sqlalchemy as sa
 
+from custom_components.area_occupancy.const import HA_RECORDER_DAYS
 from custom_components.area_occupancy.schema import (
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
@@ -185,15 +186,45 @@ class TestAreaOccupancyStorage:
         store = AreaOccupancyStorage(coordinator=mock_coordinator)
 
         entity_ids = ["sensor.test1", "sensor.test2"]
-        expected_result = {"sensor.test1": 100, "sensor.test2": 150}
+        fake_intervals = [
+            StateInterval(
+                entity_id="sensor.test1",
+                state="on",
+                start_time=datetime.now(),
+                end_time=datetime.now(),
+            )
+        ]
+        expected_result = {"sensor.test1": 1, "sensor.test2": 0}
 
-        with patch.object(
-            store,
-            "import_intervals_from_recorder",
-            return_value=expected_result,
+        with (
+            patch(
+                "custom_components.area_occupancy.sqlite_storage.get_intervals_from_recorder"
+            ) as mock_get_intervals,
+            patch.object(store, "save_state_intervals_batch") as mock_save_batch,
+            patch(
+                "custom_components.area_occupancy.sqlite_storage._LOGGER.info"
+            ) as mock_info_logger,
+            patch(
+                "custom_components.area_occupancy.sqlite_storage._LOGGER.debug"
+            ) as mock_debug_logger,
         ):
-            result = await store.import_intervals_from_recorder(entity_ids, days=10)
-            assert result == expected_result
+            # Mock save_state_intervals_batch to return count of saved intervals
+            mock_save_batch.return_value = 1
+
+            # First entity returns intervals, second returns empty
+            mock_get_intervals.side_effect = [fake_intervals, []]
+
+            await store.import_intervals_from_recorder(entity_ids, days=10)
+
+            # Verify the import_stats were set correctly
+            assert store.import_stats == expected_result
+
+            # Verify save_state_intervals_batch was called for the first entity
+            mock_save_batch.assert_called_once_with(fake_intervals)
+
+            # Verify logging calls
+            assert mock_info_logger.call_count >= 2  # Start and completion logs
+            assert mock_debug_logger.call_count >= 4  # Processing logs for each entity
 
     async def test_cleanup_old_intervals(self, mock_coordinator: Mock) -> None:
         """Test cleanup_old_intervals method."""
@@ -843,14 +874,47 @@ class TestAreaOccupancyStorageDirect:
         storage = AreaOccupancyStorage(hass=mock_hass, entry_id="test_entry")
 
         entity_ids = ["sensor.test1", "sensor.test2"]
-        expected_result = {"sensor.test1": 0, "sensor.test2": 0}
+        fake_intervals = [
+            StateInterval(
+                entity_id="sensor.test1",
+                state="on",
+                start_time=datetime.now(),
+                end_time=datetime.now(),
+            )
+        ]
+        expected_result = {"sensor.test1": 1, "sensor.test2": 0}
 
-        with patch.object(
-            mock_hass, "async_add_executor_job", return_value=expected_result
+        with (
+            patch(
+                "custom_components.area_occupancy.sqlite_storage.get_intervals_from_recorder"
+            ) as mock_get_intervals,
+            patch.object(storage, "save_state_intervals_batch") as mock_save_batch,
+            patch(
+                "custom_components.area_occupancy.sqlite_storage._LOGGER.info"
+            ) as mock_info_logger,
+            patch(
+                "custom_components.area_occupancy.sqlite_storage._LOGGER.debug"
+            ) as mock_debug_logger,
         ):
-            result = await storage.import_intervals_from_recorder(entity_ids, days=10)
+            # Mock save_state_intervals_batch to return count of saved intervals
+            mock_save_batch.return_value = 1
 
-            assert result == expected_result
+            # First entity returns intervals, second returns empty
+            mock_get_intervals.side_effect = [fake_intervals, []]
+
+            await storage.import_intervals_from_recorder(
+                entity_ids, days=HA_RECORDER_DAYS
+            )
+
+            # Verify the import_stats were set correctly
+            assert storage.import_stats == expected_result
+
+            # Verify save_state_intervals_batch was called for the first entity
+            mock_save_batch.assert_called_once_with(fake_intervals)
+
+            # Verify logging calls
+            assert mock_info_logger.call_count >= 2  # Start and completion logs
+            assert mock_debug_logger.call_count >= 4  # Processing logs for each entity
 
     async def test_reset_entry_data(self, mock_hass: Mock) -> None:
         """Test resetting entry data."""
