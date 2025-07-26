@@ -91,7 +91,7 @@ Time-based priors are stored in a dedicated SQLite database with:
 Manually trigger a recalculation of time-based priors:
 
 ```yaml
-service: area_occupancy.update_time_based_priors
+service: area_occupancy.run_analysis
 data:
   entry_id: your_config_entry_id_here
 ```
@@ -102,66 +102,6 @@ data:
 - `history_period_days`: Number of days analyzed
 - `start_timestamp`: When calculation began
 
-### Get Time-Based Priors
-
-Retrieve current time-based priors in a human-readable format:
-
-```yaml
-service: area_occupancy.get_time_based_priors
-data:
-  entry_id: your_config_entry_id_here
-```
-
-**Returns:**
-- `area_name`: Name of the area
-- `current_time_slot`: Current time slot (e.g., "Monday 14:00-14:30")
-- `current_prior`: Current time-based prior value
-- `time_prior`: Time-based prior for current slot
-- `global_prior`: Fallback global prior value
-- `total_time_slots_available`: Number of time slots with data
-- `daily_summaries`: Prior values organized by day and time
-- `key_periods`: Average priors for common time periods (Early Morning, Morning, Afternoon, Evening, Night)
-
-## Example Output
-
-The `get_time_based_priors` service provides rich, human-readable output:
-
-```json
-{
-  "area_name": "Living Room",
-  "current_time_slot": "Monday 14:00-14:30",
-  "current_prior": 0.2345,
-  "time_prior": 0.1567,
-  "global_prior": 0.2345,
-  "total_time_slots_available": 312,
-  "daily_summaries": {
-    "Monday": {
-      "08:00": 0.4567,
-      "08:30": 0.4789,
-      "09:00": 0.5123,
-      "18:00": 0.8234,
-      "18:30": 0.8456,
-      "19:00": 0.8678
-    },
-    "Saturday": {
-      "10:00": 0.3456,
-      "10:30": 0.3678,
-      "20:00": 0.9123,
-      "20:30": 0.9234
-    }
-  },
-  "key_periods": {
-    "Morning (08:00-12:00)": [
-      {"day": "Monday", "average": 0.4567},
-      {"day": "Tuesday", "average": 0.4234}
-    ],
-    "Evening (17:00-21:00)": [
-      {"day": "Monday", "average": 0.8234},
-      {"day": "Saturday", "average": 0.9123}
-    ]
-  }
-}
-```
 
 ## Benefits
 
@@ -200,13 +140,12 @@ The `get_time_based_priors` service provides rich, human-readable output:
 3. **Inaccurate Patterns**:
    - Increase the history period for more data
    - Manually trigger recalculation after significant schedule changes
-   - Review the learned patterns using the `get_time_based_priors` service
+   - Review the learned patterns using the `debug_database_state` service
 
 ### Debug Services
 
 Two additional debug services are available:
 
-- **`debug_import_intervals`**: Manually trigger state intervals import from recorder
 - **`debug_database_state`**: Check database state and statistics
 
 ## Integration with Existing Features

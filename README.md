@@ -162,24 +162,13 @@ The integration creates several entities, all prefixed with your configured area
 
 ## Services
 
-### area_occupancy.update_priors
+### area_occupancy.run_analysis
 
-Manually trigger an update of the learned prior probabilities.
-
-Service Data:
-```yaml
-entry_id: "<config_entry_id>"  # Required: ID of the Area Occupancy instance
-history_period: 7              # Optional: Days of history to analyze (1-30 days)
-```
-
-### area_occupancy.update_likelihoods
-
-Recalculate the stored sensor likelihoods. Use this after changing sensors or if you want to refresh how reliable each sensor is considered.
+Run the historical analysis process for an Area Occupancy instance. This imports recent state data from the recorder, updates priors and likelihoods and refreshes the entities.
 
 Service Data:
 ```yaml
 entry_id: "<config_entry_id>"  # Required: ID of the Area Occupancy instance
-history_period: 7              # Optional: Days of history to analyse
 ```
 
 ## Example Automations
@@ -227,10 +216,9 @@ automation:
         weekday:
           - mon
     action:
-      - service: area_occupancy.update_priors
+      - service: area_occupancy.run_analysis
         data:
           entry_id: !input config_entry_id
-          history_period: 14
 ```
 
 ## Troubleshooting
