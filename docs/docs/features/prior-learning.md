@@ -46,7 +46,7 @@ This learning process relies heavily on the **Primary Occupancy Sensor** you des
 ### Global Prior Learning
 
 - **Automatically:** This learning process typically runs automatically in the background at a set interval (e.g., once per hour, though this might be configurable or dynamically adjusted).
-- **Manually:** You can trigger the learning process immediately using the `area_occupancy.update_priors` service call.
+- **Manually:** You can trigger the learning process immediately using the `area_occupancy.run_analysis` service call.
 - **Startup:** It may also run on Home Assistant startup or when the integration is first set up, especially if no prior learned data exists.
 
 ## Using Learned Priors
