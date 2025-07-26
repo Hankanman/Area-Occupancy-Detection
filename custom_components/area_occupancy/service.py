@@ -28,7 +28,7 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
-async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Manually trigger an update of sensor likelihoods."""
     entry_id = call.data["entry_id"]
 
