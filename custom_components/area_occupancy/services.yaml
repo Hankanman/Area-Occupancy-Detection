@@ -1,22 +1,10 @@
-update_area_prior:
-  name: Update Area Prior
-  description: "Update the area's baseline occupancy prior from historical data."
+run_analysis:
+  name: Run Analysis
+  description: "Run the analysis for the area occupancy instance."
   fields:
     entry_id:
       name: Entry ID
-      description: "Select the Area Occupancy instance to update area prior for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-
-update_likelihoods:
-  name: Update Sensor Likelihoods
-  description: "Update the learned conditional probabilities for all configured sensors."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to update sensor likelihoods for."
+      description: "Select the Area Occupancy instance to run analysis for."
       required: true
       selector:
         config_entry:
@@ -96,18 +84,6 @@ get_entity_type_learned_data:
     entry_id:
       name: Entry ID
       description: "Select the Area Occupancy instance to get learned entity type data for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-
-debug_import_intervals:
-  name: Debug Import State Intervals
-  description: "Manually trigger state intervals import from recorder with detailed debug logging. Use this to diagnose why state intervals aren't being populated."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to debug import for."
       required: true
       selector:
         config_entry:
