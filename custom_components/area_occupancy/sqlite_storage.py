@@ -621,9 +621,15 @@ class AreaOccupancyStorage:
             end_time,
         )
 
+        entities = entity_ids
+        if self.coordinator.occupancy_entity_id:
+            entities.append(self.coordinator.occupancy_entity_id)
+        if self.coordinator.wasp_entity_id:
+            entities.append(self.coordinator.wasp_entity_id)
+
         import_counts = {}
 
-        for entity_id in entity_ids:
+        for entity_id in entities:
             try:
                 _LOGGER.debug("Processing entity %s for import", entity_id)
 
