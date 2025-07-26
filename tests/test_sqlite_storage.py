@@ -63,13 +63,11 @@ async def test_import_intervals_from_recorder(real_storage: AreaOccupancyStorage
             side_effect=lambda intervals: len(intervals),
         ) as save_batch,
     ):
-        result = await real_storage.import_intervals_from_recorder(
-            ["sensor.demo"], days=1
-        )
+        await real_storage.import_intervals_from_recorder(["sensor.demo"], days=1)
         # Accept either 1 or 0 depending on whether intervals are actually saved
-        assert result["sensor.demo"] in (0, 1)
+        assert real_storage.import_stats["sensor.demo"] in (0, 1)
         # Only check save_batch if intervals were passed
-        if result["sensor.demo"]:
+        if real_storage.import_stats["sensor.demo"]:
             save_batch.assert_called_once_with([interval])
 
 
