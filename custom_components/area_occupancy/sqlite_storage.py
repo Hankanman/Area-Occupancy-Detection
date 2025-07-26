@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
@@ -16,7 +17,6 @@ from homeassistant.util import dt as dt_util
 from .const import HA_RECORDER_DAYS
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
 from .schema import (
-    DB_VERSION,
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
     AreaTimePriorRecord,
@@ -99,77 +99,37 @@ class AreaOccupancyStorage:
         def _create_schema():
             try:
                 self._enable_wal_mode()
-                # Check which tables already exist
-                with self.engine.connect() as conn:
-                    existing_tables = {
-                        row[0]
-                        for row in conn.execute(
-                            sa.text("SELECT name FROM sqlite_master WHERE type='table'")
-                        ).fetchall()
-                    }
-
-                    _LOGGER.debug("Existing tables: %s", existing_tables)
-
-                # Create all tables and indexes in one call
                 metadata.create_all(self.engine, checkfirst=True)
-
-                # Initialize/check version metadata
-                with self.engine.connect() as conn:
-                    # Check if version exists
-                    result = conn.execute(
-                        sa.select(metadata_table.c.value).where(
-                            metadata_table.c.key == "db_version"
-                        )
-                    ).fetchone()
-
-                    if not result:
-                        conn.execute(
-                            metadata_table.insert().values(
-                                key="db_version", value=str(DB_VERSION)
-                            )
-                        )
-                        conn.commit()
-                        _LOGGER.info("Database initialized with version %s", DB_VERSION)
-                    else:
-                        current_version = int(result[0])
-                        if current_version < DB_VERSION:
-                            _LOGGER.info(
-                                "Database schema upgrade needed: %s -> %s",
-                                current_version,
-                                DB_VERSION,
-                            )
-                            # TODO: Add migration logic here for future schema changes
-                            conn.execute(
-                                metadata_table.update()
-                                .where(metadata_table.c.key == "db_version")
-                                .values(value=str(DB_VERSION))
-                            )
-                            conn.commit()
-
-                    # Verify database integrity
-                    self._check_database_integrity(conn)
-
-            except (sa.exc.SQLAlchemyError, OSError) as err:
-                _LOGGER.error("Database initialization failed: %s", err)
-                # Attempt to recover by recreating schema
-                if "corrupt" in str(err).lower():
-                    _LOGGER.warning("Database corruption detected, attempting recovery")
-                    self.db_path.unlink(missing_ok=True)
-                    # Recreate all tables since we deleted the database
-                    for table in metadata.tables.values():
-                        table.create(self.engine)
-                    with self.engine.connect() as conn:
-                        conn.execute(
-                            metadata_table.insert().values(
-                                key="db_version", value=str(DB_VERSION)
-                            )
-                        )
-                        conn.commit()
+            except sa.exc.OperationalError as err:
+                # Handle race condition when multiple instances try to create tables
+                if "already exists" in str(err).lower():
+                    _LOGGER.debug(
+                        "Table already exists (race condition), continuing: %s", err
+                    )
+                    # Continue - other tables might still need to be created
+                    # Try to create remaining tables individually
+                    self._create_tables_individually()
                 else:
+                    _LOGGER.error("Database initialization failed: %s", err)
                     raise
+            except Exception as err:
+                _LOGGER.error("Database initialization failed: %s", err)
+                raise
 
         await self.hass.async_add_executor_job(_create_schema)
         _LOGGER.info("SQLite storage initialized successfully")
+
+    def _create_tables_individually(self) -> None:
+        """Create tables individually to handle race conditions."""
+        with self.engine.connect():
+            for table in metadata.tables.values():
+                try:
+                    table.create(self.engine, checkfirst=True)
+                except sa.exc.OperationalError as err:
+                    if "already exists" in str(err).lower():
+                        _LOGGER.debug("Table %s already exists, skipping", table.name)
+                        continue
+                    raise
 
     def _check_database_integrity(self, conn) -> None:
         """Check database integrity and log issues."""
@@ -200,6 +160,33 @@ class AreaOccupancyStorage:
 
         except (sa.exc.SQLAlchemyError, OSError) as err:
             _LOGGER.warning("Database integrity check failed: %s", err)
+
+    def _execute_with_retry(
+        self, func, max_retries: int = 3, initial_delay: float = 0.1
+    ):
+        """Execute a function with retry logic for database lock errors."""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except sa.exc.OperationalError as err:
+                if (
+                    "database is locked" in str(err).lower()
+                    and attempt < max_retries - 1
+                ):
+                    delay = initial_delay * (2**attempt)  # Exponential backoff
+                    _LOGGER.debug(
+                        "Database locked, retrying in %.2fs (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+            except Exception:
+                raise
+        # This should never be reached due to the retry logic above
+        raise RuntimeError("Retry logic failed unexpectedly")
 
     # ─────────────────── Area Occupancy Methods ───────────────────
 
@@ -254,38 +241,39 @@ class AreaOccupancyStorage:
         record.last_updated = dt_util.utcnow()
 
         def _save(record: AreaEntityConfigRecord):
-            # First ensure the global entity exists
-
-            with self.engine.connect() as conn:
-                # Ensure global entity exists
-                conn.execute(
-                    sa.text(
+            def _do_save():
+                with self.engine.connect() as conn:
+                    # Ensure global entity exists
+                    conn.execute(
+                        sa.text(
+                            """
+                            INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
+                            VALUES (:entity_id, :now, :now)
                         """
-                        INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
-                        VALUES (:entity_id, :now, :now)
-                    """
-                    ),
-                    {
-                        "entity_id": record.entity_id,
-                        "now": dt_util.utcnow(),
-                    },
-                )
+                        ),
+                        {
+                            "entity_id": record.entity_id,
+                            "now": dt_util.utcnow(),
+                        },
+                    )
 
-                # Save area-specific config
-                values = SchemaConverter.area_entity_config_to_dict(record)
-                stmt = sa.text(
+                    # Save area-specific config
+                    values = SchemaConverter.area_entity_config_to_dict(record)
+                    stmt = sa.text(
+                        """
+                        INSERT OR REPLACE INTO area_entity_config
+                        (entry_id, entity_id, entity_type, weight,
+                         prob_given_true, prob_given_false, last_updated)
+                        VALUES (:entry_id, :entity_id, :entity_type, :weight,
+                                :prob_given_true, :prob_given_false, :last_updated)
                     """
-                    INSERT OR REPLACE INTO area_entity_config
-                    (entry_id, entity_id, entity_type, weight,
-                     prob_given_true, prob_given_false, last_updated)
-                    VALUES (:entry_id, :entity_id, :entity_type, :weight,
-                            :prob_given_true, :prob_given_false, :last_updated)
-                """
-                )
+                    )
 
-                conn.execute(stmt, values)
-                conn.commit()
-                return record
+                    conn.execute(stmt, values)
+                    conn.commit()
+                    return record
+
+            return self._execute_with_retry(_do_save)
 
         return await self.hass.async_add_executor_job(_save, record)
 
@@ -441,8 +429,8 @@ class AreaOccupancyStorage:
         _LOGGER.debug("Saving batch of %d intervals", len(intervals))
 
         def _save():
-            stored_count = 0
-            try:
+            def _do_save():
+                stored_count = 0
                 with self.engine.connect() as conn:
                     # First, ensure all entities exist in a single executemany call
                     unique_entities = {interval["entity_id"] for interval in intervals}
@@ -501,11 +489,13 @@ class AreaOccupancyStorage:
                         len(values_list),
                         stored_count,
                     )
+                    return stored_count
+
+            try:
+                return self._execute_with_retry(_do_save)
             except (sa.exc.SQLAlchemyError, OSError) as err:
                 _LOGGER.warning("Failed to save batch of state intervals: %s", err)
                 return 0
-            else:
-                return stored_count
 
         return await self.hass.async_add_executor_job(_save)
 
