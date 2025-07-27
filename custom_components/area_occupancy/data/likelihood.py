@@ -172,7 +172,7 @@ class Likelihood:
         self.end_time = dt_util.utcnow()
 
         # Use only our DB for interval retrieval
-        intervals = await self.coordinator.sqlite_store.get_historical_intervals(
+        intervals = await self.coordinator.storage.get_historical_intervals(
             self.entity_id,
             self.start_time,
             self.end_time,

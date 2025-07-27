@@ -107,7 +107,7 @@ async def test_update_with_wasp_disabled(mock_coordinator):
             return occupancy_intervals
         return primary_intervals
 
-    mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
+    mock_coordinator.storage.get_historical_intervals = AsyncMock(
         side_effect=mock_get_intervals
     )
     mock_coordinator.config.wasp_in_box.enabled = False
@@ -130,7 +130,7 @@ async def test_update_with_wasp_disabled(mock_coordinator):
     assert prior.global_prior == prior.primary_sensors_prior
 
     # Verify call count: motion1, motion2, occupancy (wasp disabled)
-    calls = mock_coordinator.sqlite_store.get_historical_intervals.call_args_list
+    calls = mock_coordinator.storage.get_historical_intervals.call_args_list
     assert len(calls) == 3
 
 
@@ -147,7 +147,7 @@ async def test_update_with_wasp_enabled(mock_coordinator):
         },
     ]
 
-    mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
+    mock_coordinator.storage.get_historical_intervals = AsyncMock(
         return_value=intervals
     )
     mock_coordinator.config.wasp_in_box.enabled = True
@@ -156,7 +156,7 @@ async def test_update_with_wasp_enabled(mock_coordinator):
     await prior.update()
 
     # Verify that get_historical_intervals was called with wasp entity included
-    calls = mock_coordinator.sqlite_store.get_historical_intervals.call_args_list
+    calls = mock_coordinator.storage.get_historical_intervals.call_args_list
 
     # Should be called 4 times: motion1, motion2, wasp (for primary sensors), and occupancy
     assert len(calls) == 4
@@ -201,7 +201,7 @@ async def test_update_occupancy_higher_than_primary(mock_coordinator):
             return occupancy_intervals
         return primary_intervals
 
-    mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
+    mock_coordinator.storage.get_historical_intervals = AsyncMock(
         side_effect=mock_get_intervals
     )
 
@@ -215,14 +215,14 @@ async def test_update_occupancy_higher_than_primary(mock_coordinator):
     assert prior.global_prior == prior.occupancy_prior
 
     # Verify call count: motion1, motion2, occupancy (wasp disabled by default)
-    calls = mock_coordinator.sqlite_store.get_historical_intervals.call_args_list
+    calls = mock_coordinator.storage.get_historical_intervals.call_args_list
     assert len(calls) == 3
 
 
 @pytest.mark.asyncio
 async def test_update_handles_exception_and_sets_min_prior(mock_coordinator):
     # Simulate error in get_historical_intervals
-    mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
+    mock_coordinator.storage.get_historical_intervals = AsyncMock(
         side_effect=Exception("fail")
     )
     prior = Prior(mock_coordinator)
@@ -250,7 +250,7 @@ async def test_calculate_prior_method(mock_coordinator):
         },
     ]
 
-    mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
+    mock_coordinator.storage.get_historical_intervals = AsyncMock(
         return_value=intervals
     )
 
@@ -264,8 +264,8 @@ async def test_calculate_prior_method(mock_coordinator):
     assert isinstance(merged_intervals, list)
 
     # Verify get_historical_intervals was called with state_filter
-    mock_coordinator.sqlite_store.get_historical_intervals.assert_called_once()
-    call_kwargs = mock_coordinator.sqlite_store.get_historical_intervals.call_args[1]
+    mock_coordinator.storage.get_historical_intervals.assert_called_once()
+    call_kwargs = mock_coordinator.storage.get_historical_intervals.call_args[1]
     assert call_kwargs.get("state_filter") == "on"
 
 

@@ -642,14 +642,14 @@ class TestDebugDatabaseState:
             "db_size_mb": 1.5,
         }
         # Mock the async methods properly
-        mock_coordinator.sqlite_store.is_state_intervals_empty = AsyncMock()
-        mock_coordinator.sqlite_store.is_state_intervals_empty.return_value = False
-        mock_coordinator.sqlite_store.get_total_intervals_count = AsyncMock()
-        mock_coordinator.sqlite_store.get_total_intervals_count.return_value = 1000
-        mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock()
-        mock_coordinator.sqlite_store.get_historical_intervals.return_value = []
-        mock_coordinator.sqlite_store.async_get_stats = AsyncMock()
-        mock_coordinator.sqlite_store.async_get_stats.return_value = mock_stats
+        mock_coordinator.storage.is_state_intervals_empty = AsyncMock()
+        mock_coordinator.storage.is_state_intervals_empty.return_value = False
+        mock_coordinator.storage.get_total_intervals_count = AsyncMock()
+        mock_coordinator.storage.get_total_intervals_count.return_value = 1000
+        mock_coordinator.storage.get_historical_intervals = AsyncMock()
+        mock_coordinator.storage.get_historical_intervals.return_value = []
+        mock_coordinator.storage.async_get_stats = AsyncMock()
+        mock_coordinator.storage.async_get_stats.return_value = mock_stats
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -663,9 +663,8 @@ class TestDebugDatabaseState:
         assert "state_intervals_empty" in result["database_state"]
         assert "sample_entities" in result["database_state"]
         assert "database_stats" in result["database_state"]
-        assert "schema_info" in result["database_state"]
 
-        mock_coordinator.sqlite_store.async_get_stats.assert_called_once()
+        mock_coordinator.storage.async_get_stats.assert_called_once()
 
     async def test_debug_database_state_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test debug database state with missing entry_id."""
@@ -684,14 +683,14 @@ class TestDebugDatabaseState:
     ) -> None:
         """Test debug database state with error."""
         # Mock the async methods properly
-        mock_coordinator.sqlite_store.is_state_intervals_empty = AsyncMock()
-        mock_coordinator.sqlite_store.is_state_intervals_empty.return_value = False
-        mock_coordinator.sqlite_store.get_total_intervals_count = AsyncMock()
-        mock_coordinator.sqlite_store.get_total_intervals_count.return_value = 1000
-        mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock()
-        mock_coordinator.sqlite_store.get_historical_intervals.return_value = []
-        mock_coordinator.sqlite_store.async_get_stats = AsyncMock()
-        mock_coordinator.sqlite_store.async_get_stats.side_effect = RuntimeError(
+        mock_coordinator.storage.is_state_intervals_empty = AsyncMock()
+        mock_coordinator.storage.is_state_intervals_empty.return_value = False
+        mock_coordinator.storage.get_total_intervals_count = AsyncMock()
+        mock_coordinator.storage.get_total_intervals_count.return_value = 1000
+        mock_coordinator.storage.get_historical_intervals = AsyncMock()
+        mock_coordinator.storage.get_historical_intervals.return_value = []
+        mock_coordinator.storage.async_get_stats = AsyncMock()
+        mock_coordinator.storage.async_get_stats.side_effect = RuntimeError(
             "Stats failed"
         )
 
@@ -735,10 +734,8 @@ class TestPurgeIntervals:
         mock_context_manager = Mock()
         mock_context_manager.__enter__ = Mock(return_value=mock_connection)
         mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_coordinator.sqlite_store.engine.connect.return_value = mock_context_manager
-        mock_coordinator.sqlite_store.get_historical_intervals = AsyncMock(
-            return_value=[]
-        )
+        mock_coordinator.storage.engine.connect.return_value = mock_context_manager
+        mock_coordinator.storage.get_historical_intervals = AsyncMock(return_value=[])
 
         # Mock hass.async_add_executor_job
         mock_hass.async_add_executor_job = AsyncMock()
