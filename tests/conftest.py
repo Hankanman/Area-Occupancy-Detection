@@ -77,7 +77,7 @@ from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.likelihood import Likelihood
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
-from custom_components.area_occupancy.sqlite_storage import AreaOccupancyStorage
+from custom_components.area_occupancy.storage import AreaOccupancyStorage
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -1250,17 +1250,15 @@ def mock_entity_for_likelihood_tests() -> Mock:
 
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_store_globally():
-    """Automatically mock AreaOccupancySQLiteStore for all tests."""
+    """Automatically mock AreaOccupancyStorage for all tests."""
     with patch(
-        "custom_components.area_occupancy.sqlite_storage.AreaOccupancyStorage"
+        "custom_components.area_occupancy.storage.AreaOccupancyStorage"
     ) as mock_store_class:
         mock_store = Mock()
         mock_store.async_save_data = AsyncMock()
         mock_store.async_load_data = AsyncMock(return_value=None)
         mock_store.async_reset = AsyncMock()
         mock_store.async_get_stats = AsyncMock(return_value={})
-        mock_store.get_time_prior = AsyncMock(return_value=None)
-        mock_store.save_time_priors_batch = AsyncMock(return_value=0)
         mock_store.get_historical_intervals = AsyncMock(return_value=[])
         mock_store_class.return_value = mock_store
         yield mock_store
