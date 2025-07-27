@@ -125,6 +125,21 @@ def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
+CONF_HISTORY_PERIOD = "history_period"
+
+
+def remove_history_keys(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated history period key from config."""
+    if CONF_HISTORY_PERIOD in config:
+        config.pop(CONF_HISTORY_PERIOD)
+        _LOGGER.debug("Removed deprecated history period key from config")
+    if CONF_HISTORICAL_ANALYSIS_ENABLED in config:
+        config.pop(CONF_HISTORICAL_ANALYSIS_ENABLED)
+        _LOGGER.debug("Removed deprecated historical analysis enabled key from config")
+    return config
+
+
 def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add decay half life."""
     if CONF_DECAY_HALF_LIFE not in config:
@@ -204,6 +219,7 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     config = migrate_decay_half_life(config)
     config = remove_decay_window_key(config)
     config = remove_lights_key(config)
+    config = remove_history_keys(config)
     return migrate_purpose_field(config)
 
 

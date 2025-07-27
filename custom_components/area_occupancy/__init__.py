@@ -42,7 +42,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Create and setup coordinator
     _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
-    coordinator = AreaOccupancyCoordinator(hass, entry)
+    try:
+        coordinator = AreaOccupancyCoordinator(hass, entry)
+    except Exception as err:
+        _LOGGER.error("Failed to create coordinator: %s", err)
+        raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
 
     # Use modern coordinator setup pattern
     try:
@@ -81,15 +85,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         # Check if runtime_data exists and has a coordinator
         if hasattr(entry, "runtime_data") and entry.runtime_data:
-            # Use the existing coordinator's store
-            store = entry.runtime_data.store
+            # Use the existing coordinator's sqlite store
+            storage = entry.runtime_data.storage
         else:
             # Create a temporary coordinator just for cleanup
             temp_coordinator = AreaOccupancyCoordinator(hass, entry)
-            store = temp_coordinator.store
+            storage = temp_coordinator.storage
 
         # Remove the per-entry storage file
-        await store.async_remove()
+        await storage.async_reset()
         _LOGGER.info("Per-entry storage removed for instance %s", entry_id)
 
     except Exception:

@@ -1,5 +1,5 @@
-homeassistant==2025.2.4
+homeassistant
 pip>=21.3.1
-ruff==0.12.4
+ruff==0.12.5
 
 # Stay aligned with https://github.com/ludeeus/integration_blueprint/blob/main/requirements.txt
