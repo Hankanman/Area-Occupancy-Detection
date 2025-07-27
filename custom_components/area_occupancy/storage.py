@@ -1,156 +1,677 @@
-"""Storage manager for Area Occupancy Detection."""
+"""SQLite storage module for Area Occupancy Detection."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+import time
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.storage import Store
+import sqlalchemy as sa
+
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, DOMAIN
+from .const import HA_RECORDER_DAYS
+from .data.entity_type import _ENTITY_TYPE_DATA, InputType
+from .db import AreaOccupancyDB, Base, Serializer
+from .state_intervals import StateInterval, get_intervals_from_recorder
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-
-class AreaOccupancyStorageData(TypedDict, total=False):
-    """Typed data structure for area occupancy storage."""
-
-    name: str | None
-    purpose: str | None
-    probability: float | None
-    prior: float | None
-    threshold: float | None
-    last_updated: str | None
-    entities: dict[str, Any]
+# Default retention for state interval cleanup
+DEFAULT_RETENTION_DAYS = 365
 
 
-class AreaOccupancyStore(Store[AreaOccupancyStorageData]):
-    """Per-config-entry storage for Area Occupancy Detection."""
+class AreaOccupancyStorage:
+    """Unified storage for Area Occupancy Detection, combining DB access and coordinator logic."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the per-entry storage."""
-        super().__init__(
-            hass=coordinator.hass,
-            version=CONF_VERSION,
-            key=f"{DOMAIN}.{coordinator.entry_id}",
-            atomic_writes=True,  # Enable safe writes
-            minor_version=CONF_VERSION_MINOR,
-        )
-        self._coordinator = coordinator
+    def __init__(
+        self,
+        hass: HomeAssistant = None,
+        entry_id: str | None = None,
+        coordinator: AreaOccupancyCoordinator | None = None,
+    ) -> None:
+        """Initialize SQLite storage.
 
-    async def _async_migrate_func(
-        self, old_major_version: int, old_minor_version: int, old_data: dict
-    ) -> AreaOccupancyStorageData:
-        """Migrate storage data to new format."""
-        _LOGGER.info(
-            "Migrating storage for entry %s from version %d.%d to %d.%d",
-            self._coordinator.entry_id,
-            old_major_version,
-            old_minor_version,
-            CONF_VERSION,
-            CONF_VERSION_MINOR,
-        )
+        Args:
+            hass: Home Assistant instance (optional for testing)
+            entry_id: Unique entry ID for the area (optional for testing)
+            coordinator: AreaOccupancyCoordinator instance (optional for testing)
 
-        # For major version changes, start fresh
-        if old_major_version < CONF_VERSION:
-            _LOGGER.info(
-                "Major version change for entry %s, starting with empty storage",
-                self._coordinator.entry_id,
-            )
-            return AreaOccupancyStorageData(entities={})
-
-        # Handle migration from various data formats
-        if isinstance(old_data, dict):
-            return AreaOccupancyStorageData(
-                name=old_data.get("name"),
-                purpose=old_data.get("purpose"),
-                probability=old_data.get("probability"),
-                prior=old_data.get("prior"),
-                threshold=old_data.get("threshold"),
-                last_updated=old_data.get("last_updated"),
-                entities=old_data.get("entities", {}),
-            )
-
-        # Fallback for unexpected data format
-        return AreaOccupancyStorageData(entities={}, entity_types={})
-
-    async def async_save_data(self, force: bool = False) -> None:
-        """Save coordinator data using debounced storage."""
-
-        entity_manager = self._coordinator.entities
-
-        def get_storage_data() -> AreaOccupancyStorageData:
-            entity_data = entity_manager.to_dict()
-
-            return AreaOccupancyStorageData(
-                name=self._coordinator.config.name,
-                purpose=self._coordinator.config.purpose,
-                probability=self._coordinator.probability,
-                prior=self._coordinator.area_prior,
-                threshold=self._coordinator.threshold,
-                last_updated=dt_util.utcnow().isoformat(),
-                entities=entity_data.get("entities", {}),
-            )
-
-        # Use native Store debounced saving
-        data = get_storage_data()
-        if force:
-            await self.async_save(data)
-        else:
-            self.async_delay_save(get_storage_data, delay=5)
-
-    async def async_load_data(self) -> AreaOccupancyStorageData | None:
-        """Load coordinator data from storage with compatibility checking.
-
-        Returns the full data dict if valid, or None if reset/invalid.
         """
-        coordinator = self._coordinator
-        try:
-            data = await super().async_load()
-            if data is None:
-                _LOGGER.info(
-                    "No stored data found for entry %s, will initialize with defaults",
-                    coordinator.entry_id,
-                )
-                return None
+        self.hass = hass
+        self.entry_id = entry_id
+        self.coordinator = coordinator
+        self.import_stats: dict[str, int] = {}
 
-            # Basic format validation
-            if not isinstance(data, dict) or "entities" not in data:
-                _LOGGER.warning(
-                    "Invalid storage format for entry %s, resetting",
-                    coordinator.entry_id,
+        # Use AreaOccupancyDB for database operations
+        self.db = AreaOccupancyDB(hass=self.hass) if self.hass else None
+        self.engine = self.db.engine if self.db else None
+
+        _LOGGER.debug(
+            "SQLite storage initialized for entry %s using AreaOccupancyDB", entry_id
+        )
+
+    def _enable_wal_mode(self) -> None:
+        """Enable SQLite WAL mode for better concurrent writes."""
+        if not self.engine:
+            return
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+        except sa.exc.SQLAlchemyError as err:
+            _LOGGER.debug("Failed to enable WAL mode: %s", err)
+
+    async def async_initialize(self) -> None:
+        """Initialize the database schema using SQLAlchemy."""
+
+        def _create_schema():
+            try:
+                self._enable_wal_mode()
+                Base.metadata.create_all(self.engine, checkfirst=True)
+            except sa.exc.OperationalError as err:
+                # Handle race condition when multiple instances try to create tables
+                if "already exists" in str(err).lower():
+                    _LOGGER.debug(
+                        "Table already exists (race condition), continuing: %s", err
+                    )
+                    # Continue - other tables might still need to be created
+                    # Try to create remaining tables individually
+                    self._create_tables_individually()
+                else:
+                    _LOGGER.error("Database initialization failed: %s", err)
+                    raise
+            except Exception as err:
+                _LOGGER.error("Database initialization failed: %s", err)
+                raise
+
+        await self.hass.async_add_executor_job(_create_schema)
+        _LOGGER.info("SQLite storage initialized successfully")
+
+    def _create_tables_individually(self) -> None:
+        """Create tables individually to handle race conditions."""
+        with self.engine.connect():
+            for table in Base.metadata.tables.values():
+                try:
+                    table.create(self.engine, checkfirst=True)
+                except sa.exc.OperationalError as err:
+                    if "already exists" in str(err).lower():
+                        _LOGGER.debug("Table %s already exists, skipping", table.name)
+                        continue
+                    raise
+
+    def execute_with_retry(
+        self, func, max_retries: int = 3, initial_delay: float = 0.1
+    ):
+        """Execute a function with retry logic for database lock errors."""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except sa.exc.OperationalError as err:
+                if (
+                    "database is locked" in str(err).lower()
+                    and attempt < max_retries - 1
+                ):
+                    delay = initial_delay * (2**attempt)  # Exponential backoff
+                    _LOGGER.debug(
+                        "Database locked, retrying in %.2fs (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+            except Exception:
+                raise
+        # This should never be reached due to the retry logic above
+        raise RuntimeError("Retry logic failed unexpectedly")
+
+    # ─────────────────── Area Occupancy Methods ───────────────────
+
+    async def save_area_occupancy(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Save or update area occupancy record."""
+        record["updated_at"] = dt_util.utcnow()
+
+        def _save(record: dict[str, Any]):
+            with self.engine.connect() as conn:
+                values = Serializer.area_occupancy_to_dict(record)
+
+                # Use INSERT OR REPLACE for SQLite
+                stmt = sa.text(
+                    """
+                    INSERT OR REPLACE INTO areas
+                    (entry_id, area_name, purpose, threshold, created_at, updated_at)
+                    VALUES (:entry_id, :area_name, :purpose, :threshold,
+                            COALESCE((SELECT created_at FROM areas WHERE entry_id = :entry_id), :created_at),
+                            :updated_at)
+                """
                 )
-                await self.async_remove()
-                return None
+
+                conn.execute(stmt, values)
+                conn.commit()
+                return record
+
+        return await self.hass.async_add_executor_job(_save, record)
+
+    async def get_area_occupancy(self, entry_id: str) -> dict[str, Any] | None:
+        """Get area occupancy record by entry ID."""
+
+        def _get():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(self.db.areas).where(self.db.areas.c.entry_id == entry_id)
+                ).fetchone()
+
+                return Serializer.row_to_area_occupancy(result) if result else None
+
+        return await self.hass.async_add_executor_job(_get)
+
+    # ─────────────────── Entity Configuration Methods ───────────────────
+
+    async def save_entity_config(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Save or update entity configuration."""
+        record["last_updated"] = dt_util.utcnow()
+
+        def _save(record: dict[str, Any]):
+            def _do_save():
+                with self.engine.connect() as conn:
+                    # Save entity configuration
+                    values = Serializer.entity_to_dict(record)
+                    stmt = sa.text(
+                        """
+                        INSERT OR REPLACE INTO entities
+                        (entry_id, entity_id, entity_type, weight,
+                         prob_given_true, prob_given_false, last_updated, created_at)
+                        VALUES (:entry_id, :entity_id, :entity_type, :weight,
+                                :prob_given_true, :prob_given_false, :last_updated, :created_at)
+                    """
+                    )
+
+                    conn.execute(stmt, values)
+                    conn.commit()
+                    return record
+
+            return self.execute_with_retry(_do_save)
+
+        return await self.hass.async_add_executor_job(_save, record)
+
+    async def get_entity_configs(self, entry_id: str) -> list[dict[str, Any]]:
+        """Get all entity configurations for an entry."""
+
+        def _get():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    sa.select(self.db.entities)
+                    .where(self.db.entities.c.entry_id == entry_id)
+                    .order_by(self.db.entities.c.entity_id)
+                ).fetchall()
+
+                return [Serializer.row_to_entity(row) for row in result]
+
+        return await self.hass.async_add_executor_job(_get)
+
+    # ─────────────────── Global State Intervals Methods ───────────────────
+
+    async def save_state_intervals_batch(self, intervals: list[StateInterval]) -> int:
+        """Save multiple state intervals efficiently to global table."""
+        if not intervals:
+            _LOGGER.debug("No intervals to save")
+            return 0
+
+        _LOGGER.debug("Saving batch of %d intervals", len(intervals))
+
+        def _save():
+            def _do_save():
+                stored_count = 0
+                with self.engine.connect() as conn:
+                    # First, ensure all entities exist in a single executemany call
+                    unique_entities = {interval["entity_id"] for interval in intervals}
+                    entity_values = [
+                        {"entity_id": entity_id, "now": dt_util.utcnow()}
+                        for entity_id in unique_entities
+                    ]
+                    if entity_values:
+                        conn.execute(
+                            sa.text(
+                                """
+                                INSERT OR IGNORE INTO entities (entry_id, entity_id, last_updated, created_at)
+                                VALUES (:entry_id, :entity_id, :now, :now)
+                                """
+                            ),
+                            [
+                                {
+                                    "entry_id": self.entry_id,
+                                    "entity_id": entity_id,
+                                    "now": dt_util.utcnow(),
+                                }
+                                for entity_id in unique_entities
+                            ],
+                        )
+
+                    # Commit entities first
+                    conn.commit()
+
+                    # Prepare all interval values for bulk insert
+                    values_list = [
+                        Serializer.state_interval_to_dict(interval)
+                        for interval in intervals
+                    ]
+
+                    if not values_list:
+                        _LOGGER.debug("No intervals to insert after conversion")
+                        return 0
+
+                    stmt = sa.text(
+                        """
+                        INSERT OR IGNORE INTO intervals
+                        (entity_id, state, start_time, end_time, duration_seconds, created_at)
+                        VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
+                        """
+                    )
+
+                    result = conn.execute(stmt, values_list)
+                    conn.commit()
+
+                    # SQLAlchemy 1.4+ result.rowcount is total rows inserted (may be -1 for some DBs)
+                    if (
+                        hasattr(result, "rowcount")
+                        and result.rowcount is not None
+                        and result.rowcount >= 0
+                    ):
+                        stored_count = result.rowcount
+                    else:
+                        # Fallback: count attempted inserts (not always accurate with OR IGNORE)
+                        stored_count = len(values_list)
+
+                    _LOGGER.debug(
+                        "Committed batch: attempted %d, stored %d intervals successfully",
+                        len(values_list),
+                        stored_count,
+                    )
+                    return stored_count
+
+            try:
+                return self.execute_with_retry(_do_save)
+            except (sa.exc.SQLAlchemyError, OSError) as err:
+                _LOGGER.warning("Failed to save batch of state intervals: %s", err)
+                return 0
+
+        return await self.hass.async_add_executor_job(_save)
+
+    async def get_historical_intervals(
+        self,
+        entity_id: str,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        state_filter: str | None = None,
+        limit: int | None = None,
+        page_size: int = 1000,
+    ) -> list[StateInterval]:
+        """Get historical state intervals from global storage with pagination support."""
+        if start_time is None:
+            start_time = dt_util.utcnow() - timedelta(days=30)
+        if end_time is None:
+            end_time = dt_util.utcnow()
+
+        def _get():
+            all_intervals = []
+            offset = 0
+
+            with self.engine.connect() as conn:
+                while True:
+                    query = sa.select(self.db.intervals).where(
+                        sa.and_(
+                            self.db.intervals.c.entity_id == entity_id,
+                            self.db.intervals.c.start_time >= start_time,
+                            self.db.intervals.c.end_time <= end_time,
+                        )
+                    )
+
+                    if state_filter:
+                        query = query.where(self.db.intervals.c.state == state_filter)
+
+                    query = query.order_by(self.db.intervals.c.start_time.desc())
+
+                    # Apply pagination
+                    page_limit = (
+                        min(page_size, limit - len(all_intervals))
+                        if limit
+                        else page_size
+                    )
+                    query = query.limit(page_limit).offset(offset)
+
+                    result = conn.execute(query).fetchall()
+                    if not result:
+                        break
+
+                    intervals = [
+                        Serializer.row_to_state_interval(row) for row in result
+                    ]
+                    all_intervals.extend(intervals)
+
+                    # Check if we have enough results or reached the end
+                    if len(result) < page_size or (
+                        limit and len(all_intervals) >= limit
+                    ):
+                        break
+
+                    offset += page_size
+
+                return all_intervals[:limit] if limit else all_intervals
+
+        return await self.hass.async_add_executor_job(_get)
+
+    async def cleanup_old_intervals(
+        self, retention_days: int = DEFAULT_RETENTION_DAYS
+    ) -> int:
+        """Remove state intervals older than the retention period.
+
+        The default retention period keeps roughly one year of history to
+        balance accuracy with storage size.
+        """
+        cutoff_date = dt_util.utcnow() - timedelta(days=retention_days)
+
+        def _cleanup():
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    self.db.intervals.delete().where(
+                        self.db.intervals.c.end_time < cutoff_date
+                    )
+                )
+                deleted_count = result.rowcount
+                conn.commit()
+                return deleted_count
+
+        deleted_count = await self.hass.async_add_executor_job(_cleanup)
+        _LOGGER.info(
+            "Cleaned up %d state intervals older than %d days",
+            deleted_count,
+            retention_days,
+        )
+        return deleted_count
+
+    async def import_intervals_from_recorder(
+        self, entity_ids: list[str], days: int = HA_RECORDER_DAYS
+    ) -> None:
+        """Import state intervals from recorder into the global table.
+
+        The default range of 10 days mirrors Home Assistant's typical recorder
+        retention. Intervals with ``unavailable`` or ``unknown`` states are
+        ignored to keep the database small.
+        """
+        end_time = dt_util.utcnow()
+        start_time = end_time - timedelta(days=days)
+
+        _LOGGER.info(
+            "Importing recorder data for %d entities from %s to %s",
+            len(entity_ids),
+            start_time,
+            end_time,
+        )
+
+        entities = entity_ids
+        if self.coordinator.occupancy_entity_id:
+            entities.append(self.coordinator.occupancy_entity_id)
+        if self.coordinator.wasp_entity_id:
+            entities.append(self.coordinator.wasp_entity_id)
+
+        import_counts = {}
+
+        for entity_id in entities:
+            try:
+                _LOGGER.debug("Processing entity %s for import", entity_id)
+
+                # Get intervals from recorder
+                intervals = await get_intervals_from_recorder(
+                    self.hass, entity_id, start_time, end_time
+                )
+
+                _LOGGER.debug(
+                    "Got %d intervals from recorder for %s",
+                    len(intervals) if intervals else 0,
+                    entity_id,
+                )
+
+                if intervals:
+                    # Store intervals efficiently
+                    count = await self.save_state_intervals_batch(intervals)
+                    import_counts[entity_id] = count
+                    _LOGGER.debug("Imported %d intervals for %s", count, entity_id)
+                else:
+                    import_counts[entity_id] = 0
+                    _LOGGER.debug("No intervals found for %s", entity_id)
+
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to import intervals for %s",
+                    entity_id,
+                )
+                import_counts[entity_id] = 0
+
+        total_imported = sum(import_counts.values())
+        _LOGGER.info("Import completed: %d total intervals imported", total_imported)
+
+        self.import_stats = import_counts
+
+    # ─────────────────── Cleanup Methods ───────────────────
+
+    async def reset_entry_data(self, entry_id: str) -> None:
+        """Remove all data for a specific entry (area-specific only)."""
+
+        def _reset():
+            with self.engine.connect() as conn:
+                # Delete area-specific data only (preserve global entities and intervals)
+                # Note: area_history table removed in schema simplification
+                conn.execute(
+                    self.db.entities.delete().where(
+                        self.db.entities.c.entry_id == entry_id
+                    )
+                )
+                conn.execute(
+                    self.db.areas.delete().where(self.db.areas.c.entry_id == entry_id)
+                )
+                # Delete time-based priors
+                conn.execute(
+                    self.db.priors.delete().where(self.db.priors.c.entry_id == entry_id)
+                )
+                conn.commit()
+
+        await self.hass.async_add_executor_job(_reset)
+        _LOGGER.info("Reset area-specific data for entry %s", entry_id)
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Get database statistics."""
+
+        def _get_stats():
+            stats = {}
+            with self.engine.connect() as conn:
+                # Count records in each table
+                stats["areas_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.areas)
+                ).scalar()
+                stats["entities_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.entities)
+                ).scalar()
+                stats["intervals_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
+                ).scalar()
+                stats["priors_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.priors)
+                ).scalar()
+
+                # Entry-specific stats
+                stats[f"priors_entry_{self.entry_id}"] = conn.execute(
+                    sa.select(sa.func.count())
+                    .select_from(self.db.priors)
+                    .where(self.db.priors.c.entry_id == self.entry_id)
+                ).scalar()
+
+                # Database schema info
+                stats["database_version"] = conn.execute(
+                    sa.select(self.db.metadata.c.value).where(
+                        self.db.metadata.c.key == "db_version"
+                    )
+                ).scalar()
+
+            # Database file size
+            try:
+                stats["db_size_bytes"] = self.db.db_path.stat().st_size
+            except (FileNotFoundError, AttributeError):
+                stats["db_size_bytes"] = 0
+
+            return stats
+
+        return await self.hass.async_add_executor_job(_get_stats)
+
+    async def is_state_intervals_empty(self) -> bool:
+        """Check if the intervals table is empty."""
+
+        def _check_empty():
+            with self.engine.connect() as conn:
+                count = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
+                ).scalar()
+                return (count or 0) == 0
+
+        return await self.hass.async_add_executor_job(_check_empty)
+
+    async def get_total_intervals_count(self) -> int:
+        """Get the total count of state intervals."""
+
+        def _get_count():
+            with self.engine.connect() as conn:
+                count = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
+                ).scalar()
+                return count or 0
+
+        return await self.hass.async_add_executor_job(_get_count)
+
+    async def async_save_data(self) -> None:
+        """Save coordinator data to SQLite storage using normalized schema."""
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_save_data")
+        try:
+            # Save area occupancy data
+            area_record = {
+                "entry_id": self.coordinator.entry_id,
+                "area_name": self.coordinator.config.name,
+                "purpose": self.coordinator.config.purpose,
+                "threshold": self.coordinator.threshold,
+                "created_at": dt_util.utcnow(),
+                "updated_at": dt_util.utcnow(),
+            }
+            await self.save_area_occupancy(area_record)
+
+            # Save entity configurations
+            for entity in self.coordinator.entities.entities.values():
+                entity_config = {
+                    "entry_id": self.coordinator.entry_id,
+                    "entity_id": entity.entity_id,
+                    "entity_type": entity.type.input_type.value,
+                    "weight": entity.type.weight,
+                    "prob_given_true": entity.likelihood.prob_given_true,
+                    "prob_given_false": entity.likelihood.prob_given_false,
+                    "created_at": dt_util.utcnow(),
+                    "last_updated": dt_util.utcnow(),
+                }
+                await self.save_entity_config(entity_config)
 
             _LOGGER.debug(
-                "Successfully loaded storage data for entry %s", coordinator.entry_id
+                "Successfully saved data to SQLite storage for entry %s",
+                self.coordinator.entry_id,
             )
+        except Exception as err:
+            _LOGGER.error("Failed to save data to SQLite storage: %s", err)
+            raise
 
-        except (HomeAssistantError, OSError, ValueError) as err:
-            _LOGGER.warning(
-                "Storage error for entry %s, initializing with defaults: %s",
-                coordinator.entry_id,
-                err,
-            )
+    async def async_load_data(self) -> dict[str, Any] | None:
+        """Load coordinator data from SQLite storage using normalized schema."""
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_load_data")
+        try:
+            area_record = await self.get_area_occupancy(self.coordinator.entry_id)
+            if not area_record:
+                _LOGGER.info(
+                    "No area occupancy data found for entry %s",
+                    self.coordinator.entry_id,
+                )
+                return None
+            entity_configs = await self.get_entity_configs(self.coordinator.entry_id)
+            entities_data = {}
+            for config in entity_configs:
+                try:
+                    input_type = InputType(config["entity_type"])
+                    type_defaults = _ENTITY_TYPE_DATA.get(input_type, {})
+                except (ValueError, KeyError):
+                    type_defaults = _ENTITY_TYPE_DATA.get(InputType.MOTION, {})
+                    _LOGGER.warning(
+                        "Unknown entity type %s for %s, using motion defaults",
+                        config["entity_type"],
+                        config["entity_id"],
+                    )
+                entities_data[config["entity_id"]] = {
+                    "entity_id": config["entity_id"],
+                    "entity_type": config["entity_type"],
+                    "last_updated": config["last_updated"].isoformat(),
+                    "likelihood": {
+                        "prob_given_true": config["prob_given_true"],
+                        "prob_given_false": config["prob_given_false"],
+                        "last_updated": config["last_updated"].isoformat(),
+                    },
+                    "type": {
+                        "input_type": config["entity_type"],
+                        "weight": config["weight"],
+                        "prob_true": config["prob_given_true"],
+                        "prob_false": config["prob_given_false"],
+                        "prior": type_defaults.get("prior", 0.5),
+                        "active_states": type_defaults.get("active_states"),
+                        "active_range": type_defaults.get("active_range"),
+                    },
+                    "decay": {
+                        "last_trigger_ts": dt_util.utcnow().timestamp(),
+                        "half_life": self.coordinator.config.decay.half_life,
+                        "is_decaying": False,
+                    },
+                    "previous_evidence": None,
+                    "previous_probability": 0.0,
+                }
+            return {
+                "name": area_record["area_name"],
+                "purpose": area_record["purpose"],
+                "probability": self.coordinator.probability,
+                "prior": self.coordinator.area_prior,
+                "threshold": area_record["threshold"],
+                "last_updated": area_record["updated_at"].isoformat(),
+                "entities": entities_data,
+            }
+        except (sa.exc.SQLAlchemyError, OSError) as err:
+            _LOGGER.error("Failed to load data from SQLite storage: %s", err)
             return None
-        else:
-            return AreaOccupancyStorageData(
-                name=data.get("name"),
-                purpose=data.get("purpose"),
-                probability=data.get("probability"),
-                prior=data.get("prior"),
-                threshold=data.get("threshold"),
-                last_updated=data.get("last_updated"),
-                entities=data.get("entities", {}),
-            )
 
     async def async_reset(self) -> None:
-        """Reset storage by removing all stored data."""
-        _LOGGER.info("Resetting storage for entry %s", self._coordinator.entry_id)
-        await self.async_remove()
+        """Reset SQLite storage by removing all area-specific data for this entry."""
+        if not self.coordinator:
+            raise RuntimeError("Coordinator is required for async_reset")
+        await self.reset_entry_data(self.coordinator.entry_id)
+        _LOGGER.info("Reset SQLite storage for entry %s", self.coordinator.entry_id)
+
+    async def async_get_stats(self) -> dict[str, Any]:
+        """Get storage statistics."""
+        return await self.get_stats()
+
+    async def async_close(self) -> None:
+        """Dispose the SQLAlchemy engine."""
+
+        def _dispose() -> None:
+            if self.db:
+                self.db.close()
+                if self.db.engine:
+                    self.db.engine.dispose()
+
+        await self.hass.async_add_executor_job(_dispose)

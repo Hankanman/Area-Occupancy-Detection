@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
-import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import SQLAlchemyError
-
-from homeassistant.components.recorder.history import get_significant_states
-from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -26,198 +18,130 @@ from .const import (
 if TYPE_CHECKING:
     from .data.entity import Entity
 
-_LOGGER = logging.getLogger(__name__)
+# ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
 
 
-class Interval(TypedDict):
-    """Time interval with state information."""
-
-    start: datetime
-    end: datetime
-
-
-class StateInterval(Interval):
-    """Time interval with state information."""
-
-    state: str
-
-
-class TimeInterval(Interval):
-    """Time interval with time information."""
-
-    state: str
-
-
-class PriorInterval:
-    """Time interval with prior information."""
-
-    start_hour: int
-    start_minute: int
-    end_hour: int
-    end_minute: int
-    prior: float | None
-
-    def __init__(
-        self,
-        start_hour: int,
-        start_minute: int,
-        end_hour: int,
-        end_minute: int,
-        prior: float | None,
-    ) -> None:
-        """Initialize prior interval."""
-        self.start_hour = start_hour
-        self.start_minute = start_minute
-        self.end_hour = end_hour
-        self.end_minute = end_minute
-        self.prior = prior
-
-    def to_interval(self) -> Interval:
-        """Convert to interval."""
-        return Interval(
-            start=datetime(
-                datetime.now().year,
-                datetime.now().month,
-                datetime.now().day,
-                self.start_hour,
-                self.start_minute,
-            ),
-            end=datetime(
-                datetime.now().year,
-                datetime.now().month,
-                datetime.now().day,
-                self.end_hour,
-                self.end_minute,
-            ),
-        )
-
-
-class LikelihoodInterval(Interval):
-    """Time interval with likelihood information."""
-
-    prob_given_true: float
-    prob_given_false: float
-
-
-async def init_times_of_day(hass: HomeAssistant) -> list[PriorInterval]:
-    """Initialize times of day for a given entity as 24 hourly intervals."""
-    return [
-        PriorInterval(
-            start_hour=hour,
-            start_minute=minute,
-            end_hour=hour if minute == 0 else (hour + 1) % 24,
-            end_minute=29 if minute == 0 else 59,
-            prior=None,
-        )
-        for hour in range(24)
-        for minute in (0, 30)
-    ]
-
-
-# ──────────────────────────────────── History Utilities ──────────────────────────────────
-async def get_states_from_recorder(
-    hass: HomeAssistant, entity_id: str, start_time: datetime, end_time: datetime
-) -> list[State | dict[str, Any]] | None:
-    """Fetch states history from recorder.
+def datetime_to_time_slot(dt: datetime) -> tuple[int, int]:
+    """Convert datetime to day of week and time slot.
 
     Args:
-        hass: Home Assistant instance
-        entity_id: Entity ID to fetch history for
-        start_time: Start time window
-        end_time: End time window
+        dt: Datetime to convert
 
     Returns:
-        List of states or minimal state dicts if successful, None if error occurred
-
-    Raises:
-        HomeAssistantError: If recorder access fails
-        SQLAlchemyError: If database query fails
+        Tuple of (day_of_week, time_slot) where:
+        - day_of_week: 0=Monday, 6=Sunday
+        - time_slot: 0-47 (30-minute intervals, 00:00-00:29=0, 00:30-00:59=1, etc.)
 
     """
-    _LOGGER.debug("Fetching states: %s [%s -> %s]", entity_id, start_time, end_time)
+    # weekday() already returns Monday=0, Tuesday=1, ..., Sunday=6
+    day_of_week = dt.weekday()
 
-    # Check if recorder is available
-    recorder = get_instance(hass)
-    if recorder is None:
-        _LOGGER.debug("Recorder not available for %s", entity_id)
-        return None
+    # Calculate time slot (0-47 for 30-minute intervals)
+    hour = dt.hour
+    minute = dt.minute
+    time_slot = hour * 2 + (1 if minute >= 30 else 0)
 
-    try:
-        states = await recorder.async_add_executor_job(
-            lambda: get_significant_states(
-                hass,
-                start_time,
-                end_time,
-                [entity_id],
-                minimal_response=False,  # Must be false to include last_changed attribute
-            )
-        )
+    return day_of_week, time_slot
 
-        entity_states = states.get(entity_id) if states else None
 
-        if entity_states:
-            _LOGGER.debug("Found %d states for %s", len(entity_states), entity_id)
-        else:
-            _LOGGER.debug("No states found for %s", entity_id)
+def time_slot_to_datetime_range(
+    day_of_week: int, time_slot: int, base_date: datetime | None = None
+) -> tuple[datetime, datetime]:
+    """Convert day of week and time slot to datetime range.
 
-    except (HomeAssistantError, SQLAlchemyError, TimeoutError) as err:
-        _LOGGER.error("Error getting states for %s: %s", entity_id, err)
-        # Re-raise the exception as documented, let the caller handle fallback
-        raise
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
+        base_date: Base date to use (defaults to current date)
 
+    Returns:
+        Tuple of (start_datetime, end_datetime) for the 30-minute slot
+
+    """
+    if base_date is None:
+        base_date = dt_util.utcnow()
+
+    # Calculate start hour and minute
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
+
+    # Calculate end hour and minute
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
     else:
-        return entity_states
+        end_hour = start_hour
+        end_minute = 30
+
+    # Find the target day of week
+    current_weekday = base_date.weekday()  # weekday() already returns Monday=0
+    days_diff = (day_of_week - current_weekday) % 7
+
+    # Calculate target date
+    target_date = base_date.date() + timedelta(days=days_diff)
+
+    # Create start and end datetimes
+    start_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=start_hour, minute=start_minute)
+    )
+    end_dt = datetime.combine(
+        target_date, datetime.min.time().replace(hour=end_hour, minute=end_minute)
+    )
+
+    return start_dt, end_dt
 
 
-async def states_to_intervals(
-    states: Sequence[State], start: datetime, end: datetime
-) -> list[TimeInterval]:
-    """Convert state history to time intervals.
-
-    Args:
-        states: List of State objects
-        start: Start time for analysis
-        end: End time for analysis
+def get_current_time_slot() -> tuple[int, int]:
+    """Get the current day of week and time slot.
 
     Returns:
-        List of TimeInterval objects
+        Tuple of (day_of_week, time_slot) for current time
 
     """
-    intervals: list[TimeInterval] = []
-    if not states:
-        return intervals
+    return datetime_to_time_slot(dt_util.utcnow())
 
-    # Sort states chronologically
-    sorted_states = sorted(states, key=lambda x: x.last_changed)
 
-    # Determine the state that was active at the start time
-    current_state = sorted_states[0].state
-    for state in sorted_states:
-        if state.last_changed <= start:
-            current_state = state.state
-        else:
-            break
+def get_time_slot_name(day_of_week: int, time_slot: int) -> str:
+    """Get a human-readable name for a time slot.
 
-    current_time = start
+    Args:
+        day_of_week: 0=Monday, 6=Sunday
+        time_slot: 0-47 (30-minute intervals)
 
-    # Build intervals between state changes
-    for state in sorted_states:
-        if state.last_changed <= start:
-            continue
-        if state.last_changed > end:
-            break
-        intervals.append(
-            TimeInterval(
-                start=current_time, end=state.last_changed, state=current_state
-            )
-        )
-        current_state = state.state
-        current_time = state.last_changed
+    Returns:
+        Human-readable time slot name (e.g., "Monday 13:00-13:29")
 
-    # Final interval until end
-    intervals.append(TimeInterval(start=current_time, end=end, state=current_state))
+    """
+    day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    start_hour = time_slot // 2
+    start_minute = (time_slot % 2) * 30
 
-    return intervals
+    if start_minute == 30:
+        end_hour = (start_hour + 1) % 24
+        end_minute = 0
+    else:
+        end_hour = start_hour
+        end_minute = 30
+
+    return f"{day_names[day_of_week]} {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d}"
+
+
+def get_all_time_slots() -> list[tuple[int, int]]:
+    """Get all possible day of week and time slot combinations.
+
+    Returns:
+        List of (day_of_week, time_slot) tuples for all 336 slots (7 days × 48 slots)
+
+    """
+    return [(day, slot) for day in range(7) for slot in range(48)]
 
 
 # ───────────────────────────────────────── Validation ────────────────────────
@@ -225,15 +149,10 @@ def validate_prob(value: complex) -> float:
     """Validate probability value, handling complex numbers."""
     # Handle complex numbers by taking the real part
     if isinstance(value, complex):
-        _LOGGER.warning(
-            "Complex number detected in probability calculation: %s, using real part",
-            value,
-        )
         value = value.real
 
     # Ensure it's a valid float
     if not isinstance(value, (int, float)) or not (-1e10 < value < 1e10):
-        _LOGGER.warning("Invalid probability value: %s, using default", value)
         return 0.5
 
     return max(0.001, min(float(value), 1.0))

@@ -9,4 +9,4 @@ These values are called *likelihoods* and are calculated from your history data 
 
 If history based learning is disabled, or insufficient history is available, default likelihoods from the integration are used instead.
 
-You can manually refresh the stored likelihoods by calling the `area_occupancy.update_likelihoods` service.
+You can manually refresh the stored likelihoods by calling the `area_occupancy.run_analysis` service.
