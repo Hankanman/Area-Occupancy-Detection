@@ -11,7 +11,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .db import state_intervals_table
 from .state_intervals import filter_intervals
 
 if TYPE_CHECKING:
@@ -67,9 +66,9 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
             likelihood_data[entity_id] = entity_likelihood_data
 
-        import_stats = coordinator.sqlite_store.import_stats
+        import_stats = coordinator.storage.import_stats
         total_imported = sum(import_stats.values())
-        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
+        total_intervals = await coordinator.storage.get_total_intervals_count()
 
         response_data = {
             "area_name": coordinator.config.name,
@@ -359,8 +358,8 @@ async def _debug_database_state(
         _LOGGER.info("Debug: Checking database state for entry %s", entry_id)
 
         # Check if state_intervals table is empty
-        is_empty = await coordinator.sqlite_store.is_state_intervals_empty()
-        total_intervals = await coordinator.sqlite_store.get_total_intervals_count()
+        is_empty = await coordinator.storage.is_state_intervals_empty()
+        total_intervals = await coordinator.storage.get_total_intervals_count()
 
         _LOGGER.info(
             "Debug: State intervals empty: %s, Total count: %d",
@@ -375,7 +374,7 @@ async def _debug_database_state(
         for entity_id in entity_ids:
             try:
                 # Get recent intervals for this entity
-                intervals = await coordinator.sqlite_store.get_historical_intervals(
+                intervals = await coordinator.storage.get_historical_intervals(
                     entity_id,
                     start_time=dt_util.utcnow() - timedelta(days=1),
                     end_time=dt_util.utcnow(),
@@ -405,26 +404,7 @@ async def _debug_database_state(
                 sample_data[entity_id] = {"error": str(err)}
 
         # Get database statistics
-        stats = await coordinator.sqlite_store.async_get_stats()
-
-        # Add schema information
-        schema_info = {
-            "tables": [
-                "entities",
-                "state_intervals",
-                "area_occupancy",
-                "area_entity_config",
-                "metadata",
-            ],
-            "simplified_schema": True,
-            "removed_tables": ["area_history"],
-            "removed_fields": {
-                "area_occupancy": ["probability", "prior", "occupied"],
-                "area_entity_config": ["attributes", "last_state"],
-                "entities": ["domain"],
-            },
-            "indexes_count": 3,  # Simplified from 11 to 3
-        }
+        stats = await coordinator.storage.async_get_stats()
 
     except Exception as err:
         error_msg = f"Debug database state failed for {entry_id}: {err}"
@@ -437,7 +417,6 @@ async def _debug_database_state(
                 "total_intervals": total_intervals,
                 "sample_entities": sample_data,
                 "database_stats": stats,
-                "schema_info": schema_info,
             },
             "configuration": {
                 "entity_ids": coordinator.config.entity_ids,
@@ -453,7 +432,7 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
     try:
         coordinator = _get_coordinator(hass, entry_id)
-        sqlite_store = coordinator.sqlite_store
+        storage = coordinator.storage
         cutoff_date = dt_util.utcnow() - timedelta(days=retention_days)
 
         if not entity_ids:
@@ -461,27 +440,33 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
         # Count all intervals in the db for this entry_id (across all entity_ids)
         def _count_all_intervals():
-            with sqlite_store.engine.connect() as conn:
-                result = conn.execute(
-                    state_intervals_table.select().where(
-                        state_intervals_table.c.entity_id.in_(entity_ids)
+            def _do_count():
+                with storage.engine.connect() as conn:
+                    result = conn.execute(
+                        storage.db.intervals.select().where(
+                            storage.db.intervals.c.entity_id.in_(entity_ids)
+                        )
                     )
-                )
-                return len(result.fetchall())
+                    return len(result.fetchall())
+
+            return storage.execute_with_retry(_do_count)
 
         total_intervals_in_db = await hass.async_add_executor_job(_count_all_intervals)
 
         # 1. Delete all intervals older than the retention period
         def _delete_old():
-            with sqlite_store.engine.connect() as conn:
-                result = conn.execute(
-                    state_intervals_table.delete().where(
-                        state_intervals_table.c.entity_id.in_(entity_ids)
-                        & (state_intervals_table.c.end_time < cutoff_date)
+            def _do_delete_old():
+                with storage.engine.connect() as conn:
+                    result = conn.execute(
+                        storage.db.intervals.delete().where(
+                            storage.db.intervals.c.entity_id.in_(entity_ids)
+                            & (storage.db.intervals.c.end_time < cutoff_date)
+                        )
                     )
-                )
-                conn.commit()
-                return result.rowcount
+                    conn.commit()
+                    return result.rowcount
+
+            return storage.execute_with_retry(_do_delete_old)
 
         total_deleted_old = await hass.async_add_executor_job(_delete_old)
 
@@ -492,7 +477,7 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         details = {}
         for entity_id in entity_ids:
             # Fetch intervals within retention
-            intervals = await sqlite_store.get_historical_intervals(
+            intervals = await storage.get_historical_intervals(
                 entity_id,
                 start_time=cutoff_date,
                 end_time=None,
@@ -507,26 +492,29 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
             if to_delete:
 
-                def _delete(to_delete=to_delete):
-                    with sqlite_store.engine.connect() as conn:
-                        for iv in to_delete:
-                            conn.execute(
-                                state_intervals_table.delete().where(
-                                    (
-                                        state_intervals_table.c.entity_id
-                                        == iv["entity_id"]
+                def _delete_filtered(to_delete=to_delete):
+                    def _do_delete_filtered():
+                        with storage.engine.connect() as conn:
+                            for iv in to_delete:
+                                conn.execute(
+                                    storage.db.intervals.delete().where(
+                                        (
+                                            storage.db.intervals.c.entity_id
+                                            == iv["entity_id"]
+                                        )
+                                        & (
+                                            storage.db.intervals.c.start_time
+                                            == iv["start"]
+                                        )
+                                        & (storage.db.intervals.c.end_time == iv["end"])
+                                        & (storage.db.intervals.c.state == iv["state"])
                                     )
-                                    & (
-                                        state_intervals_table.c.start_time
-                                        == iv["start"]
-                                    )
-                                    & (state_intervals_table.c.end_time == iv["end"])
-                                    & (state_intervals_table.c.state == iv["state"])
                                 )
-                            )
-                        conn.commit()
+                            conn.commit()
 
-                await hass.async_add_executor_job(_delete)
+                    return storage.execute_with_retry(_do_delete_filtered)
+
+                await hass.async_add_executor_job(_delete_filtered)
 
             details[entity_id] = {
                 "intervals_checked": len(intervals),
