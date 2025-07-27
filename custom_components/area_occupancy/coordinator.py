@@ -36,7 +36,7 @@ from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
-from .sqlite_storage import AreaOccupancyStorage
+from .storage import AreaOccupancyStorage
 from .utils import conditional_sorted_probability
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
         self.prior = Prior(self)
-        self.sqlite_store = AreaOccupancyStorage(
+        self.storage = AreaOccupancyStorage(
             hass=self.hass, entry_id=self.entry_id, coordinator=self
         )
         self.entity_types = EntityTypeManager(self)
@@ -142,9 +142,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.entity_types.async_initialize()
 
             # Load stored data
-            await self.sqlite_store.async_initialize()
+            await self.storage.async_initialize()
 
-            is_empty = await self.sqlite_store.is_state_intervals_empty()
+            is_empty = await self.storage.is_state_intervals_empty()
             if is_empty:
                 _LOGGER.info(
                     "State intervals table is empty for instance %s. Populating with initial data from recorder.",
@@ -152,7 +152,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 entity_ids = [eid for eid in set(self.config.entity_ids) if eid]
                 if entity_ids:
-                    await self.sqlite_store.import_intervals_from_recorder(
+                    await self.storage.import_intervals_from_recorder(
                         entity_ids, days=HA_RECORDER_DAYS
                     )
                 else:
@@ -161,7 +161,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self.entry_id,
                     )
             # Initialize entities from storage or config
-            loaded_data = await self.sqlite_store.async_load_data()
+            loaded_data = await self.storage.async_load_data()
             if loaded_data:
                 self.entities = EntityManager.from_dict(dict(loaded_data), self)
                 await self.entities.__post_init__()
@@ -171,7 +171,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Calculate priors and likelihoods
             await self.prior.update()
             await self.entities.update_all_entity_likelihoods()
-            await self.sqlite_store.async_save_data()
+            await self.storage.async_save_data()
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
             # Start timers only after everything is ready
@@ -190,7 +190,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
         # Save current state to storage
-        await self.sqlite_store.async_save_data()
+        await self.storage.async_save_data()
 
         # Return current state data
         return {
@@ -219,7 +219,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer()
             self._analysis_timer = None
 
-        await self.sqlite_store.async_save_data()
+        await self.storage.async_save_data()
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -254,7 +254,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.track_entity_state_changes(self.entities.entity_ids)
 
         # Force immediate save after configuration changes
-        await self.sqlite_store.async_save_data()
+        await self.storage.async_save_data()
 
         await self.async_request_refresh()
 
@@ -323,10 +323,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Import recent data from recorder
             entity_ids = list(self.entities.entities.keys())
             if entity_ids:
-                await self.sqlite_store.import_intervals_from_recorder(
+                await self.storage.import_intervals_from_recorder(
                     entity_ids, days=HA_RECORDER_DAYS
                 )
-                import_stats = self.sqlite_store.import_stats
+                import_stats = self.storage.import_stats
                 total_imported = sum(import_stats.values())
 
                 if total_imported > 0:
@@ -343,7 +343,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     await self.entities.update_all_entity_likelihoods()
 
                 # Cleanup old data (yearly retention)
-                await self.sqlite_store.cleanup_old_intervals(retention_days=365)
+                await self.storage.cleanup_old_intervals(retention_days=365)
 
             # Refresh the coordinator
             await self.async_refresh()

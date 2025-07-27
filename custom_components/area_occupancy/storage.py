@@ -4,31 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
-from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
-from sqlalchemy import create_engine
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import HA_RECORDER_DAYS
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
-from .schema import (
-    AreaEntityConfigRecord,
-    AreaOccupancyRecord,
-    AreaTimePriorRecord,
-    SchemaConverter,
-    area_entity_config_table,
-    area_occupancy_table,
-    area_time_priors_table,
-    entities_table,
-    metadata,
-    metadata_table,
-    state_intervals_table,
-)
+from .db import AreaOccupancyDB, Base, Serializer
 from .state_intervals import StateInterval, get_intervals_from_recorder
 
 if TYPE_CHECKING:
@@ -36,18 +22,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Database constants
-DB_NAME = "area_occupancy.db"
 # Default retention for state interval cleanup
 DEFAULT_RETENTION_DAYS = 365
 
 
 class AreaOccupancyStorage:
     """Unified storage for Area Occupancy Detection, combining DB access and coordinator logic."""
-
-    # Merge all methods and logic from SQLiteStorage and AreaOccupancySQLiteStore here.
-    # Accept both hass/entry_id and coordinator in __init__, and set up attributes accordingly.
-    # All public APIs from both classes should be preserved.
 
     def __init__(
         self,
@@ -66,21 +46,14 @@ class AreaOccupancyStorage:
         self.hass = hass
         self.entry_id = entry_id
         self.coordinator = coordinator
-        self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
-        self.db_path = self.storage_path / DB_NAME if self.storage_path else None
         self.import_stats: dict[str, int] = {}
 
-        # Ensure storage directory exists
-        if self.storage_path:
-            self.storage_path.mkdir(exist_ok=True)
-
-        # Create SQLAlchemy engine
-        self.engine = (
-            create_engine(f"sqlite:///{self.db_path}") if self.db_path else None
-        )
+        # Use AreaOccupancyDB for database operations
+        self.db = AreaOccupancyDB(hass=self.hass) if self.hass else None
+        self.engine = self.db.engine if self.db else None
 
         _LOGGER.debug(
-            "SQLite storage initialized for entry %s at %s", entry_id, self.db_path
+            "SQLite storage initialized for entry %s using AreaOccupancyDB", entry_id
         )
 
     def _enable_wal_mode(self) -> None:
@@ -99,7 +72,7 @@ class AreaOccupancyStorage:
         def _create_schema():
             try:
                 self._enable_wal_mode()
-                metadata.create_all(self.engine, checkfirst=True)
+                Base.metadata.create_all(self.engine, checkfirst=True)
             except sa.exc.OperationalError as err:
                 # Handle race condition when multiple instances try to create tables
                 if "already exists" in str(err).lower():
@@ -122,7 +95,7 @@ class AreaOccupancyStorage:
     def _create_tables_individually(self) -> None:
         """Create tables individually to handle race conditions."""
         with self.engine.connect():
-            for table in metadata.tables.values():
+            for table in Base.metadata.tables.values():
                 try:
                     table.create(self.engine, checkfirst=True)
                 except sa.exc.OperationalError as err:
@@ -131,37 +104,7 @@ class AreaOccupancyStorage:
                         continue
                     raise
 
-    def _check_database_integrity(self, conn) -> None:
-        """Check database integrity and log issues."""
-        try:
-            # Quick integrity check
-            result = conn.execute(sa.text("PRAGMA integrity_check")).fetchone()
-            if result and result[0] != "ok":
-                _LOGGER.warning("Database integrity issue detected: %s", result[0])
-
-            # Check if all required tables exist
-            required_tables = [
-                "area_occupancy",
-                "entities",
-                "area_entity_config",
-                "state_intervals",
-                "metadata",
-            ]
-            existing_tables = [
-                row[0]
-                for row in conn.execute(
-                    sa.text("SELECT name FROM sqlite_master WHERE type='table'")
-                ).fetchall()
-            ]
-
-            missing_tables = set(required_tables) - set(existing_tables)
-            if missing_tables:
-                _LOGGER.warning("Missing tables detected: %s", missing_tables)
-
-        except (sa.exc.SQLAlchemyError, OSError) as err:
-            _LOGGER.warning("Database integrity check failed: %s", err)
-
-    def _execute_with_retry(
+    def execute_with_retry(
         self, func, max_retries: int = 3, initial_delay: float = 0.1
     ):
         """Execute a function with retry logic for database lock errors."""
@@ -190,23 +133,21 @@ class AreaOccupancyStorage:
 
     # ─────────────────── Area Occupancy Methods ───────────────────
 
-    async def save_area_occupancy(
-        self, record: AreaOccupancyRecord
-    ) -> AreaOccupancyRecord:
+    async def save_area_occupancy(self, record: dict[str, Any]) -> dict[str, Any]:
         """Save or update area occupancy record."""
-        record.updated_at = dt_util.utcnow()
+        record["updated_at"] = dt_util.utcnow()
 
-        def _save(record: AreaOccupancyRecord):
+        def _save(record: dict[str, Any]):
             with self.engine.connect() as conn:
-                values = SchemaConverter.area_occupancy_to_dict(record)
+                values = Serializer.area_occupancy_to_dict(record)
 
                 # Use INSERT OR REPLACE for SQLite
                 stmt = sa.text(
                     """
-                    INSERT OR REPLACE INTO area_occupancy
+                    INSERT OR REPLACE INTO areas
                     (entry_id, area_name, purpose, threshold, created_at, updated_at)
                     VALUES (:entry_id, :area_name, :purpose, :threshold,
-                            COALESCE((SELECT created_at FROM area_occupancy WHERE entry_id = :entry_id), :created_at),
+                            COALESCE((SELECT created_at FROM areas WHERE entry_id = :entry_id), :created_at),
                             :updated_at)
                 """
                 )
@@ -217,55 +158,37 @@ class AreaOccupancyStorage:
 
         return await self.hass.async_add_executor_job(_save, record)
 
-    async def get_area_occupancy(self, entry_id: str) -> AreaOccupancyRecord | None:
+    async def get_area_occupancy(self, entry_id: str) -> dict[str, Any] | None:
         """Get area occupancy record by entry ID."""
 
         def _get():
             with self.engine.connect() as conn:
                 result = conn.execute(
-                    sa.select(area_occupancy_table).where(
-                        area_occupancy_table.c.entry_id == entry_id
-                    )
+                    sa.select(self.db.areas).where(self.db.areas.c.entry_id == entry_id)
                 ).fetchone()
 
-                return SchemaConverter.row_to_area_occupancy(result) if result else None
+                return Serializer.row_to_area_occupancy(result) if result else None
 
         return await self.hass.async_add_executor_job(_get)
 
-    # ─────────────────── Area Entity Configuration Methods ───────────────────
+    # ─────────────────── Entity Configuration Methods ───────────────────
 
-    async def save_area_entity_config(
-        self, record: AreaEntityConfigRecord
-    ) -> AreaEntityConfigRecord:
-        """Save or update area-specific entity configuration."""
-        record.last_updated = dt_util.utcnow()
+    async def save_entity_config(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Save or update entity configuration."""
+        record["last_updated"] = dt_util.utcnow()
 
-        def _save(record: AreaEntityConfigRecord):
+        def _save(record: dict[str, Any]):
             def _do_save():
                 with self.engine.connect() as conn:
-                    # Ensure global entity exists
-                    conn.execute(
-                        sa.text(
-                            """
-                            INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
-                            VALUES (:entity_id, :now, :now)
-                        """
-                        ),
-                        {
-                            "entity_id": record.entity_id,
-                            "now": dt_util.utcnow(),
-                        },
-                    )
-
-                    # Save area-specific config
-                    values = SchemaConverter.area_entity_config_to_dict(record)
+                    # Save entity configuration
+                    values = Serializer.entity_to_dict(record)
                     stmt = sa.text(
                         """
-                        INSERT OR REPLACE INTO area_entity_config
+                        INSERT OR REPLACE INTO entities
                         (entry_id, entity_id, entity_type, weight,
-                         prob_given_true, prob_given_false, last_updated)
+                         prob_given_true, prob_given_false, last_updated, created_at)
                         VALUES (:entry_id, :entity_id, :entity_type, :weight,
-                                :prob_given_true, :prob_given_false, :last_updated)
+                                :prob_given_true, :prob_given_false, :last_updated, :created_at)
                     """
                     )
 
@@ -273,148 +196,22 @@ class AreaOccupancyStorage:
                     conn.commit()
                     return record
 
-            return self._execute_with_retry(_do_save)
+            return self.execute_with_retry(_do_save)
 
         return await self.hass.async_add_executor_job(_save, record)
 
-    async def get_area_entity_configs(
-        self, entry_id: str
-    ) -> list[AreaEntityConfigRecord]:
-        """Get all area-specific entity configurations for an entry."""
+    async def get_entity_configs(self, entry_id: str) -> list[dict[str, Any]]:
+        """Get all entity configurations for an entry."""
 
         def _get():
             with self.engine.connect() as conn:
                 result = conn.execute(
-                    sa.select(area_entity_config_table)
-                    .where(area_entity_config_table.c.entry_id == entry_id)
-                    .order_by(area_entity_config_table.c.entity_id)
+                    sa.select(self.db.entities)
+                    .where(self.db.entities.c.entry_id == entry_id)
+                    .order_by(self.db.entities.c.entity_id)
                 ).fetchall()
 
-                return [
-                    SchemaConverter.row_to_area_entity_config(row) for row in result
-                ]
-
-        return await self.hass.async_add_executor_job(_get)
-
-    # ─────────────────── Time-Based Priors Methods ───────────────────
-
-    async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
-        """Save multiple time-based prior records efficiently."""
-        if not records:
-            _LOGGER.debug("No time priors to save")
-            return 0
-
-        _LOGGER.debug("Saving batch of %d time priors", len(records))
-
-        def _save():
-            try:
-                with self.engine.connect() as conn:
-                    # Prepare a list of dictionaries for bulk insert
-                    values_list = [
-                        {
-                            **SchemaConverter.area_time_prior_to_dict(record),
-                            "last_updated": dt_util.utcnow(),
-                        }
-                        for record in records
-                    ]
-
-                    # Use executemany for bulk insert
-                    stmt = sa.text(
-                        """
-                        INSERT OR REPLACE INTO area_time_priors
-                        (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                        VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                        """
-                    )
-
-                    conn.execute(stmt, values_list)
-                    conn.commit()
-                    _LOGGER.debug(
-                        "Committed batch: %d time priors stored successfully",
-                        len(values_list),
-                    )
-                    return len(values_list)
-            except (sa.exc.SQLAlchemyError, OSError) as err:
-                _LOGGER.error("Failed to save batch of time priors: %s", err)
-                return 0
-
-        return await self.hass.async_add_executor_job(_save)
-
-    async def get_time_prior(
-        self, entry_id: str, day_of_week: int, time_slot: int
-    ) -> AreaTimePriorRecord | None:
-        """Get a specific time-based prior record."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table).where(
-                        sa.and_(
-                            area_time_priors_table.c.entry_id == entry_id,
-                            area_time_priors_table.c.day_of_week == day_of_week,
-                            area_time_priors_table.c.time_slot == time_slot,
-                        )
-                    )
-                ).fetchone()
-
-                return (
-                    SchemaConverter.row_to_area_time_prior(result) if result else None
-                )
-
-        return await self.hass.async_add_executor_job(_get)
-
-    async def get_time_priors_for_entry(
-        self, entry_id: str
-    ) -> list[AreaTimePriorRecord]:
-        """Get all time-based prior records for an entry."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table)
-                    .where(area_time_priors_table.c.entry_id == entry_id)
-                    .order_by(
-                        area_time_priors_table.c.day_of_week,
-                        area_time_priors_table.c.time_slot,
-                    )
-                ).fetchall()
-
-                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
-
-        return await self.hass.async_add_executor_job(_get)
-
-    async def get_recent_time_priors(
-        self, entry_id: str, hours: int = 24
-    ) -> list[AreaTimePriorRecord]:
-        """Get time-based prior records updated within the specified hours.
-
-        Args:
-            entry_id: The entry ID to get priors for
-            hours: Number of hours to look back for recent updates
-
-        Returns:
-            List of recent time prior records
-
-        """
-
-        def _get():
-            cutoff_time = dt_util.utcnow() - timedelta(hours=hours)
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table)
-                    .where(
-                        sa.and_(
-                            area_time_priors_table.c.entry_id == entry_id,
-                            area_time_priors_table.c.last_updated >= cutoff_time,
-                        )
-                    )
-                    .order_by(
-                        area_time_priors_table.c.day_of_week,
-                        area_time_priors_table.c.time_slot,
-                    )
-                ).fetchall()
-
-                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
+                return [Serializer.row_to_entity(row) for row in result]
 
         return await self.hass.async_add_executor_job(_get)
 
@@ -442,11 +239,18 @@ class AreaOccupancyStorage:
                         conn.execute(
                             sa.text(
                                 """
-                                INSERT OR IGNORE INTO entities (entity_id, last_seen, created_at)
-                                VALUES (:entity_id, :now, :now)
+                                INSERT OR IGNORE INTO entities (entry_id, entity_id, last_updated, created_at)
+                                VALUES (:entry_id, :entity_id, :now, :now)
                                 """
                             ),
-                            entity_values,
+                            [
+                                {
+                                    "entry_id": self.entry_id,
+                                    "entity_id": entity_id,
+                                    "now": dt_util.utcnow(),
+                                }
+                                for entity_id in unique_entities
+                            ],
                         )
 
                     # Commit entities first
@@ -454,7 +258,7 @@ class AreaOccupancyStorage:
 
                     # Prepare all interval values for bulk insert
                     values_list = [
-                        SchemaConverter.state_interval_to_dict(interval)
+                        Serializer.state_interval_to_dict(interval)
                         for interval in intervals
                     ]
 
@@ -464,7 +268,7 @@ class AreaOccupancyStorage:
 
                     stmt = sa.text(
                         """
-                        INSERT OR IGNORE INTO state_intervals
+                        INSERT OR IGNORE INTO intervals
                         (entity_id, state, start_time, end_time, duration_seconds, created_at)
                         VALUES (:entity_id, :state, :start_time, :end_time, :duration_seconds, :created_at)
                         """
@@ -492,7 +296,7 @@ class AreaOccupancyStorage:
                     return stored_count
 
             try:
-                return self._execute_with_retry(_do_save)
+                return self.execute_with_retry(_do_save)
             except (sa.exc.SQLAlchemyError, OSError) as err:
                 _LOGGER.warning("Failed to save batch of state intervals: %s", err)
                 return 0
@@ -520,20 +324,18 @@ class AreaOccupancyStorage:
 
             with self.engine.connect() as conn:
                 while True:
-                    query = sa.select(state_intervals_table).where(
+                    query = sa.select(self.db.intervals).where(
                         sa.and_(
-                            state_intervals_table.c.entity_id == entity_id,
-                            state_intervals_table.c.start_time >= start_time,
-                            state_intervals_table.c.end_time <= end_time,
+                            self.db.intervals.c.entity_id == entity_id,
+                            self.db.intervals.c.start_time >= start_time,
+                            self.db.intervals.c.end_time <= end_time,
                         )
                     )
 
                     if state_filter:
-                        query = query.where(
-                            state_intervals_table.c.state == state_filter
-                        )
+                        query = query.where(self.db.intervals.c.state == state_filter)
 
-                    query = query.order_by(state_intervals_table.c.start_time.desc())
+                    query = query.order_by(self.db.intervals.c.start_time.desc())
 
                     # Apply pagination
                     page_limit = (
@@ -548,7 +350,7 @@ class AreaOccupancyStorage:
                         break
 
                     intervals = [
-                        SchemaConverter.row_to_state_interval(row) for row in result
+                        Serializer.row_to_state_interval(row) for row in result
                     ]
                     all_intervals.extend(intervals)
 
@@ -577,8 +379,8 @@ class AreaOccupancyStorage:
         def _cleanup():
             with self.engine.connect() as conn:
                 result = conn.execute(
-                    state_intervals_table.delete().where(
-                        state_intervals_table.c.end_time < cutoff_date
+                    self.db.intervals.delete().where(
+                        self.db.intervals.c.end_time < cutoff_date
                     )
                 )
                 deleted_count = result.rowcount
@@ -592,15 +394,6 @@ class AreaOccupancyStorage:
             retention_days,
         )
         return deleted_count
-
-    async def vacuum_database(self) -> None:
-        """Run SQLite VACUUM to reclaim space."""
-
-        def _vacuum() -> None:
-            with self.engine.connect() as conn:
-                conn.execute(sa.text("VACUUM"))
-
-        await self.hass.async_add_executor_job(_vacuum)
 
     async def import_intervals_from_recorder(
         self, entity_ids: list[str], days: int = HA_RECORDER_DAYS
@@ -675,20 +468,16 @@ class AreaOccupancyStorage:
                 # Delete area-specific data only (preserve global entities and intervals)
                 # Note: area_history table removed in schema simplification
                 conn.execute(
-                    area_entity_config_table.delete().where(
-                        area_entity_config_table.c.entry_id == entry_id
+                    self.db.entities.delete().where(
+                        self.db.entities.c.entry_id == entry_id
                     )
                 )
                 conn.execute(
-                    area_occupancy_table.delete().where(
-                        area_occupancy_table.c.entry_id == entry_id
-                    )
+                    self.db.areas.delete().where(self.db.areas.c.entry_id == entry_id)
                 )
                 # Delete time-based priors
                 conn.execute(
-                    area_time_priors_table.delete().where(
-                        area_time_priors_table.c.entry_id == entry_id
-                    )
+                    self.db.priors.delete().where(self.db.priors.c.entry_id == entry_id)
                 )
                 conn.commit()
 
@@ -702,45 +491,37 @@ class AreaOccupancyStorage:
             stats = {}
             with self.engine.connect() as conn:
                 # Count records in each table
-                stats["area_occupancy_count"] = conn.execute(
-                    sa.select(sa.func.count()).select_from(area_occupancy_table)
+                stats["areas_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.areas)
                 ).scalar()
                 stats["entities_count"] = conn.execute(
-                    sa.select(sa.func.count()).select_from(entities_table)
+                    sa.select(sa.func.count()).select_from(self.db.entities)
                 ).scalar()
-                stats["area_entity_config_count"] = conn.execute(
-                    sa.select(sa.func.count()).select_from(area_entity_config_table)
+                stats["intervals_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
                 ).scalar()
-                stats["state_intervals_count"] = conn.execute(
-                    sa.select(sa.func.count()).select_from(state_intervals_table)
-                ).scalar()
-                stats["area_time_priors_count"] = conn.execute(
-                    sa.select(sa.func.count()).select_from(area_time_priors_table)
+                stats["priors_count"] = conn.execute(
+                    sa.select(sa.func.count()).select_from(self.db.priors)
                 ).scalar()
 
                 # Entry-specific stats
-                stats[f"area_entity_config_entry_{self.entry_id}"] = conn.execute(
+                stats[f"priors_entry_{self.entry_id}"] = conn.execute(
                     sa.select(sa.func.count())
-                    .select_from(area_entity_config_table)
-                    .where(area_entity_config_table.c.entry_id == self.entry_id)
-                ).scalar()
-                stats[f"area_time_priors_entry_{self.entry_id}"] = conn.execute(
-                    sa.select(sa.func.count())
-                    .select_from(area_time_priors_table)
-                    .where(area_time_priors_table.c.entry_id == self.entry_id)
+                    .select_from(self.db.priors)
+                    .where(self.db.priors.c.entry_id == self.entry_id)
                 ).scalar()
 
                 # Database schema info
                 stats["database_version"] = conn.execute(
-                    sa.select(metadata_table.c.value).where(
-                        metadata_table.c.key == "db_version"
+                    sa.select(self.db.metadata.c.value).where(
+                        self.db.metadata.c.key == "db_version"
                     )
                 ).scalar()
 
             # Database file size
             try:
-                stats["db_size_bytes"] = self.db_path.stat().st_size
-            except FileNotFoundError:
+                stats["db_size_bytes"] = self.db.db_path.stat().st_size
+            except (FileNotFoundError, AttributeError):
                 stats["db_size_bytes"] = 0
 
             return stats
@@ -748,12 +529,12 @@ class AreaOccupancyStorage:
         return await self.hass.async_add_executor_job(_get_stats)
 
     async def is_state_intervals_empty(self) -> bool:
-        """Check if the state_intervals table is empty."""
+        """Check if the intervals table is empty."""
 
         def _check_empty():
             with self.engine.connect() as conn:
                 count = conn.execute(
-                    sa.select(sa.func.count()).select_from(state_intervals_table)
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
                 ).scalar()
                 return (count or 0) == 0
 
@@ -765,7 +546,7 @@ class AreaOccupancyStorage:
         def _get_count():
             with self.engine.connect() as conn:
                 count = conn.execute(
-                    sa.select(sa.func.count()).select_from(state_intervals_table)
+                    sa.select(sa.func.count()).select_from(self.db.intervals)
                 ).scalar()
                 return count or 0
 
@@ -777,25 +558,29 @@ class AreaOccupancyStorage:
             raise RuntimeError("Coordinator is required for async_save_data")
         try:
             # Save area occupancy data
-            area_record = AreaOccupancyRecord(
-                entry_id=self.coordinator.entry_id,
-                area_name=self.coordinator.config.name,
-                purpose=self.coordinator.config.purpose,
-                threshold=self.coordinator.threshold,
-            )
+            area_record = {
+                "entry_id": self.coordinator.entry_id,
+                "area_name": self.coordinator.config.name,
+                "purpose": self.coordinator.config.purpose,
+                "threshold": self.coordinator.threshold,
+                "created_at": dt_util.utcnow(),
+                "updated_at": dt_util.utcnow(),
+            }
             await self.save_area_occupancy(area_record)
 
-            # Save area-specific entity configurations
+            # Save entity configurations
             for entity in self.coordinator.entities.entities.values():
-                entity_config = AreaEntityConfigRecord(
-                    entry_id=self.coordinator.entry_id,
-                    entity_id=entity.entity_id,
-                    entity_type=entity.type.input_type.value,
-                    weight=entity.type.weight,
-                    prob_given_true=entity.likelihood.prob_given_true,
-                    prob_given_false=entity.likelihood.prob_given_false,
-                )
-                await self.save_area_entity_config(entity_config)
+                entity_config = {
+                    "entry_id": self.coordinator.entry_id,
+                    "entity_id": entity.entity_id,
+                    "entity_type": entity.type.input_type.value,
+                    "weight": entity.type.weight,
+                    "prob_given_true": entity.likelihood.prob_given_true,
+                    "prob_given_false": entity.likelihood.prob_given_false,
+                    "created_at": dt_util.utcnow(),
+                    "last_updated": dt_util.utcnow(),
+                }
+                await self.save_entity_config(entity_config)
 
             _LOGGER.debug(
                 "Successfully saved data to SQLite storage for entry %s",
@@ -817,35 +602,33 @@ class AreaOccupancyStorage:
                     self.coordinator.entry_id,
                 )
                 return None
-            entity_configs = await self.get_area_entity_configs(
-                self.coordinator.entry_id
-            )
+            entity_configs = await self.get_entity_configs(self.coordinator.entry_id)
             entities_data = {}
             for config in entity_configs:
                 try:
-                    input_type = InputType(config.entity_type)
+                    input_type = InputType(config["entity_type"])
                     type_defaults = _ENTITY_TYPE_DATA.get(input_type, {})
                 except (ValueError, KeyError):
                     type_defaults = _ENTITY_TYPE_DATA.get(InputType.MOTION, {})
                     _LOGGER.warning(
                         "Unknown entity type %s for %s, using motion defaults",
-                        config.entity_type,
-                        config.entity_id,
+                        config["entity_type"],
+                        config["entity_id"],
                     )
-                entities_data[config.entity_id] = {
-                    "entity_id": config.entity_id,
-                    "entity_type": config.entity_type,
-                    "last_updated": config.last_updated.isoformat(),
+                entities_data[config["entity_id"]] = {
+                    "entity_id": config["entity_id"],
+                    "entity_type": config["entity_type"],
+                    "last_updated": config["last_updated"].isoformat(),
                     "likelihood": {
-                        "prob_given_true": config.prob_given_true,
-                        "prob_given_false": config.prob_given_false,
-                        "last_updated": config.last_updated.isoformat(),
+                        "prob_given_true": config["prob_given_true"],
+                        "prob_given_false": config["prob_given_false"],
+                        "last_updated": config["last_updated"].isoformat(),
                     },
                     "type": {
-                        "input_type": config.entity_type,
-                        "weight": config.weight,
-                        "prob_true": config.prob_given_true,
-                        "prob_false": config.prob_given_false,
+                        "input_type": config["entity_type"],
+                        "weight": config["weight"],
+                        "prob_true": config["prob_given_true"],
+                        "prob_false": config["prob_given_false"],
                         "prior": type_defaults.get("prior", 0.5),
                         "active_states": type_defaults.get("active_states"),
                         "active_range": type_defaults.get("active_range"),
@@ -859,12 +642,12 @@ class AreaOccupancyStorage:
                     "previous_probability": 0.0,
                 }
             return {
-                "name": area_record.area_name,
-                "purpose": area_record.purpose,
+                "name": area_record["area_name"],
+                "purpose": area_record["purpose"],
                 "probability": self.coordinator.probability,
                 "prior": self.coordinator.area_prior,
-                "threshold": area_record.threshold,
-                "last_updated": area_record.updated_at.isoformat(),
+                "threshold": area_record["threshold"],
+                "last_updated": area_record["updated_at"].isoformat(),
                 "entities": entities_data,
             }
         except (sa.exc.SQLAlchemyError, OSError) as err:
@@ -886,7 +669,9 @@ class AreaOccupancyStorage:
         """Dispose the SQLAlchemy engine."""
 
         def _dispose() -> None:
-            if self.engine:
-                self.engine.dispose()
+            if self.db:
+                self.db.close()
+                if self.db.engine:
+                    self.db.engine.dispose()
 
         await self.hass.async_add_executor_job(_dispose)
