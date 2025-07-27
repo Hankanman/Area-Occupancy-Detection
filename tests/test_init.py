@@ -212,7 +212,7 @@ class TestAsyncRemoveEntry:
     ) -> None:
         """Ensure stored runtime data is used."""
         sqlite_store = Mock(async_reset=AsyncMock())
-        mock_config_entry.runtime_data = Mock(sqlite_store=sqlite_store)
+        mock_config_entry.runtime_data = Mock(storage=sqlite_store)
         from custom_components.area_occupancy import async_remove_entry
 
         await async_remove_entry(mock_hass, mock_config_entry)
@@ -225,7 +225,7 @@ class TestAsyncRemoveEntry:
         sqlite_store = Mock(async_reset=AsyncMock())
         with patch(
             "custom_components.area_occupancy.AreaOccupancyCoordinator",
-            return_value=Mock(sqlite_store=sqlite_store),
+            return_value=Mock(storage=sqlite_store),
         ) as mock_coord:
             mock_config_entry.runtime_data = None
             from custom_components.area_occupancy import async_remove_entry
@@ -239,7 +239,7 @@ class TestAsyncRemoveEntry:
     ) -> None:
         """Errors from the store should be logged but not raised."""
         sqlite_store = Mock(async_reset=AsyncMock(side_effect=Exception("fail")))
-        mock_config_entry.runtime_data = Mock(sqlite_store=sqlite_store)
+        mock_config_entry.runtime_data = Mock(storage=sqlite_store)
         from custom_components.area_occupancy import async_remove_entry
 
         await async_remove_entry(mock_hass, mock_config_entry)
