@@ -104,7 +104,7 @@ class AreaOccupancyStorage:
                         continue
                     raise
 
-    def _execute_with_retry(
+    def execute_with_retry(
         self, func, max_retries: int = 3, initial_delay: float = 0.1
     ):
         """Execute a function with retry logic for database lock errors."""
@@ -196,7 +196,7 @@ class AreaOccupancyStorage:
                     conn.commit()
                     return record
 
-            return self._execute_with_retry(_do_save)
+            return self.execute_with_retry(_do_save)
 
         return await self.hass.async_add_executor_job(_save, record)
 
@@ -296,7 +296,7 @@ class AreaOccupancyStorage:
                     return stored_count
 
             try:
-                return self._execute_with_retry(_do_save)
+                return self.execute_with_retry(_do_save)
             except (sa.exc.SQLAlchemyError, OSError) as err:
                 _LOGGER.warning("Failed to save batch of state intervals: %s", err)
                 return 0
