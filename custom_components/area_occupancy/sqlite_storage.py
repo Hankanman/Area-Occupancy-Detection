@@ -4,22 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
-from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
-from sqlalchemy import create_engine
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import HA_RECORDER_DAYS
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
-from .schema import (
-    AreaEntityConfigRecord,
-    AreaOccupancyRecord,
-    SchemaConverter,
+from .db import (
+    AreaOccupancyDB,
     area_entity_config_table,
     area_occupancy_table,
     area_time_priors_table,
@@ -28,6 +24,7 @@ from .schema import (
     metadata_table,
     state_intervals_table,
 )
+from .schema import AreaEntityConfigRecord, AreaOccupancyRecord, SchemaConverter
 from .state_intervals import StateInterval, get_intervals_from_recorder
 
 if TYPE_CHECKING:
@@ -35,18 +32,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Database constants
-DB_NAME = "area_occupancy.db"
 # Default retention for state interval cleanup
 DEFAULT_RETENTION_DAYS = 365
 
 
 class AreaOccupancyStorage:
     """Unified storage for Area Occupancy Detection, combining DB access and coordinator logic."""
-
-    # Merge all methods and logic from SQLiteStorage and AreaOccupancySQLiteStore here.
-    # Accept both hass/entry_id and coordinator in __init__, and set up attributes accordingly.
-    # All public APIs from both classes should be preserved.
 
     def __init__(
         self,
@@ -65,21 +56,14 @@ class AreaOccupancyStorage:
         self.hass = hass
         self.entry_id = entry_id
         self.coordinator = coordinator
-        self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
-        self.db_path = self.storage_path / DB_NAME if self.storage_path else None
         self.import_stats: dict[str, int] = {}
 
-        # Ensure storage directory exists
-        if self.storage_path:
-            self.storage_path.mkdir(exist_ok=True)
-
-        # Create SQLAlchemy engine
-        self.engine = (
-            create_engine(f"sqlite:///{self.db_path}") if self.db_path else None
-        )
+        # Use AreaOccupancyDB for database operations
+        self.db = AreaOccupancyDB(hass=self.hass) if self.hass else None
+        self.engine = self.db.engine if self.db else None
 
         _LOGGER.debug(
-            "SQLite storage initialized for entry %s at %s", entry_id, self.db_path
+            "SQLite storage initialized for entry %s using AreaOccupancyDB", entry_id
         )
 
     def _enable_wal_mode(self) -> None:
@@ -577,8 +561,8 @@ class AreaOccupancyStorage:
 
             # Database file size
             try:
-                stats["db_size_bytes"] = self.db_path.stat().st_size
-            except FileNotFoundError:
+                stats["db_size_bytes"] = self.db.db_path.stat().st_size
+            except (FileNotFoundError, AttributeError):
                 stats["db_size_bytes"] = 0
 
             return stats
@@ -724,7 +708,9 @@ class AreaOccupancyStorage:
         """Dispose the SQLAlchemy engine."""
 
         def _dispose() -> None:
-            if self.engine:
-                self.engine.dispose()
+            if self.db:
+                self.db.close()
+                if self.db.engine:
+                    self.db.engine.dispose()
 
         await self.hass.async_add_executor_job(_dispose)

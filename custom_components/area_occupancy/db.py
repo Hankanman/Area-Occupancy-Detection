@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    MetaData,
     String,
     UniqueConstraint,
     create_engine,
@@ -18,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
@@ -32,6 +34,12 @@ DEFAULT_ENTITY_PROB_GIVEN_TRUE = 0.8
 DEFAULT_ENTITY_PROB_GIVEN_FALSE = 0.05
 DB_NAME = "area_occupancy.db"
 
+# Database metadata for Core access
+metadata = MetaData()
+
+# Database schema version for migrations
+DB_VERSION = 2
+
 
 class AreaOccupancyDB:
     """A class to manage area occupancy database operations."""
@@ -44,15 +52,13 @@ class AreaOccupancyDB:
 
         Args:
             hass: Home Assistant instance (optional for testing)
-            entry_id: Unique entry ID for the area (optional for testing)
-            coordinator: AreaOccupancyCoordinator instance (optional for testing)
 
         """
         self.hass = hass
         self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
         self.engine = create_engine(
-            self.db_path,
+            f"sqlite:///{self.db_path}",
             echo=False,
             pool_pre_ping=True,
             connect_args={
@@ -60,6 +66,10 @@ class AreaOccupancyDB:
                 "timeout": 30,
             },
         )
+
+        # Ensure storage directory exists
+        if self.storage_path:
+            self.storage_path.mkdir(exist_ok=True)
 
         # Check if database exists and initialize if needed
         self._ensure_db_exists()
@@ -81,8 +91,8 @@ class AreaOccupancyDB:
             default=DEFAULT_AREA_PRIOR,
             server_default=text(str(DEFAULT_AREA_PRIOR)),
         )
-        created_at = Column(DateTime, nullable=False)
-        updated_at = Column(DateTime, nullable=False)
+        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        updated_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
         entities = relationship("AreaEntityConfig", back_populates="area")
         priors = relationship("AreaTimePriors", back_populates="area")
 
@@ -91,8 +101,8 @@ class AreaOccupancyDB:
 
         __tablename__ = "entities"
         entity_id = Column(String, primary_key=True)
-        last_seen = Column(DateTime, nullable=False)
-        created_at = Column(DateTime, nullable=False)
+        last_seen = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
         intervals = relationship("StateInterval", back_populates="entity")
         configs = relationship("AreaEntityConfig", back_populates="entity")
 
@@ -112,7 +122,7 @@ class AreaOccupancyDB:
         prob_given_false = Column(
             Float, nullable=False, default=DEFAULT_ENTITY_PROB_GIVEN_FALSE
         )
-        last_updated = Column(DateTime, nullable=False)
+        last_updated = Column(DateTime, nullable=False, default=dt_util.utcnow)
         area = relationship("AreaOccupancy", back_populates="entities")
         entity = relationship("Entity", back_populates="configs")
 
@@ -132,7 +142,7 @@ class AreaOccupancyDB:
         time_slot = Column(Integer, primary_key=True)
         prior_value = Column(Float, nullable=False)
         data_points = Column(Integer, nullable=False)
-        last_updated = Column(DateTime, nullable=False)
+        last_updated = Column(DateTime, nullable=False, default=dt_util.utcnow)
         area = relationship("AreaOccupancy", back_populates="priors")
 
         __table_args__ = (
@@ -151,7 +161,7 @@ class AreaOccupancyDB:
         start_time = Column(DateTime, nullable=False)
         end_time = Column(DateTime, nullable=False)
         duration_seconds = Column(Float, nullable=False)
-        created_at = Column(DateTime, nullable=False)
+        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
         entity = relationship("Entity", back_populates="intervals")
 
         # Add unique constraint on (entity_id, start_time, end_time)
@@ -222,3 +232,18 @@ class AreaOccupancyDB:
     def init_db(self):
         """Initialize the database."""
         Base.metadata.create_all(self.engine)
+
+
+# ─────────────────── Table References for Core Access ───────────────────
+
+# Make table references available for SQLAlchemy Core operations
+# These reference the ORM model tables for use by sqlite_storage.py
+area_occupancy_table = AreaOccupancyDB.AreaOccupancy.__table__
+entities_table = AreaOccupancyDB.Entity.__table__
+area_entity_config_table = AreaOccupancyDB.AreaEntityConfig.__table__
+area_time_priors_table = AreaOccupancyDB.AreaTimePriors.__table__
+state_intervals_table = AreaOccupancyDB.StateInterval.__table__
+metadata_table = AreaOccupancyDB.Metadata.__table__
+
+# Update the global metadata with the ORM tables
+metadata = Base.metadata
