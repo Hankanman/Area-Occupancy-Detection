@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .schema import state_intervals_table
+from .db import state_intervals_table
 from .state_intervals import filter_intervals
 
 if TYPE_CHECKING:
