@@ -92,7 +92,7 @@ class Prior:
 
         all_intervals: list[StateInterval] = []
         for entity_id in entity_ids:
-            intervals = await self.coordinator.sqlite_store.get_historical_intervals(
+            intervals = await self.coordinator.storage.get_historical_intervals(
                 entity_id,
                 start_time,
                 end_time,
