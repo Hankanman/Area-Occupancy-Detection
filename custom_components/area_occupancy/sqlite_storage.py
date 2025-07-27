@@ -19,7 +19,6 @@ from .data.entity_type import _ENTITY_TYPE_DATA, InputType
 from .schema import (
     AreaEntityConfigRecord,
     AreaOccupancyRecord,
-    AreaTimePriorRecord,
     SchemaConverter,
     area_entity_config_table,
     area_occupancy_table,
@@ -130,36 +129,6 @@ class AreaOccupancyStorage:
                         _LOGGER.debug("Table %s already exists, skipping", table.name)
                         continue
                     raise
-
-    def _check_database_integrity(self, conn) -> None:
-        """Check database integrity and log issues."""
-        try:
-            # Quick integrity check
-            result = conn.execute(sa.text("PRAGMA integrity_check")).fetchone()
-            if result and result[0] != "ok":
-                _LOGGER.warning("Database integrity issue detected: %s", result[0])
-
-            # Check if all required tables exist
-            required_tables = [
-                "area_occupancy",
-                "entities",
-                "area_entity_config",
-                "state_intervals",
-                "metadata",
-            ]
-            existing_tables = [
-                row[0]
-                for row in conn.execute(
-                    sa.text("SELECT name FROM sqlite_master WHERE type='table'")
-                ).fetchall()
-            ]
-
-            missing_tables = set(required_tables) - set(existing_tables)
-            if missing_tables:
-                _LOGGER.warning("Missing tables detected: %s", missing_tables)
-
-        except (sa.exc.SQLAlchemyError, OSError) as err:
-            _LOGGER.warning("Database integrity check failed: %s", err)
 
     def _execute_with_retry(
         self, func, max_retries: int = 3, initial_delay: float = 0.1
@@ -293,128 +262,6 @@ class AreaOccupancyStorage:
                 return [
                     SchemaConverter.row_to_area_entity_config(row) for row in result
                 ]
-
-        return await self.hass.async_add_executor_job(_get)
-
-    # ─────────────────── Time-Based Priors Methods ───────────────────
-
-    async def save_time_priors_batch(self, records: list[AreaTimePriorRecord]) -> int:
-        """Save multiple time-based prior records efficiently."""
-        if not records:
-            _LOGGER.debug("No time priors to save")
-            return 0
-
-        _LOGGER.debug("Saving batch of %d time priors", len(records))
-
-        def _save():
-            try:
-                with self.engine.connect() as conn:
-                    # Prepare a list of dictionaries for bulk insert
-                    values_list = [
-                        {
-                            **SchemaConverter.area_time_prior_to_dict(record),
-                            "last_updated": dt_util.utcnow(),
-                        }
-                        for record in records
-                    ]
-
-                    # Use executemany for bulk insert
-                    stmt = sa.text(
-                        """
-                        INSERT OR REPLACE INTO area_time_priors
-                        (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                        VALUES (:entry_id, :day_of_week, :time_slot, :prior_value, :data_points, :last_updated)
-                        """
-                    )
-
-                    conn.execute(stmt, values_list)
-                    conn.commit()
-                    _LOGGER.debug(
-                        "Committed batch: %d time priors stored successfully",
-                        len(values_list),
-                    )
-                    return len(values_list)
-            except (sa.exc.SQLAlchemyError, OSError) as err:
-                _LOGGER.error("Failed to save batch of time priors: %s", err)
-                return 0
-
-        return await self.hass.async_add_executor_job(_save)
-
-    async def get_time_prior(
-        self, entry_id: str, day_of_week: int, time_slot: int
-    ) -> AreaTimePriorRecord | None:
-        """Get a specific time-based prior record."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table).where(
-                        sa.and_(
-                            area_time_priors_table.c.entry_id == entry_id,
-                            area_time_priors_table.c.day_of_week == day_of_week,
-                            area_time_priors_table.c.time_slot == time_slot,
-                        )
-                    )
-                ).fetchone()
-
-                return (
-                    SchemaConverter.row_to_area_time_prior(result) if result else None
-                )
-
-        return await self.hass.async_add_executor_job(_get)
-
-    async def get_time_priors_for_entry(
-        self, entry_id: str
-    ) -> list[AreaTimePriorRecord]:
-        """Get all time-based prior records for an entry."""
-
-        def _get():
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table)
-                    .where(area_time_priors_table.c.entry_id == entry_id)
-                    .order_by(
-                        area_time_priors_table.c.day_of_week,
-                        area_time_priors_table.c.time_slot,
-                    )
-                ).fetchall()
-
-                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
-
-        return await self.hass.async_add_executor_job(_get)
-
-    async def get_recent_time_priors(
-        self, entry_id: str, hours: int = 24
-    ) -> list[AreaTimePriorRecord]:
-        """Get time-based prior records updated within the specified hours.
-
-        Args:
-            entry_id: The entry ID to get priors for
-            hours: Number of hours to look back for recent updates
-
-        Returns:
-            List of recent time prior records
-
-        """
-
-        def _get():
-            cutoff_time = dt_util.utcnow() - timedelta(hours=hours)
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    sa.select(area_time_priors_table)
-                    .where(
-                        sa.and_(
-                            area_time_priors_table.c.entry_id == entry_id,
-                            area_time_priors_table.c.last_updated >= cutoff_time,
-                        )
-                    )
-                    .order_by(
-                        area_time_priors_table.c.day_of_week,
-                        area_time_priors_table.c.time_slot,
-                    )
-                ).fetchall()
-
-                return [SchemaConverter.row_to_area_time_prior(row) for row in result]
 
         return await self.hass.async_add_executor_job(_get)
 
@@ -592,15 +439,6 @@ class AreaOccupancyStorage:
             retention_days,
         )
         return deleted_count
-
-    async def vacuum_database(self) -> None:
-        """Run SQLite VACUUM to reclaim space."""
-
-        def _vacuum() -> None:
-            with self.engine.connect() as conn:
-                conn.execute(sa.text("VACUUM"))
-
-        await self.hass.async_add_executor_job(_vacuum)
 
     async def import_intervals_from_recorder(
         self, entity_ids: list[str], days: int = HA_RECORDER_DAYS
