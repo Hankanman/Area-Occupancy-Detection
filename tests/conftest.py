@@ -1267,8 +1267,13 @@ def mock_entity_for_likelihood_tests() -> Mock:
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_store_globally(request):
     """Automatically mock AreaOccupancyStorage for all tests except storage tests."""
-    # Skip mocking for storage tests
-    if "TestAreaOccupancyStorage" in str(request.node):
+    # Skip mocking for storage tests. Checking request.cls is more reliable
+    # than matching the node string only.
+    cls_name = getattr(getattr(request.node, "cls", None), "__name__", "")
+    if (
+        "TestAreaOccupancyStorage" in str(request.node)
+        or cls_name == "TestAreaOccupancyStorage"
+    ):
         yield None
         return
 
@@ -1893,6 +1898,17 @@ def mock_storage_with_db(mock_hass, db_engine, tmp_path):
 
     # Override the database with our test database
     storage.db.engine = db_engine
+    storage.engine = db_engine
+    # Recreate helpers bound to the new engine
+    from custom_components.area_occupancy.storage import (
+        DatabaseExecutor,
+        DatabaseInitializer,
+        DatabaseQueries,
+    )
+
+    storage.executor = DatabaseExecutor(db_engine)
+    storage.initializer = DatabaseInitializer(db_engine)
+    storage.queries = DatabaseQueries(storage.db, storage.entry_id)
 
     # Create a fresh session for each test
     SessionLocal = sessionmaker(bind=db_engine)
