@@ -313,6 +313,8 @@ class TestDatabaseModels:
         entity = AreaOccupancyDB.Entities.from_dict(entity_data)
         db_session.add(entity)
         db_session.commit()
+        # Expunge objects so a duplicate insert triggers an IntegrityError
+        db_session.expunge_all()
 
         # Try to create duplicate entity (should fail due to primary key constraint)
         duplicate_entity = AreaOccupancyDB.Entities.from_dict(entity_data)
