@@ -188,8 +188,16 @@ class Likelihood:
             "Likelihood calculation for %s: intervals=%d, prior_intervals=%d",
             self.entity_id,
             len(intervals) if intervals else 0,
-            len(prior_intervals),
+            len(prior_intervals) if prior_intervals else 0,
         )
+
+        # If prior intervals are not available, use default values
+        if not prior_intervals:
+            _LOGGER.debug(
+                "Prior intervals not available for %s, using default likelihoods",
+                self.entity_id,
+            )
+            return active_ratio, inactive_ratio
 
         if intervals and prior_intervals:
             # Calculate total analysis period
