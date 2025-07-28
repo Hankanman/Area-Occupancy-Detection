@@ -1,6 +1,7 @@
 """Database schema and functions to interact with the database."""
 
-from datetime import datetime
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,12 +23,14 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .state_intervals import StateInterval
-
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
 
     Base = DeclarativeBase
+    Areas = "Areas"
+    Entities = "Entities"
+    Priors = "Priors"
+    Intervals = "Intervals"
 else:
     Base = declarative_base()
 
@@ -134,6 +137,31 @@ class AreaOccupancyDB:
         entities = relationship("Entities", back_populates="area")
         priors = relationship("Priors", back_populates="area")
 
+        def to_dict(self) -> dict[str, Any]:
+            """Convert the ORM object to a dictionary."""
+            return {
+                "entry_id": self.entry_id,
+                "area_name": self.area_name,
+                "purpose": self.purpose,
+                "threshold": self.threshold,
+                "area_prior": self.area_prior,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> Areas:
+            """Create an Areas instance from a dictionary."""
+            return cls(
+                entry_id=data["entry_id"],
+                area_name=data["area_name"],
+                purpose=data["purpose"],
+                threshold=data["threshold"],
+                area_prior=data.get("area_prior", DEFAULT_AREA_PRIOR),
+                created_at=data.get("created_at", dt_util.utcnow()),
+                updated_at=data.get("updated_at", dt_util.utcnow()),
+            )
+
     class Entities(Base):
         """A table to store the entity information."""
 
@@ -158,6 +186,37 @@ class AreaOccupancyDB:
             Index("idx_entities_type", "entry_id", "entity_type"),
         )
 
+        def to_dict(self) -> dict[str, Any]:
+            """Convert the ORM object to a dictionary."""
+            return {
+                "entry_id": self.entry_id,
+                "entity_id": self.entity_id,
+                "entity_type": self.entity_type,
+                "weight": self.weight,
+                "prob_given_true": self.prob_given_true,
+                "prob_given_false": self.prob_given_false,
+                "last_updated": self.last_updated,
+                "created_at": self.created_at,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> Entities:
+            """Create an Entities instance from a dictionary."""
+            return cls(
+                entry_id=data["entry_id"],
+                entity_id=data["entity_id"],
+                entity_type=data["entity_type"],
+                weight=data.get("weight", DEFAULT_ENTITY_WEIGHT),
+                prob_given_true=data.get(
+                    "prob_given_true", DEFAULT_ENTITY_PROB_GIVEN_TRUE
+                ),
+                prob_given_false=data.get(
+                    "prob_given_false", DEFAULT_ENTITY_PROB_GIVEN_FALSE
+                ),
+                last_updated=data.get("last_updated", dt_util.utcnow()),
+                created_at=data.get("created_at", dt_util.utcnow()),
+            )
+
     class Priors(Base):
         """A table to store the area time priors."""
 
@@ -175,6 +234,29 @@ class AreaOccupancyDB:
             Index("idx_priors_day_slot", "day_of_week", "time_slot"),
             Index("idx_priors_last_updated", "last_updated"),
         )
+
+        def to_dict(self) -> dict[str, Any]:
+            """Convert the ORM object to a dictionary."""
+            return {
+                "entry_id": self.entry_id,
+                "day_of_week": self.day_of_week,
+                "time_slot": self.time_slot,
+                "prior_value": self.prior_value,
+                "data_points": self.data_points,
+                "last_updated": self.last_updated,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> Priors:
+            """Create a Priors instance from a dictionary."""
+            return cls(
+                entry_id=data["entry_id"],
+                day_of_week=data["day_of_week"],
+                time_slot=data["time_slot"],
+                prior_value=data["prior_value"],
+                data_points=data["data_points"],
+                last_updated=data.get("last_updated", dt_util.utcnow()),
+            )
 
     class Intervals(Base):
         """A table to store the state intervals."""
@@ -200,6 +282,30 @@ class AreaOccupancyDB:
             Index("idx_intervals_start_time", "start_time"),
             Index("idx_intervals_end_time", "end_time"),
         )
+
+        def to_dict(self) -> dict[str, Any]:
+            """Convert the ORM object to a dictionary."""
+            return {
+                "id": self.id,
+                "entity_id": self.entity_id,
+                "state": self.state,
+                "start_time": self.start_time,
+                "end_time": self.end_time,
+                "duration_seconds": self.duration_seconds,
+                "created_at": self.created_at,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> Intervals:
+            """Create an Intervals instance from a dictionary."""
+            return cls(
+                entity_id=data["entity_id"],
+                state=data["state"],
+                start_time=data["start_time"],
+                end_time=data["end_time"],
+                duration_seconds=data["duration_seconds"],
+                created_at=data["created_at"],
+            )
 
     class Metadata(Base):
         """A table to store the metadata."""
@@ -255,126 +361,3 @@ class AreaOccupancyDB:
     def init_db(self):
         """Initialize the database."""
         Base.metadata.create_all(self.engine)
-
-
-# ─────────────────── Serializer ───────────────────
-
-
-class Serializer:
-    """Convert between SQLAlchemy ORM models and dictionaries."""
-
-    @staticmethod
-    def row_to_area_occupancy(row: Any) -> dict[str, Any]:
-        """Convert SQLAlchemy row to area occupancy dictionary."""
-        return {
-            "entry_id": row.entry_id,
-            "area_name": row.area_name,
-            "purpose": row.purpose,
-            "threshold": row.threshold,
-            "area_prior": row.area_prior,
-            "created_at": row.created_at
-            if isinstance(row.created_at, datetime)
-            else dt_util.parse_datetime(row.created_at) or dt_util.utcnow(),
-            "updated_at": row.updated_at
-            if isinstance(row.updated_at, datetime)
-            else dt_util.parse_datetime(row.updated_at) or dt_util.utcnow(),
-        }
-
-    @staticmethod
-    def area_occupancy_to_dict(record: dict[str, Any]) -> dict[str, Any]:
-        """Convert area occupancy dictionary to database insertion format."""
-        return {
-            "entry_id": record["entry_id"],
-            "area_name": record["area_name"],
-            "purpose": record["purpose"],
-            "threshold": record["threshold"],
-            "area_prior": record.get("area_prior", DEFAULT_AREA_PRIOR),
-            "created_at": record["created_at"],
-            "updated_at": record["updated_at"],
-        }
-
-    @staticmethod
-    def row_to_entity(row: Any) -> dict[str, Any]:
-        """Convert SQLAlchemy row to entity dictionary."""
-        return {
-            "entry_id": row.entry_id,
-            "entity_id": row.entity_id,
-            "entity_type": row.entity_type,
-            "weight": row.weight,
-            "prob_given_true": row.prob_given_true,
-            "prob_given_false": row.prob_given_false,
-            "last_updated": row.last_updated
-            if isinstance(row.last_updated, datetime)
-            else dt_util.parse_datetime(row.last_updated) or dt_util.utcnow(),
-            "created_at": row.created_at
-            if isinstance(row.created_at, datetime)
-            else dt_util.parse_datetime(row.created_at) or dt_util.utcnow(),
-        }
-
-    @staticmethod
-    def entity_to_dict(record: dict[str, Any]) -> dict[str, Any]:
-        """Convert entity dictionary to database insertion format."""
-        return {
-            "entry_id": record["entry_id"],
-            "entity_id": record["entity_id"],
-            "entity_type": record["entity_type"],
-            "weight": record["weight"],
-            "prob_given_true": record["prob_given_true"],
-            "prob_given_false": record["prob_given_false"],
-            "last_updated": record["last_updated"],
-            "created_at": record["created_at"],
-        }
-
-    @staticmethod
-    def row_to_area_time_prior(row: Any) -> dict[str, Any]:
-        """Convert SQLAlchemy row to area time prior dictionary."""
-        return {
-            "entry_id": row.entry_id,
-            "day_of_week": row.day_of_week,
-            "time_slot": row.time_slot,
-            "prior_value": row.prior_value,
-            "data_points": row.data_points,
-            "last_updated": row.last_updated
-            if isinstance(row.last_updated, datetime)
-            else dt_util.parse_datetime(row.last_updated) or dt_util.utcnow(),
-        }
-
-    @staticmethod
-    def area_time_prior_to_dict(record: dict[str, Any]) -> dict[str, Any]:
-        """Convert area time prior dictionary to database insertion format."""
-        return {
-            "entry_id": record["entry_id"],
-            "day_of_week": record["day_of_week"],
-            "time_slot": record["time_slot"],
-            "prior_value": record["prior_value"],
-            "data_points": record["data_points"],
-            "last_updated": record["last_updated"],
-        }
-
-    @staticmethod
-    def row_to_state_interval(row: Any) -> StateInterval:
-        """Convert SQLAlchemy row to StateInterval."""
-        return StateInterval(
-            start=row.start_time
-            if isinstance(row.start_time, datetime)
-            else dt_util.parse_datetime(row.start_time) or dt_util.utcnow(),
-            end=row.end_time
-            if isinstance(row.end_time, datetime)
-            else dt_util.parse_datetime(row.end_time) or dt_util.utcnow(),
-            state=row.state,
-            entity_id=row.entity_id,
-        )
-
-    @staticmethod
-    def state_interval_to_dict(record: StateInterval) -> dict[str, Any]:
-        """Convert StateInterval to dictionary for database insertion."""
-        duration_seconds = (record["end"] - record["start"]).total_seconds()
-
-        return {
-            "entity_id": record["entity_id"],
-            "state": record["state"],
-            "start_time": record["start"],
-            "end_time": record["end"],
-            "duration_seconds": duration_seconds,
-            "created_at": dt_util.utcnow(),
-        }
