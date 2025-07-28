@@ -12,7 +12,6 @@ import sqlalchemy as sa
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 
-from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -35,617 +34,26 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_RETENTION_DAYS = 365
 
 
-class DatabaseExecutor:
-    """Handles database operations with retry logic and session management."""
-
-    def __init__(self, engine: sa.engine.Engine):
-        """Initialize the database executor."""
-        self.engine = engine
-        self.Session = sessionmaker(bind=engine)
-
-    def execute_with_retry(
-        self, func: Callable, max_retries: int = 3, initial_delay: float = 0.1
-    ) -> Any:
-        """Execute a function with retry logic for database lock errors."""
-        for attempt in range(max_retries):
-            try:
-                return func()
-            except sa.exc.OperationalError as err:
-                if (
-                    "database is locked" in str(err).lower()
-                    and attempt < max_retries - 1
-                ):
-                    delay = initial_delay * (2**attempt)  # Exponential backoff
-                    _LOGGER.debug(
-                        "Database locked, retrying in %.2fs (attempt %d/%d)",
-                        delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(delay)
-                    continue
-                raise
-            except Exception:
-                raise
-        # This should never be reached due to the retry logic above
-        raise RuntimeError("Retry logic failed unexpectedly")
-
-    def execute_in_session(self, func: Callable[[Session], Any]) -> Any:
-        """Execute a function within an ORM session with automatic commit/rollback."""
-        with self.Session() as session:
-            try:
-                result = func(session)
-                session.commit()
-            except Exception:
-                session.rollback()
-                raise
-            else:
-                return result
-
-    def execute_in_transaction(self, func: Callable) -> Any:
-        """Execute a function within a database transaction using engine.begin()."""
-        with self.engine.begin() as conn:
-            return func(conn)
-
-
-class DatabaseInitializer:
-    """Handles database initialization and schema creation."""
-
-    def __init__(self, engine: sa.engine.Engine):
-        """Initialize the database initializer."""
-        self.engine = engine
-
-    def enable_wal_mode(self) -> None:
-        """Enable SQLite WAL mode for better concurrent writes."""
-        try:
-            with self.engine.connect() as conn:
-                conn.execute(sa.text("PRAGMA journal_mode=WAL"))
-        except sa.exc.SQLAlchemyError as err:
-            _LOGGER.debug("Failed to enable WAL mode: %s", err)
-
-    def create_schema(self) -> None:
-        """Create the database schema."""
-        try:
-            self.enable_wal_mode()
-            Base.metadata.create_all(self.engine, checkfirst=True)
-        except sa.exc.OperationalError as err:
-            # Handle race condition when multiple instances try to create tables
-            if "already exists" in str(err).lower():
-                _LOGGER.debug(
-                    "Table already exists (race condition), continuing: %s", err
-                )
-                # Continue - other tables might still need to be created
-                # Try to create remaining tables individually
-                self._create_tables_individually()
-            else:
-                _LOGGER.error("Database initialization failed: %s", err)
-                raise
-        except Exception as err:
-            _LOGGER.error("Database initialization failed: %s", err)
-            raise
-
-    def _create_tables_individually(self) -> None:
-        """Create tables individually to handle race conditions."""
-        with self.engine.connect():
-            for table in Base.metadata.tables.values():
-                try:
-                    table.create(self.engine, checkfirst=True)
-                except sa.exc.OperationalError as err:
-                    if "already exists" in str(err).lower():
-                        _LOGGER.debug("Table %s already exists, skipping", table.name)
-                        continue
-                    raise
-
-
-class DatabaseQueries:
-    """Handles all database queries for Area Occupancy Detection."""
-
-    def __init__(self, db: AreaOccupancyDB, entry_id: str):
-        """Initialize the queries handler."""
-        self.db = db
-        self.entry_id = entry_id
-
-    # ─────────────────── Area Occupancy Queries ───────────────────
-
-    def save_area_occupancy(
-        self, record: dict[str, Any], session: Session
-    ) -> dict[str, Any]:
-        """Save or update area occupancy record using ORM."""
-        try:
-            # Try to find existing record
-            area = (
-                session.query(self.db.Areas)
-                .filter_by(entry_id=record["entry_id"])
-                .first()
-            )
-
-            if area:
-                # Update existing record
-                for key, value in record.items():
-                    if hasattr(area, key):
-                        setattr(area, key, value)
-            else:
-                # Create new record using from_dict
-                area = self.db.Areas.from_dict(record)
-                session.add(area)
-
-            session.flush()  # Ensure the record is saved
-            return area.to_dict()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to save area occupancy: %s", e)
-            raise
-
-    def get_area_occupancy(
-        self, entry_id: str, session: Session
-    ) -> dict[str, Any] | None:
-        """Get area occupancy record by entry ID using ORM."""
-        try:
-            area = session.query(self.db.Areas).filter_by(entry_id=entry_id).first()
-            return area.to_dict() if area else None
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get area occupancy: %s", e)
-            raise
-
-    # ─────────────────── Entity Configuration Queries ───────────────────
-
-    def save_entity_config(
-        self, record: dict[str, Any], session: Session
-    ) -> dict[str, Any]:
-        """Save or update entity configuration using ORM."""
-        try:
-            # Try to find existing record
-            entity = (
-                session.query(self.db.Entities)
-                .filter_by(entry_id=record["entry_id"], entity_id=record["entity_id"])
-                .first()
-            )
-
-            if entity:
-                # Update existing record
-                for key, value in record.items():
-                    if hasattr(entity, key):
-                        setattr(entity, key, value)
-            else:
-                # Create new record using from_dict
-                entity = self.db.Entities.from_dict(record)
-                session.add(entity)
-
-            session.flush()  # Ensure the record is saved
-            return entity.to_dict()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to save entity config: %s", e)
-            raise
-
-    def get_entity_configs(
-        self, entry_id: str, session: Session
-    ) -> list[dict[str, Any]]:
-        """Get all entity configurations for an entry using ORM."""
-        try:
-            entities = (
-                session.query(self.db.Entities)
-                .filter_by(entry_id=entry_id)
-                .order_by(self.db.Entities.entity_id)
-                .all()
-            )
-            return [entity.to_dict() for entity in entities]
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get entity configs: %s", e)
-            raise
-
-    # ─────────────────── State Intervals Queries ───────────────────
-
-    def save_intervals_batch(
-        self, intervals: Sequence[StateInterval], session: Session
-    ) -> int:
-        """Save multiple state intervals efficiently using ORM bulk operations."""
-        if not intervals:
-            return 0
-
-        try:
-            # First, ensure all entities exist
-            unique_entities = {interval["entity_id"] for interval in intervals}
-            for entity_id in unique_entities:
-                # Check if entity exists
-                entity = (
-                    session.query(self.db.Entities)
-                    .filter_by(entity_id=entity_id)
-                    .first()
-                )
-                if not entity:
-                    # Create minimal entity record
-                    entity = self.db.Entities(
-                        entry_id=self.entry_id,
-                        entity_id=entity_id,
-                        entity_type="unknown",  # Default type
-                        last_updated=dt_util.utcnow(),
-                        created_at=dt_util.utcnow(),
-                    )
-                    session.add(entity)
-
-            # Insert intervals individually to handle unique constraint violations
-            inserted_count = 0
-            skipped_count = 0
-
-            for interval in intervals:
-                try:
-                    # Convert StateInterval to dictionary format for ORM
-                    duration_seconds = (
-                        interval["end"] - interval["start"]
-                    ).total_seconds()
-                    interval_dict = {
-                        "entity_id": interval["entity_id"],
-                        "state": interval["state"],
-                        "start_time": interval["start"],
-                        "end_time": interval["end"],
-                        "duration_seconds": duration_seconds,
-                        "created_at": dt_util.utcnow(),
-                    }
-                    interval_obj = self.db.Intervals.from_dict(interval_dict)
-                    session.add(interval_obj)
-                    session.flush()  # Flush immediately to catch constraint violations
-                    inserted_count += 1
-                except sa.exc.IntegrityError as e:
-                    # Unique constraint violation - interval already exists
-                    if "UNIQUE constraint failed" in str(e):
-                        session.rollback()  # Rollback the failed insert
-                        skipped_count += 1
-                        continue
-                    # Re-raise if it's a different integrity error
-                    raise
-                except Exception:
-                    # Re-raise other exceptions
-                    raise
-
-            _LOGGER.debug(
-                "Inserted %d new intervals, skipped %d existing intervals",
-                inserted_count,
-                skipped_count,
-            )
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to save intervals batch: %s", e)
-            raise
-        else:
-            return inserted_count
-
-    def get_historical_intervals(
-        self,
-        entity_id: str,
-        start_time: datetime,
-        end_time: datetime,
-        state_filter: str | None = None,
-        limit: int | None = None,
-        page_size: int = 1000,
-        session: Session | None = None,
-    ) -> list[StateInterval]:
-        """Get historical state intervals using ORM with pagination support."""
-        try:
-            query = session.query(self.db.Intervals).filter(
-                self.db.Intervals.entity_id == entity_id,
-                self.db.Intervals.start_time >= start_time,
-                self.db.Intervals.end_time <= end_time,
-            )
-
-            if state_filter:
-                query = query.filter(self.db.Intervals.state == state_filter)
-
-            query = query.order_by(self.db.Intervals.start_time.desc())
-
-            # Apply pagination
-            if limit:
-                query = query.limit(limit)
-            else:
-                query = query.limit(page_size)
-
-            intervals = query.all()
-
-            # Convert to StateInterval format
-            return [
-                StateInterval(
-                    start=interval.start_time,
-                    end=interval.end_time,
-                    state=interval.state,
-                    entity_id=interval.entity_id,
-                )
-                for interval in intervals
-            ]
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get historical intervals: %s", e)
-            raise
-
-    def cleanup_old_intervals(self, cutoff_date: datetime, session: Session) -> int:
-        """Remove state intervals older than the cutoff date using ORM."""
-        try:
-            result = (
-                session.query(self.db.Intervals)
-                .filter(self.db.Intervals.end_time < cutoff_date)
-                .delete()
-            )
-            session.flush()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to cleanup old intervals: %s", e)
-            raise
-        else:
-            return result
-
-    def delete_specific_intervals(
-        self, intervals: list[dict[str, Any]], session: Session
-    ) -> int:
-        """Delete specific intervals using ORM."""
-        try:
-            deleted_count = 0
-            for interval in intervals:
-                result = (
-                    session.query(self.db.Intervals)
-                    .filter(
-                        and_(
-                            self.db.Intervals.entity_id == interval["entity_id"],
-                            self.db.Intervals.start_time == interval["start"],
-                            self.db.Intervals.end_time == interval["end"],
-                            self.db.Intervals.state == interval["state"],
-                        )
-                    )
-                    .delete()
-                )
-                deleted_count += result
-
-            session.flush()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to delete specific intervals: %s", e)
-            raise
-        else:
-            return deleted_count
-
-    # ─────────────────── Statistics Queries ───────────────────
-
-    def get_stats(self, session: Session) -> dict[str, Any]:
-        """Get database statistics using ORM."""
-        try:
-            stats = {}
-
-            # Count records in each table using ORM
-            stats["areas_count"] = session.query(self.db.Areas).count()
-            stats["entities_count"] = session.query(self.db.Entities).count()
-            stats["intervals_count"] = session.query(self.db.Intervals).count()
-            stats["priors_count"] = session.query(self.db.Priors).count()
-
-            # Entry-specific stats using ORM
-            stats[f"priors_entry_{self.entry_id}"] = (
-                session.query(self.db.Priors).filter_by(entry_id=self.entry_id).count()
-            )
-
-            # Database schema info
-            db_version = (
-                session.query(self.db.Metadata).filter_by(key="db_version").first()
-            )
-            stats["database_version"] = db_version.value if db_version else None
-
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get statistics: %s", e)
-            raise
-        else:
-            return stats
-
-    def is_intervals_empty(self, session: Session) -> bool:
-        """Check if the intervals table is empty using ORM."""
-        try:
-            count = session.query(self.db.Intervals).count()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to check if intervals empty: %s", e)
-            raise
-        else:
-            return count == 0
-
-    def get_total_intervals_count(self, session: Session) -> int:
-        """Get the total count of state intervals using ORM."""
-        try:
-            return session.query(self.db.Intervals).count()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get total intervals count: %s", e)
-            raise
-
-    # ─────────────────── Cleanup Queries ───────────────────
-
-    def reset_entry_data(self, entry_id: str, session: Session) -> None:
-        """Remove all data for a specific entry (area-specific only)."""
-        try:
-            # Delete area-specific data only (preserve global entities and intervals)
-            session.query(self.db.Entities).filter_by(entry_id=entry_id).delete()
-            session.query(self.db.Areas).filter_by(entry_id=entry_id).delete()
-            # Delete time-based priors
-            session.query(self.db.Priors).filter_by(entry_id=entry_id).delete()
-            session.flush()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to reset entry data: %s", e)
-            raise
-
-    # ─────────────────── ORM Relationship Queries ───────────────────
-
-    def get_area_with_entities(
-        self, entry_id: str, session: Session
-    ) -> dict[str, Any] | None:
-        """Get area occupancy record with all related entities using ORM relationships."""
-
-        area = (
-            session.query(self.db.Areas)
-            .options(joinedload(self.db.Areas.entities))
-            .filter_by(entry_id=entry_id)
-            .first()
-        )
-
-        if not area:
-            return None
-
-        # Use relationship to get entities (already loaded)
-        entities = area.entities
-        area_dict = area.to_dict()
-        area_dict["entities"] = [entity.to_dict() for entity in entities]
-
-        return area_dict
-
-    def get_entity_with_intervals(
-        self, entity_id: str, session: Session, limit: int = 100
-    ) -> dict[str, Any] | None:
-        """Get entity with recent intervals using ORM relationships."""
-
-        entity = (
-            session.query(self.db.Entities)
-            .options(joinedload(self.db.Entities.intervals))
-            .filter_by(entity_id=entity_id)
-            .first()
-        )
-
-        if not entity:
-            return None
-
-        # Use relationship to get recent intervals (already loaded)
-        recent_intervals = sorted(
-            entity.intervals, key=lambda x: x.start_time, reverse=True
-        )[:limit]
-
-        entity_dict = entity.to_dict()
-        entity_dict["recent_intervals"] = [
-            interval.to_dict() for interval in recent_intervals
-        ]
-
-        return entity_dict
-
-    def get_area_with_priors(
-        self, entry_id: str, session: Session
-    ) -> dict[str, Any] | None:
-        """Get area occupancy record with all related priors using ORM relationships."""
-
-        area = (
-            session.query(self.db.Areas)
-            .options(joinedload(self.db.Areas.priors))
-            .filter_by(entry_id=entry_id)
-            .first()
-        )
-
-        if not area:
-            return None
-
-        # Use relationship to get priors (already loaded)
-        priors = area.priors
-        area_dict = area.to_dict()
-        area_dict["priors"] = [prior.to_dict() for prior in priors]
-
-        return area_dict
-
-    # ─────────────────── Prior Operations ───────────────────
-
-    def save_prior(self, record: dict[str, Any], session: Session) -> dict[str, Any]:
-        """Save or update area time prior using ORM."""
-        try:
-            # Try to find existing record
-            prior = (
-                session.query(self.db.Priors)
-                .filter_by(
-                    entry_id=record["entry_id"],
-                    day_of_week=record["day_of_week"],
-                    time_slot=record["time_slot"],
-                )
-                .first()
-            )
-
-            if prior:
-                # Update existing record
-                for key, value in record.items():
-                    if hasattr(prior, key):
-                        setattr(prior, key, value)
-            else:
-                # Create new record using from_dict
-                prior = self.db.Priors.from_dict(record)
-                session.add(prior)
-
-            session.flush()  # Ensure the record is saved
-            return prior.to_dict()
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to save prior: %s", e)
-            raise
-
-    def get_priors(self, entry_id: str, session: Session) -> list[dict[str, Any]]:
-        """Get all priors for an entry using ORM."""
-        try:
-            priors = (
-                session.query(self.db.Priors)
-                .filter_by(entry_id=entry_id)
-                .order_by(self.db.Priors.day_of_week, self.db.Priors.time_slot)
-                .all()
-            )
-            return [prior.to_dict() for prior in priors]
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to get priors: %s", e)
-            raise
-
-    def save_priors_batch(
-        self, priors: Sequence[dict[str, Any]], session: Session
-    ) -> int:
-        """Save multiple priors efficiently using ORM bulk operations."""
-        if not priors:
-            return 0
-
-        try:
-            # Prepare prior objects for bulk insert/update
-            prior_objects = []
-            for prior_record in priors:
-                # Check if prior exists
-                existing_prior = (
-                    session.query(self.db.Priors)
-                    .filter_by(
-                        entry_id=prior_record["entry_id"],
-                        day_of_week=prior_record["day_of_week"],
-                        time_slot=prior_record["time_slot"],
-                    )
-                    .first()
-                )
-
-                if existing_prior:
-                    # Update existing record
-                    for key, value in prior_record.items():
-                        if hasattr(existing_prior, key):
-                            setattr(existing_prior, key, value)
-                else:
-                    # Create new record using from_dict
-                    prior_obj = self.db.Priors.from_dict(prior_record)
-                    prior_objects.append(prior_obj)
-
-            # Use bulk_save_objects for new records
-            if prior_objects:
-                session.bulk_save_objects(prior_objects, update_changed_only=False)
-                session.flush()
-
-            return (
-                len(prior_objects) + len(priors) - len(prior_objects)
-            )  # Total processed
-        except sa.exc.SQLAlchemyError as e:
-            _LOGGER.error("Failed to save priors batch: %s", e)
-            raise
-
-
 class AreaOccupancyStorage:
     """Unified storage for Area Occupancy Detection, combining DB access and coordinator logic."""
 
     def __init__(
         self,
-        hass: HomeAssistant = None,
-        entry_id: str | None = None,
         coordinator: AreaOccupancyCoordinator | None = None,
     ) -> None:
         """Initialize SQLite storage.
 
         Args:
-            hass: Home Assistant instance (optional for testing)
-            entry_id: Unique entry ID for the area (optional for testing)
-            coordinator: AreaOccupancyCoordinator instance (optional for testing)
+            coordinator: AreaOccupancyCoordinator instance
 
         """
-        self.hass = hass
-        self.entry_id = entry_id
         self.coordinator = coordinator
+        self.hass = coordinator.hass
+        self.entry_id = coordinator.entry_id
         self.import_stats: dict[str, int] = {}
 
         # Use AreaOccupancyDB for database operations
-        self.db = AreaOccupancyDB(hass=self.hass) if self.hass else None
+        self.db = AreaOccupancyDB(hass=self.hass)
         self.engine = self.db.engine if self.db else None
 
         # Initialize database components
@@ -655,7 +63,8 @@ class AreaOccupancyStorage:
             self.queries = DatabaseQueries(self.db, self.entry_id)
 
         _LOGGER.debug(
-            "SQLite storage initialized for entry %s using AreaOccupancyDB", entry_id
+            "SQLite storage initialized for entry %s using AreaOccupancyDB",
+            self.entry_id,
         )
 
     async def async_initialize(self) -> None:
@@ -1045,3 +454,599 @@ class AreaOccupancyStorage:
                     self.db.engine.dispose()
 
         await self.hass.async_add_executor_job(_dispose)
+
+
+class DatabaseExecutor:
+    """Handles database operations with retry logic and session management."""
+
+    def __init__(self, engine: sa.engine.Engine):
+        """Initialize the database executor."""
+        self.engine = engine
+        self.Session = sessionmaker(bind=engine)
+
+    def execute_with_retry(
+        self, func: Callable, max_retries: int = 3, initial_delay: float = 0.1
+    ) -> Any:
+        """Execute a function with retry logic for database lock errors."""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except sa.exc.OperationalError as err:
+                if (
+                    "database is locked" in str(err).lower()
+                    and attempt < max_retries - 1
+                ):
+                    delay = initial_delay * (2**attempt)  # Exponential backoff
+                    _LOGGER.debug(
+                        "Database locked, retrying in %.2fs (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+            except Exception:
+                raise
+        # This should never be reached due to the retry logic above
+        raise RuntimeError("Retry logic failed unexpectedly")
+
+    def execute_in_session(self, func: Callable[[Session], Any]) -> Any:
+        """Execute a function within an ORM session with automatic commit/rollback."""
+        with self.Session() as session:
+            try:
+                result = func(session)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            else:
+                return result
+
+    def execute_in_transaction(self, func: Callable) -> Any:
+        """Execute a function within a database transaction using engine.begin()."""
+        with self.engine.begin() as conn:
+            return func(conn)
+
+
+class DatabaseInitializer:
+    """Handles database initialization and schema creation."""
+
+    def __init__(self, engine: sa.engine.Engine):
+        """Initialize the database initializer."""
+        self.engine = engine
+
+    def enable_wal_mode(self) -> None:
+        """Enable SQLite WAL mode for better concurrent writes."""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+        except sa.exc.SQLAlchemyError as err:
+            _LOGGER.debug("Failed to enable WAL mode: %s", err)
+
+    def create_schema(self) -> None:
+        """Create the database schema."""
+        try:
+            self.enable_wal_mode()
+            Base.metadata.create_all(self.engine, checkfirst=True)
+        except sa.exc.OperationalError as err:
+            # Handle race condition when multiple instances try to create tables
+            if "already exists" in str(err).lower():
+                _LOGGER.debug(
+                    "Table already exists (race condition), continuing: %s", err
+                )
+                # Continue - other tables might still need to be created
+                # Try to create remaining tables individually
+                self._create_tables_individually()
+            else:
+                _LOGGER.error("Database initialization failed: %s", err)
+                raise
+        except Exception as err:
+            _LOGGER.error("Database initialization failed: %s", err)
+            raise
+
+    def _create_tables_individually(self) -> None:
+        """Create tables individually to handle race conditions."""
+        with self.engine.connect():
+            for table in Base.metadata.tables.values():
+                try:
+                    table.create(self.engine, checkfirst=True)
+                except sa.exc.OperationalError as err:
+                    if "already exists" in str(err).lower():
+                        _LOGGER.debug("Table %s already exists, skipping", table.name)
+                        continue
+                    raise
+
+
+class DatabaseQueries:
+    """Handles all database queries for Area Occupancy Detection."""
+
+    def __init__(self, db: AreaOccupancyDB, entry_id: str):
+        """Initialize the queries handler."""
+        self.db = db
+        self.entry_id = entry_id
+
+    # ─────────────────── Area Occupancy Queries ───────────────────
+
+    def save_area_occupancy(
+        self, record: dict[str, Any], session: Session
+    ) -> dict[str, Any]:
+        """Save or update area occupancy record using ORM."""
+        try:
+            # Try to find existing record
+            area = (
+                session.query(self.db.Areas)
+                .filter_by(entry_id=record["entry_id"])
+                .first()
+            )
+
+            if area:
+                # Update existing record
+                for key, value in record.items():
+                    if hasattr(area, key):
+                        setattr(area, key, value)
+            else:
+                # Create new record using from_dict
+                area = self.db.Areas.from_dict(record)
+                session.add(area)
+
+            session.commit()  # Ensure the record is saved
+            return area.to_dict()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to save area occupancy: %s", e)
+            raise
+
+    def get_area_occupancy(
+        self, entry_id: str, session: Session
+    ) -> dict[str, Any] | None:
+        """Get area occupancy record by entry ID using ORM."""
+        try:
+            area = session.query(self.db.Areas).filter_by(entry_id=entry_id).first()
+            return area.to_dict() if area else None
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get area occupancy: %s", e)
+            raise
+
+    # ─────────────────── Entity Configuration Queries ───────────────────
+
+    def save_entity_config(
+        self, record: dict[str, Any], session: Session
+    ) -> dict[str, Any]:
+        """Save or update entity configuration using ORM."""
+        try:
+            # Try to find existing record
+            entity = (
+                session.query(self.db.Entities)
+                .filter_by(entry_id=record["entry_id"], entity_id=record["entity_id"])
+                .first()
+            )
+
+            if entity:
+                # Update existing record
+                for key, value in record.items():
+                    if hasattr(entity, key):
+                        setattr(entity, key, value)
+            else:
+                # Create new record using from_dict
+                entity = self.db.Entities.from_dict(record)
+                session.add(entity)
+
+            session.commit()  # Ensure the record is saved
+            return entity.to_dict()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to save entity config: %s", e)
+            raise
+
+    def get_entity_configs(
+        self, entry_id: str, session: Session
+    ) -> list[dict[str, Any]]:
+        """Get all entity configurations for an entry using ORM."""
+        try:
+            entities = (
+                session.query(self.db.Entities)
+                .filter_by(entry_id=entry_id)
+                .order_by(self.db.Entities.entity_id)
+                .all()
+            )
+            return [entity.to_dict() for entity in entities]
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get entity configs: %s", e)
+            raise
+
+    # ─────────────────── State Intervals Queries ───────────────────
+
+    def save_intervals_batch(
+        self, intervals: Sequence[StateInterval], session: Session
+    ) -> int:
+        """Save multiple state intervals efficiently using ORM bulk operations."""
+        if not intervals:
+            return 0
+
+        try:
+            # First, ensure all entities exist
+            unique_entities = {interval["entity_id"] for interval in intervals}
+            for entity_id in unique_entities:
+                # Check if entity exists
+                entity = (
+                    session.query(self.db.Entities)
+                    .filter_by(entity_id=entity_id)
+                    .first()
+                )
+                if not entity:
+                    # Create minimal entity record
+                    entity = self.db.Entities(
+                        entry_id=self.entry_id,
+                        entity_id=entity_id,
+                        entity_type="unknown",  # Default type
+                        last_updated=dt_util.utcnow(),
+                        created_at=dt_util.utcnow(),
+                    )
+                    session.add(entity)
+
+            # Commit entities to ensure they exist before inserting intervals
+            session.commit()
+
+            # Insert intervals individually to handle unique constraint violations
+            inserted_count = 0
+            skipped_count = 0
+
+            for interval in intervals:
+                try:
+                    # Convert StateInterval to dictionary format for ORM
+                    duration_seconds = (
+                        interval["end"] - interval["start"]
+                    ).total_seconds()
+                    interval_dict = {
+                        "entity_id": interval["entity_id"],
+                        "state": interval["state"],
+                        "start_time": interval["start"],
+                        "end_time": interval["end"],
+                        "duration_seconds": duration_seconds,
+                        "created_at": dt_util.utcnow(),
+                    }
+                    interval_obj = self.db.Intervals.from_dict(interval_dict)
+                    session.add(interval_obj)
+                    session.flush()  # Flush immediately to catch constraint violations
+                    inserted_count += 1
+                except sa.exc.IntegrityError as e:
+                    # Unique constraint violation - interval already exists
+                    if "UNIQUE constraint failed" in str(e):
+                        session.rollback()  # Rollback the failed insert
+                        skipped_count += 1
+                        continue
+                    # Re-raise if it's a different integrity error
+                    raise
+                except Exception:
+                    # Re-raise other exceptions
+                    raise
+
+            # Commit all changes
+            session.commit()
+
+            _LOGGER.debug(
+                "Inserted %d new intervals, skipped %d existing intervals",
+                inserted_count,
+                skipped_count,
+            )
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to save intervals batch: %s", e)
+            raise
+        else:
+            return inserted_count
+
+    def get_historical_intervals(
+        self,
+        entity_id: str,
+        start_time: datetime,
+        end_time: datetime,
+        state_filter: str | None = None,
+        limit: int | None = None,
+        page_size: int = 1000,
+        session: Session | None = None,
+    ) -> list[StateInterval]:
+        """Get historical state intervals using ORM with pagination support."""
+        if session is None:
+            # Use the default session from the database
+            session = self.db.session
+
+        try:
+            query = session.query(self.db.Intervals).filter(
+                self.db.Intervals.entity_id == entity_id,
+                self.db.Intervals.start_time >= start_time,
+                self.db.Intervals.end_time <= end_time,
+            )
+
+            if state_filter:
+                query = query.filter(self.db.Intervals.state == state_filter)
+
+            query = query.order_by(self.db.Intervals.start_time.desc())
+
+            # Apply pagination
+            if limit:
+                query = query.limit(limit)
+            else:
+                query = query.limit(page_size)
+
+            intervals = query.all()
+
+            # Convert to StateInterval format (TypedDict)
+            return [
+                {
+                    "start": interval.start_time,
+                    "end": interval.end_time,
+                    "state": interval.state,
+                    "entity_id": interval.entity_id,
+                }
+                for interval in intervals
+            ]
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get historical intervals: %s", e)
+            raise
+
+    def cleanup_old_intervals(self, cutoff_date: datetime, session: Session) -> int:
+        """Remove state intervals older than the cutoff date using ORM."""
+        try:
+            result = (
+                session.query(self.db.Intervals)
+                .filter(self.db.Intervals.end_time < cutoff_date)
+                .delete()
+            )
+            session.flush()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to cleanup old intervals: %s", e)
+            raise
+        else:
+            return result
+
+    def delete_specific_intervals(
+        self, intervals: list[dict[str, Any]], session: Session
+    ) -> int:
+        """Delete specific intervals using ORM."""
+        try:
+            deleted_count = 0
+            for interval in intervals:
+                result = (
+                    session.query(self.db.Intervals)
+                    .filter(
+                        and_(
+                            self.db.Intervals.entity_id == interval["entity_id"],
+                            self.db.Intervals.start_time == interval["start"],
+                            self.db.Intervals.end_time == interval["end"],
+                            self.db.Intervals.state == interval["state"],
+                        )
+                    )
+                    .delete()
+                )
+                deleted_count += result
+
+            session.flush()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to delete specific intervals: %s", e)
+            raise
+        else:
+            return deleted_count
+
+    # ─────────────────── Statistics Queries ───────────────────
+
+    def get_stats(self, session: Session) -> dict[str, Any]:
+        """Get database statistics using ORM."""
+        try:
+            stats = {}
+
+            # Count records in each table using ORM
+            stats["areas_count"] = session.query(self.db.Areas).count()
+            stats["entities_count"] = session.query(self.db.Entities).count()
+            stats["intervals_count"] = session.query(self.db.Intervals).count()
+            stats["priors_count"] = session.query(self.db.Priors).count()
+
+            # Entry-specific stats using ORM
+            stats[f"priors_entry_{self.entry_id}"] = (
+                session.query(self.db.Priors).filter_by(entry_id=self.entry_id).count()
+            )
+
+            # Database schema info
+            db_version = (
+                session.query(self.db.Metadata).filter_by(key="db_version").first()
+            )
+            stats["database_version"] = db_version.value if db_version else None
+
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get statistics: %s", e)
+            raise
+        else:
+            return stats
+
+    def is_intervals_empty(self, session: Session) -> bool:
+        """Check if the intervals table is empty using ORM."""
+        try:
+            count = session.query(self.db.Intervals).count()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to check if intervals empty: %s", e)
+            raise
+        else:
+            return count == 0
+
+    def get_total_intervals_count(self, session: Session) -> int:
+        """Get the total count of state intervals using ORM."""
+        try:
+            return session.query(self.db.Intervals).count()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get total intervals count: %s", e)
+            raise
+
+    # ─────────────────── Cleanup Queries ───────────────────
+
+    def reset_entry_data(self, entry_id: str, session: Session) -> None:
+        """Remove all data for a specific entry (area-specific only)."""
+        try:
+            # Delete area-specific data only (preserve global entities and intervals)
+            session.query(self.db.Entities).filter_by(entry_id=entry_id).delete()
+            session.query(self.db.Areas).filter_by(entry_id=entry_id).delete()
+            # Delete time-based priors
+            session.query(self.db.Priors).filter_by(entry_id=entry_id).delete()
+            session.flush()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to reset entry data: %s", e)
+            raise
+
+    # ─────────────────── ORM Relationship Queries ───────────────────
+
+    def get_area_with_entities(
+        self, entry_id: str, session: Session
+    ) -> dict[str, Any] | None:
+        """Get area occupancy record with all related entities using ORM relationships."""
+
+        area = (
+            session.query(self.db.Areas)
+            .options(joinedload(self.db.Areas.entities))
+            .filter_by(entry_id=entry_id)
+            .first()
+        )
+
+        if not area:
+            return None
+
+        # Use relationship to get entities (already loaded)
+        entities = area.entities
+        area_dict = area.to_dict()
+        area_dict["entities"] = [entity.to_dict() for entity in entities]
+
+        return area_dict
+
+    def get_entity_with_intervals(
+        self, entity_id: str, session: Session, limit: int = 100
+    ) -> dict[str, Any] | None:
+        """Get entity with recent intervals using direct queries."""
+
+        entity = session.query(self.db.Entities).filter_by(entity_id=entity_id).first()
+
+        if not entity:
+            return None
+
+        # Query intervals directly
+        recent_intervals = (
+            session.query(self.db.Intervals)
+            .filter_by(entity_id=entity_id)
+            .order_by(self.db.Intervals.start_time.desc())
+            .limit(limit)
+            .all()
+        )
+
+        entity_dict = entity.to_dict()
+        entity_dict["recent_intervals"] = [
+            interval.to_dict() for interval in recent_intervals
+        ]
+
+        return entity_dict
+
+    def get_area_with_priors(
+        self, entry_id: str, session: Session
+    ) -> dict[str, Any] | None:
+        """Get area occupancy record with all related priors using ORM relationships."""
+
+        area = (
+            session.query(self.db.Areas)
+            .options(joinedload(self.db.Areas.priors))
+            .filter_by(entry_id=entry_id)
+            .first()
+        )
+
+        if not area:
+            return None
+
+        # Use relationship to get priors (already loaded)
+        priors = area.priors
+        area_dict = area.to_dict()
+        area_dict["priors"] = [prior.to_dict() for prior in priors]
+
+        return area_dict
+
+    # ─────────────────── Prior Operations ───────────────────
+
+    def save_prior(self, record: dict[str, Any], session: Session) -> dict[str, Any]:
+        """Save or update area time prior using ORM."""
+        try:
+            # Try to find existing record
+            prior = (
+                session.query(self.db.Priors)
+                .filter_by(
+                    entry_id=record["entry_id"],
+                    day_of_week=record["day_of_week"],
+                    time_slot=record["time_slot"],
+                )
+                .first()
+            )
+
+            if prior:
+                # Update existing record
+                for key, value in record.items():
+                    if hasattr(prior, key):
+                        setattr(prior, key, value)
+            else:
+                # Create new record using from_dict
+                prior = self.db.Priors.from_dict(record)
+                session.add(prior)
+
+            session.commit()  # Ensure the record is saved
+            return prior.to_dict()
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to save prior: %s", e)
+            raise
+
+    def get_priors(self, entry_id: str, session: Session) -> list[dict[str, Any]]:
+        """Get all priors for an entry using ORM."""
+        try:
+            priors = (
+                session.query(self.db.Priors)
+                .filter_by(entry_id=entry_id)
+                .order_by(self.db.Priors.day_of_week, self.db.Priors.time_slot)
+                .all()
+            )
+            return [prior.to_dict() for prior in priors]
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get priors: %s", e)
+            raise
+
+    def save_priors_batch(
+        self, priors: Sequence[dict[str, Any]], session: Session
+    ) -> int:
+        """Save multiple priors efficiently using ORM bulk operations."""
+        if not priors:
+            return 0
+
+        try:
+            # Prepare prior objects for bulk insert/update
+            prior_objects = []
+            for prior_record in priors:
+                # Check if prior exists
+                existing_prior = (
+                    session.query(self.db.Priors)
+                    .filter_by(
+                        entry_id=prior_record["entry_id"],
+                        day_of_week=prior_record["day_of_week"],
+                        time_slot=prior_record["time_slot"],
+                    )
+                    .first()
+                )
+
+                if existing_prior:
+                    # Update existing record
+                    for key, value in prior_record.items():
+                        if hasattr(existing_prior, key):
+                            setattr(existing_prior, key, value)
+                else:
+                    # Create new record using from_dict
+                    prior_obj = self.db.Priors.from_dict(prior_record)
+                    prior_objects.append(prior_obj)
+
+            # Use bulk_save_objects for new records
+            if prior_objects:
+                session.bulk_save_objects(prior_objects, update_changed_only=False)
+                session.flush()
+
+            return (
+                len(prior_objects) + len(priors) - len(prior_objects)
+            )  # Total processed
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to save priors batch: %s", e)
+            raise

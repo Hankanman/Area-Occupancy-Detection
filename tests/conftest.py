@@ -85,7 +85,17 @@ from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-# Event loop configuration is handled in pyproject.toml
+
+# Ensure an event loop exists for fixtures that rely on it
+@pytest.fixture(autouse=True)
+def enable_event_loop_debug() -> None:
+    """Ensure an event loop exists and enable debug mode."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    loop.set_debug(True)
 
 
 @pytest.fixture
@@ -141,7 +151,13 @@ def mock_hass() -> Mock:
 
     # Async methods
     hass.async_create_task = Mock(side_effect=lambda coro: asyncio.create_task(coro))
-    hass.async_add_executor_job = AsyncMock()
+
+    # Make async_add_executor_job actually execute the function
+    async def async_add_executor_job(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    hass.async_add_executor_job = async_add_executor_job
+
     hass.async_add_job = AsyncMock()
     hass.async_run_job = AsyncMock()
 
@@ -1249,8 +1265,13 @@ def mock_entity_for_likelihood_tests() -> Mock:
 
 
 @pytest.fixture(autouse=True)
-def mock_area_occupancy_store_globally():
-    """Automatically mock AreaOccupancyStorage for all tests."""
+def mock_area_occupancy_store_globally(request):
+    """Automatically mock AreaOccupancyStorage for all tests except storage tests."""
+    # Skip mocking for storage tests
+    if "TestAreaOccupancyStorage" in str(request.node):
+        yield None
+        return
+
     with patch(
         "custom_components.area_occupancy.storage.AreaOccupancyStorage"
     ) as mock_store_class:
@@ -1714,3 +1735,245 @@ def auto_cancel_timers(monkeypatch):
     for handle in timer_handles:
         with contextlib.suppress(Exception):
             handle.cancel()
+
+
+# SQLAlchemy Database Testing Fixtures
+# Following best practices for in-memory SQLite testing with proper isolation
+
+
+@pytest.fixture
+def db_engine():
+    """Create an in-memory SQLite engine for testing."""
+    from sqlalchemy import create_engine
+
+    from custom_components.area_occupancy.db import Base
+
+    # Create in-memory SQLite engine
+    engine = create_engine(
+        "sqlite:///:memory:",
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={"check_same_thread": False},
+    )
+
+    # Create all tables
+    Base.metadata.create_all(engine)
+
+    yield engine
+
+    # Clean up - drop all tables
+    Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def db_session(db_engine):
+    """Create a database session for testing with automatic rollback."""
+    from sqlalchemy.orm import sessionmaker
+
+    # Create session factory bound to the test engine
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+
+    try:
+        yield session
+    finally:
+        # Rollback any uncommitted changes and close session
+        session.rollback()
+        session.close()
+
+
+@pytest.fixture
+def transactional_db_session(db_engine):
+    """Create a database session with nested transaction for maximum isolation."""
+    from sqlalchemy.orm import sessionmaker
+
+    # Create connection and start transaction
+    connection = db_engine.connect()
+    trans = connection.begin()
+
+    # Create session bound to the connection
+    Session = sessionmaker(bind=connection)
+    session = Session()
+
+    # Start nested SAVEPOINT for maximum isolation
+    session.begin_nested()
+
+    try:
+        yield session
+    finally:
+        # Rollback nested transaction, then outer transaction
+        session.rollback()
+        trans.rollback()
+        connection.close()
+
+
+@pytest.fixture
+def mock_area_occupancy_db(db_engine, db_session, tmp_path):
+    """Create a mock AreaOccupancyDB instance using in-memory database."""
+    from unittest.mock import Mock
+
+    from custom_components.area_occupancy.db import AreaOccupancyDB
+
+    # Create mock hass with config_dir using tmp_path
+    mock_hass = Mock()
+    mock_hass.config = Mock()
+    mock_hass.config.config_dir = str(tmp_path)
+
+    # Create the .storage directory that AreaOccupancyDB expects
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(exist_ok=True)
+
+    # Create AreaOccupancyDB instance but override the engine
+    db = AreaOccupancyDB(hass=mock_hass)
+
+    # Replace the engine with our test engine
+    db.engine = db_engine
+    db.session = db_session
+
+    return db
+
+
+@pytest.fixture
+def seeded_db_session(db_session):
+    """Create a database session with test data pre-loaded."""
+    from datetime import datetime
+
+    from custom_components.area_occupancy.db import AreaOccupancyDB
+
+    # Create test data
+    area_data = {
+        "entry_id": "test_entry_001",
+        "area_name": "Test Living Room",
+        "purpose": "living",
+        "threshold": 0.5,
+        "area_prior": 0.3,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+    }
+
+    entity_data = {
+        "entry_id": "test_entry_001",
+        "entity_id": "binary_sensor.motion_1",
+        "entity_type": "motion",
+        "weight": 0.85,
+        "prob_given_true": 0.8,
+        "prob_given_false": 0.1,
+        "last_updated": datetime.now(),
+        "created_at": datetime.now(),
+    }
+
+    # Create ORM objects
+    area = AreaOccupancyDB.Areas.from_dict(area_data)
+    entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+
+    # Add to session and commit
+    db_session.add(area)
+    db_session.add(entity)
+    db_session.commit()
+
+    return db_session
+
+
+@pytest.fixture
+def mock_storage_with_db(mock_hass, db_engine, tmp_path):
+    """Create AreaOccupancyStorage instance with in-memory database."""
+    from unittest.mock import Mock
+
+    from sqlalchemy.orm import sessionmaker
+
+    from custom_components.area_occupancy.storage import AreaOccupancyStorage
+
+    # Create mock coordinator
+    mock_coordinator = Mock()
+    mock_coordinator.hass = mock_hass
+    mock_coordinator.entry_id = "test_entry_001"
+
+    # Create real storage instance
+    storage = AreaOccupancyStorage(coordinator=mock_coordinator)
+
+    # Override the database with our test database
+    storage.db.engine = db_engine
+
+    # Create a fresh session for each test
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+
+    # Clear any existing data
+    try:
+        session.query(storage.db.Intervals).delete()
+        session.query(storage.db.Entities).delete()
+        session.query(storage.db.Areas).delete()
+        session.query(storage.db.Priors).delete()
+        session.commit()
+    except (ValueError, OSError):
+        session.rollback()
+
+    storage.db.session = session
+
+    return storage
+
+
+@pytest.fixture
+def sample_area_data():
+    """Provide sample area data for testing."""
+    from datetime import datetime
+
+    return {
+        "entry_id": "test_entry_001",
+        "area_name": "Test Living Room",
+        "purpose": "living",
+        "threshold": 0.5,
+        "area_prior": 0.3,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+    }
+
+
+@pytest.fixture
+def sample_entity_data():
+    """Provide sample entity data for testing."""
+    from datetime import datetime
+
+    return {
+        "entry_id": "test_entry_001",
+        "entity_id": "binary_sensor.motion_1",
+        "entity_type": "motion",
+        "weight": 0.85,
+        "prob_given_true": 0.8,
+        "prob_given_false": 0.1,
+        "last_updated": datetime.now(),
+        "created_at": datetime.now(),
+    }
+
+
+@pytest.fixture
+def sample_interval_data():
+    """Provide sample interval data for testing."""
+    from datetime import datetime, timedelta
+
+    start_time = datetime.now()
+    end_time = start_time + timedelta(hours=1)
+
+    return {
+        "entity_id": "binary_sensor.motion_1",
+        "state": "on",
+        "start_time": start_time,
+        "end_time": end_time,
+        "duration_seconds": 3600.0,
+        "created_at": datetime.now(),
+    }
+
+
+@pytest.fixture
+def sample_prior_data():
+    """Provide sample prior data for testing."""
+    from datetime import datetime
+
+    return {
+        "entry_id": "test_entry_001",
+        "day_of_week": 1,  # Monday
+        "time_slot": 14,  # 2 PM
+        "prior_value": 0.35,
+        "data_points": 10,
+        "last_updated": datetime.now(),
+    }

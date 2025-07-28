@@ -1,159 +1,460 @@
-"""Integration tests for AreaOccupancyStorage with real SQLite database."""
+"""Tests for database operations using SQLAlchemy fixtures."""
 
-import asyncio
-import os
-import tempfile
-from unittest.mock import Mock
+from datetime import datetime, timedelta
 
-from custom_components.area_occupancy.storage import AreaOccupancyStorage
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-
-# ruff: noqa: PLC0415
-def test_real_db_area_occupancy_crud():
-    """Integration test: CRUD for area occupancy with real SQLite DB."""
-
-    # Create a temporary directory for the database
-    with tempfile.TemporaryDirectory() as temp_dir:
-        entry_id = "test_entry"
-
-        # Create a comprehensive mock hass
-        mock_hass = Mock()
-        mock_hass.config = Mock()
-        mock_hass.config.config_dir = temp_dir
-
-        # Mock the async_add_executor_job to actually execute functions
-        async def real_executor_job(func, *args, **kwargs):
-            """Actually execute the function instead of mocking it."""
-            return func(*args, **kwargs)
-
-        mock_hass.async_add_executor_job = real_executor_job
-
-        async def run_test():
-            # Create storage
-            storage = AreaOccupancyStorage(hass=mock_hass, entry_id=entry_id)
-
-            # Initialize the storage (this creates the database)
-            await storage.async_initialize()
-
-            # Verify database was created in .storage subdirectory
-            db_path = os.path.join(temp_dir, ".storage", "area_occupancy.db")
-            assert os.path.exists(db_path), f"Database file not created at {db_path}"
-
-            # Insert a record
-            from homeassistant.util import dt as dt_util
-
-            record = {
-                "entry_id": entry_id,
-                "area_name": "Test Area",
-                "purpose": "test",
-                "threshold": 0.5,
-                "created_at": dt_util.utcnow(),
-                "updated_at": dt_util.utcnow(),
-            }
-
-            saved = await storage.save_area_occupancy(record)
-            assert saved["entry_id"] == entry_id
-            assert saved["area_name"] == "Test Area"
-
-            # Query the record
-            fetched = await storage.get_area_occupancy(entry_id)
-            assert fetched is not None
-            assert fetched["area_name"] == "Test Area"
-            assert fetched["entry_id"] == entry_id
-
-            # Update the record
-            record["area_name"] = "Updated Area"
-            await storage.save_area_occupancy(record)
-            updated = await storage.get_area_occupancy(entry_id)
-            assert updated["area_name"] == "Updated Area"
-
-            # Delete the record (via reset)
-            await storage.reset_entry_data(entry_id)
-            deleted = await storage.get_area_occupancy(entry_id)
-            assert deleted is None
-
-        # Run the async test
-        asyncio.run(run_test())
+from custom_components.area_occupancy.db import AreaOccupancyDB
+from custom_components.area_occupancy.state_intervals import StateInterval
 
 
-def test_real_db_duplicate_area_update():
-    """Integration test: Insert same entry_id twice should update, not error."""
+class TestDatabaseModels:
+    """Test database ORM models and basic operations."""
 
-    # Create a temporary directory for the database
-    with tempfile.TemporaryDirectory() as temp_dir:
-        entry_id = "test_entry"
+    def test_areas_model_creation(self, db_session: Session):
+        """Test creating and retrieving Areas model."""
+        # Create area data
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
 
-        # Create a comprehensive mock hass
-        mock_hass = Mock()
-        mock_hass.config = Mock()
-        mock_hass.config.config_dir = temp_dir
+        # Create ORM object
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
 
-        # Mock the async_add_executor_job to actually execute functions
-        async def real_executor_job(func, *args, **kwargs):
-            """Actually execute the function instead of mocking it."""
-            return func(*args, **kwargs)
+        # Add to session and commit
+        db_session.add(area)
+        db_session.commit()
 
-        mock_hass.async_add_executor_job = real_executor_job
+        # Retrieve and verify
+        retrieved_area = (
+            db_session.query(AreaOccupancyDB.Areas)
+            .filter_by(entry_id="test_entry_001")
+            .first()
+        )
 
-        async def run_test():
-            # Create storage
-            storage = AreaOccupancyStorage(hass=mock_hass, entry_id=entry_id)
+        assert retrieved_area is not None
+        assert retrieved_area.entry_id == "test_entry_001"
+        assert retrieved_area.area_name == "Test Living Room"
+        assert retrieved_area.threshold == 0.5
+        assert retrieved_area.area_prior == 0.3
 
-            # Initialize the storage
-            await storage.async_initialize()
+    def test_entities_model_creation(self, db_session: Session):
+        """Test creating and retrieving Entities model."""
+        # First create an area (required for foreign key)
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+        db_session.commit()
 
-            from homeassistant.util import dt as dt_util
+        # Create entity data
+        entity_data = {
+            "entry_id": "test_entry_001",
+            "entity_id": "binary_sensor.motion_1",
+            "entity_type": "motion",
+            "weight": 0.85,
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "last_updated": datetime.now(),
+            "created_at": datetime.now(),
+        }
 
-            record = {
-                "entry_id": entry_id,
-                "area_name": "Test Area",
-                "purpose": "test",
-                "threshold": 0.5,
-                "created_at": dt_util.utcnow(),
-                "updated_at": dt_util.utcnow(),
-            }
+        # Create ORM object
+        entity = AreaOccupancyDB.Entities.from_dict(entity_data)
 
-            # First insert
-            await storage.save_area_occupancy(record)
+        # Add to session and commit
+        db_session.add(entity)
+        db_session.commit()
 
-            # Try to insert again with the same entry_id (should update, not error)
-            record["area_name"] = "Test Area 2"
-            await storage.save_area_occupancy(record)
+        # Retrieve and verify
+        retrieved_entity = (
+            db_session.query(AreaOccupancyDB.Entities)
+            .filter_by(entry_id="test_entry_001", entity_id="binary_sensor.motion_1")
+            .first()
+        )
 
-            fetched = await storage.get_area_occupancy(entry_id)
-            assert fetched["area_name"] == "Test Area 2"
+        assert retrieved_entity is not None
+        assert retrieved_entity.entity_id == "binary_sensor.motion_1"
+        assert retrieved_entity.entity_type == "motion"
+        assert retrieved_entity.weight == 0.85
+        assert retrieved_entity.prob_given_true == 0.8
 
-        # Run the async test
-        asyncio.run(run_test())
+    def test_intervals_model_creation(self, db_session: Session):
+        """Test creating and retrieving Intervals model."""
+        # First create area and entity (required for foreign keys)
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+
+        entity_data = {
+            "entry_id": "test_entry_001",
+            "entity_id": "binary_sensor.motion_1",
+            "entity_type": "motion",
+            "weight": 0.85,
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "last_updated": datetime.now(),
+            "created_at": datetime.now(),
+        }
+        entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+        db_session.add(entity)
+        db_session.commit()
+
+        # Create interval data
+        start_time = datetime.now()
+        end_time = start_time + timedelta(hours=1)
+        interval_data = {
+            "entity_id": "binary_sensor.motion_1",
+            "state": "on",
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_seconds": 3600.0,
+            "created_at": datetime.now(),
+        }
+
+        # Create ORM object
+        interval = AreaOccupancyDB.Intervals.from_dict(interval_data)
+
+        # Add to session and commit
+        db_session.add(interval)
+        db_session.commit()
+
+        # Retrieve and verify
+        retrieved_interval = (
+            db_session.query(AreaOccupancyDB.Intervals)
+            .filter_by(entity_id="binary_sensor.motion_1")
+            .first()
+        )
+
+        assert retrieved_interval is not None
+        assert retrieved_interval.entity_id == "binary_sensor.motion_1"
+        assert retrieved_interval.state == "on"
+        assert retrieved_interval.duration_seconds == 3600.0
+
+    def test_priors_model_creation(self, db_session: Session):
+        """Test creating and retrieving Priors model."""
+        # First create an area (required for foreign key)
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+        db_session.commit()
+
+        # Create prior data
+        prior_data = {
+            "entry_id": "test_entry_001",
+            "day_of_week": 1,  # Monday
+            "time_slot": 14,  # 2 PM
+            "prior_value": 0.35,
+            "data_points": 10,
+            "last_updated": datetime.now(),
+        }
+
+        # Create ORM object
+        prior = AreaOccupancyDB.Priors.from_dict(prior_data)
+
+        # Add to session and commit
+        db_session.add(prior)
+        db_session.commit()
+
+        # Retrieve and verify
+        retrieved_prior = (
+            db_session.query(AreaOccupancyDB.Priors)
+            .filter_by(entry_id="test_entry_001", day_of_week=1, time_slot=14)
+            .first()
+        )
+
+        assert retrieved_prior is not None
+        assert retrieved_prior.entry_id == "test_entry_001"
+        assert retrieved_prior.day_of_week == 1
+        assert retrieved_prior.time_slot == 14
+        assert retrieved_prior.prior_value == 0.35
+        assert retrieved_prior.data_points == 10
+
+    def test_relationships(self, db_session: Session):
+        """Test ORM relationships between models."""
+        # Create area
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+
+        # Create entity
+        entity_data = {
+            "entry_id": "test_entry_001",
+            "entity_id": "binary_sensor.motion_1",
+            "entity_type": "motion",
+            "weight": 0.85,
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "last_updated": datetime.now(),
+            "created_at": datetime.now(),
+        }
+        entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+        db_session.add(entity)
+
+        # Create prior
+        prior_data = {
+            "entry_id": "test_entry_001",
+            "day_of_week": 1,
+            "time_slot": 14,
+            "prior_value": 0.35,
+            "data_points": 10,
+            "last_updated": datetime.now(),
+        }
+        prior = AreaOccupancyDB.Priors.from_dict(prior_data)
+        db_session.add(prior)
+
+        db_session.commit()
+
+        # Test relationships
+        retrieved_area = (
+            db_session.query(AreaOccupancyDB.Areas)
+            .filter_by(entry_id="test_entry_001")
+            .first()
+        )
+
+        assert len(retrieved_area.entities) == 1
+        assert retrieved_area.entities[0].entity_id == "binary_sensor.motion_1"
+
+        assert len(retrieved_area.priors) == 1
+        assert retrieved_area.priors[0].day_of_week == 1
+        assert retrieved_area.priors[0].time_slot == 14
+
+    def test_to_dict_methods(self, db_session: Session):
+        """Test to_dict methods on ORM models."""
+        # Create and save area
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+        db_session.commit()
+
+        # Test to_dict method
+        area_dict = area.to_dict()
+        assert area_dict["entry_id"] == "test_entry_001"
+        assert area_dict["area_name"] == "Test Living Room"
+        assert area_dict["threshold"] == 0.5
+        assert "created_at" in area_dict
+        assert "updated_at" in area_dict
+
+    def test_unique_constraints(self, db_session: Session):
+        """Test unique constraints on models."""
+        # Create area
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+        db_session.commit()
+
+        # Create entity
+        entity_data = {
+            "entry_id": "test_entry_001",
+            "entity_id": "binary_sensor.motion_1",
+            "entity_type": "motion",
+            "weight": 0.85,
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "last_updated": datetime.now(),
+            "created_at": datetime.now(),
+        }
+        entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+        db_session.add(entity)
+        db_session.commit()
+
+        # Try to create duplicate entity (should fail due to primary key constraint)
+        duplicate_entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+        db_session.add(duplicate_entity)
+
+        with pytest.raises(IntegrityError):  # Should raise integrity error
+            db_session.commit()
+
+        db_session.rollback()
 
 
-def test_real_db_basic_initialization():
-    """Test basic storage initialization with real database."""
+class TestDatabaseOperations:
+    """Test database operations using the AreaOccupancyDB class."""
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        entry_id = "test_entry"
+    def test_area_occupancy_db_initialization(self, mock_area_occupancy_db):
+        """Test AreaOccupancyDB initialization with in-memory database."""
+        db = mock_area_occupancy_db
 
-        mock_hass = Mock()
-        mock_hass.config = Mock()
-        mock_hass.config.config_dir = temp_dir
+        assert db.engine is not None
+        assert db.session is not None
 
-        async def real_executor_job(func, *args, **kwargs):
-            return func(*args, **kwargs)
+        # Test that we can create tables
+        db.init_db()
 
-        mock_hass.async_add_executor_job = real_executor_job
+        # Verify tables exist
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+            table_names = [row[0] for row in result]
 
-        async def run_test():
-            storage = AreaOccupancyStorage(hass=mock_hass, entry_id=entry_id)
-            await storage.async_initialize()
+            assert "areas" in table_names
+            assert "entities" in table_names
+            assert "intervals" in table_names
+            assert "priors" in table_names
+            assert "metadata" in table_names
 
-            # Check that database file was created in .storage subdirectory
-            db_path = os.path.join(temp_dir, ".storage", "area_occupancy.db")
-            assert os.path.exists(db_path)
+    def test_session_management(self, mock_area_occupancy_db):
+        """Test session management methods."""
+        db = mock_area_occupancy_db
 
-            # Check that storage has required attributes
-            assert hasattr(storage, "db")
-            assert hasattr(storage, "executor")
-            assert hasattr(storage, "initializer")
-            assert hasattr(storage, "queries")
+        # Test commit
+        db.commit()
 
-        asyncio.run(run_test())
+        # Test rollback
+        db.rollback()
+
+        # Test close
+        db.close()
+        assert db.session is None
+
+        # Test refresh session
+        db.refresh_session()
+        assert db.session is not None
+
+    def test_seeded_database(self, seeded_db_session):
+        """Test database with pre-seeded data."""
+        # Query the seeded data
+        areas = seeded_db_session.query(AreaOccupancyDB.Areas).all()
+        entities = seeded_db_session.query(AreaOccupancyDB.Entities).all()
+
+        assert len(areas) == 1
+        assert len(entities) == 1
+
+        area = areas[0]
+        entity = entities[0]
+
+        assert area.entry_id == "test_entry_001"
+        assert area.area_name == "Test Living Room"
+        assert entity.entity_id == "binary_sensor.motion_1"
+        assert entity.entity_type == "motion"
+
+
+class TestStateIntervalIntegration:
+    """Test StateInterval integration with database."""
+
+    def test_state_interval_to_orm(self, db_session: Session):
+        """Test converting StateInterval to ORM model."""
+        # Create area and entity first
+        area_data = {
+            "entry_id": "test_entry_001",
+            "area_name": "Test Living Room",
+            "purpose": "living",
+            "threshold": 0.5,
+            "area_prior": 0.3,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+        area = AreaOccupancyDB.Areas.from_dict(area_data)
+        db_session.add(area)
+
+        entity_data = {
+            "entry_id": "test_entry_001",
+            "entity_id": "binary_sensor.motion_1",
+            "entity_type": "motion",
+            "weight": 0.85,
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "last_updated": datetime.now(),
+            "created_at": datetime.now(),
+        }
+        entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+        db_session.add(entity)
+        db_session.commit()
+
+        # Create StateInterval (this returns a dictionary)
+        start_time = datetime.now()
+        end_time = start_time + timedelta(hours=1)
+        state_interval = StateInterval(
+            entity_id="binary_sensor.motion_1",
+            state="on",
+            start=start_time,
+            end=end_time,
+        )
+
+        # Convert to ORM model - use the StateInterval dictionary values
+        interval_data = {
+            "entity_id": state_interval["entity_id"],
+            "state": state_interval["state"],
+            "start_time": state_interval["start"],
+            "end_time": state_interval["end"],
+            "duration_seconds": (end_time - start_time).total_seconds(),
+            "created_at": datetime.now(),
+        }
+
+        interval = AreaOccupancyDB.Intervals.from_dict(interval_data)
+        db_session.add(interval)
+        db_session.commit()
+
+        # Verify
+        retrieved_interval = (
+            db_session.query(AreaOccupancyDB.Intervals)
+            .filter_by(entity_id="binary_sensor.motion_1")
+            .first()
+        )
+
+        assert retrieved_interval is not None
+        assert retrieved_interval.entity_id == state_interval["entity_id"]
+        assert retrieved_interval.state == state_interval["state"]
+        assert retrieved_interval.start_time == state_interval["start"]
+        assert retrieved_interval.end_time == state_interval["end"]
+        assert (
+            retrieved_interval.duration_seconds
+            == (end_time - start_time).total_seconds()
+        )

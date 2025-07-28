@@ -689,6 +689,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -725,6 +726,7 @@ class TestCoordinatorSetupScenarios:
             ),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -757,6 +759,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
