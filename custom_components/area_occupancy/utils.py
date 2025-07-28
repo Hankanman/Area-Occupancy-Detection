@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 # ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
 
 
+def ensure_timezone_aware(dt: datetime) -> datetime:
+    """Ensure datetime is timezone-aware."""
+    if dt.tzinfo is None:
+        # If naive, assume UTC (Home Assistant stores times in UTC)
+
+        return dt.replace(tzinfo=dt_util.UTC)
+    return dt
+
+
 def datetime_to_time_slot(dt: datetime) -> tuple[int, int]:
     """Convert datetime to day of week and time slot.
 
