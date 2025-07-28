@@ -722,24 +722,19 @@ class TestPurgeIntervals:
             return_value=["binary_sensor.motion1", "binary_sensor.motion2"]
         )
 
-        # Mock SQLite store database operations
-        mock_connection = Mock()
-        mock_connection.execute.return_value.fetchall.return_value = [
-            Mock() for _ in range(100)
-        ]
-        mock_connection.execute.return_value.rowcount = 50
-        mock_connection.commit.return_value = None
-
-        # Mock the context manager properly
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_connection)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_coordinator.storage.engine.connect.return_value = mock_context_manager
+        # Mock storage methods for ORM-based operations
+        mock_coordinator.storage.get_total_intervals_count = AsyncMock(return_value=100)
+        mock_coordinator.storage.cleanup_old_intervals = AsyncMock(return_value=50)
         mock_coordinator.storage.get_historical_intervals = AsyncMock(return_value=[])
+        mock_coordinator.storage.executor = Mock()
+        mock_coordinator.storage.queries = Mock()
+        mock_coordinator.storage.queries.delete_specific_intervals = Mock(
+            return_value=0
+        )
 
         # Mock hass.async_add_executor_job
         mock_hass.async_add_executor_job = AsyncMock()
-        mock_hass.async_add_executor_job.side_effect = [100, 50]  # count, delete
+        mock_hass.async_add_executor_job.return_value = 0  # delete operation
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
@@ -790,9 +785,11 @@ class TestPurgeIntervals:
             return_value=["binary_sensor.motion1"]
         )
 
-        # Mock hass.async_add_executor_job to raise an error during the count operation
-        mock_hass.async_add_executor_job = AsyncMock()
-        mock_hass.async_add_executor_job.side_effect = RuntimeError("DB error")
+        # Mock storage methods to raise an error during the count operation
+        mock_coordinator.storage.get_total_intervals_count = AsyncMock()
+        mock_coordinator.storage.get_total_intervals_count.side_effect = RuntimeError(
+            "DB error"
+        )
 
         mock_config_entry.runtime_data = mock_coordinator
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
