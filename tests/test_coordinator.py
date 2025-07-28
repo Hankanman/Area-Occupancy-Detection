@@ -580,6 +580,9 @@ class TestCoordinatorAdvancedTimerManagement:
                 "homeassistant.helpers.event.async_track_point_in_time",
                 return_value=Mock(),
             ),
+            patch.object(
+                coordinator.storage, "async_save_data", new_callable=AsyncMock
+            ),
         ):
             mock_entity_type = Mock()
             mock_entity_type.prob_true = 0.25
@@ -689,6 +692,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -725,6 +729,7 @@ class TestCoordinatorSetupScenarios:
             ),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,
@@ -757,6 +762,7 @@ class TestCoordinatorSetupScenarios:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator.storage, "async_save_data", new=AsyncMock()),
             patch.object(
                 coordinator.entity_types, "get_entity_type"
             ) as mock_get_entity_type,

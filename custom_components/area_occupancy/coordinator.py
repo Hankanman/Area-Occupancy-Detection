@@ -64,10 +64,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry_id = config_entry.entry_id
         self.config_manager = ConfigManager(self)
         self.config = self.config_manager.config
+        self.storage = AreaOccupancyStorage(self)
         self.prior = Prior(self)
-        self.storage = AreaOccupancyStorage(
-            hass=self.hass, entry_id=self.entry_id, coordinator=self
-        )
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
@@ -76,7 +74,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
-        self.initializing: bool = False  # True if DB is being populated in background
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -325,8 +322,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, self.run_analysis, next_update
         )
 
-    async def run_analysis(self, _now: datetime) -> None:
+    async def run_analysis(self, _now: datetime | None = None) -> None:
         """Handle the historical data import timer."""
+        if _now is None:
+            _now = dt_util.utcnow()
         self._analysis_timer = None
 
         try:
