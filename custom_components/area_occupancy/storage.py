@@ -262,30 +262,50 @@ class DatabaseQueries:
                     )
                     session.add(entity)
 
-            # Prepare interval objects for bulk insert using from_dict
-            interval_objects = []
+            # Insert intervals individually to handle unique constraint violations
+            inserted_count = 0
+            skipped_count = 0
+
             for interval in intervals:
-                # Convert StateInterval to dictionary format for ORM
-                duration_seconds = (interval["end"] - interval["start"]).total_seconds()
-                interval_dict = {
-                    "entity_id": interval["entity_id"],
-                    "state": interval["state"],
-                    "start_time": interval["start"],
-                    "end_time": interval["end"],
-                    "duration_seconds": duration_seconds,
-                    "created_at": dt_util.utcnow(),
-                }
-                interval_obj = self.db.Intervals.from_dict(interval_dict)
-                interval_objects.append(interval_obj)
+                try:
+                    # Convert StateInterval to dictionary format for ORM
+                    duration_seconds = (
+                        interval["end"] - interval["start"]
+                    ).total_seconds()
+                    interval_dict = {
+                        "entity_id": interval["entity_id"],
+                        "state": interval["state"],
+                        "start_time": interval["start"],
+                        "end_time": interval["end"],
+                        "duration_seconds": duration_seconds,
+                        "created_at": dt_util.utcnow(),
+                    }
+                    interval_obj = self.db.Intervals.from_dict(interval_dict)
+                    session.add(interval_obj)
+                    session.flush()  # Flush immediately to catch constraint violations
+                    inserted_count += 1
+                except sa.exc.IntegrityError as e:
+                    # Unique constraint violation - interval already exists
+                    if "UNIQUE constraint failed" in str(e):
+                        session.rollback()  # Rollback the failed insert
+                        skipped_count += 1
+                        continue
+                    # Re-raise if it's a different integrity error
+                    raise
+                except Exception:
+                    # Re-raise other exceptions
+                    raise
 
-            # Use bulk_save_objects for efficient insertion
-            session.bulk_save_objects(interval_objects, update_changed_only=False)
-            session.flush()
-
-            return len(interval_objects)
+            _LOGGER.debug(
+                "Inserted %d new intervals, skipped %d existing intervals",
+                inserted_count,
+                skipped_count,
+            )
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save intervals batch: %s", e)
             raise
+        else:
+            return inserted_count
 
     def get_historical_intervals(
         self,
@@ -950,16 +970,18 @@ class AreaOccupancyStorage:
                 try:
                     input_type = InputType(config["entity_type"])
                     type_defaults = _ENTITY_TYPE_DATA.get(input_type, {})
+                    valid_entity_type = config["entity_type"]
                 except (ValueError, KeyError):
-                    type_defaults = _ENTITY_TYPE_DATA.get(InputType.MOTION, {})
+                    type_defaults = _ENTITY_TYPE_DATA.get(InputType.UNKNOWN, {})
+                    valid_entity_type = InputType.UNKNOWN.value
                     _LOGGER.warning(
-                        "Unknown entity type %s for %s, using motion defaults",
+                        "Unknown entity type %s for %s, using unknown defaults",
                         config["entity_type"],
                         config["entity_id"],
                     )
                 entities_data[config["entity_id"]] = {
                     "entity_id": config["entity_id"],
-                    "entity_type": config["entity_type"],
+                    "entity_type": valid_entity_type,
                     "last_updated": config["last_updated"].isoformat(),
                     "likelihood": {
                         "prob_given_true": config["prob_given_true"],
@@ -967,7 +989,7 @@ class AreaOccupancyStorage:
                         "last_updated": config["last_updated"].isoformat(),
                     },
                     "type": {
-                        "input_type": config["entity_type"],
+                        "input_type": valid_entity_type,
                         "weight": config["weight"],
                         "prob_true": type_defaults.get(
                             "prob_true", DEFAULT_PROB_GIVEN_TRUE

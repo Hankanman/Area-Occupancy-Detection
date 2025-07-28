@@ -39,6 +39,7 @@ class InputType(StrEnum):
     HUMIDITY = "humidity"
     ILLUMINANCE = "illuminance"
     ENVIRONMENTAL = "environmental"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -304,5 +305,13 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "prior": 0.0769,
         "active_states": None,
         "active_range": (0.0, 0.2),
+    },
+    InputType.UNKNOWN: {
+        "weight": DEFAULT_WEIGHT_MOTION,  # Use motion weight as fallback
+        "prob_true": 0.15,  # Conservative default
+        "prob_false": 0.03,  # Conservative default
+        "prior": 0.2,  # Conservative default
+        "active_states": [STATE_ON],  # Default to motion-like behavior
+        "active_range": None,
     },
 }

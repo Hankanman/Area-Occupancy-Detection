@@ -15,6 +15,8 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 
+from .utils import ensure_timezone_aware
+
 _LOGGER = getLogger(__name__)
 
 # ─────────────────── Constants ───────────────────
@@ -153,13 +155,18 @@ async def states_to_intervals(
     intervals: list[StateInterval] = []
     if not states:
         return intervals
-    # Sort states chronologically
-    sorted_states = sorted(states, key=lambda x: x.last_changed)
+
+    # Normalize start and end times
+    start = ensure_timezone_aware(start)
+    end = ensure_timezone_aware(end)
+
+    # Sort states chronologically, ensuring timezone-aware comparison
+    sorted_states = sorted(states, key=lambda x: ensure_timezone_aware(x.last_changed))
 
     # Determine the state that was active at the start time
     current_state = sorted_states[0].state
     for state in sorted_states:
-        if state.last_changed <= start:
+        if ensure_timezone_aware(state.last_changed) <= start:
             current_state = state.state
         else:
             break
@@ -168,22 +175,23 @@ async def states_to_intervals(
 
     # Build intervals between state changes
     for state in sorted_states:
-        if state.last_changed <= start:
+        state_time = ensure_timezone_aware(state.last_changed)
+        if state_time <= start:
             continue
-        if state.last_changed > end:
+        if state_time > end:
             break
 
         # Append interval from the last change (or start) to this state change
         intervals.append(
             StateInterval(
                 start=current_time,
-                end=state.last_changed,
+                end=state_time,
                 state=current_state,
                 entity_id=state.entity_id,
             )
         )
         current_state = state.state
-        current_time = state.last_changed
+        current_time = state_time
 
     # After processing all state changes, append the final interval
     # This covers the period from the last state change up to the requested end time
@@ -226,8 +234,20 @@ def merge_intervals(intervals: list[StateInterval]) -> list[StateInterval]:
     """Merge overlapping intervals (dicts with 'start' and 'end' datetimes)."""
     if not intervals:
         return []
+
+    # Normalize all intervals to have timezone-aware datetimes
+    normalized_intervals = [
+        {
+            "start": ensure_timezone_aware(interval["start"]),
+            "end": ensure_timezone_aware(interval["end"]),
+            "state": interval["state"],
+            "entity_id": interval["entity_id"],
+        }
+        for interval in intervals
+    ]
+
     # Sort intervals by start time
-    sorted_intervals = sorted(intervals, key=lambda x: x["start"])
+    sorted_intervals = sorted(normalized_intervals, key=lambda x: x["start"])
     merged = [sorted_intervals[0]]
     for current in sorted_intervals[1:]:
         last = merged[-1]
