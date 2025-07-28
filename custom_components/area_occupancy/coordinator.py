@@ -315,7 +315,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, self.run_analysis, next_update
         )
 
-    async def run_analysis(self) -> None:
+    async def run_analysis(self, _now: datetime) -> None:
         """Handle the historical data import timer."""
         self._analysis_timer = None
 
