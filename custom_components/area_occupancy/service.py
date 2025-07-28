@@ -439,42 +439,17 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
             entity_ids = coordinator.config.entity_ids
 
         # Count all intervals in the db for this entry_id (across all entity_ids)
-        def _count_all_intervals():
-            def _do_count():
-                with storage.engine.connect() as conn:
-                    result = conn.execute(
-                        storage.db.intervals.select().where(
-                            storage.db.intervals.c.entity_id.in_(entity_ids)
-                        )
-                    )
-                    return len(result.fetchall())
+        total_intervals_in_db = await storage.get_total_intervals_count()
 
-            return storage.execute_with_retry(_do_count)
-
-        total_intervals_in_db = await hass.async_add_executor_job(_count_all_intervals)
-
-        # 1. Delete all intervals older than the retention period
-        def _delete_old():
-            def _do_delete_old():
-                with storage.engine.connect() as conn:
-                    result = conn.execute(
-                        storage.db.intervals.delete().where(
-                            storage.db.intervals.c.entity_id.in_(entity_ids)
-                            & (storage.db.intervals.c.end_time < cutoff_date)
-                        )
-                    )
-                    conn.commit()
-                    return result.rowcount
-
-            return storage.execute_with_retry(_do_delete_old)
-
-        total_deleted_old = await hass.async_add_executor_job(_delete_old)
+        # 1. Delete all intervals older than the retention period using ORM
+        total_deleted_old = await storage.cleanup_old_intervals(retention_days)
 
         # 2. For intervals within retention, filter and delete those that don't pass
         total_checked = 0
         total_deleted_filtered = 0
         total_kept = 0
         details = {}
+
         for entity_id in entity_ids:
             # Fetch intervals within retention
             intervals = await storage.get_historical_intervals(
@@ -491,28 +466,13 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
             total_kept += len(filtered)
 
             if to_delete:
-
-                def _delete_filtered(to_delete=to_delete):
-                    def _do_delete_filtered():
-                        with storage.engine.connect() as conn:
-                            for iv in to_delete:
-                                conn.execute(
-                                    storage.db.intervals.delete().where(
-                                        (
-                                            storage.db.intervals.c.entity_id
-                                            == iv["entity_id"]
-                                        )
-                                        & (
-                                            storage.db.intervals.c.start_time
-                                            == iv["start"]
-                                        )
-                                        & (storage.db.intervals.c.end_time == iv["end"])
-                                        & (storage.db.intervals.c.state == iv["state"])
-                                    )
-                                )
-                            conn.commit()
-
-                    return storage.execute_with_retry(_do_delete_filtered)
+                # Delete filtered intervals using ORM
+                def _delete_filtered(to_delete=to_delete, storage=storage):
+                    return storage.executor.execute_in_session(
+                        lambda session: storage.queries.delete_specific_intervals(
+                            to_delete, session
+                        )
+                    )
 
                 await hass.async_add_executor_job(_delete_filtered)
 
