@@ -165,12 +165,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if loaded_data:
                 self.entities = EntityManager.from_dict(dict(loaded_data), self)
                 await self.entities.__post_init__()
+                # Restore prior from storage if available
+                if "prior" in loaded_data and loaded_data["prior"] is not None:
+                    self.prior.set_global_prior(loaded_data["prior"])
             else:
                 self.entities = EntityManager(self)
                 await self.entities.__post_init__()
-            # Calculate priors and likelihoods
-            await self.prior.update()
-            await self.entities.update_all_entity_likelihoods()
+            # Calculate priors and likelihoods if not restored from storage
+            if (
+                loaded_data is None
+                or "prior" not in loaded_data
+                or loaded_data["prior"] is None
+                or "entities" not in loaded_data
+            ):
+                await self.prior.update()
+                await self.entities.update_all_entity_likelihoods()
+            # Save data to storage
             await self.storage.async_save_data()
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
@@ -315,7 +325,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, self.run_analysis, next_update
         )
 
-    async def run_analysis(self) -> None:
+    async def run_analysis(self, _now: datetime) -> None:
         """Handle the historical data import timer."""
         self._analysis_timer = None
 

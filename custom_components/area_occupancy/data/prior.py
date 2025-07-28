@@ -54,6 +54,11 @@ class Prior:
         """Return the prior intervals."""
         return self._prior_intervals
 
+    def set_global_prior(self, prior: float) -> None:
+        """Set the global prior value."""
+        self.global_prior = prior
+        self._last_updated = dt_util.utcnow()
+
     async def update(self) -> None:
         """Calculate and update the prior value."""
         try:

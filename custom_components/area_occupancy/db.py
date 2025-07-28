@@ -271,6 +271,7 @@ class Serializer:
             "area_name": row.area_name,
             "purpose": row.purpose,
             "threshold": row.threshold,
+            "area_prior": row.area_prior,
             "created_at": row.created_at
             if isinstance(row.created_at, datetime)
             else dt_util.parse_datetime(row.created_at) or dt_util.utcnow(),
@@ -287,6 +288,7 @@ class Serializer:
             "area_name": record["area_name"],
             "purpose": record["purpose"],
             "threshold": record["threshold"],
+            "area_prior": record.get("area_prior", DEFAULT_AREA_PRIOR),
             "created_at": record["created_at"],
             "updated_at": record["updated_at"],
         }
