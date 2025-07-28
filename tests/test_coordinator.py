@@ -580,6 +580,9 @@ class TestCoordinatorAdvancedTimerManagement:
                 "homeassistant.helpers.event.async_track_point_in_time",
                 return_value=Mock(),
             ),
+            patch.object(
+                coordinator.storage, "async_save_data", new_callable=AsyncMock
+            ),
         ):
             mock_entity_type = Mock()
             mock_entity_type.prob_true = 0.25
