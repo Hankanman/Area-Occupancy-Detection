@@ -474,19 +474,17 @@ class DatabaseExecutor:  # pragma: no cover
             try:
                 return func()
             except sa.exc.OperationalError as err:
-                if (
-                    "database is locked" in str(err).lower()
-                    and attempt < max_retries - 1
-                ):
-                    delay = initial_delay * (2**attempt)  # Exponential backoff
-                    _LOGGER.debug(
-                        "Database locked, retrying in %.2fs (attempt %d/%d)",
-                        delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(delay)
-                    continue
+                if err.orig and hasattr(err.orig, "sqlite_errno"):
+                    if err.orig.sqlite_errno == 5:
+                        delay = initial_delay * (2**attempt)  # Exponential backoff
+                        _LOGGER.debug(
+                            "Database locked, retrying in %.2fs (attempt %d/%d)",
+                            delay,
+                            attempt + 1,
+                            max_retries,
+                        )
+                        time.sleep(delay)
+                        continue
                 raise
             except Exception:
                 raise
@@ -533,13 +531,17 @@ class DatabaseInitializer:  # pragma: no cover
             Base.metadata.create_all(self.engine, checkfirst=True)
         except sa.exc.OperationalError as err:
             # Handle race condition when multiple instances try to create tables
-            if "already exists" in str(err).lower():
-                _LOGGER.debug(
-                    "Table already exists (race condition), continuing: %s", err
-                )
-                # Continue - other tables might still need to be created
-                # Try to create remaining tables individually
-                self._create_tables_individually()
+            if err.orig and hasattr(err.orig, "sqlite_errno"):
+                if err.orig.sqlite_errno == 1:
+                    _LOGGER.debug(
+                        "Table already exists (race condition), continuing: %s", err
+                    )
+                    # Continue - other tables might still need to be created
+                    # Try to create remaining tables individually
+                    self._create_tables_individually()
+                else:
+                    _LOGGER.error("Database initialization failed: %s", err)
+                    raise
             else:
                 _LOGGER.error("Database initialization failed: %s", err)
                 raise
@@ -554,9 +556,12 @@ class DatabaseInitializer:  # pragma: no cover
                 try:
                     table.create(self.engine, checkfirst=True)
                 except sa.exc.OperationalError as err:
-                    if "already exists" in str(err).lower():
-                        _LOGGER.debug("Table %s already exists, skipping", table.name)
-                        continue
+                    if err.orig and hasattr(err.orig, "sqlite_errno"):
+                        if err.orig.sqlite_errno == 1:
+                            _LOGGER.debug(
+                                "Table %s already exists, skipping", table.name
+                            )
+                            continue
                     raise
 
 
@@ -592,7 +597,6 @@ class DatabaseQueries:  # pragma: no cover
                 area = self.db.Areas.from_dict(record)
                 session.add(area)
 
-            session.commit()  # Ensure the record is saved
             return area.to_dict()
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save area occupancy: %s", e)
@@ -633,7 +637,6 @@ class DatabaseQueries:  # pragma: no cover
                 entity = self.db.Entities.from_dict(record)
                 session.add(entity)
 
-            session.commit()  # Ensure the record is saved
             return entity.to_dict()
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save entity config: %s", e)
@@ -679,7 +682,7 @@ class DatabaseQueries:  # pragma: no cover
                     entity = self.db.Entities(
                         entry_id=self.entry_id,
                         entity_id=entity_id,
-                        entity_type="unknown",  # Default type
+                        entity_type=InputType.UNKNOWN,
                         last_updated=dt_util.utcnow(),
                         created_at=dt_util.utcnow(),
                     )
@@ -712,18 +715,16 @@ class DatabaseQueries:  # pragma: no cover
                     inserted_count += 1
                 except sa.exc.IntegrityError as e:
                     # Unique constraint violation - interval already exists
-                    if "UNIQUE constraint failed" in str(e):
-                        session.rollback()  # Rollback the failed insert
-                        skipped_count += 1
-                        continue
+                    if e.orig and hasattr(e.orig, "sqlite_errno"):
+                        if e.orig.sqlite_errno in (19, 2067):
+                            session.rollback()  # Rollback the failed insert
+                            skipped_count += 1
+                            continue
                     # Re-raise if it's a different integrity error
                     raise
                 except Exception:
                     # Re-raise other exceptions
                     raise
-
-            # Commit all changes
-            session.commit()
 
             _LOGGER.debug(
                 "Inserted %d new intervals, skipped %d existing intervals",
@@ -991,7 +992,6 @@ class DatabaseQueries:  # pragma: no cover
                 prior = self.db.Priors.from_dict(record)
                 session.add(prior)
 
-            session.commit()  # Ensure the record is saved
             return prior.to_dict()
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save prior: %s", e)
