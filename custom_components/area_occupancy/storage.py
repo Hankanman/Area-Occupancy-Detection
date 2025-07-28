@@ -12,7 +12,13 @@ import sqlalchemy as sa
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import HA_RECORDER_DAYS
+from .const import (
+    DEFAULT_PROB_GIVEN_FALSE,
+    DEFAULT_PROB_GIVEN_TRUE,
+    HA_RECORDER_DAYS,
+    MAX_PRIOR,
+    MIN_PRIOR,
+)
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
 from .db import AreaOccupancyDB, Base, Serializer
 from .state_intervals import StateInterval, get_intervals_from_recorder
@@ -145,8 +151,8 @@ class AreaOccupancyStorage:
                 stmt = sa.text(
                     """
                     INSERT OR REPLACE INTO areas
-                    (entry_id, area_name, purpose, threshold, created_at, updated_at)
-                    VALUES (:entry_id, :area_name, :purpose, :threshold,
+                    (entry_id, area_name, purpose, threshold, area_prior, created_at, updated_at)
+                    VALUES (:entry_id, :area_name, :purpose, :threshold, :area_prior,
                             COALESCE((SELECT created_at FROM areas WHERE entry_id = :entry_id), :created_at),
                             :updated_at)
                 """
@@ -563,6 +569,7 @@ class AreaOccupancyStorage:
                 "area_name": self.coordinator.config.name,
                 "purpose": self.coordinator.config.purpose,
                 "threshold": self.coordinator.threshold,
+                "area_prior": self.coordinator.area_prior,
                 "created_at": dt_util.utcnow(),
                 "updated_at": dt_util.utcnow(),
             }
@@ -575,8 +582,8 @@ class AreaOccupancyStorage:
                     "entity_id": entity.entity_id,
                     "entity_type": entity.type.input_type.value,
                     "weight": entity.type.weight,
-                    "prob_given_true": entity.likelihood.prob_given_true,
-                    "prob_given_false": entity.likelihood.prob_given_false,
+                    "prob_given_true": entity.likelihood.prob_given_true_raw,
+                    "prob_given_false": entity.likelihood.prob_given_false_raw,
                     "created_at": dt_util.utcnow(),
                     "last_updated": dt_util.utcnow(),
                 }
@@ -627,9 +634,15 @@ class AreaOccupancyStorage:
                     "type": {
                         "input_type": config["entity_type"],
                         "weight": config["weight"],
-                        "prob_true": config["prob_given_true"],
-                        "prob_false": config["prob_given_false"],
-                        "prior": type_defaults.get("prior", 0.5),
+                        "prob_true": type_defaults.get(
+                            "prob_true", DEFAULT_PROB_GIVEN_TRUE
+                        ),
+                        "prob_false": type_defaults.get(
+                            "prob_false", DEFAULT_PROB_GIVEN_FALSE
+                        ),
+                        "prior": type_defaults.get(
+                            "prior", (MIN_PRIOR + MAX_PRIOR) / 2
+                        ),
                         "active_states": type_defaults.get("active_states"),
                         "active_range": type_defaults.get("active_range"),
                     },
@@ -645,7 +658,7 @@ class AreaOccupancyStorage:
                 "name": area_record["area_name"],
                 "purpose": area_record["purpose"],
                 "probability": self.coordinator.probability,
-                "prior": self.coordinator.area_prior,
+                "prior": area_record.get("area_prior", self.coordinator.area_prior),
                 "threshold": area_record["threshold"],
                 "last_updated": area_record["updated_at"].isoformat(),
                 "entities": entities_data,
