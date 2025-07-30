@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import HA_RECORDER_DAYS
 from ..state_intervals import StateInterval
-from ..utils import validate_prob
+from ..utils import ensure_timezone_aware, validate_prob
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -188,8 +188,16 @@ class Likelihood:
             "Likelihood calculation for %s: intervals=%d, prior_intervals=%d",
             self.entity_id,
             len(intervals) if intervals else 0,
-            len(prior_intervals),
+            len(prior_intervals) if prior_intervals else 0,
         )
+
+        # If prior intervals are not available, use default values
+        if not prior_intervals:
+            _LOGGER.debug(
+                "Prior intervals not available for %s, using default likelihoods",
+                self.entity_id,
+            )
+            return active_ratio, inactive_ratio
 
         if intervals and prior_intervals:
             # Calculate total analysis period
@@ -266,17 +274,21 @@ class Likelihood:
             True if interval overlaps any prior interval
 
         """
-        interval_start = interval["start"]
-        interval_end = interval["end"]
+
+        interval_start = ensure_timezone_aware(interval["start"])
+        interval_end = ensure_timezone_aware(interval["end"])
 
         # Binary search approach for better performance with many prior intervals
         for prior in sorted_prior_intervals:
+            prior_start = ensure_timezone_aware(prior["start"])
+            prior_end = ensure_timezone_aware(prior["end"])
+
             # Early exit if we've passed all possible overlaps
-            if prior["start"] > interval_end:
+            if prior_start > interval_end:
                 break
 
             # Check for overlap
-            if interval_end > prior["start"] and interval_start < prior["end"]:
+            if interval_end > prior_start and interval_start < prior_end:
                 return True
 
         return False

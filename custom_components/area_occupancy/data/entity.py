@@ -396,6 +396,11 @@ class EntityManager:
             _LOGGER.debug("No entities to update likelihoods for")
             return 0
 
+        # Ensure prior is calculated before likelihood calculations
+        if self.coordinator.prior.prior_intervals is None:
+            _LOGGER.debug("Prior not calculated yet, calculating prior first")
+            await self.coordinator.prior.update()
+
         # Process entities in parallel chunks to avoid blocking
         chunk_size = 5  # Process 5 entities at a time
         entity_list = list(self._entities.values())
