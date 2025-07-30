@@ -731,11 +731,19 @@ class DatabaseQueries:  # pragma: no cover
                 inserted_count,
                 skipped_count,
             )
+            return inserted_count
+        except sa.exc.IntegrityError as e:
+            # Handle duplicate key constraints gracefully
+            if e.orig and hasattr(e.orig, "sqlite_errno"):
+                if e.orig.sqlite_errno in (19, 2067):  # UNIQUE constraint failed
+                    _LOGGER.debug("Intervals already exist in database, skipping batch")
+                    return 0
+            # Re-raise other integrity errors
+            _LOGGER.error("Database integrity error in batch: %s", e)
+            raise
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save intervals batch: %s", e)
             raise
-        else:
-            return inserted_count
 
     def get_historical_intervals(
         self,
