@@ -63,6 +63,8 @@ from ..const import (
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
+from .entity_type import InputType
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -73,12 +75,12 @@ class Sensors:
     motion: list[str] = field(default_factory=list)
     primary_occupancy: str | None = None
     media: list[str] = field(default_factory=list)
-    appliances: list[str] = field(default_factory=list)
+    appliance: list[str] = field(default_factory=list)
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
-    doors: list[str] = field(default_factory=list)
-    windows: list[str] = field(default_factory=list)
+    door: list[str] = field(default_factory=list)
+    window: list[str] = field(default_factory=list)
 
     def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
         """Get motion sensors including wasp sensor if enabled and available.
@@ -182,13 +184,99 @@ class Config:
         return [
             *self.sensors.motion,
             *self.sensors.media,
-            *self.sensors.appliances,
-            *self.sensors.doors,
-            *self.sensors.windows,
+            *self.sensors.appliance,
+            *self.sensors.door,
+            *self.sensors.window,
             *self.sensors.illuminance,
             *self.sensors.humidity,
             *self.sensors.temperature,
         ]
+
+    def get_entity_specifications(
+        self, coordinator: "AreaOccupancyCoordinator"
+    ) -> dict[str, dict[str, Any]]:
+        """Get entity specifications for all configured entities.
+
+        Returns a mapping of entity_id -> specification dict that can be used
+        directly for entity creation without intermediate conversions.
+        """
+        specs = {}
+
+        # Define sensor type mappings to eliminate repetition
+        SENSOR_TYPE_MAPPING = {
+            "motion": (InputType.MOTION, "motion"),
+            "media": (InputType.MEDIA, "media"),
+            "appliance": (InputType.APPLIANCE, "appliance"),
+            "door": (InputType.DOOR, "door"),
+            "window": (InputType.WINDOW, "window"),
+            "illuminance": (InputType.ILLUMINANCE, "environmental"),
+            "humidity": (InputType.HUMIDITY, "environmental"),
+            "temperature": (InputType.TEMPERATURE, "environmental"),
+        }
+
+        # Process each sensor type using the mapping
+        for sensor_type, (input_type, weight_attr) in SENSOR_TYPE_MAPPING.items():
+            sensor_list = getattr(self.sensors, sensor_type)
+
+            # Special handling for motion sensors (includes wasp)
+            if sensor_type == "motion":
+                sensor_list = self.sensors.get_motion_sensors(coordinator)
+
+            for entity_id in sensor_list:
+                # Get active states for sensor types that have them
+                active_states = None
+                if sensor_type in ["media", "appliance", "door", "window"]:
+                    active_states = getattr(self.sensor_states, sensor_type)
+
+                specs[entity_id] = {
+                    "input_type": input_type,
+                    "weight": getattr(self.weights, weight_attr),
+                    "active_states": active_states,
+                    "active_range": None,  # Will be set by EntityType for environmental sensors
+                }
+
+        return specs
+
+    def validate_entity_configuration(self) -> list[str]:
+        """Validate entity configuration and return any issues found.
+
+        Returns:
+            List of validation error messages (empty if valid)
+
+        """
+        errors = []
+
+        # Check for duplicate entity IDs
+        all_entity_ids = self.entity_ids
+        duplicates = {eid for eid in all_entity_ids if all_entity_ids.count(eid) > 1}
+        if duplicates:
+            errors.append(f"Duplicate entity IDs found: {duplicates}")
+
+        # Check for empty entity lists
+        if (
+            not self.sensors.motion
+            and not self.sensors.media
+            and not self.sensors.appliance
+        ):
+            errors.append("No motion, media, or appliance sensors configured")
+
+        # Validate individual sensor lists
+        for sensor_type, entity_list in [
+            ("motion", self.sensors.motion),
+            ("media", self.sensors.media),
+            ("appliance", self.sensors.appliance),
+            ("door", self.sensors.door),
+            ("window", self.sensors.window),
+            ("illuminance", self.sensors.illuminance),
+            ("humidity", self.sensors.humidity),
+            ("temperature", self.sensors.temperature),
+        ]:
+            if entity_list and not all(
+                isinstance(eid, str) and eid.strip() for eid in entity_list
+            ):
+                errors.append(f"Invalid {sensor_type} sensor entity IDs: {entity_list}")
+
+        return errors
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -227,12 +315,12 @@ class Config:
                 motion=data.get(CONF_MOTION_SENSORS, []),
                 primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
                 media=data.get(CONF_MEDIA_DEVICES, []),
-                appliances=data.get(CONF_APPLIANCES, []),
+                appliance=data.get(CONF_APPLIANCES, []),
                 illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
                 humidity=data.get(CONF_HUMIDITY_SENSORS, []),
                 temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
-                doors=data.get(CONF_DOOR_SENSORS, []),
-                windows=data.get(CONF_WINDOW_SENSORS, []),
+                door=data.get(CONF_DOOR_SENSORS, []),
+                window=data.get(CONF_WINDOW_SENSORS, []),
             ),
             sensor_states=SensorStates(
                 door=[data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],

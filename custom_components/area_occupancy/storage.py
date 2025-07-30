@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy import and_
-from sqlalchemy.orm import Session, joinedload, sessionmaker
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session, sessionmaker
 
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +22,7 @@ from .const import (
     MAX_PRIOR,
     MIN_PRIOR,
 )
+from .data.entity import EntityFactory
 from .data.entity_type import _ENTITY_TYPE_DATA, InputType
 from .db import AreaOccupancyDB, Base
 from .state_intervals import StateInterval, get_intervals_from_recorder
@@ -133,16 +135,12 @@ class AreaOccupancyStorage:
 
         def _save():
             def _do_save():
-                try:
-                    # Use ORM for bulk operations
-                    return self.executor.execute_in_session(
-                        lambda session: self.queries.save_intervals_batch(
-                            intervals, session
-                        )
+                # Use ORM for bulk operations
+                return self.executor.execute_in_session(
+                    lambda session: self.queries.save_intervals_batch(
+                        intervals, session
                     )
-                except (sa.exc.SQLAlchemyError, OSError) as err:
-                    _LOGGER.warning("Failed to save batch of state intervals: %s", err)
-                    return 0
+                )
 
             return self.executor.execute_with_retry(_do_save)
 
@@ -375,53 +373,62 @@ class AreaOccupancyStorage:
                     self.coordinator.entry_id,
                 )
                 return None
-            entity_configs = await self.get_entity_configs(self.coordinator.entry_id)
+            db_entities = await self.get_entity_configs(self.coordinator.entry_id)
             entities_data = {}
-            for config in entity_configs:
+
+            factory = EntityFactory(self.coordinator)
+
+            for db_entity in db_entities:
                 try:
-                    input_type = InputType(config["entity_type"])
-                    type_defaults = _ENTITY_TYPE_DATA.get(input_type, {})
-                    valid_entity_type = config["entity_type"]
-                except (ValueError, KeyError):
-                    type_defaults = _ENTITY_TYPE_DATA.get(InputType.UNKNOWN, {})
-                    valid_entity_type = InputType.UNKNOWN.value
-                    _LOGGER.warning(
-                        "Unknown entity type %s for %s, using unknown defaults",
-                        config["entity_type"],
-                        config["entity_id"],
+                    # Get the default entity type data for this entity type
+                    input_type = InputType(db_entity["entity_type"])
+                    type_defaults = _ENTITY_TYPE_DATA.get(
+                        input_type, _ENTITY_TYPE_DATA[InputType.UNKNOWN]
                     )
-                entities_data[config["entity_id"]] = {
-                    "entity_id": config["entity_id"],
-                    "entity_type": valid_entity_type,
-                    "last_updated": config["last_updated"].isoformat(),
-                    "likelihood": {
-                        "prob_given_true": config["prob_given_true"],
-                        "prob_given_false": config["prob_given_false"],
-                        "last_updated": config["last_updated"].isoformat(),
-                    },
-                    "type": {
-                        "input_type": valid_entity_type,
-                        "weight": config["weight"],
-                        "prob_true": type_defaults.get(
-                            "prob_true", DEFAULT_PROB_GIVEN_TRUE
-                        ),
-                        "prob_false": type_defaults.get(
-                            "prob_false", DEFAULT_PROB_GIVEN_FALSE
-                        ),
-                        "prior": type_defaults.get(
-                            "prior", (MIN_PRIOR + MAX_PRIOR) / 2
-                        ),
-                        "active_states": type_defaults.get("active_states"),
-                        "active_range": type_defaults.get("active_range"),
-                    },
-                    "decay": {
-                        "last_trigger_ts": dt_util.utcnow().timestamp(),
-                        "half_life": self.coordinator.config.decay.half_life,
-                        "is_decaying": False,
-                    },
-                    "previous_evidence": None,
-                    "previous_probability": 0.0,
-                }
+
+                    # Convert database config to storage format for factory
+                    storage_data = {
+                        "entity_id": db_entity["entity_id"],
+                        "type": {
+                            "input_type": db_entity["entity_type"],
+                            "weight": db_entity["weight"],
+                            "prob_true": db_entity.get(
+                                "prob_given_true", DEFAULT_PROB_GIVEN_TRUE
+                            ),
+                            "prob_false": db_entity.get(
+                                "prob_given_false", DEFAULT_PROB_GIVEN_FALSE
+                            ),
+                            "prior": (MIN_PRIOR + MAX_PRIOR) / 2,
+                            "active_states": type_defaults.get("active_states"),
+                            "active_range": type_defaults.get("active_range"),
+                        },
+                        "likelihood": {
+                            "prob_given_true": db_entity["prob_given_true"],
+                            "prob_given_false": db_entity["prob_given_false"],
+                            "last_updated": db_entity["last_updated"].isoformat(),
+                        },
+                        "decay": {
+                            "last_trigger_ts": dt_util.utcnow().timestamp(),
+                            "half_life": self.coordinator.config.decay.half_life,
+                            "is_decaying": False,
+                        },
+                        "last_updated": db_entity["last_updated"].isoformat(),
+                        "previous_evidence": None,
+                        "previous_probability": 0.0,
+                    }
+
+                    # Use factory to create entity from storage data
+                    entity = factory.create_from_storage(storage_data)
+                    entities_data[db_entity["entity_id"]] = entity.to_dict()
+
+                except (ValueError, KeyError) as err:
+                    _LOGGER.warning(
+                        "Failed to load entity %s: %s, skipping",
+                        db_entity["entity_id"],
+                        err,
+                    )
+                    continue
+
             return {
                 "name": area_record["area_name"],
                 "purpose": area_record["purpose"],
@@ -486,6 +493,9 @@ class DatabaseExecutor:  # pragma: no cover
                         time.sleep(delay)
                         continue
                 raise
+            except sa.exc.IntegrityError:
+                # Don't retry on integrity errors - they're not transient
+                raise
             except Exception:
                 raise
         # This should never be reached due to the retry logic above
@@ -497,6 +507,10 @@ class DatabaseExecutor:  # pragma: no cover
             try:
                 result = func(session)
                 session.commit()
+            except sa.exc.IntegrityError:
+                # Handle integrity errors specifically
+                session.rollback()
+                raise
             except Exception:
                 session.rollback()
                 raise
@@ -663,7 +677,7 @@ class DatabaseQueries:  # pragma: no cover
     def save_intervals_batch(
         self, intervals: Sequence[StateInterval], session: Session
     ) -> int:
-        """Save multiple state intervals efficiently using ORM bulk operations."""
+        """Save multiple state intervals efficiently using SQLite INSERT OR IGNORE."""
         if not intervals:
             return 0
 
@@ -691,17 +705,14 @@ class DatabaseQueries:  # pragma: no cover
             # Commit entities to ensure they exist before inserting intervals
             session.commit()
 
-            # Insert intervals individually to handle unique constraint violations
-            inserted_count = 0
-            skipped_count = 0
+            # Use SQLite INSERT OR IGNORE for automatic conflict resolution
 
+            # Prepare interval data
+            interval_data = []
             for interval in intervals:
-                try:
-                    # Convert StateInterval to dictionary format for ORM
-                    duration_seconds = (
-                        interval["end"] - interval["start"]
-                    ).total_seconds()
-                    interval_dict = {
+                duration_seconds = (interval["end"] - interval["start"]).total_seconds()
+                interval_data.append(
+                    {
                         "entity_id": interval["entity_id"],
                         "state": interval["state"],
                         "start_time": interval["start"],
@@ -709,33 +720,25 @@ class DatabaseQueries:  # pragma: no cover
                         "duration_seconds": duration_seconds,
                         "created_at": dt_util.utcnow(),
                     }
-                    interval_obj = self.db.Intervals.from_dict(interval_dict)
-                    session.add(interval_obj)
-                    session.flush()  # Flush immediately to catch constraint violations
-                    inserted_count += 1
-                except sa.exc.IntegrityError as e:
-                    # Unique constraint violation - interval already exists
-                    if e.orig and hasattr(e.orig, "sqlite_errno"):
-                        if e.orig.sqlite_errno in (19, 2067):
-                            session.rollback()  # Rollback the failed insert
-                            skipped_count += 1
-                            continue
-                    # Re-raise if it's a different integrity error
-                    raise
-                except Exception:
-                    # Re-raise other exceptions
-                    raise
+                )
+
+            # Use SQLite-specific insert with conflict resolution
+            stmt = sqlite_insert(self.db.Intervals).on_conflict_do_nothing(
+                index_elements=["entity_id", "start_time", "end_time"]
+            )
+
+            session.execute(stmt, interval_data)
+            session.commit()
 
             _LOGGER.debug(
-                "Inserted %d new intervals, skipped %d existing intervals",
-                inserted_count,
-                skipped_count,
+                "Attempted to insert %d intervals using INSERT OR IGNORE",
+                len(interval_data),
             )
+            return len(interval_data)
+
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to save intervals batch: %s", e)
             raise
-        else:
-            return inserted_count
 
     def get_historical_intervals(
         self,
@@ -893,78 +896,6 @@ class DatabaseQueries:  # pragma: no cover
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to reset entry data: %s", e)
             raise
-
-    # ─────────────────── ORM Relationship Queries ───────────────────
-
-    def get_area_with_entities(
-        self, entry_id: str, session: Session
-    ) -> dict[str, Any] | None:
-        """Get area occupancy record with all related entities using ORM relationships."""
-
-        area = (
-            session.query(self.db.Areas)
-            .options(joinedload(self.db.Areas.entities))
-            .filter_by(entry_id=entry_id)
-            .first()
-        )
-
-        if not area:
-            return None
-
-        # Use relationship to get entities (already loaded)
-        entities = area.entities
-        area_dict = area.to_dict()
-        area_dict["entities"] = [entity.to_dict() for entity in entities]
-
-        return area_dict
-
-    def get_entity_with_intervals(
-        self, entity_id: str, session: Session, limit: int = 100
-    ) -> dict[str, Any] | None:
-        """Get entity with recent intervals using direct queries."""
-
-        entity = session.query(self.db.Entities).filter_by(entity_id=entity_id).first()
-
-        if not entity:
-            return None
-
-        # Query intervals directly
-        recent_intervals = (
-            session.query(self.db.Intervals)
-            .filter_by(entity_id=entity_id)
-            .order_by(self.db.Intervals.start_time.asc())
-            .limit(limit)
-            .all()
-        )
-
-        entity_dict = entity.to_dict()
-        entity_dict["recent_intervals"] = [
-            interval.to_dict() for interval in recent_intervals
-        ]
-
-        return entity_dict
-
-    def get_area_with_priors(
-        self, entry_id: str, session: Session
-    ) -> dict[str, Any] | None:
-        """Get area occupancy record with all related priors using ORM relationships."""
-
-        area = (
-            session.query(self.db.Areas)
-            .options(joinedload(self.db.Areas.priors))
-            .filter_by(entry_id=entry_id)
-            .first()
-        )
-
-        if not area:
-            return None
-
-        # Use relationship to get priors (already loaded)
-        priors = area.priors
-        area_dict = area.to_dict()
-        area_dict["priors"] = [prior.to_dict() for prior in priors]
-
-        return area_dict
 
     # ─────────────────── Prior Operations ───────────────────
 

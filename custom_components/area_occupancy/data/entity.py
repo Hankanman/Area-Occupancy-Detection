@@ -185,54 +185,146 @@ class Entity:
             "previous_probability": self.previous_probability,
         }
 
-    @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
-    ) -> "Entity":
-        """Create entity from dictionary."""
-        entity_type = EntityType.from_dict(data["type"])
-        decay = Decay.from_dict(data["decay"])
 
-        # Create likelihood with specific values instead of entity reference
-        likelihood = Likelihood.from_dict(
-            data["likelihood"],
-            coordinator,
-            entity_id=data["entity_id"],
-            active_states=entity_type.active_states or [],
-            default_prob_true=entity_type.prob_true,
-            default_prob_false=entity_type.prob_false,
-            weight=entity_type.weight,
+class EntityFactory:
+    """Factory for creating entities from various sources."""
+
+    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
+        """Initialize the factory."""
+        self.coordinator = coordinator
+        self.config = coordinator.config_manager.config
+
+    def create_from_storage(self, data: dict[str, Any]) -> Entity:
+        """Create entity from storage data."""
+        entity_type_data = data["type"]
+
+        # Create entity type from storage data
+        entity_type = EntityType(
+            input_type=InputType(entity_type_data["input_type"]),
+            weight=entity_type_data["weight"],
+            prob_true=entity_type_data["prob_true"],
+            prob_false=entity_type_data["prob_false"],
+            prior=entity_type_data["prior"],
+            active_states=entity_type_data.get("active_states"),
+            active_range=entity_type_data.get("active_range"),
         )
 
-        # Create the entity
-        return cls(
+        return self._create_entity(
             entity_id=data["entity_id"],
+            entity_type=entity_type,
+            stored_likelihood=data.get("likelihood"),
+            stored_decay=data.get("decay"),
+            last_updated=data.get("last_updated"),
+            previous_evidence=data.get("previous_evidence"),
+            previous_probability=data.get("previous_probability", 0.0),
+        )
+
+    def create_from_config_spec(self, entity_id: str, spec: dict[str, Any]) -> Entity:
+        """Create entity from configuration specification."""
+        entity_type = self.coordinator.entity_types.get_entity_type(spec["input_type"])
+
+        # Override entity type with config-specific values
+        entity_type.weight = spec.get("weight", entity_type.weight)
+        entity_type.active_states = spec.get("active_states", entity_type.active_states)
+        entity_type.active_range = spec.get("active_range", entity_type.active_range)
+
+        return self._create_entity(
+            entity_id=entity_id,
+            entity_type=entity_type,
+            stored_likelihood=None,
+            stored_decay=None,
+            last_updated=None,
+            previous_evidence=None,
+            previous_probability=0.0,
+        )
+
+    def _create_entity(
+        self,
+        entity_id: str,
+        entity_type: EntityType,
+        stored_likelihood: dict[str, Any] | None = None,
+        stored_decay: dict[str, Any] | None = None,
+        last_updated: str | None = None,
+        previous_evidence: bool | None = None,
+        previous_probability: float = 0.0,
+    ) -> Entity:
+        """Create entity with the given parameters."""
+
+        # Create decay
+        if stored_decay:
+            decay = Decay.from_dict(stored_decay)
+        else:
+            decay = Decay(
+                last_trigger_ts=dt_util.utcnow().timestamp(),
+                half_life=self.config.decay.half_life,
+            )
+
+        # Create likelihood
+        if stored_likelihood:
+            likelihood = Likelihood.from_dict(
+                stored_likelihood,
+                self.coordinator,
+                entity_id=entity_id,
+                active_states=entity_type.active_states or [],
+                default_prob_true=entity_type.prob_true,
+                default_prob_false=entity_type.prob_false,
+                weight=entity_type.weight,
+            )
+        else:
+            likelihood = Likelihood(
+                coordinator=self.coordinator,
+                entity_id=entity_id,
+                active_states=entity_type.active_states or [],
+                default_prob_true=entity_type.prob_true,
+                default_prob_false=entity_type.prob_false,
+                weight=entity_type.weight,
+            )
+
+        # Create entity
+        return Entity(
+            entity_id=entity_id,
             type=entity_type,
             likelihood=likelihood,
             decay=decay,
-            coordinator=coordinator,
-            last_updated=datetime.fromisoformat(data["last_updated"]),
-            previous_evidence=data["previous_evidence"],
-            previous_probability=data["previous_probability"],
+            coordinator=self.coordinator,
+            last_updated=(
+                dt_util.parse_datetime(last_updated)
+                if last_updated
+                else dt_util.utcnow()
+            ),
+            previous_evidence=previous_evidence,
+            previous_probability=previous_probability,
         )
+
+    def create_all_from_config(self) -> dict[str, Entity]:
+        """Create all entities from current configuration."""
+        config_specs = self.config.get_entity_specifications(self.coordinator)
+        entities = {}
+
+        for entity_id, spec in config_specs.items():
+            _LOGGER.debug("Creating entity %s from config spec", entity_id)
+            entities[entity_id] = self.create_from_config_spec(entity_id, spec)
+
+        return entities
 
 
 class EntityManager:
-    """Manages entities."""
+    """Manages entities with simplified creation and storage logic."""
 
     def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the entities."""
+        """Initialize the entity manager."""
         self.coordinator = coordinator
         self.config = coordinator.config_manager.config
         self.hass = coordinator.hass
         self._entities: dict[str, Entity] = {}
+        self._factory = EntityFactory(coordinator)
 
     async def __post_init__(self) -> None:
-        """Post init - validate datetime."""
+        """Post init - initialize entities from storage or config."""
         if self._entities:
-            await self._update_entities_from_config()
+            await self._sync_with_config()
         else:
-            self._entities = await self._create_entities_from_config()
+            await self._create_from_config()
 
     @property
     def entities(self) -> dict[str, Entity]:
@@ -282,25 +374,20 @@ class EntityManager:
     def from_dict(
         cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
     ) -> "EntityManager":
-        """Create entity manager from dictionary.
-
-        Only accepts the format: {"entities": {entity_id: entity_dict, ...}}
-        """
+        """Create entity manager from dictionary."""
         manager = cls(coordinator=coordinator)
 
-        # Only accept new format with 'entities' key
         if "entities" not in data:
             raise ValueError(
                 f"Invalid storage format: missing 'entities' key in data structure. "
-                f"Available keys: {list(data.keys())}. "
-                f"This should have been caught by storage validation."
+                f"Available keys: {list(data.keys())}."
             )
 
         entities_data = data["entities"]
 
         try:
             manager._entities = {
-                entity_id: Entity.from_dict(entity, coordinator)
+                entity_id: manager._factory.create_from_storage(entity)
                 for entity_id, entity in entities_data.items()
             }
         except (KeyError, ValueError, TypeError) as err:
@@ -327,71 +414,63 @@ class EntityManager:
             del self._entities[entity_id]
 
     async def cleanup(self) -> None:
-        """Clean up resources."""
+        """Clean up resources and recreate from config."""
         self._entities.clear()
-        self._entities = await self._create_entities_from_config()
+        await self._create_from_config()
 
-    async def create_entity(self, entity_id: str, entity_type: EntityType) -> Entity:
-        """Create a new entity.
+    async def _create_from_config(self) -> None:
+        """Create entities from current configuration."""
+        # Validate configuration first
+        validation_errors = self.config.validate_entity_configuration()
+        if validation_errors:
+            _LOGGER.warning(
+                "Entity configuration validation issues: %s", validation_errors
+            )
 
-        Args:
-            entity_id: The unique identifier for the entity
-            entity_type: The type of entity
+        # Create all entities using factory
+        self._entities = self._factory.create_all_from_config()
+        _LOGGER.info("Created %d entities from configuration", len(self._entities))
 
-        Returns:
-            The created Entity instance
+    async def _sync_with_config(self) -> None:
+        """Sync existing entities with current configuration."""
+        # Validate configuration first
+        validation_errors = self.config.validate_entity_configuration()
+        if validation_errors:
+            _LOGGER.warning(
+                "Entity configuration validation issues: %s", validation_errors
+            )
 
-        """
-        # Create required components
-        decay = Decay(
-            last_trigger_ts=dt_util.utcnow().timestamp(),
-            half_life=self.config.decay.half_life,
-        )
-        likelihood = Likelihood(
-            coordinator=self.coordinator,
-            entity_id=entity_id,
-            active_states=entity_type.active_states or [],
-            default_prob_true=entity_type.prob_true,
-            default_prob_false=entity_type.prob_false,
-            weight=entity_type.weight,
-        )
+        # Get required entities from config
+        required_entities = self._factory.create_all_from_config()
+        updated_entities: dict[str, Entity] = {}
 
-        return Entity(
-            entity_id=entity_id,
-            type=entity_type,
-            likelihood=likelihood,
-            decay=decay,
-            coordinator=self.coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=None,
-            previous_probability=0.0,
-        )
+        # Process existing entities
+        for entity_id, existing_entity in self._entities.items():
+            if entity_id in required_entities:
+                # Entity still exists in config - update type configuration
+                new_entity = required_entities[entity_id]
 
-    def build_sensor_type_mappings(self) -> dict[InputType, list[str]]:
-        """Build mapping of InputType -> list of entity IDs from configuration.
+                # Update type configuration but preserve learned data
+                existing_entity.type.weight = new_entity.type.weight
+                existing_entity.type.active_states = new_entity.type.active_states
+                existing_entity.type.active_range = new_entity.type.active_range
 
-        Returns:
-            Dictionary mapping sensor types to their configured entity IDs
+                updated_entities[entity_id] = existing_entity
+                del required_entities[entity_id]  # Mark as processed
+            else:
+                _LOGGER.info(
+                    "Entity %s removed from configuration, dropping stored data",
+                    entity_id,
+                )
 
-        """
-        return {
-            InputType.MOTION: self.config.sensors.get_motion_sensors(self.coordinator),
-            InputType.MEDIA: self.config.sensors.media,
-            InputType.APPLIANCE: self.config.sensors.appliances,
-            InputType.DOOR: self.config.sensors.doors,
-            InputType.WINDOW: self.config.sensors.windows,
-            InputType.ILLUMINANCE: self.config.sensors.illuminance,
-            InputType.HUMIDITY: self.config.sensors.humidity,
-            InputType.TEMPERATURE: self.config.sensors.temperature,
-        }
+        # Add new entities
+        updated_entities.update(required_entities)
+
+        self._entities = updated_entities
+        _LOGGER.info("Entity sync complete: %d total entities", len(self._entities))
 
     async def update_all_entity_likelihoods(self) -> int:
-        """Update all entity likelihoods.
-
-        Returns:
-            int: Number of entities updated
-
-        """
+        """Update all entity likelihoods."""
         if not self._entities:
             _LOGGER.debug("No entities to update likelihoods for")
             return 0
@@ -402,7 +481,7 @@ class EntityManager:
             await self.coordinator.prior.update()
 
         # Process entities in parallel chunks to avoid blocking
-        chunk_size = 5  # Process 5 entities at a time
+        chunk_size = 5
         entity_list = list(self._entities.values())
         updated_count = 0
 
@@ -436,15 +515,7 @@ class EntityManager:
         return updated_count
 
     async def _update_entity_likelihood(self, entity: Entity) -> int:
-        """Safely update a single entity's likelihood with error handling.
-
-        Args:
-            entity: The entity to update
-
-        Returns:
-            1 if successful, 0 if failed
-
-        """
+        """Safely update a single entity's likelihood with error handling."""
         try:
             await entity.likelihood.update()
         except (ValueError, TypeError) as err:
@@ -456,125 +527,3 @@ class EntityManager:
             return 0
         else:
             return 1
-
-    async def _update_entities_from_config(self) -> None:
-        """Update existing entities with current configuration."""
-        config_entities = await self._get_config_entity_mapping()
-        updated_entities: dict[str, Entity] = {}
-
-        # Process existing entities and mark those that are retained
-        self._process_existing_entities(config_entities, updated_entities)
-
-        # Create new entities for those added to configuration
-        await self._create_new_entities(config_entities, updated_entities)
-
-        # Apply the updated entity collection
-        self._entities = updated_entities
-        _LOGGER.info("Entity update complete: %d total entities", len(self._entities))
-
-    def _process_existing_entities(
-        self,
-        config_entities: dict[str, EntityType],
-        updated_entities: dict[str, Entity],
-    ) -> None:
-        """Process existing restored entities, updating configuration and marking processed ones.
-
-        Args:
-            config_entities: Configuration entity mapping (modified in place to mark processed)
-            updated_entities: Collection to add retained entities to
-
-        """
-        for entity_id, restored_entity in self._entities.items():
-            if entity_id in config_entities:
-                # Entity still exists in config - update type configuration
-                current_type = config_entities[entity_id]
-
-                # Update type configuration but preserve learned data
-                restored_entity.type.weight = current_type.weight
-                restored_entity.type.active_states = current_type.active_states
-                restored_entity.type.active_range = current_type.active_range
-
-                updated_entities[entity_id] = restored_entity
-                del config_entities[entity_id]  # Mark as processed
-            else:
-                _LOGGER.info(
-                    "Entity %s removed from configuration, dropping stored data",
-                    entity_id,
-                )
-
-    async def _create_new_entities(
-        self,
-        config_entities: dict[str, EntityType],
-        updated_entities: dict[str, Entity],
-    ) -> None:
-        """Create new entities for those added to configuration.
-
-        Args:
-            config_entities: Remaining unprocessed entities from configuration
-            updated_entities: Collection to add new entities to
-
-        """
-        # First pass: Create all new entities with default priors
-        new_entities: dict[str, Entity] = {}
-        for entity_id, entity_type in config_entities.items():
-            _LOGGER.info("Creating new entity %s", entity_id)
-            # Create entity with default priors from entity type
-            new_entity = await self.create_entity(
-                entity_id=entity_id, entity_type=entity_type
-            )
-            new_entities[entity_id] = new_entity
-            updated_entities[entity_id] = new_entity
-
-        # Note: Likelihood updates will be performed separately after all entities are created
-        # This avoids initialization issues during entity creation
-
-    async def _get_config_entity_mapping(self) -> dict[str, EntityType]:
-        """Get mapping of entity_id -> EntityType from current configuration."""
-        # Build sensor type mappings from configuration
-        type_mappings = self.build_sensor_type_mappings()
-
-        # Create initial entity mapping from type mappings
-
-        return self._build_entity_mapping_from_types(type_mappings)
-
-    def _build_entity_mapping_from_types(
-        self, type_mappings: dict[InputType, list[str]]
-    ) -> dict[str, EntityType]:
-        """Build entity_id -> EntityType mapping from type mappings.
-
-        Args:
-            type_mappings: Dictionary of InputType -> list of entity IDs
-
-        Returns:
-            Dictionary mapping entity IDs to their EntityType configurations
-
-        """
-        entity_mapping: dict[str, EntityType] = {}
-
-        for input_type, entity_ids in type_mappings.items():
-            entity_type = self.coordinator.entity_types.get_entity_type(input_type)
-            for entity_id in entity_ids:
-                entity_mapping[entity_id] = entity_type
-
-        return entity_mapping
-
-    async def _create_entities_from_config(self) -> dict[str, Entity]:
-        """Create entities from current configuration."""
-        # Use shared sensor mapping logic instead of duplicating it
-        type_mappings = self.build_sensor_type_mappings()
-
-        entities: dict[str, Entity] = {}
-
-        # First pass: Create all entities with default priors
-        for input_type, inputs in type_mappings.items():
-            entity_type = self.coordinator.entity_types.get_entity_type(input_type)
-            for input_entity_id in inputs:
-                # Create entity with default priors from entity type
-                entities[input_entity_id] = await self.create_entity(
-                    entity_id=input_entity_id, entity_type=entity_type
-                )
-
-        # Note: Likelihood calculations will be performed later in the coordinator setup
-        # This avoids initialization issues during entity creation
-
-        return entities
