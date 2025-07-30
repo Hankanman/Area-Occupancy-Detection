@@ -72,12 +72,12 @@ class TestSensors:
         assert sensors.motion == []
         assert sensors.primary_occupancy is None
         assert sensors.media == []
-        assert sensors.appliances == []
+        assert sensors.appliance == []
         assert sensors.illuminance == []
         assert sensors.humidity == []
         assert sensors.temperature == []
-        assert sensors.doors == []
-        assert sensors.windows == []
+        assert sensors.door == []
+        assert sensors.window == []
 
     def test_initialization_with_values(self) -> None:
         """Test Sensors initialization with specific values."""
@@ -85,23 +85,23 @@ class TestSensors:
             motion=["binary_sensor.motion1", "binary_sensor.motion2"],
             primary_occupancy="binary_sensor.motion1",
             media=["media_player.tv"],
-            appliances=["switch.coffee_maker"],
+            appliance=["switch.coffee_maker"],
             illuminance=["sensor.illuminance"],
             humidity=["sensor.humidity"],
             temperature=["sensor.temperature"],
-            doors=["binary_sensor.door"],
-            windows=["binary_sensor.window"],
+            door=["binary_sensor.door"],
+            window=["binary_sensor.window"],
         )
 
         assert sensors.motion == ["binary_sensor.motion1", "binary_sensor.motion2"]
         assert sensors.primary_occupancy == "binary_sensor.motion1"
         assert sensors.media == ["media_player.tv"]
-        assert sensors.appliances == ["switch.coffee_maker"]
+        assert sensors.appliance == ["switch.coffee_maker"]
         assert sensors.illuminance == ["sensor.illuminance"]
         assert sensors.humidity == ["sensor.humidity"]
         assert sensors.temperature == ["sensor.temperature"]
-        assert sensors.doors == ["binary_sensor.door"]
-        assert sensors.windows == ["binary_sensor.window"]
+        assert sensors.door == ["binary_sensor.door"]
+        assert sensors.window == ["binary_sensor.window"]
 
     def test_get_motion_sensors_without_wasp(self) -> None:
         """Test get_motion_sensors without wasp enabled."""
@@ -337,12 +337,12 @@ class TestConfig:
         ]
         assert config.sensors.primary_occupancy == "binary_sensor.motion1"
         assert config.sensors.media == ["media_player.tv"]
-        assert config.sensors.appliances == ["switch.coffee_maker"]
+        assert config.sensors.appliance == ["switch.coffee_maker"]
         assert config.sensors.illuminance == ["sensor.illuminance"]
         assert config.sensors.humidity == ["sensor.humidity"]
         assert config.sensors.temperature == ["sensor.temperature"]
-        assert config.sensors.doors == ["binary_sensor.door"]
-        assert config.sensors.windows == ["binary_sensor.window"]
+        assert config.sensors.door == ["binary_sensor.door"]
+        assert config.sensors.window == ["binary_sensor.window"]
         assert config.sensor_states.door == ["open"]
         assert config.sensor_states.window == ["open"]
         assert config.sensor_states.appliance == ["on"]
@@ -530,12 +530,12 @@ class TestConfigIntegration:
         # Verify all sensor lists are properly populated
         assert len(config.sensors.motion) == 2
         assert len(config.sensors.media) == 2
-        assert len(config.sensors.appliances) == 2
+        assert len(config.sensors.appliance) == 2
         assert len(config.sensors.illuminance) == 2
         assert len(config.sensors.humidity) == 1
         assert len(config.sensors.temperature) == 1
-        assert len(config.sensors.doors) == 2
-        assert len(config.sensors.windows) == 2
+        assert len(config.sensors.door) == 2
+        assert len(config.sensors.window) == 2
 
     def test_config_validation_edge_cases(self) -> None:
         """Test config validation with edge cases."""
