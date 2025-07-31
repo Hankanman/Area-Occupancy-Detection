@@ -58,10 +58,8 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             entity_likelihood_data = {
                 "type": entity.type.input_type.value,
                 "weight": entity.type.weight,
-                "prob_given_true": entity.likelihood.prob_given_true,
-                "prob_given_false": entity.likelihood.prob_given_false,
-                "prob_given_true_raw": entity.likelihood.prob_given_true_raw,
-                "prob_given_false_raw": entity.likelihood.prob_given_false_raw,
+                "prob_given_true": entity.prob_given_true,
+                "prob_given_false": entity.prob_given_false,
             }
 
             likelihood_data[entity_id] = entity_likelihood_data
@@ -228,10 +226,8 @@ async def _get_entity_details(hass: HomeAssistant, call: ServiceCall) -> dict[st
                         "active_states": entity.type.active_states,
                         "active_range": entity.type.active_range,
                     },
-                    "prior": {
-                        "prob_given_true": entity.likelihood.prob_given_true,
-                        "prob_given_false": entity.likelihood.prob_given_false,
-                    },
+                    "prob_given_true": entity.prob_given_true,
+                    "prob_given_false": entity.prob_given_false,
                 }
             except ValueError:
                 details[entity_id] = {"error": "Entity not found"}
