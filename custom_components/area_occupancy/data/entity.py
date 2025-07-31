@@ -1,6 +1,7 @@
 """Entity model."""
 
-import asyncio
+import bisect
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 import logging
@@ -11,7 +12,6 @@ from homeassistant.util import dt as dt_util
 from ..utils import bayesian_probability
 from .decay import Decay
 from .entity_type import EntityType, InputType
-from .likelihood import Likelihood
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -26,7 +26,8 @@ class Entity:
     # --- Core Data ---
     entity_id: str
     type: EntityType
-    likelihood: Likelihood
+    prob_given_true: float
+    prob_given_false: float
     decay: Decay
     coordinator: "AreaOccupancyCoordinator"
     last_updated: datetime
@@ -50,8 +51,8 @@ class Entity:
         # Calculate effective Bayesian posterior with decay applied
         return bayesian_probability(
             prior=self.coordinator.area_prior,
-            prob_given_true=self.likelihood.prob_given_true,
-            prob_given_false=self.likelihood.prob_given_false,
+            prob_given_true=self.prob_given_true,
+            prob_given_false=self.prob_given_false,
             evidence=True,
             decay_factor=self.decay_factor,
         )
@@ -125,6 +126,14 @@ class Entity:
             return 1.0
         return self.decay.decay_factor
 
+    def update_likelihood(
+        self, prob_given_true: float, prob_given_false: float
+    ) -> None:
+        """Update the likelihood of the entity."""
+        self.prob_given_true = prob_given_true
+        self.prob_given_false = prob_given_false
+        self.last_updated = dt_util.utcnow()
+
     def has_new_evidence(self) -> bool:
         """Update decay and probability on actual evidence transitions.
 
@@ -158,8 +167,8 @@ class Entity:
                 # Evidence appeared - jump probability up via Bayesian update
                 self.previous_probability = bayesian_probability(
                     prior=self.previous_probability,
-                    prob_given_true=self.likelihood.prob_given_true,
-                    prob_given_false=self.likelihood.prob_given_false,
+                    prob_given_true=self.prob_given_true,
+                    prob_given_false=self.prob_given_false,
                     evidence=True,
                     decay_factor=1.0,  # No decay on evidence appearance
                 )
@@ -178,7 +187,8 @@ class Entity:
         return {
             "entity_id": self.entity_id,
             "type": self.type.to_dict(),
-            "likelihood": self.likelihood.to_dict(),
+            "prob_given_true": self.prob_given_true,
+            "prob_given_false": self.prob_given_false,
             "decay": self.decay.to_dict(),
             "last_updated": self.last_updated.isoformat(),
             "previous_evidence": self.previous_evidence,
@@ -192,7 +202,7 @@ class EntityFactory:
     def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the factory."""
         self.coordinator = coordinator
-        self.config = coordinator.config_manager.config
+        self.config = coordinator.config
 
     def create_from_storage(self, data: dict[str, Any]) -> Entity:
         """Create entity from storage data."""
@@ -212,7 +222,8 @@ class EntityFactory:
         return self._create_entity(
             entity_id=data["entity_id"],
             entity_type=entity_type,
-            stored_likelihood=data.get("likelihood"),
+            stored_prob_given_true=data.get("prob_given_true"),
+            stored_prob_given_false=data.get("prob_given_false"),
             stored_decay=data.get("decay"),
             last_updated=data.get("last_updated"),
             previous_evidence=data.get("previous_evidence"),
@@ -231,7 +242,8 @@ class EntityFactory:
         return self._create_entity(
             entity_id=entity_id,
             entity_type=entity_type,
-            stored_likelihood=None,
+            stored_prob_given_true=None,
+            stored_prob_given_false=None,
             stored_decay=None,
             last_updated=None,
             previous_evidence=None,
@@ -242,7 +254,8 @@ class EntityFactory:
         self,
         entity_id: str,
         entity_type: EntityType,
-        stored_likelihood: dict[str, Any] | None = None,
+        stored_prob_given_true: float | None = None,
+        stored_prob_given_false: float | None = None,
         stored_decay: dict[str, Any] | None = None,
         last_updated: str | None = None,
         previous_evidence: bool | None = None,
@@ -259,32 +272,12 @@ class EntityFactory:
                 half_life=self.config.decay.half_life,
             )
 
-        # Create likelihood
-        if stored_likelihood:
-            likelihood = Likelihood.from_dict(
-                stored_likelihood,
-                self.coordinator,
-                entity_id=entity_id,
-                active_states=entity_type.active_states or [],
-                default_prob_true=entity_type.prob_true,
-                default_prob_false=entity_type.prob_false,
-                weight=entity_type.weight,
-            )
-        else:
-            likelihood = Likelihood(
-                coordinator=self.coordinator,
-                entity_id=entity_id,
-                active_states=entity_type.active_states or [],
-                default_prob_true=entity_type.prob_true,
-                default_prob_false=entity_type.prob_false,
-                weight=entity_type.weight,
-            )
-
         # Create entity
         return Entity(
             entity_id=entity_id,
             type=entity_type,
-            likelihood=likelihood,
+            prob_given_true=stored_prob_given_true,
+            prob_given_false=stored_prob_given_false,
             decay=decay,
             coordinator=self.coordinator,
             last_updated=(
@@ -314,7 +307,7 @@ class EntityManager:
     def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the entity manager."""
         self.coordinator = coordinator
-        self.config = coordinator.config_manager.config
+        self.config = coordinator.config
         self.hass = coordinator.hass
         self._entities: dict[str, Entity] = {}
         self._factory = EntityFactory(coordinator)
@@ -469,61 +462,106 @@ class EntityManager:
         self._entities = updated_entities
         _LOGGER.info("Entity sync complete: %d total entities", len(self._entities))
 
-    async def update_all_entity_likelihoods(self) -> int:
-        """Update all entity likelihoods."""
-        if not self._entities:
-            _LOGGER.debug("No entities to update likelihoods for")
-            return 0
+    def update_all_entity_likelihoods(self):
+        """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
-        # Ensure prior is calculated before likelihood calculations
-        if self.coordinator.prior.prior_intervals is None:
-            _LOGGER.debug("Prior not calculated yet, calculating prior first")
-            await self.coordinator.prior.update()
-
-        # Process entities in parallel chunks to avoid blocking
-        chunk_size = 5
-        entity_list = list(self._entities.values())
-        updated_count = 0
-
-        for i in range(0, len(entity_list), chunk_size):
-            chunk = entity_list[i : i + chunk_size]
-
-            # Create tasks for parallel processing
-            tasks = []
-            for entity in chunk:
-                task = self._update_entity_likelihood(entity)
-                tasks.append(task)
-
-            # Wait for all tasks in this chunk to complete
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Count successful updates
-            for result in results:
-                if isinstance(result, Exception):
-                    _LOGGER.warning("Entity likelihood update failed: %s", result)
-                elif isinstance(result, int):
-                    updated_count += result
-
-            # Yield control between chunks to avoid blocking
-            await asyncio.sleep(0)
-
-        _LOGGER.info(
-            "Updated likelihoods for %d out of %d entities",
-            updated_count,
-            len(self._entities),
-        )
-        return updated_count
-
-    async def _update_entity_likelihood(self, entity: Entity) -> int:
-        """Safely update a single entity's likelihood with error handling."""
-        try:
-            await entity.likelihood.update()
-        except (ValueError, TypeError) as err:
-            _LOGGER.warning(
-                "Failed to update likelihood for entity %s: %s",
-                entity.entity_id,
-                err,
+        Use motion-based labels for 'occupied'.
+        """
+        session = self.coordinator.db.session
+        db = self.coordinator.db
+        entry_id = self.coordinator.entry_id
+        sensor_ids = self.coordinator.config.sensors.motion
+        # Get all sensor configs for this area
+        sensors = session.query(db.Entities).filter_by(entry_id=entry_id).all()
+        occupied_intervals = (
+            session.query(db.Intervals.start_time, db.Intervals.end_time)
+            .join(
+                db.Entities,
+                db.Intervals.entity_id == db.Entities.entity_id,
             )
-            return 0
-        else:
-            return 1
+            .filter(
+                db.Entities.entry_id == entry_id,
+                db.Intervals.entity_id.in_(sensor_ids),
+                db.Intervals.state == "on",
+            )
+            .order_by(db.Intervals.start_time)
+            .all()
+        )
+
+        # Get truth timeline from motion sensors (sorted for binary search)
+        occupied_times = [(start, end) for start, end in occupied_intervals]
+
+        def is_occupied(ts):
+            """Efficiently check if timestamp falls within any occupied interval using binary search."""
+            if not occupied_times:
+                return False
+
+            # Binary search to find the rightmost interval that starts <= ts
+            idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
+
+            # Check if ts falls within the interval found
+            if idx > 0:
+                start, end = occupied_times[idx - 1]
+                if start <= ts < end:
+                    return True
+
+            return False
+
+        sensor_entity_ids = [entity.entity_id for entity in sensors]
+        if not sensor_entity_ids:
+            return
+
+        # Get all intervals for all sensors in one query
+        all_intervals = (
+            session.query(db.Intervals)
+            .filter(db.Intervals.entity_id.in_(sensor_entity_ids))
+            .all()
+        )
+
+        # Group intervals by entity_id for processing
+        intervals_by_entity = defaultdict(list)
+        for interval in all_intervals:
+            intervals_by_entity[interval.entity_id].append(interval)
+
+        # Process each sensor's intervals
+        now = dt_util.utcnow()
+        for entity in sensors:
+            # Get intervals for this specific sensor
+            intervals = intervals_by_entity[entity.entity_id]
+
+            # Count true readings during occupied vs empty
+            true_occ = false_occ = true_empty = false_empty = 0
+
+            for interval in intervals:
+                occ = is_occupied(interval.start_time)
+                if interval.state == "on":
+                    if occ:
+                        true_occ += interval.duration_seconds
+                    else:
+                        true_empty += interval.duration_seconds
+                elif occ:
+                    false_occ += interval.duration_seconds
+                else:
+                    false_empty += interval.duration_seconds
+
+            # Avoid division by zero
+            prob_given_true = (
+                true_occ / (true_occ + false_occ) if (true_occ + false_occ) > 0 else 0.5
+            )
+            prob_given_false = (
+                true_empty / (true_empty + false_empty)
+                if (true_empty + false_empty) > 0
+                else 0.5
+            )
+            updated_entity = db.Entities(
+                entity_id=entity.entity_id,
+                prob_given_true=prob_given_true,
+                prob_given_false=prob_given_false,
+                last_updated=now,
+            )
+            session.add(updated_entity)
+            self.get_entity(entity.entity_id).update_likelihood(
+                prob_given_true, prob_given_false
+            )
+
+        session.commit()
