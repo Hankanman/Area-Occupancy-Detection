@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
+from custom_components.area_occupancy.db import AreaOccupancyDB
+
 # Third Party
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
@@ -31,7 +33,7 @@ from .const import (
     HA_RECORDER_DAYS,
     MIN_PROBABILITY,
 )
-from .data.config import ConfigManager
+from .data.config import Config
 from .data.entity import EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
@@ -62,8 +64,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass = hass
         self.config_entry = config_entry
         self.entry_id = config_entry.entry_id
-        self.config_manager = ConfigManager(self)
-        self.config = self.config_manager.config
+        self.config = Config(self)
+        self.db = AreaOccupancyDB(self)
         self.storage = AreaOccupancyStorage(self)
         self.prior = Prior(self)
         self.entity_types = EntityTypeManager(self)
@@ -139,7 +141,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.entity_types.async_initialize()
 
             # Load stored data
-            await self.storage.async_initialize()
 
             is_empty = await self.storage.is_state_intervals_empty()
             if is_empty:
@@ -239,8 +240,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options."""
         # Update config
-        await self.config_manager.update_config(options)
-        self.config = self.config_manager.config
+        await self.config.update_config(options)
 
         # Update purpose with new configuration
         await self.purpose.async_initialize()
