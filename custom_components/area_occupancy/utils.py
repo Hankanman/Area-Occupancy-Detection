@@ -283,8 +283,8 @@ def complementary_probability(entities: dict[str, Entity], prior: float) -> floa
     for e in contributing_entities:
         posterior = bayesian_probability(
             prior=prior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=True,
             decay_factor=e.decay_factor,
         )
@@ -319,8 +319,8 @@ def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
         effective_evidence = e.evidence or e.decay.is_decaying
         entity_posterior = bayesian_probability(
             prior=posterior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )
@@ -360,8 +360,8 @@ def conditional_sorted_probability(entities: dict[str, Entity], prior: float) ->
         effective_evidence = e.evidence or e.decay.is_decaying
         entity_posterior = bayesian_probability(
             prior=posterior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )
