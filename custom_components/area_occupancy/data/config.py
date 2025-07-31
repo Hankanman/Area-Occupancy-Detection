@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -153,20 +152,124 @@ class WaspInBox:
     max_duration: int = DEFAULT_WASP_MAX_DURATION
 
 
-@dataclass
 class Config:
     """Configuration for Area Occupancy Detection."""
 
-    name: str = "Area Occupancy"
-    purpose: str = DEFAULT_PURPOSE
-    area_id: str | None = None
-    threshold: float = DEFAULT_THRESHOLD
-    sensors: Sensors = field(default_factory=Sensors)
-    sensor_states: SensorStates = field(default_factory=SensorStates)
-    weights: Weights = field(default_factory=Weights)
-    decay: Decay = field(default_factory=Decay)
-    wasp_in_box: WaspInBox = field(default_factory=WaspInBox)
-    _raw: dict = field(default_factory=dict, repr=False)
+    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
+        """Initialize the config from a coordinator."""
+        self.coordinator = coordinator
+        self.config_entry = coordinator.config_entry
+        self.hass = coordinator.hass
+
+        # Load configuration from the merged entry data
+        self._load_config(self._merge_entry(coordinator.config_entry))
+
+    def _load_config(self, merged_data: dict[str, Any]) -> None:
+        """Load configuration from merged data.
+
+        Args:
+            merged_data: Dictionary containing merged config entry data and options
+
+        """
+        # Validate threshold range
+        threshold = float(merged_data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)) / 100.0
+
+        # Validate weights are positive
+        weights_data = self._validate_weights(merged_data)
+
+        # Set all configuration attributes
+        self.name = merged_data.get(CONF_NAME, "Area Occupancy")
+        self.purpose = merged_data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        self.area_id = merged_data.get(CONF_AREA_ID)
+        self.threshold = threshold
+
+        self.sensors = Sensors(
+            motion=merged_data.get(CONF_MOTION_SENSORS, []),
+            primary_occupancy=merged_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
+            media=merged_data.get(CONF_MEDIA_DEVICES, []),
+            appliance=merged_data.get(CONF_APPLIANCES, []),
+            illuminance=merged_data.get(CONF_ILLUMINANCE_SENSORS, []),
+            humidity=merged_data.get(CONF_HUMIDITY_SENSORS, []),
+            temperature=merged_data.get(CONF_TEMPERATURE_SENSORS, []),
+            door=merged_data.get(CONF_DOOR_SENSORS, []),
+            window=merged_data.get(CONF_WINDOW_SENSORS, []),
+        )
+
+        self.sensor_states = SensorStates(
+            door=[merged_data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
+            window=[
+                merged_data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
+            ],
+            appliance=merged_data.get(
+                CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
+            ),
+            media=merged_data.get(
+                CONF_MEDIA_ACTIVE_STATES, list(DEFAULT_MEDIA_ACTIVE_STATES)
+            ),
+        )
+
+        self.weights = Weights(
+            motion=weights_data[CONF_WEIGHT_MOTION],
+            media=weights_data[CONF_WEIGHT_MEDIA],
+            appliance=weights_data[CONF_WEIGHT_APPLIANCE],
+            door=weights_data[CONF_WEIGHT_DOOR],
+            window=weights_data[CONF_WEIGHT_WINDOW],
+            environmental=weights_data[CONF_WEIGHT_ENVIRONMENTAL],
+            wasp=weights_data[CONF_WASP_WEIGHT],
+        )
+
+        self.decay = Decay(
+            enabled=bool(merged_data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
+            half_life=int(
+                merged_data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
+            ),
+        )
+
+        self.wasp_in_box = WaspInBox(
+            enabled=bool(merged_data.get(CONF_WASP_ENABLED, False)),
+            motion_timeout=int(
+                merged_data.get(CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT)
+            ),
+            weight=float(merged_data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT)),
+            max_duration=int(
+                merged_data.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
+            ),
+        )
+
+    def _validate_weights(self, merged_data: dict[str, Any]) -> dict[str, float]:
+        """Validate and return weights data.
+
+        Args:
+            merged_data: Dictionary containing merged config entry data and options
+
+        Returns:
+            Dictionary of validated weight values
+
+        """
+        weights_data = {}
+        weight_configs = [
+            (CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            (CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
+            (CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+        ]
+
+        for weight_key, default_val in weight_configs:
+            weight_val = float(merged_data.get(weight_key, default_val))
+            if weight_val < 0:
+                _LOGGER.warning(
+                    "Invalid weight %s=%s, using default %s",
+                    weight_key,
+                    weight_val,
+                    default_val,
+                )
+                weight_val = default_val
+            weights_data[weight_key] = weight_val
+
+        return weights_data
 
     @property
     def start_time(self) -> datetime:
@@ -278,118 +381,6 @@ class Config:
 
         return errors
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Config":
-        """Create a config from a dictionary with validation."""
-        # Validate threshold range
-        threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)) / 100.0
-
-        # Validate weights are positive
-        weights_data = {}
-        for weight_key, default_val in [
-            (CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
-            (CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
-            (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
-            (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
-            (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
-            (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
-            (CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
-        ]:
-            weight_val = float(data.get(weight_key, default_val))
-            if weight_val < 0:
-                _LOGGER.warning(
-                    "Invalid weight %s=%s, using default %s",
-                    weight_key,
-                    weight_val,
-                    default_val,
-                )
-                weight_val = default_val
-            weights_data[weight_key] = weight_val
-
-        return cls(
-            name=data.get(CONF_NAME, "Area Occupancy"),
-            purpose=data.get(CONF_PURPOSE, DEFAULT_PURPOSE),
-            area_id=data.get(CONF_AREA_ID),
-            threshold=threshold,
-            sensors=Sensors(
-                motion=data.get(CONF_MOTION_SENSORS, []),
-                primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
-                media=data.get(CONF_MEDIA_DEVICES, []),
-                appliance=data.get(CONF_APPLIANCES, []),
-                illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
-                humidity=data.get(CONF_HUMIDITY_SENSORS, []),
-                temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
-                door=data.get(CONF_DOOR_SENSORS, []),
-                window=data.get(CONF_WINDOW_SENSORS, []),
-            ),
-            sensor_states=SensorStates(
-                door=[data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
-                window=[
-                    data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
-                ],
-                appliance=data.get(
-                    CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
-                ),
-                media=data.get(
-                    CONF_MEDIA_ACTIVE_STATES, list(DEFAULT_MEDIA_ACTIVE_STATES)
-                ),
-            ),
-            weights=Weights(
-                motion=weights_data[CONF_WEIGHT_MOTION],
-                media=weights_data[CONF_WEIGHT_MEDIA],
-                appliance=weights_data[CONF_WEIGHT_APPLIANCE],
-                door=weights_data[CONF_WEIGHT_DOOR],
-                window=weights_data[CONF_WEIGHT_WINDOW],
-                environmental=weights_data[CONF_WEIGHT_ENVIRONMENTAL],
-                wasp=weights_data[CONF_WASP_WEIGHT],
-            ),
-            decay=Decay(
-                enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
-                half_life=int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)),
-            ),
-            wasp_in_box=WaspInBox(
-                enabled=bool(data.get(CONF_WASP_ENABLED, False)),
-                motion_timeout=int(
-                    data.get(CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT)
-                ),
-                weight=float(data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT)),
-                max_duration=int(
-                    data.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
-                ),
-            ),
-            _raw=data.copy(),
-        )
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return the config as a dictionary."""
-        return self._raw.copy()
-
-
-class ConfigManager:
-    """Manages configuration for Area Occupancy Detection."""
-
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the config manager."""
-        if coordinator.config_entry is None:
-            raise ValueError("Config entry is required")
-        self.coordinator = coordinator
-        self.config_entry = coordinator.config_entry
-        self._config = Config.from_dict(self._merge_entry(coordinator.config_entry))
-        self._hass = coordinator.hass
-
-        _LOGGER.debug("ConfigManager initialized with config: %s", self._config)
-
-    @property
-    def hass(self) -> HomeAssistant:
-        """Get the Home Assistant instance."""
-        if self._hass is None:
-            raise RuntimeError("Home Assistant instance not set")
-        return self._hass
-
-    def set_hass(self, hass: HomeAssistant) -> None:
-        """Set the Home Assistant instance."""
-        self._hass = hass
-
     @staticmethod
     def _merge_entry(config_entry: ConfigEntry) -> dict[str, Any]:
         """Merge the config entry data and options."""
@@ -397,19 +388,17 @@ class ConfigManager:
         merged.update(config_entry.options)
         return merged
 
-    @property
-    def config(self) -> Config:
-        """Get the config."""
-        return self._config
-
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry."""
+        # Update the config entry reference
         self.config_entry = config_entry
-        self._config = Config.from_dict(self._merge_entry(config_entry))
+
+        # Reload configuration from the merged entry data
+        self._load_config(self._merge_entry(config_entry))
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value by key."""
-        return getattr(self._config, key, default)
+        return getattr(self, key, default)
 
     async def update_config(self, options: dict[str, Any]) -> None:
         """Update configuration and persist to Home Assistant config entry.
@@ -436,8 +425,8 @@ class ConfigManager:
             merged_data = self._merge_entry(self.config_entry)
             merged_data.update(options)
 
-            # Create new config object with validation
-            self._config = Config.from_dict(merged_data)
+            # Reload configuration with updated data
+            self._load_config(merged_data)
 
             # Request update since threshold affects occupied calculation
             await self.coordinator.async_request_refresh()

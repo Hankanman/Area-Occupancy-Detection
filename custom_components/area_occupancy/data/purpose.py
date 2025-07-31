@@ -58,7 +58,7 @@ class PurposeManager:
     def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Initialize the purpose manager."""
         self.coordinator = coordinator
-        self.config = coordinator.config_manager.config
+        self.config = coordinator.config
         self._current_purpose: Purpose | None = None
 
     async def async_initialize(self) -> None:
