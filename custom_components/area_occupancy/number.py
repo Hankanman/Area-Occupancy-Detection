@@ -49,7 +49,7 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
             raise ServiceValidationError(
                 f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
             )
-        await self.coordinator.config_manager.update_config({CONF_THRESHOLD: value})
+        await self.coordinator.config.update_config({CONF_THRESHOLD: value})
 
 
 async def async_setup_entry(

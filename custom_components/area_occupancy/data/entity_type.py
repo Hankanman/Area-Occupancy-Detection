@@ -97,7 +97,7 @@ class EntityTypeManager:
     def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
         """Initialize the entity type manager."""
         self.coordinator = coordinator
-        self.config = coordinator.config_manager.config
+        self.config = coordinator.config
         self._entity_types: dict[InputType, EntityType] = {}
 
     async def async_initialize(self) -> None:
