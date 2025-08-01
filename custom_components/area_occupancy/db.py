@@ -745,27 +745,74 @@ class AreaOccupancyDB:
                 return dt_util.now() - timedelta(days=10)
             raise
 
-    def filter_states(self, states: dict[str, list[State]]) -> list[State]:
-        """Filter states to only include valid states."""
-        filtered_states = []
+    def _states_to_intervals(
+        self, states: dict[str, list[State]], end_time: datetime
+    ) -> list[dict[str, Any]]:
+        """Convert states to intervals by processing consecutive state changes for each entity.
+
+        Args:
+            states: Dictionary mapping entity_id to list of State objects
+            end_time: The end time for the analysis period
+
+        Returns:
+            List of interval dictionaries with proper start_time, end_time, and duration_seconds
+
+        """
+        intervals = []
         retention_time = dt_util.now() - timedelta(days=RETENTION_DAYS)
-        for state_list in states.values():
-            for state in state_list:
-                # Filter by retention
-                if state.last_updated > retention_time:
-                    duration_seconds = (
-                        state.last_updated - state.last_changed
-                    ).total_seconds()
-                    if state.state == "on":
-                        if duration_seconds <= MAX_INTERVAL_SECONDS:
-                            filtered_states.append(state)
-                    elif (
-                        self.is_valid_state(state.state)
-                        and duration_seconds >= MIN_INTERVAL_SECONDS
-                    ):
-                        filtered_states.append(state)
-        _LOGGER.debug("Filtered %d states", len(filtered_states))
-        return filtered_states
+
+        for entity_id, state_list in states.items():
+            if not state_list:
+                continue
+
+            # Sort states by last_changed time
+            sorted_states = sorted(state_list, key=lambda s: s.last_changed)
+
+            # Process each state to create intervals
+            for i, state in enumerate(sorted_states):
+                # Skip states outside retention period
+                if state.last_changed < retention_time:
+                    continue
+
+                # Determine the end time for this interval
+                if i + 1 < len(sorted_states):
+                    # Use the start time of the next state as the end time
+                    interval_end = sorted_states[i + 1].last_changed
+                else:
+                    # For the last state, use the analysis end time
+                    interval_end = end_time
+
+                # Calculate duration
+                duration_seconds = (interval_end - state.last_changed).total_seconds()
+
+                # Apply filtering based on state and duration
+                if state.state == "on":
+                    if duration_seconds <= MAX_INTERVAL_SECONDS:
+                        intervals.append(
+                            {
+                                "entity_id": entity_id,
+                                "state": state.state,
+                                "start_time": state.last_changed,
+                                "end_time": interval_end,
+                                "duration_seconds": duration_seconds,
+                            }
+                        )
+                elif (
+                    self.is_valid_state(state.state)
+                    and duration_seconds >= MIN_INTERVAL_SECONDS
+                ):
+                    intervals.append(
+                        {
+                            "entity_id": entity_id,
+                            "state": state.state,
+                            "start_time": state.last_changed,
+                            "end_time": interval_end,
+                            "duration_seconds": duration_seconds,
+                        }
+                    )
+
+        _LOGGER.debug("Created %d intervals from states", len(intervals))
+        return intervals
 
     async def sync_states(
         self,
@@ -790,30 +837,16 @@ class AreaOccupancyDB:
             _LOGGER.debug("Found %d states", len(states))
 
             if states:
-                # Prepare all rows for batch insert
-                filtered_states = self.filter_states(states)
-                rows = []
-                for state in filtered_states:
-                    duration_seconds = (
-                        state.last_updated - state.last_changed
-                    ).total_seconds()
-                    rows.append(
-                        {
-                            "entity_id": state.entity_id,
-                            "state": state.state,
-                            "start_time": state.last_changed,
-                            "end_time": state.last_updated,
-                            "duration_seconds": duration_seconds,
-                        }
-                    )
-                _LOGGER.debug("Syncing %d states", len(rows))
-                if rows:
+                # Convert states to proper intervals with correct duration calculation
+                intervals = self._states_to_intervals(states, end_time)
+                _LOGGER.debug("Syncing %d intervals", len(intervals))
+                if intervals:
                     with self.engine.begin() as conn:
                         conn.execute(
                             self.Intervals.__table__.insert().prefix_with("OR IGNORE"),
-                            rows,
+                            intervals,
                         )
-                    _LOGGER.debug("Synced %d states", len(rows))
+                    _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")
 
