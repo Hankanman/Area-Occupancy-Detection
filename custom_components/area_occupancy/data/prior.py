@@ -75,6 +75,7 @@ class Prior:
             float: Prior probability of occupancy (0.0 to 1.0)
 
         """
+        _LOGGER.debug("Calculating area prior")
 
         # Get total occupied time from motion sensors
         total_occupied_seconds = self.get_total_occupied_seconds(entity_ids)
@@ -94,6 +95,7 @@ class Prior:
 
     def compute_time_priors(self, slot_minutes: int = 60):
         """Estimate P(occupied) per day_of_week and time_slot from motion sensor intervals."""
+        _LOGGER.debug("Computing time priors")
 
         # Get aggregated interval data
         interval_aggregates = self.get_interval_aggregates(slot_minutes)
@@ -160,6 +162,7 @@ class Prior:
             List of (day_of_week, time_slot, total_occupied_seconds) tuples
 
         """
+        _LOGGER.debug("Getting interval aggregates")
         entry_id = self.coordinator.entry_id
         db = self.db
 
@@ -207,6 +210,7 @@ class Prior:
             Tuple of (first_time, last_time) or (None, None) if no data
 
         """
+        _LOGGER.debug("Getting time bounds")
         db = self.db
 
         with db.get_session() as session:
@@ -233,6 +237,7 @@ class Prior:
 
     def get_total_occupied_seconds(self, entity_ids: list[str]) -> float:
         """Get total occupied seconds for specific entities."""
+        _LOGGER.debug("Getting total occupied seconds")
         db = self.db
 
         with db.get_session() as session:

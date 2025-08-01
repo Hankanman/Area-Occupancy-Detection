@@ -206,10 +206,15 @@ class AreaOccupancyDB:
         @classmethod
         def from_dict(cls, data: dict[str, Any]) -> Areas:
             """Create an Areas instance from a dictionary."""
+            # Handle area_id fallback - use entry_id if area_id is None or empty
+            area_id = data.get("area_id")
+            if not area_id:
+                area_id = data["entry_id"]
+
             return cls(
                 entry_id=data["entry_id"],
                 area_name=data["area_name"],
-                area_id=data["area_id"],
+                area_id=area_id,
                 purpose=data["purpose"],
                 threshold=data["threshold"],
                 area_prior=data.get("area_prior", DEFAULT_AREA_PRIOR),
@@ -533,24 +538,93 @@ class AreaOccupancyDB:
 
     # --- Save Data ---
 
-    async def save_data(self) -> None:
-        """Save the data to the database."""
+    async def save_area_data(self) -> None:
+        """Save the area data to the database."""
         try:
-            # Save area occupancy data
             with self.engine.begin() as conn:
                 cfg = self.coordinator.config
-                conn.execute(
-                    self.Areas.__table__.insert().prefix_with("OR IGNORE"),
-                    {
-                        "entry_id": self.coordinator.entry_id,
-                        "area_name": cfg.name,
-                        "area_id": cfg.area_id,
-                        "purpose": cfg.purpose,
-                        "threshold": cfg.threshold,
-                        "area_prior": self.coordinator.area_prior,
-                        "updated_at": dt_util.utcnow(),
-                    },
-                )
+
+                area_data = {
+                    "entry_id": self.coordinator.entry_id,
+                    "area_name": cfg.name,
+                    "area_id": cfg.area_id,
+                    "purpose": cfg.purpose,
+                    "threshold": cfg.threshold,
+                    "area_prior": self.coordinator.area_prior,
+                    "updated_at": dt_util.utcnow(),
+                }
+
+                _LOGGER.debug("Attempting to insert area data: %s", area_data)
+
+                # Validate required fields
+                if not area_data["entry_id"]:
+                    _LOGGER.error("entry_id is empty or None, cannot insert area")
+                    return
+
+                if not area_data["area_name"]:
+                    _LOGGER.error("area_name is empty or None, cannot insert area")
+                    return
+
+                if not area_data["purpose"]:
+                    _LOGGER.error("purpose is empty or None, cannot insert area")
+                    return
+
+                if area_data["threshold"] is None:
+                    _LOGGER.error("threshold is None, cannot insert area")
+                    return
+
+                if area_data["area_prior"] is None:
+                    _LOGGER.error("area_prior is None, cannot insert area")
+                    return
+
+                # Handle area_id - use entry_id as fallback if area_id is None or empty
+                if not area_data["area_id"]:
+                    _LOGGER.info(
+                        "area_id is None or empty, using entry_id as fallback: %s",
+                        area_data["entry_id"],
+                    )
+                    area_data["area_id"] = area_data["entry_id"]
+
+                try:
+                    result = conn.execute(
+                        self.Areas.__table__.insert().prefix_with("OR REPLACE"),
+                        area_data,
+                    )
+                    _LOGGER.debug("Area insert/replace result: %s", result)
+
+                    if result.rowcount > 0:
+                        _LOGGER.info(
+                            "Successfully saved area data for entry_id: %s",
+                            area_data["entry_id"],
+                        )
+                    else:
+                        _LOGGER.warning("Area insert/replace affected 0 rows")
+
+                except (
+                    sa.exc.SQLAlchemyError,
+                    HomeAssistantError,
+                    TimeoutError,
+                    OSError,
+                ) as insert_err:
+                    _LOGGER.error("Failed to insert/replace area data: %s", insert_err)
+                    try:
+                        conn.execute(
+                            self.Areas.__table__.insert(),
+                            area_data,
+                        )
+                        _LOGGER.info("Direct insert succeeded")
+                    except Exception as direct_err:
+                        _LOGGER.error("Direct insert also failed: %s", direct_err)
+                        raise
+            _LOGGER.debug("Saved area data")
+        except Exception as err:
+            _LOGGER.error("Failed to save area data: %s", err)
+            raise
+
+    async def save_entity_data(self) -> None:
+        """Save the entity data to the database."""
+        try:
+            with self.engine.begin() as conn:
                 entities = self.coordinator.entities.entities.values()
                 for entity in entities:
                     # Skip entities with missing type information
@@ -582,10 +656,15 @@ class AreaOccupancyDB:
                             "last_updated": entity.last_updated,
                         },
                     )
-            _LOGGER.debug("Saved area occupancy data")
+            _LOGGER.debug("Saved entity data")
         except Exception as err:
-            _LOGGER.error("Failed to save area occupancy data: %s", err)
+            _LOGGER.error("Failed to save entity data: %s", err)
             raise
+
+    async def save_data(self) -> None:
+        """Save both area and entity data to the database."""
+        await self.save_area_data()
+        await self.save_entity_data()
 
     # --- Sync Data from Recorder ---
 
@@ -606,6 +685,48 @@ class AreaOccupancyDB:
                 return True
             _LOGGER.error("Failed to check if intervals empty: %s", e)
             raise
+
+    def get_area_data(self, entry_id: str) -> dict[str, Any] | None:
+        """Get area data for a specific entry_id."""
+        try:
+            with self.get_session() as session:
+                area = session.query(self.Areas).filter_by(entry_id=entry_id).first()
+                if area:
+                    return area.to_dict()
+                return None
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Failed to get area data: %s", e)
+            return None
+
+    async def ensure_area_exists(self) -> None:
+        """Ensure that the area record exists in the database."""
+        try:
+            # Check if area exists
+            existing_area = self.get_area_data(self.coordinator.entry_id)
+            if existing_area:
+                _LOGGER.debug(
+                    "Area already exists for entry_id: %s", self.coordinator.entry_id
+                )
+                return
+
+            # Area doesn't exist, force create it
+            _LOGGER.info(
+                "Area not found, forcing creation for entry_id: %s",
+                self.coordinator.entry_id,
+            )
+            await self.save_data()
+
+            # Verify it was created
+            new_area = self.get_area_data(self.coordinator.entry_id)
+            if new_area:
+                _LOGGER.info("Successfully created area: %s", new_area)
+            else:
+                _LOGGER.error(
+                    "Failed to create area for entry_id: %s", self.coordinator.entry_id
+                )
+
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+            _LOGGER.error("Error ensuring area exists: %s", e)
 
     def get_latest_interval(self) -> datetime | None:
         """Return the latest interval end time minus 1 day, or None if no intervals."""

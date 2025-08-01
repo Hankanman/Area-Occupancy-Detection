@@ -138,7 +138,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Build Default Entity Types
             await self.entity_types.async_initialize()
 
+            # Initialize entities
+            await self.entities.__post_init__()
+
+            # Ensure area exists in database
+            await self.db.save_area_data()
+
             # Load stored data
+            await self.db.load_data()
 
             is_empty = self.db.is_intervals_empty()
             if is_empty:
