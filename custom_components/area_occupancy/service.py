@@ -1,6 +1,5 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
-from datetime import timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +10,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .state_intervals import filter_intervals
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -64,21 +62,12 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
             likelihood_data[entity_id] = entity_likelihood_data
 
-        import_stats = coordinator.storage.import_stats
-        total_imported = sum(import_stats.values())
-        total_intervals = await coordinator.storage.get_total_intervals_count()
-
         response_data = {
             "area_name": coordinator.config.name,
             "current_prior": coordinator.area_prior,
             "global_prior": coordinator.prior.global_prior,
-            "occupancy_prior": coordinator.prior.occupancy_prior,
-            "primary_sensors_prior": coordinator.prior.primary_sensors_prior,
             "prior_entity_ids": coordinator.prior.sensor_ids,
             "total_entities": len(coordinator.entities.entities),
-            "import_stats": import_stats,
-            "total_imported": total_imported,
-            "total_intervals": total_intervals,
             "entity_states": entity_states,
             "likelihoods": likelihood_data,
             "update_timestamp": dt_util.utcnow().isoformat(),
@@ -342,169 +331,6 @@ async def _get_entity_type_learned_data(
         return {"entity_types": learned_data}
 
 
-async def _debug_database_state(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Debug service to check current database state."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        _LOGGER.info("Debug: Checking database state for entry %s", entry_id)
-
-        # Check if state_intervals table is empty
-        is_empty = await coordinator.storage.is_state_intervals_empty()
-        total_intervals = await coordinator.storage.get_total_intervals_count()
-
-        _LOGGER.info(
-            "Debug: State intervals empty: %s, Total count: %d",
-            is_empty,
-            total_intervals,
-        )
-
-        # Get some sample intervals for a few entities
-        entity_ids = coordinator.config.entity_ids[:3]  # Just first 3 entities
-        sample_data = {}
-
-        for entity_id in entity_ids:
-            try:
-                # Get recent intervals for this entity
-                intervals = await coordinator.storage.get_historical_intervals(
-                    entity_id,
-                    start_time=dt_util.utcnow() - timedelta(days=1),
-                    end_time=dt_util.utcnow(),
-                )
-                sample_data[entity_id] = {
-                    "intervals_found": len(intervals),
-                    "latest_intervals": [
-                        {
-                            "state": interval["state"],
-                            "start": interval["start"].isoformat(),
-                            "end": interval["end"].isoformat(),
-                            "duration_minutes": round(
-                                (interval["end"] - interval["start"]).total_seconds()
-                                / 60,
-                                2,
-                            ),
-                        }
-                        for interval in intervals[:3]
-                    ],
-                }
-                _LOGGER.info(
-                    "Debug: Entity %s has %d intervals in last 24h",
-                    entity_id,
-                    len(intervals),
-                )
-            except (HomeAssistantError, OSError) as err:
-                sample_data[entity_id] = {"error": str(err)}
-
-        # Get database statistics
-        stats = await coordinator.storage.async_get_stats()
-
-    except Exception as err:
-        error_msg = f"Debug database state failed for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {
-            "database_state": {
-                "state_intervals_empty": is_empty,
-                "total_intervals": total_intervals,
-                "sample_entities": sample_data,
-                "database_stats": stats,
-            },
-            "configuration": {
-                "entity_ids": coordinator.config.entity_ids,
-            },
-        }
-
-
-async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Purge state_intervals table based on filter_intervals and retention period."""
-    entry_id = call.data["entry_id"]
-    retention_days = call.data.get("retention_days", 365)
-    entity_ids = call.data.get("entity_ids", [])
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        storage = coordinator.storage
-        cutoff_date = dt_util.utcnow() - timedelta(days=retention_days)
-
-        if not entity_ids:
-            entity_ids = coordinator.config.entity_ids
-
-        # Count all intervals in the db for this entry_id (across all entity_ids)
-        total_intervals_in_db = await storage.get_total_intervals_count()
-
-        # 1. Delete all intervals older than the retention period using ORM
-        total_deleted_old = await storage.cleanup_old_intervals(retention_days)
-
-        # 2. For intervals within retention, filter and delete those that don't pass
-        total_checked = 0
-        total_deleted_filtered = 0
-        total_kept = 0
-        details = {}
-
-        for entity_id in entity_ids:
-            # Fetch intervals within retention
-            intervals = await storage.get_historical_intervals(
-                entity_id,
-                start_time=cutoff_date,
-                end_time=None,
-                limit=None,
-                page_size=1000,
-            )
-            total_checked += len(intervals)
-            filtered = filter_intervals(intervals)
-            to_delete = [iv for iv in intervals if iv not in filtered]
-            total_deleted_filtered += len(to_delete)
-            total_kept += len(filtered)
-
-            if to_delete:
-                # Delete filtered intervals using ORM
-                def _delete_filtered(to_delete=to_delete, storage=storage):
-                    return storage.executor.execute_in_session(
-                        lambda session: storage.queries.delete_specific_intervals(
-                            to_delete, session
-                        )
-                    )
-
-                await hass.async_add_executor_job(_delete_filtered)
-
-            details[entity_id] = {
-                "intervals_checked": len(intervals),
-                "intervals_deleted_filtered": len(to_delete),
-                "intervals_kept": len(filtered),
-            }
-
-        _LOGGER.info(
-            "Purged intervals for entry %s: deleted old %d, checked %d, deleted filtered %d, kept %d",
-            entry_id,
-            total_deleted_old,
-            total_checked,
-            total_deleted_filtered,
-            total_kept,
-        )
-
-    except Exception as err:
-        error_msg = f"Failed to purge intervals for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {
-            "entry_id": entry_id,
-            "retention_days": retention_days,
-            "entity_ids": entity_ids,
-            "total_deleted_old": total_deleted_old,
-            "total_checked": total_checked,
-            "total_deleted_filtered": total_deleted_filtered,
-            "total_kept": total_kept,
-            "details": details,
-            "total_intervals_in_db": total_intervals_in_db,
-        }
-
-
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -513,14 +339,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     entity_details_schema = vol.Schema(
         {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
-    )
-
-    purge_intervals_schema = vol.Schema(
-        {
-            vol.Required("entry_id"): str,
-            vol.Optional("retention_days", default=365): int,
-            vol.Optional("entity_ids", default=[]): [str],
-        }
     )
 
     # Create async wrapper functions to properly handle the service calls
@@ -545,12 +363,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_type_learned_data(hass, call)
-
-    async def handle_debug_database_state(call: ServiceCall) -> dict[str, Any]:
-        return await _debug_database_state(hass, call)
-
-    async def handle_purge_intervals(call: ServiceCall) -> dict[str, Any]:
-        return await _purge_intervals(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -601,26 +413,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "get_entity_type_learned_data",
         handle_get_entity_type_learned_data,
         schema=entry_id_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "debug_database_state",
-        handle_debug_database_state,
-        schema=vol.Schema(
-            {
-                vol.Required("entry_id"): str,
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "purge_intervals",
-        handle_purge_intervals,
-        schema=purge_intervals_schema,
         supports_response=SupportsResponse.ONLY,
     )
 

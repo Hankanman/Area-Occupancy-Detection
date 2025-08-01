@@ -142,21 +142,11 @@ class TestEntityType:
         mock_coordinator.hass.states.get.return_value = mock_state
 
         # Create a test entity
-        from custom_components.area_occupancy.data.likelihood import Likelihood
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="binary_sensor.test",
-            active_states=[STATE_ON],
-            default_prob_true=0.25,
-            default_prob_false=0.05,
-            weight=0.8,
-        )
-
         test_entity = Entity(
             entity_id="binary_sensor.test",
             type=entity_type,
-            likelihood=likelihood,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
             decay=Decay(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -193,21 +183,11 @@ class TestEntityType:
         mock_coordinator.hass.states.get.return_value = mock_state
 
         # Create a test entity
-        from custom_components.area_occupancy.data.likelihood import Likelihood
-
-        likelihood = Likelihood(
-            coordinator=mock_coordinator,
-            entity_id="sensor.test",
-            active_states=[],  # Empty list instead of None
-            default_prob_true=0.09,
-            default_prob_false=0.01,
-            weight=0.3,
-        )
-
         test_entity = Entity(
             entity_id="sensor.test",
             type=entity_type,
-            likelihood=likelihood,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
             decay=Decay(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -281,7 +261,7 @@ class TestEntityTypeManager:
         manager = EntityTypeManager(mock_coordinator)
 
         assert manager.coordinator == mock_coordinator
-        assert manager.config == mock_coordinator.config_manager.config
+        assert manager.config == mock_coordinator.config
         assert manager._entity_types == {}
 
     async def test_async_initialize(self, mock_coordinator: Mock) -> None:
@@ -315,7 +295,7 @@ class TestEntityTypeManagerOverrides:
 
     def _make_manager(self, config: Any) -> EntityTypeManager:
         coordinator = Mock()
-        coordinator.config_manager = Mock(config=config)
+        coordinator.config = config
         return EntityTypeManager(coordinator)
 
     def test_apply_weight_valid(self) -> None:

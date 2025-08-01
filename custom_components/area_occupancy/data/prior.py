@@ -17,7 +17,6 @@ from homeassistant.util import dt as dt_util
 
 from ..const import MAX_PRIOR, MIN_PRIOR
 from ..data.entity_type import InputType
-from ..state_intervals import StateInterval
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -34,7 +33,6 @@ class Prior:
         """Initialize the Prior class."""
         self.coordinator = coordinator
         self.db = coordinator.db
-        self.session = coordinator.db.session
         self.sensor_ids = coordinator.config.sensors.motion
         self.hass = coordinator.hass
         self.global_prior: float | None = None
@@ -51,11 +49,6 @@ class Prior:
     def last_updated(self) -> datetime | None:
         """Return the last updated timestamp."""
         return self._last_updated
-
-    @property
-    def prior_intervals(self) -> list[StateInterval] | None:
-        """Return the prior intervals."""
-        return self._prior_intervals
 
     def set_global_prior(self, prior: float) -> None:
         """Set the global prior value."""
@@ -125,32 +118,34 @@ class Prior:
 
         # Generate priors for all time slots
         now = datetime.now(UTC)
+        db = self.db
 
-        for day in range(7):
-            for slot in range(slots_per_day):
-                total_slot_seconds = days * slot_duration_seconds
-                occupied_slot_seconds = occupied_seconds.get((day, slot), 0.0)
+        with db.get_session() as session:
+            for day in range(7):
+                for slot in range(slots_per_day):
+                    total_slot_seconds = days * slot_duration_seconds
+                    occupied_slot_seconds = occupied_seconds.get((day, slot), 0.0)
 
-                # Calculate probability
-                p = (
-                    occupied_slot_seconds / total_slot_seconds
-                    if total_slot_seconds > 0
-                    else 0.0
-                )
+                    # Calculate probability
+                    p = (
+                        occupied_slot_seconds / total_slot_seconds
+                        if total_slot_seconds > 0
+                        else 0.0
+                    )
 
-                # Create the prior object within the storage's session
-                prior = self.db.Priors(
-                    entry_id=self.coordinator.entry_id,
-                    day_of_week=day,
-                    time_slot=slot,
-                    prior_value=p,
-                    data_points=int(total_slot_seconds),
-                    last_updated=now,
-                )
-                self.session.add(prior)
+                    # Create the prior object within the database's session
+                    prior = db.Priors(
+                        entry_id=self.coordinator.entry_id,
+                        day_of_week=day,
+                        time_slot=slot,
+                        prior_value=p,
+                        data_points=int(total_slot_seconds),
+                        last_updated=now,
+                    )
+                    session.add(prior)
 
-        # Commit the session to save all priors
-        self.session.commit()
+            # Commit the session to save all priors
+            session.commit()
 
     def get_interval_aggregates(
         self, slot_minutes: int = 60
@@ -166,37 +161,39 @@ class Prior:
 
         """
         entry_id = self.coordinator.entry_id
-        session = self.session
         db = self.db
 
-        interval_aggregates = (
-            session.query(
-                func.extract("dow", db.Intervals.start_time).label("day_of_week"),
-                func.floor(
-                    (
-                        func.extract("hour", db.Intervals.start_time) * 60
-                        + func.extract("minute", db.Intervals.start_time)
-                    )
-                    / slot_minutes
-                ).label("time_slot"),
-                func.sum(db.Intervals.duration_seconds).label("total_occupied_seconds"),
+        with db.get_session() as session:
+            interval_aggregates = (
+                session.query(
+                    func.extract("dow", db.Intervals.start_time).label("day_of_week"),
+                    func.floor(
+                        (
+                            func.extract("hour", db.Intervals.start_time) * 60
+                            + func.extract("minute", db.Intervals.start_time)
+                        )
+                        / slot_minutes
+                    ).label("time_slot"),
+                    func.sum(db.Intervals.duration_seconds).label(
+                        "total_occupied_seconds"
+                    ),
+                )
+                .join(
+                    db.Entities,
+                    db.Intervals.entity_id == db.Entities.entity_id,
+                )
+                .filter(
+                    db.Entities.entry_id == entry_id,
+                    db.Entities.entity_type == InputType.MOTION,
+                    db.Intervals.state == "on",
+                )
+                .group_by("day_of_week", "time_slot")
+                .all()
             )
-            .join(
-                db.Entities,
-                db.Intervals.entity_id == db.Entities.entity_id,
-            )
-            .filter(
-                db.Entities.entry_id == entry_id,
-                db.Entities.entity_type == InputType.MOTION,
-                db.Intervals.state == "on",
-            )
-            .group_by("day_of_week", "time_slot")
-            .all()
-        )
-        return [
-            (day, slot, total_seconds)
-            for day, slot, total_seconds in interval_aggregates
-        ]
+            return [
+                (day, slot, total_seconds)
+                for day, slot, total_seconds in interval_aggregates
+            ]
 
     def get_time_bounds(
         self, entity_ids: list[str] | None = None
@@ -210,34 +207,41 @@ class Prior:
             Tuple of (first_time, last_time) or (None, None) if no data
 
         """
+        db = self.db
 
-        query = self.session.query(
-            func.min(self.db.Intervals.start_time).label("first"),
-            func.max(self.db.Intervals.end_time).label("last"),
-        )
+        with db.get_session() as session:
+            query = session.query(
+                func.min(db.Intervals.start_time).label("first"),
+                func.max(db.Intervals.end_time).label("last"),
+            )
 
-        if entity_ids is not None:
-            # Filter by specific entity IDs
-            query = query.filter(self.db.Intervals.entity_id.in_(entity_ids))
-        else:
-            # Filter by area entry_id
-            entry_id = self.coordinator.entry_id
-            query = query.join(
-                self.db.Entities,
-                self.db.Intervals.entity_id == self.db.Entities.entity_id,
-            ).filter(self.db.Entities.entry_id == entry_id)
+            if entity_ids is not None:
+                # Filter by specific entity IDs
+                query = query.filter(db.Intervals.entity_id.in_(entity_ids))
+            else:
+                # Filter by area entry_id
+                entry_id = self.coordinator.entry_id
+                query = query.join(
+                    db.Entities,
+                    db.Intervals.entity_id == db.Entities.entity_id,
+                ).filter(db.Entities.entry_id == entry_id)
 
-        time_bounds = query.first()
-        return (time_bounds.first, time_bounds.last) if time_bounds else (None, None)
+            time_bounds = query.first()
+            return (
+                (time_bounds.first, time_bounds.last) if time_bounds else (None, None)
+            )
 
     def get_total_occupied_seconds(self, entity_ids: list[str]) -> float:
         """Get total occupied seconds for specific entities."""
-        query = self.session.query(func.sum(self.db.Intervals.duration_seconds)).filter(
-            self.db.Intervals.state == "on",
-            self.db.Intervals.entity_id.in_(entity_ids),
-        )
-        result = query.scalar()
-        return float(result or 0)
+        db = self.db
+
+        with db.get_session() as session:
+            query = session.query(func.sum(db.Intervals.duration_seconds)).filter(
+                db.Intervals.state == "on",
+                db.Intervals.entity_id.in_(entity_ids),
+            )
+            result = query.scalar()
+            return float(result or 0)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""

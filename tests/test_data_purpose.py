@@ -114,7 +114,7 @@ class TestPurposeManager:
     def mock_coordinator(self):
         """Create a mock coordinator."""
         coordinator = MagicMock()
-        coordinator.config_manager.config.purpose = "social"
+        coordinator.config.purpose = "social"
         return coordinator
 
     @pytest.fixture
@@ -136,7 +136,7 @@ class TestPurposeManager:
     @pytest.mark.asyncio
     async def test_async_initialize_with_invalid_purpose(self, mock_coordinator):
         """Test initialization with invalid purpose."""
-        mock_coordinator.config_manager.config.purpose = "invalid"
+        mock_coordinator.config.purpose = "invalid"
         purpose_manager = PurposeManager(mock_coordinator)
         await purpose_manager.async_initialize()
         # Should fall back to social
@@ -145,7 +145,7 @@ class TestPurposeManager:
     @pytest.mark.asyncio
     async def test_async_initialize_with_no_purpose(self, mock_coordinator):
         """Test initialization with no purpose configured."""
-        mock_coordinator.config_manager.config.purpose = None
+        mock_coordinator.config.purpose = None
         purpose_manager = PurposeManager(mock_coordinator)
         await purpose_manager.async_initialize()
         # Should default to social

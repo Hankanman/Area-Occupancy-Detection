@@ -160,6 +160,7 @@ class Config:
         self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self.hass = coordinator.hass
+        self.db = coordinator.db
 
         # Load configuration from the merged entry data
         self._load_config(self._merge_entry(coordinator.config_entry))

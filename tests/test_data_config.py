@@ -50,7 +50,6 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.data.config import (
     Config,
-    ConfigManager,
     Decay,
     Sensors,
     SensorStates,
@@ -61,7 +60,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001
 class TestSensors:
     """Test Sensors dataclass."""
 
@@ -390,106 +388,9 @@ class TestConfig:
         # Should return the original raw data
         assert result == original_data
 
-
-class TestConfigManager:
-    """Test ConfigManager class."""
-
-    def test_initialization(self, mock_coordinator: Mock) -> None:
-        """Test ConfigManager initialization."""
-        manager = ConfigManager(mock_coordinator)
-
-        assert manager.config_entry == mock_coordinator.config_entry
-        assert manager._config is not None
-        assert manager._hass == mock_coordinator.hass
-
-    def test_hass_property(self, mock_coordinator: Mock) -> None:
-        """Test hass property."""
-        manager = ConfigManager(mock_coordinator)
-
-        assert manager.hass == mock_coordinator.hass
-
-    def test_set_hass(self, mock_coordinator: Mock) -> None:
-        """Test set_hass method."""
-        manager = ConfigManager(mock_coordinator)
-        new_hass = Mock()
-
-        manager.set_hass(new_hass)
-
-        assert manager._hass == new_hass
-
-    def test_merge_entry(self, mock_config_entry: Mock) -> None:
-        """Test _merge_entry static method."""
-        result = ConfigManager._merge_entry(mock_config_entry)
-
-        # Should merge data and options
-        assert CONF_NAME in result
-        assert CONF_THRESHOLD in result
-        assert CONF_MOTION_SENSORS in result
-        assert result[CONF_NAME] == "Test Area"
-
-    def test_config_property_first_access(self, mock_coordinator: Mock) -> None:
-        """Test config property on first access."""
-        manager = ConfigManager(mock_coordinator)
-
-        # Should have created config during initialization
-        config = manager.config
-
-        assert isinstance(config, Config)
-        assert config.name == "Testing"  # Using realistic fixture data
-        assert manager._config is not None
-
-    def test_config_property_cached(self, mock_coordinator: Mock) -> None:
-        """Test config property returns cached value."""
-        manager = ConfigManager(mock_coordinator)
-
-        # First access
-        config1 = manager.config
-        # Second access
-        config2 = manager.config
-
-        # Should return the same cached instance
-        assert config1 is config2
-
-    def test_update_from_entry(self, mock_coordinator: Mock) -> None:
-        """Test update_from_entry method."""
-        manager = ConfigManager(mock_coordinator)
-
-        # Create initial config
-        initial_config = manager.config
-        assert initial_config.name == "Testing"  # Using realistic fixture data
-
-        # Create new config entry with updated data
-        new_config_entry = Mock(spec=ConfigEntry)
-        new_config_entry.data = {
-            CONF_NAME: "Updated Area",
-            CONF_THRESHOLD: 70,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
-        new_config_entry.options = {}
-
-        # Update from entry
-        manager.update_from_entry(new_config_entry)
-
-        # Should create new config with updated data
-        updated_config = manager.config
-        assert updated_config.name == "Updated Area"
-        assert updated_config.threshold == 0.7
-
-    def test_get_method(self, mock_coordinator: Mock) -> None:
-        """Test get method."""
-        manager = ConfigManager(mock_coordinator)
-
-        # Test getting existing value
-        name = manager.get("name")
-        assert name == "Testing"  # Using realistic fixture data
-
-        # Test getting non-existent value with default
-        value = manager.get("nonexistent_key", "default_value")
-        assert value == "default_value"
-
     async def test_update_config(self, mock_coordinator: Mock) -> None:
         """Test update_config method."""
-        manager = ConfigManager(mock_coordinator)
+        manager = Config(mock_coordinator)
 
         # Initial config
         initial_config = manager.config
@@ -555,9 +456,9 @@ class TestConfigIntegration:
         assert config.weights.motion == 0.0  # Zero weight is allowed (not negative)
 
     def test_config_manager_full_lifecycle(self, mock_coordinator: Mock) -> None:
-        """Test ConfigManager through a complete lifecycle."""
+        """Test Config through a complete lifecycle."""
         # Create manager
-        manager = ConfigManager(mock_coordinator)
+        manager = Config(mock_coordinator)
 
         # Initial config access
         initial_config = manager.config

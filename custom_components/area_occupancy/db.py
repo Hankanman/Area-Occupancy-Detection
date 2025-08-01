@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Column,
     DateTime,
@@ -20,11 +24,18 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-from homeassistant.core import HomeAssistant
+from homeassistant.components.recorder.history import get_significant_states
+from homeassistant.core import State
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
+
+from .const import CONF_VERSION
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
+
+    from .coordinator import AreaOccupancyCoordinator
 
     Base = DeclarativeBase
     Areas = "Areas"
@@ -33,6 +44,18 @@ if TYPE_CHECKING:
     Intervals = "Intervals"
 else:
     Base = declarative_base()
+
+_LOGGER = logging.getLogger(__name__)
+
+# Interval filtering thresholds to exclude anomalous data
+# Exclude intervals shorter than 5 seconds (false triggers)
+MIN_INTERVAL_SECONDS = 5
+# Exclude intervals longer than 13 hours (stuck sensors)
+MAX_INTERVAL_SECONDS = 13 * 3600
+# States to exclude from intervals
+INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
+
+RETENTION_DAYS = 365
 
 DEFAULT_AREA_PRIOR = 0.15
 DEFAULT_ENTITY_WEIGHT = 0.85
@@ -44,7 +67,7 @@ DB_NAME = "area_occupancy.db"
 metadata = MetaData()
 
 # Database schema version for migrations
-DB_VERSION = 2
+DB_VERSION = 3
 
 
 class AreaOccupancyDB:
@@ -52,16 +75,20 @@ class AreaOccupancyDB:
 
     def __init__(
         self,
-        hass: HomeAssistant = None,
+        coordinator: AreaOccupancyCoordinator,
     ):
         """Initialize SQLite storage.
 
         Args:
-            hass: Home Assistant instance (optional for testing)
+            coordinator: AreaOccupancyCoordinator instance
 
         """
-        self.hass = hass
-        self.storage_path = Path(hass.config.config_dir) / ".storage" if hass else None
+        self.coordinator = coordinator
+        self.conf_version = coordinator.config_entry.data.get("version", CONF_VERSION)
+        self.hass = coordinator.hass
+        self.storage_path = (
+            Path(self.hass.config.config_dir) / ".storage" if self.hass else None
+        )
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
@@ -80,8 +107,8 @@ class AreaOccupancyDB:
         # Check if database exists and initialize if needed
         self._ensure_db_exists()
 
-        # Create and store session
-        self.session = self.get_session()
+        # Create session maker
+        self._session_maker = sessionmaker(bind=self.engine)
 
         # Create model classes dictionary for ORM
         self.model_classes = {
@@ -91,6 +118,27 @@ class AreaOccupancyDB:
             "Intervals": self.Intervals,
             "Metadata": self.Metadata,
         }
+
+    @contextmanager
+    def get_session(self):
+        """Get a database session with automatic cleanup.
+
+        Yields:
+            Session: A SQLAlchemy session
+
+        Example:
+            with self.get_session() as session:
+                result = session.query(self.Areas).first()
+
+        """
+        session = self._session_maker()
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     # Table properties for cleaner access
     @property
@@ -124,16 +172,21 @@ class AreaOccupancyDB:
         __tablename__ = "areas"
         entry_id = Column(String, primary_key=True)
         area_name = Column(String, nullable=False)
+        area_id = Column(String, nullable=False)
         purpose = Column(String, nullable=False)
         threshold = Column(Float, nullable=False)
         area_prior = Column(
-            Float,
+            Float(precision=10),
             nullable=False,
             default=DEFAULT_AREA_PRIOR,
-            server_default=text(str(DEFAULT_AREA_PRIOR)),
+            server_default=str(DEFAULT_AREA_PRIOR),
         )
-        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
-        updated_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        created_at = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
+        updated_at = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
         entities = relationship("Entities", back_populates="area")
         priors = relationship("Priors", back_populates="area")
 
@@ -142,6 +195,7 @@ class AreaOccupancyDB:
             return {
                 "entry_id": self.entry_id,
                 "area_name": self.area_name,
+                "area_id": self.area_id,
                 "purpose": self.purpose,
                 "threshold": self.threshold,
                 "area_prior": self.area_prior,
@@ -155,6 +209,7 @@ class AreaOccupancyDB:
             return cls(
                 entry_id=data["entry_id"],
                 area_name=data["area_name"],
+                area_id=data["area_id"],
                 purpose=data["purpose"],
                 threshold=data["threshold"],
                 area_prior=data.get("area_prior", DEFAULT_AREA_PRIOR),
@@ -176,8 +231,12 @@ class AreaOccupancyDB:
         prob_given_false = Column(
             Float, nullable=False, default=DEFAULT_ENTITY_PROB_GIVEN_FALSE
         )
-        last_updated = Column(DateTime, nullable=False, default=dt_util.utcnow)
-        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        last_updated = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
+        created_at = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
         intervals = relationship("Intervals", back_populates="entity")
         area = relationship("Areas", back_populates="entities")
 
@@ -226,7 +285,9 @@ class AreaOccupancyDB:
         time_slot = Column(Integer, primary_key=True)
         prior_value = Column(Float, nullable=False)
         data_points = Column(Integer, nullable=False)
-        last_updated = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        last_updated = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
         area = relationship("Areas", back_populates="priors")
 
         __table_args__ = (
@@ -265,10 +326,12 @@ class AreaOccupancyDB:
         id = Column(Integer, primary_key=True)
         entity_id = Column(String, ForeignKey("entities.entity_id"), nullable=False)
         state = Column(String, nullable=False)
-        start_time = Column(DateTime, nullable=False)
-        end_time = Column(DateTime, nullable=False)
+        start_time = Column(DateTime(timezone=True), nullable=False)
+        end_time = Column(DateTime(timezone=True), nullable=False)
         duration_seconds = Column(Float, nullable=False)
-        created_at = Column(DateTime, nullable=False, default=dt_util.utcnow)
+        created_at = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
         entity = relationship("Entities", back_populates="intervals")
 
         # Add unique constraint on (entity_id, start_time, end_time)
@@ -315,49 +378,324 @@ class AreaOccupancyDB:
         value = Column(String, nullable=False)
 
     def _ensure_db_exists(self):
-        """Check if the database exists and initialize it if needed."""
-        # Check if any tables exist by trying to query the metadata table
+        """Check if the database exists and initialize it if needed, with locking."""
         try:
+            # Use direct engine connection during initialization
             with self.engine.connect() as conn:
-                # Try to query a table to see if the database is initialized
-                conn.execute(
+                result = conn.execute(
                     text("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
-                )
-        except Exception:  # noqa: BLE001
+                ).fetchone()
+                if not result:
+                    # No tables exist, initialize the database
+                    _LOGGER.debug("No tables found, initializing database")
+                    self.init_db()
+                    self.set_db_version()
+        except sa.exc.SQLAlchemyError:
             # Database doesn't exist or is not initialized, create it
+            _LOGGER.debug("Database error during table check, initializing database")
             self.init_db()
+            self.set_db_version()
 
     def get_engine(self):
         """Get the engine for the database with optimized settings."""
         return self.engine
 
-    def get_session(self):
-        """Get the session for the database."""
-        engine = self.get_engine()
-        session = sessionmaker(bind=engine)
-        return session()
+    def set_db_version(self):
+        """Set the database version in the metadata table."""
+        # Use direct engine connection during initialization
+        with self.engine.begin() as conn:
+            try:
+                # Try to update if exists, else insert
+                result = conn.execute(
+                    text("SELECT value FROM metadata WHERE key = 'db_version'")
+                ).fetchone()
+                if result:
+                    conn.execute(
+                        text(
+                            "UPDATE metadata SET value = :value WHERE key = 'db_version'"
+                        ),
+                        {"value": str(DB_VERSION)},
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            "INSERT INTO metadata (key, value) VALUES ('db_version', :value)"
+                        ),
+                        {"value": str(DB_VERSION)},
+                    )
+            except Exception as e:
+                _LOGGER.error("Failed to set db_version in metadata table: %s", e)
+                raise
 
-    def commit(self):
-        """Commit the current session."""
-        if self.session:
-            self.session.commit()
+    def get_db_version(self) -> int:
+        """Get the database version from the metadata table."""
+        with self.get_session() as session:
+            try:
+                metadata_entry = (
+                    session.query(self.Metadata).filter_by(key="db_version").first()
+                )
+                return int(metadata_entry.value) if metadata_entry else 0
+            except Exception as e:
+                _LOGGER.error("Failed to get db_version from metadata table: %s", e)
+                raise
 
-    def rollback(self):
-        """Rollback the current session."""
-        if self.session:
-            self.session.rollback()
+    def delete_db(self):
+        """Delete the database file."""
+        if self.db_path and self.db_path.exists():
+            try:
+                self.db_path.unlink()
+                _LOGGER.info("Deleted database at %s", self.db_path)
+            except (OSError, PermissionError) as e:
+                _LOGGER.error("Failed to delete database file: %s", e)
 
-    def close(self):
-        """Close the current session."""
-        if self.session:
-            self.session.close()
-            self.session = None
+    def force_reinitialize(self):
+        """Force reinitialization of the database tables."""
+        _LOGGER.debug("Forcing database reinitialization")
+        self.init_db()
+        self.set_db_version()
 
-    def refresh_session(self):
-        """Create a new session if the current one is closed."""
-        if not self.session:
-            self.session = self.get_session()
+    def init_db(self) -> None:
+        """Initialize the database with WAL mode and race condition handling."""
+        _LOGGER.debug("Starting database initialization")
+        try:
+            # Enable WAL mode for better concurrent writes
+            self._enable_wal_mode()
+            # Create all tables with checkfirst to avoid race conditions
+            _LOGGER.debug("Creating database tables")
+            Base.metadata.create_all(self.engine, checkfirst=True)
+            _LOGGER.debug("Database tables created successfully")
+        except sa.exc.OperationalError as err:
+            # Handle race condition when multiple instances try to create tables
+            if err.orig and hasattr(err.orig, "sqlite_errno"):
+                if err.orig.sqlite_errno == 1:
+                    _LOGGER.debug(
+                        "Table already exists (race condition), continuing: %s", err
+                    )
+                    # Continue - other tables might still need to be created
+                    # Try to create remaining tables individually
+                    self._create_tables_individually()
+                else:
+                    _LOGGER.error("Database initialization failed: %s", err)
+                    raise
+            else:
+                _LOGGER.error("Database initialization failed: %s", err)
+                raise
+        except Exception as err:
+            _LOGGER.error("Database initialization failed: %s", err)
+            raise
 
-    def init_db(self):
-        """Initialize the database."""
-        Base.metadata.create_all(self.engine)
+    def _enable_wal_mode(self) -> None:
+        """Enable SQLite WAL mode for better concurrent writes."""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+        except sa.exc.SQLAlchemyError as err:
+            _LOGGER.debug("Failed to enable WAL mode: %s", err)
+
+    def _create_tables_individually(self) -> None:
+        """Create tables individually to handle race conditions."""
+        for table in Base.metadata.tables.values():
+            try:
+                table.create(self.engine, checkfirst=True)
+            except sa.exc.OperationalError as err:
+                if err.orig and hasattr(err.orig, "sqlite_errno"):
+                    if err.orig.sqlite_errno == 1:
+                        _LOGGER.debug("Table %s already exists, skipping", table.name)
+                        continue
+                raise
+
+    # --- Load Data ---
+
+    async def load_data(self) -> None:
+        """Load the data from the database."""
+        try:
+            with self.get_session() as session:
+                area = (
+                    session.query(self.Areas)
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .first()
+                )
+                if area:
+                    self.coordinator.prior.set_global_prior(area.area_prior)
+                entities = (
+                    session.query(self.Entities)
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .order_by(self.Entities.entity_id)
+                    .all()
+                )
+                if entities:
+                    for entity in entities:
+                        self.coordinator.factory.create_from_db(entity)
+                _LOGGER.debug("Loaded area occupancy data")
+        except Exception as err:
+            _LOGGER.error("Failed to load area occupancy data: %s", err)
+            raise
+
+    # --- Save Data ---
+
+    async def save_data(self) -> None:
+        """Save the data to the database."""
+        try:
+            # Save area occupancy data
+            with self.engine.begin() as conn:
+                cfg = self.coordinator.config
+                conn.execute(
+                    self.Areas.__table__.insert().prefix_with("OR IGNORE"),
+                    {
+                        "entry_id": self.coordinator.entry_id,
+                        "area_name": cfg.name,
+                        "area_id": cfg.area_id,
+                        "purpose": cfg.purpose,
+                        "threshold": cfg.threshold,
+                        "area_prior": self.coordinator.area_prior,
+                        "updated_at": dt_util.utcnow(),
+                    },
+                )
+                entities = self.coordinator.entities.entities.values()
+                for entity in entities:
+                    # Skip entities with missing type information
+                    if not hasattr(entity, "type") or not entity.type:
+                        _LOGGER.warning(
+                            "Entity %s has no type information, skipping",
+                            entity.entity_id,
+                        )
+                        continue
+
+                    entity_type = getattr(entity.type, "input_type", None)
+                    weight = getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
+
+                    if entity_type is None:
+                        _LOGGER.warning(
+                            "Entity %s has no input_type, skipping", entity.entity_id
+                        )
+                        continue
+
+                    conn.execute(
+                        self.Entities.__table__.insert().prefix_with("OR IGNORE"),
+                        {
+                            "entry_id": self.coordinator.entry_id,
+                            "entity_id": entity.entity_id,
+                            "entity_type": entity_type,
+                            "weight": weight,
+                            "prob_given_true": entity.prob_given_true,
+                            "prob_given_false": entity.prob_given_false,
+                            "last_updated": entity.last_updated,
+                        },
+                    )
+            _LOGGER.debug("Saved area occupancy data")
+        except Exception as err:
+            _LOGGER.error("Failed to save area occupancy data: %s", err)
+            raise
+
+    # --- Sync Data from Recorder ---
+
+    def is_valid_state(self, state: Any) -> bool:
+        """Check if a state is valid."""
+        return state not in INVALID_STATES
+
+    def is_intervals_empty(self) -> bool:
+        """Check if the intervals table is empty using ORM."""
+        try:
+            with self.get_session() as session:
+                count = session.query(self.Intervals).count()
+                return count == 0
+        except sa.exc.SQLAlchemyError as e:
+            # If table doesn't exist, it's considered empty
+            if "no such table" in str(e).lower():
+                _LOGGER.debug("Intervals table doesn't exist yet, considering empty")
+                return True
+            _LOGGER.error("Failed to check if intervals empty: %s", e)
+            raise
+
+    def get_latest_interval(self) -> datetime | None:
+        """Return the latest interval end time minus 1 day, or None if no intervals."""
+        try:
+            with self.get_session() as session:
+                result = session.execute(
+                    sa.select(sa.func.max(self.Intervals.end_time))
+                ).scalar()
+                if result:
+                    return result - timedelta(hours=1)
+                return dt_util.now() - timedelta(days=10)
+        except sa.exc.SQLAlchemyError as e:
+            # If table doesn't exist, return a default time
+            if "no such table" in str(e).lower():
+                _LOGGER.debug("Intervals table doesn't exist yet, using default time")
+                return dt_util.now() - timedelta(days=10)
+            raise
+
+    def filter_states(self, states: dict[str, list[State]]) -> list[State]:
+        """Filter states to only include valid states."""
+        filtered_states = []
+        retention_time = dt_util.now() - timedelta(days=RETENTION_DAYS)
+        for state_list in states.values():
+            for state in state_list:
+                # Filter by retention
+                if state.last_updated > retention_time:
+                    duration_seconds = (
+                        state.last_updated - state.last_changed
+                    ).total_seconds()
+                    if state.state == "on":
+                        if duration_seconds <= MAX_INTERVAL_SECONDS:
+                            filtered_states.append(state)
+                    elif (
+                        self.is_valid_state(state.state)
+                        and duration_seconds >= MIN_INTERVAL_SECONDS
+                    ):
+                        filtered_states.append(state)
+        _LOGGER.debug("Filtered %d states", len(filtered_states))
+        return filtered_states
+
+    async def sync_states(
+        self,
+    ) -> None:
+        """Fetch states history from recorder and commit to Intervals table."""
+        hass = self.coordinator.hass
+        entity_ids = self.coordinator.config.entity_ids
+        recorder = get_instance(hass)
+        start_time = self.get_latest_interval()
+        end_time = dt_util.now()
+
+        try:
+            states = await recorder.async_add_executor_job(
+                lambda: get_significant_states(
+                    hass,
+                    start_time,
+                    end_time,
+                    entity_ids,
+                    minimal_response=False,
+                )
+            )
+            _LOGGER.debug("Found %d states", len(states))
+
+            if states:
+                # Prepare all rows for batch insert
+                filtered_states = self.filter_states(states)
+                rows = []
+                for state in filtered_states:
+                    duration_seconds = (
+                        state.last_updated - state.last_changed
+                    ).total_seconds()
+                    rows.append(
+                        {
+                            "entity_id": state.entity_id,
+                            "state": state.state,
+                            "start_time": state.last_changed,
+                            "end_time": state.last_updated,
+                            "duration_seconds": duration_seconds,
+                        }
+                    )
+                _LOGGER.debug("Syncing %d states", len(rows))
+                if rows:
+                    with self.engine.begin() as conn:
+                        conn.execute(
+                            self.Intervals.__table__.insert().prefix_with("OR IGNORE"),
+                            rows,
+                        )
+                    _LOGGER.debug("Synced %d states", len(rows))
+            else:
+                _LOGGER.debug("No states found in recorder query result")
+
+        except (HomeAssistantError, TimeoutError) as err:
+            _LOGGER.error("Error getting states: %s", err)
+            raise

@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from custom_components.area_occupancy.db import AreaOccupancyDB
-from custom_components.area_occupancy.state_intervals import StateInterval
 
 
 class TestDatabaseModels:

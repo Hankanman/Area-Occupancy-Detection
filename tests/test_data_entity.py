@@ -71,12 +71,10 @@ class TestEntity:
         assert result["decay"] == {"is_decaying": False}
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
-    @patch("custom_components.area_occupancy.data.entity.Likelihood")
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     def test_from_dict(
         self,
         mock_entity_type_class: Mock,
-        mock_prior_class: Mock,
         mock_decay_class: Mock,
         mock_coordinator: Mock,
     ) -> None:
@@ -85,11 +83,6 @@ class TestEntity:
         mock_entity_type.active_states = [STATE_ON]
         mock_entity_type.active_range = None
         mock_entity_type_class.from_dict.return_value = mock_entity_type
-
-        mock_likelihood = Mock()
-        mock_likelihood.prob_given_true = 0.8
-        mock_likelihood.prob_given_false = 0.1
-        mock_prior_class.from_dict.return_value = mock_likelihood
 
         mock_decay = Mock()
         mock_decay.decay_factor = 1.0
@@ -589,7 +582,7 @@ class TestEntityFactory:
         """Test factory initialization."""
         factory = EntityFactory(mock_coordinator)
         assert factory.coordinator == mock_coordinator
-        assert factory.config == mock_coordinator.config_manager.config
+        assert factory.config == mock_coordinator.config
 
     def test_create_from_config_spec(self, mock_coordinator: Mock) -> None:
         """Test creating entity from configuration."""
@@ -618,7 +611,7 @@ class TestEntityFactory:
     def test_create_from_storage(self, mock_coordinator: Mock) -> None:
         """Test creating entity from storage data."""
         factory = EntityFactory(mock_coordinator)
-        mock_coordinator.config_manager.config.decay.half_life = 300
+        mock_coordinator.config.decay.half_life = 300
         storage_data = {
             "entity_id": "binary_sensor.test",
             "type": {
@@ -672,7 +665,7 @@ class TestEntityFactory:
         }
 
         # Mock the config method properly
-        mock_coordinator.config_manager.config.get_entity_specifications = Mock(
+        mock_coordinator.config.get_entity_specifications = Mock(
             return_value=mock_specs
         )
 

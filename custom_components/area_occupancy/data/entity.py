@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
+from ..db import AreaOccupancyDB
 from ..utils import bayesian_probability
 from .decay import Decay
-from .entity_type import EntityType, InputType
+from .entity_type import EntityType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -204,30 +205,22 @@ class EntityFactory:
         self.coordinator = coordinator
         self.config = coordinator.config
 
-    def create_from_storage(self, data: dict[str, Any]) -> Entity:
+    def create_from_db(self, entity_obj: "AreaOccupancyDB.Entities") -> Entity:
         """Create entity from storage data."""
-        entity_type_data = data["type"]
-
-        # Create entity type from storage data
-        entity_type = EntityType(
-            input_type=InputType(entity_type_data["input_type"]),
-            weight=entity_type_data["weight"],
-            prob_true=entity_type_data["prob_true"],
-            prob_false=entity_type_data["prob_false"],
-            prior=entity_type_data["prior"],
-            active_states=entity_type_data.get("active_states"),
-            active_range=entity_type_data.get("active_range"),
+        # Find the existing entity type from the coordinator
+        entity_type = self.coordinator.entity_types.get_entity_type(
+            entity_obj.entity_type
         )
 
         return self._create_entity(
-            entity_id=data["entity_id"],
+            entity_id=entity_obj.entity_id,
             entity_type=entity_type,
-            stored_prob_given_true=data.get("prob_given_true"),
-            stored_prob_given_false=data.get("prob_given_false"),
-            stored_decay=data.get("decay"),
-            last_updated=data.get("last_updated"),
-            previous_evidence=data.get("previous_evidence"),
-            previous_probability=data.get("previous_probability", 0.0),
+            stored_prob_given_true=entity_obj.prob_given_true,
+            stored_prob_given_false=entity_obj.prob_given_false,
+            stored_decay=None,  # Decay data not stored in Entities table
+            last_updated=entity_obj.last_updated,
+            previous_evidence=None,  # Not stored in Entities table
+            previous_probability=0.0,  # Default value
         )
 
     def create_from_config_spec(self, entity_id: str, spec: dict[str, Any]) -> Entity:
@@ -380,7 +373,7 @@ class EntityManager:
 
         try:
             manager._entities = {
-                entity_id: manager._factory.create_from_storage(entity)
+                entity_id: manager._factory.create_from_db(entity)
                 for entity_id, entity in entities_data.items()
             }
         except (KeyError, ValueError, TypeError) as err:
@@ -467,101 +460,104 @@ class EntityManager:
 
         Use motion-based labels for 'occupied'.
         """
-        session = self.coordinator.db.session
         db = self.coordinator.db
         entry_id = self.coordinator.entry_id
         sensor_ids = self.coordinator.config.sensors.motion
-        # Get all sensor configs for this area
-        sensors = session.query(db.Entities).filter_by(entry_id=entry_id).all()
-        occupied_intervals = (
-            session.query(db.Intervals.start_time, db.Intervals.end_time)
-            .join(
-                db.Entities,
-                db.Intervals.entity_id == db.Entities.entity_id,
-            )
-            .filter(
-                db.Entities.entry_id == entry_id,
-                db.Intervals.entity_id.in_(sensor_ids),
-                db.Intervals.state == "on",
-            )
-            .order_by(db.Intervals.start_time)
-            .all()
-        )
 
-        # Get truth timeline from motion sensors (sorted for binary search)
-        occupied_times = [(start, end) for start, end in occupied_intervals]
+        with db.get_session() as session:
+            # Get all sensor configs for this area
+            sensors = session.query(db.Entities).filter_by(entry_id=entry_id).all()
+            occupied_intervals = (
+                session.query(db.Intervals.start_time, db.Intervals.end_time)
+                .join(
+                    db.Entities,
+                    db.Intervals.entity_id == db.Entities.entity_id,
+                )
+                .filter(
+                    db.Entities.entry_id == entry_id,
+                    db.Intervals.entity_id.in_(sensor_ids),
+                    db.Intervals.state == "on",
+                )
+                .order_by(db.Intervals.start_time)
+                .all()
+            )
 
-        def is_occupied(ts):
-            """Efficiently check if timestamp falls within any occupied interval using binary search."""
-            if not occupied_times:
+            # Get truth timeline from motion sensors (sorted for binary search)
+            occupied_times = [(start, end) for start, end in occupied_intervals]
+
+            def is_occupied(ts):
+                """Efficiently check if timestamp falls within any occupied interval using binary search."""
+                if not occupied_times:
+                    return False
+
+                # Binary search to find the rightmost interval that starts <= ts
+                idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
+
+                # Check if ts falls within the interval found
+                if idx > 0:
+                    start, end = occupied_times[idx - 1]
+                    if start <= ts < end:
+                        return True
+
                 return False
 
-            # Binary search to find the rightmost interval that starts <= ts
-            idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
+            sensor_entity_ids = [entity.entity_id for entity in sensors]
+            if not sensor_entity_ids:
+                return
 
-            # Check if ts falls within the interval found
-            if idx > 0:
-                start, end = occupied_times[idx - 1]
-                if start <= ts < end:
-                    return True
+            # Get all intervals for all sensors in one query
+            all_intervals = (
+                session.query(db.Intervals)
+                .filter(db.Intervals.entity_id.in_(sensor_entity_ids))
+                .all()
+            )
 
-            return False
+            # Group intervals by entity_id for processing
+            intervals_by_entity = defaultdict(list)
+            for interval in all_intervals:
+                intervals_by_entity[interval.entity_id].append(interval)
 
-        sensor_entity_ids = [entity.entity_id for entity in sensors]
-        if not sensor_entity_ids:
-            return
+            # Process each sensor's intervals
+            now = dt_util.utcnow()
+            for entity in sensors:
+                # Get intervals for this specific sensor
+                intervals = intervals_by_entity[entity.entity_id]
 
-        # Get all intervals for all sensors in one query
-        all_intervals = (
-            session.query(db.Intervals)
-            .filter(db.Intervals.entity_id.in_(sensor_entity_ids))
-            .all()
-        )
+                # Count true readings during occupied vs empty
+                true_occ = false_occ = true_empty = false_empty = 0
 
-        # Group intervals by entity_id for processing
-        intervals_by_entity = defaultdict(list)
-        for interval in all_intervals:
-            intervals_by_entity[interval.entity_id].append(interval)
-
-        # Process each sensor's intervals
-        now = dt_util.utcnow()
-        for entity in sensors:
-            # Get intervals for this specific sensor
-            intervals = intervals_by_entity[entity.entity_id]
-
-            # Count true readings during occupied vs empty
-            true_occ = false_occ = true_empty = false_empty = 0
-
-            for interval in intervals:
-                occ = is_occupied(interval.start_time)
-                if interval.state == "on":
-                    if occ:
-                        true_occ += interval.duration_seconds
+                for interval in intervals:
+                    occ = is_occupied(interval.start_time)
+                    if interval.state == "on":
+                        if occ:
+                            true_occ += interval.duration_seconds
+                        else:
+                            true_empty += interval.duration_seconds
+                    elif occ:
+                        false_occ += interval.duration_seconds
                     else:
-                        true_empty += interval.duration_seconds
-                elif occ:
-                    false_occ += interval.duration_seconds
-                else:
-                    false_empty += interval.duration_seconds
+                        false_empty += interval.duration_seconds
 
-            # Avoid division by zero
-            prob_given_true = (
-                true_occ / (true_occ + false_occ) if (true_occ + false_occ) > 0 else 0.5
-            )
-            prob_given_false = (
-                true_empty / (true_empty + false_empty)
-                if (true_empty + false_empty) > 0
-                else 0.5
-            )
-            updated_entity = db.Entities(
-                entity_id=entity.entity_id,
-                prob_given_true=prob_given_true,
-                prob_given_false=prob_given_false,
-                last_updated=now,
-            )
-            session.add(updated_entity)
-            self.get_entity(entity.entity_id).update_likelihood(
-                prob_given_true, prob_given_false
-            )
+                # Avoid division by zero
+                prob_given_true = (
+                    true_occ / (true_occ + false_occ)
+                    if (true_occ + false_occ) > 0
+                    else 0.5
+                )
+                prob_given_false = (
+                    true_empty / (true_empty + false_empty)
+                    if (true_empty + false_empty) > 0
+                    else 0.5
+                )
+                updated_entity = db.Entities(
+                    entity_id=entity.entity_id,
+                    prob_given_true=prob_given_true,
+                    prob_given_false=prob_given_false,
+                    last_updated=now,
+                )
+                session.add(updated_entity)
+                self.get_entity(entity.entity_id).update_likelihood(
+                    prob_given_true, prob_given_false
+                )
 
-        session.commit()
+            session.commit()
