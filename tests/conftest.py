@@ -965,22 +965,6 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
 
 
 @pytest.fixture
-def mock_likelihood() -> Mock:
-    """Create a mock Likelihood instance."""
-    likelihood = Mock(spec=Likelihood)
-    likelihood.prob_given_true = 0.8
-    likelihood.prob_given_false = 0.1
-    likelihood.last_updated = dt_util.utcnow()
-    likelihood.update = AsyncMock(return_value=(0.8, 0.1))
-    likelihood.to_dict.return_value = {
-        "prob_given_true": 0.8,
-        "prob_given_false": 0.1,
-        "last_updated": likelihood.last_updated.isoformat(),
-    }
-    return likelihood
-
-
-@pytest.fixture
 def mock_prior() -> Mock:
     """Create a mock Prior instance for backward compatibility with tests."""
     prior = Mock()

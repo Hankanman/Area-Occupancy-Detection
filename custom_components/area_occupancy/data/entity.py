@@ -235,8 +235,8 @@ class EntityFactory:
         return self._create_entity(
             entity_id=entity_id,
             entity_type=entity_type,
-            stored_prob_given_true=None,
-            stored_prob_given_false=None,
+            stored_prob_given_true=entity_type.prob_true,
+            stored_prob_given_false=entity_type.prob_false,
             stored_decay=None,
             last_updated=None,
             previous_evidence=None,
@@ -250,7 +250,7 @@ class EntityFactory:
         stored_prob_given_true: float | None = None,
         stored_prob_given_false: float | None = None,
         stored_decay: dict[str, Any] | None = None,
-        last_updated: str | None = None,
+        last_updated: datetime | None = None,
         previous_evidence: bool | None = None,
         previous_probability: float = 0.0,
     ) -> Entity:
@@ -273,11 +273,7 @@ class EntityFactory:
             prob_given_false=stored_prob_given_false,
             decay=decay,
             coordinator=self.coordinator,
-            last_updated=(
-                dt_util.parse_datetime(last_updated)
-                if last_updated
-                else dt_util.utcnow()
-            ),
+            last_updated=last_updated or dt_util.utcnow(),
             previous_evidence=previous_evidence,
             previous_probability=previous_probability,
         )
@@ -455,7 +451,7 @@ class EntityManager:
         self._entities = updated_entities
         _LOGGER.info("Entity sync complete: %d total entities", len(self._entities))
 
-    def update_all_entity_likelihoods(self):
+    async def update_all_entity_likelihoods(self):
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
         Use motion-based labels for 'occupied'.
@@ -549,13 +545,10 @@ class EntityManager:
                     if (true_empty + false_empty) > 0
                     else 0.5
                 )
-                updated_entity = db.Entities(
-                    entity_id=entity.entity_id,
-                    prob_given_true=prob_given_true,
-                    prob_given_false=prob_given_false,
-                    last_updated=now,
-                )
-                session.add(updated_entity)
+                # Update existing entity instead of creating new one
+                entity.prob_given_true = prob_given_true
+                entity.prob_given_false = prob_given_false
+                entity.last_updated = now
                 self.get_entity(entity.entity_id).update_likelihood(
                     prob_given_true, prob_given_false
                 )
