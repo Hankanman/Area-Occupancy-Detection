@@ -324,7 +324,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.prior.update()
 
             # Recalculate likelihoods with new data
-            await self.entities.update_all_entity_likelihoods()
+            await self.entities.update_likelihoods()
 
             # Refresh the coordinator
             await self.async_refresh()

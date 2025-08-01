@@ -451,7 +451,7 @@ class EntityManager:
         self._entities = updated_entities
         _LOGGER.info("Entity sync complete: %d total entities", len(self._entities))
 
-    async def update_all_entity_likelihoods(self):
+    async def update_likelihoods(self):
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
         Use motion-based labels for 'occupied'.

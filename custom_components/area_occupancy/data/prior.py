@@ -62,6 +62,12 @@ class Prior:
         except Exception:
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             self.global_prior = MIN_PRIOR
+        try:
+            self.compute_time_priors()
+        except Exception:
+            _LOGGER.exception(
+                "Time prior calculation failed, using default %.2f", MIN_PRIOR
+            )
 
         self._last_updated = dt_util.utcnow()
 
