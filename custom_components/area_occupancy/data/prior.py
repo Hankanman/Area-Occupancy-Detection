@@ -59,11 +59,13 @@ class Prior:
         """Calculate and update the prior value."""
         try:
             self.global_prior = self.calculate_area_prior(self.sensor_ids)
+            _LOGGER.debug("Area prior calculated: %.2f", self.global_prior)
         except Exception:
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             self.global_prior = MIN_PRIOR
         try:
             self.compute_time_priors()
+            _LOGGER.debug("Time priors calculated")
         except Exception:
             _LOGGER.exception(
                 "Time prior calculation failed, using default %.2f", MIN_PRIOR
@@ -141,16 +143,33 @@ class Prior:
                         else 0.0
                     )
 
-                    # Create the prior object within the database's session
-                    prior = db.Priors(
-                        entry_id=self.coordinator.entry_id,
-                        day_of_week=day,
-                        time_slot=slot,
-                        prior_value=p,
-                        data_points=int(total_slot_seconds),
-                        last_updated=now,
+                    # Check if prior already exists
+                    existing_prior = (
+                        session.query(db.Priors)
+                        .filter_by(
+                            entry_id=self.coordinator.entry_id,
+                            day_of_week=day,
+                            time_slot=slot,
+                        )
+                        .first()
                     )
-                    session.add(prior)
+
+                    if existing_prior:
+                        # Update existing prior
+                        existing_prior.prior_value = p
+                        existing_prior.data_points = int(total_slot_seconds)
+                        existing_prior.last_updated = now
+                    else:
+                        # Create new prior
+                        prior = db.Priors(
+                            entry_id=self.coordinator.entry_id,
+                            day_of_week=day,
+                            time_slot=slot,
+                            prior_value=p,
+                            data_points=int(total_slot_seconds),
+                            last_updated=now,
+                        )
+                        session.add(prior)
 
             # Commit the session to save all priors
             session.commit()

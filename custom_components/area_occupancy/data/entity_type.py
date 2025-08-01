@@ -5,9 +5,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import (
-    STATE_CLOSED,
+    STATE_OFF,
     STATE_ON,
-    STATE_OPEN,
     STATE_PAUSED,
     STATE_PLAYING,
     STATE_STANDBY,
@@ -60,9 +59,16 @@ class EntityType:
         self.prob_true = validate_prob(self.prob_true)
         self.prob_false = validate_prob(self.prob_false)
         self.prior = validate_prior(self.prior)
-        if self.active_states is None and self.active_range is None:
+
+        # Validate that we have exactly one of active_states or active_range
+        has_active_states = (
+            self.active_states is not None and len(self.active_states) > 0
+        )
+        has_active_range = self.active_range is not None
+
+        if not has_active_states and not has_active_range:
             raise ValueError("Either active_states or active_range must be provided")
-        if self.active_states is not None and self.active_range is not None:
+        if has_active_states and has_active_range:
             raise ValueError("Cannot provide both active_states and active_range")
 
     def to_dict(self) -> dict[str, Any]:
@@ -263,7 +269,7 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "prob_true": 0.2,
         "prob_false": 0.02,
         "prior": 0.1356,
-        "active_states": [STATE_CLOSED],
+        "active_states": [STATE_OFF],
         "active_range": None,
     },
     InputType.WINDOW: {
@@ -271,7 +277,7 @@ _ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
         "prob_true": 0.2,
         "prob_false": 0.02,
         "prior": 0.1569,
-        "active_states": [STATE_OPEN],
+        "active_states": [STATE_ON],
         "active_range": None,
     },
     InputType.TEMPERATURE: {

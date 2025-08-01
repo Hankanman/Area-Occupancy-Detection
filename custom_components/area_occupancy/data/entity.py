@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 from ..db import AreaOccupancyDB
 from ..utils import bayesian_probability
 from .decay import Decay
-from .entity_type import EntityType
+from .entity_type import EntityType, InputType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -223,14 +223,12 @@ class EntityFactory:
             previous_probability=0.0,  # Default value
         )
 
-    def create_from_config_spec(self, entity_id: str, spec: dict[str, Any]) -> Entity:
+    def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
         """Create entity from configuration specification."""
-        entity_type = self.coordinator.entity_types.get_entity_type(spec["input_type"])
-
-        # Override entity type with config-specific values
-        entity_type.weight = spec.get("weight", entity_type.weight)
-        entity_type.active_states = spec.get("active_states", entity_type.active_states)
-        entity_type.active_range = spec.get("active_range", entity_type.active_range)
+        # Get the entity type from coordinator (already built with proper defaults)
+        entity_type = self.coordinator.entity_types.get_entity_type(
+            InputType(input_type)
+        )
 
         return self._create_entity(
             entity_id=entity_id,
@@ -280,14 +278,47 @@ class EntityFactory:
 
     def create_all_from_config(self) -> dict[str, Entity]:
         """Create all entities from current configuration."""
-        config_specs = self.config.get_entity_specifications(self.coordinator)
+        entity_type_mapping = self.get_entity_type_mapping()
         entities = {}
 
-        for entity_id, spec in config_specs.items():
-            _LOGGER.debug("Creating entity %s from config spec", entity_id)
-            entities[entity_id] = self.create_from_config_spec(entity_id, spec)
+        for entity_id, input_type in entity_type_mapping.items():
+            _LOGGER.debug("Creating entity %s with type %s", entity_id, input_type)
+            entities[entity_id] = self.create_from_config_spec(entity_id, input_type)
 
         return entities
+
+    def get_entity_type_mapping(self) -> dict[str, str]:
+        """Get entity type mapping for all configured entities.
+
+        Returns a mapping of entity_id -> input_type string that can be used
+        directly for entity creation.
+        """
+        specs = {}
+
+        # Define sensor type mappings to eliminate repetition
+        SENSOR_TYPE_MAPPING = {
+            "motion": InputType.MOTION,
+            "media": InputType.MEDIA,
+            "appliance": InputType.APPLIANCE,
+            "door": InputType.DOOR,
+            "window": InputType.WINDOW,
+            "illuminance": InputType.ILLUMINANCE,
+            "humidity": InputType.HUMIDITY,
+            "temperature": InputType.TEMPERATURE,
+        }
+
+        # Process each sensor type using the mapping
+        for sensor_type, input_type in SENSOR_TYPE_MAPPING.items():
+            sensor_list = getattr(self.config.sensors, sensor_type)
+
+            # Special handling for motion sensors (includes wasp)
+            if sensor_type == "motion":
+                sensor_list = self.config.sensors.get_motion_sensors(self.coordinator)
+
+            for entity_id in sensor_list:
+                specs[entity_id] = input_type.value
+
+        return specs
 
 
 class EntityManager:
@@ -456,6 +487,7 @@ class EntityManager:
 
         Use motion-based labels for 'occupied'.
         """
+        _LOGGER.debug("Updating likelihoods")
         db = self.coordinator.db
         entry_id = self.coordinator.entry_id
         sensor_ids = self.coordinator.config.sensors.motion
@@ -519,12 +551,28 @@ class EntityManager:
                 # Get intervals for this specific sensor
                 intervals = intervals_by_entity[entity.entity_id]
 
+                # Get the corresponding Entity object to access its type configuration
+                entity_obj = self.get_entity(entity.entity_id)
+
                 # Count true readings during occupied vs empty
                 true_occ = false_occ = true_empty = false_empty = 0
 
                 for interval in intervals:
                     occ = is_occupied(interval.start_time)
-                    if interval.state == "on":
+
+                    # Determine if interval state is active based on entity type
+                    is_active = False
+                    if entity_obj.active_states:
+                        is_active = interval.state in entity_obj.active_states
+                    elif entity_obj.active_range:
+                        min_val, max_val = entity_obj.active_range
+                        try:
+                            state_val = float(interval.state)
+                            is_active = min_val <= state_val <= max_val
+                        except (ValueError, TypeError):
+                            is_active = False
+
+                    if is_active:
                         if occ:
                             true_occ += interval.duration_seconds
                         else:
@@ -554,3 +602,4 @@ class EntityManager:
                 )
 
             session.commit()
+            _LOGGER.debug("Likelihoods updated")
