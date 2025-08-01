@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_ON
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -62,7 +63,6 @@ from ..const import (
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
 
-from .entity_type import InputType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ class Sensors:
 class SensorStates:
     """Sensor states configuration."""
 
+    motion: list[str] = field(default_factory=lambda: [STATE_ON])
     door: list[str] = field(default_factory=lambda: [DEFAULT_DOOR_ACTIVE_STATE])
     window: list[str] = field(default_factory=lambda: [DEFAULT_WINDOW_ACTIVE_STATE])
     appliance: list[str] = field(
@@ -197,6 +198,7 @@ class Config:
         )
 
         self.sensor_states = SensorStates(
+            motion=[STATE_ON],  # Motion sensors default to STATE_ON
             door=[merged_data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
             window=[
                 merged_data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
@@ -295,51 +297,6 @@ class Config:
             *self.sensors.humidity,
             *self.sensors.temperature,
         ]
-
-    def get_entity_specifications(
-        self, coordinator: "AreaOccupancyCoordinator"
-    ) -> dict[str, dict[str, Any]]:
-        """Get entity specifications for all configured entities.
-
-        Returns a mapping of entity_id -> specification dict that can be used
-        directly for entity creation without intermediate conversions.
-        """
-        specs = {}
-
-        # Define sensor type mappings to eliminate repetition
-        SENSOR_TYPE_MAPPING = {
-            "motion": (InputType.MOTION, "motion"),
-            "media": (InputType.MEDIA, "media"),
-            "appliance": (InputType.APPLIANCE, "appliance"),
-            "door": (InputType.DOOR, "door"),
-            "window": (InputType.WINDOW, "window"),
-            "illuminance": (InputType.ILLUMINANCE, "environmental"),
-            "humidity": (InputType.HUMIDITY, "environmental"),
-            "temperature": (InputType.TEMPERATURE, "environmental"),
-        }
-
-        # Process each sensor type using the mapping
-        for sensor_type, (input_type, weight_attr) in SENSOR_TYPE_MAPPING.items():
-            sensor_list = getattr(self.sensors, sensor_type)
-
-            # Special handling for motion sensors (includes wasp)
-            if sensor_type == "motion":
-                sensor_list = self.sensors.get_motion_sensors(coordinator)
-
-            for entity_id in sensor_list:
-                # Get active states for sensor types that have them
-                active_states = None
-                if sensor_type in ["media", "appliance", "door", "window"]:
-                    active_states = getattr(self.sensor_states, sensor_type)
-
-                specs[entity_id] = {
-                    "input_type": input_type,
-                    "weight": getattr(self.weights, weight_attr),
-                    "active_states": active_states,
-                    "active_range": None,  # Will be set by EntityType for environmental sensors
-                }
-
-        return specs
 
     def validate_entity_configuration(self) -> list[str]:
         """Validate entity configuration and return any issues found.
