@@ -75,7 +75,6 @@ from custom_components.area_occupancy.data.config import (
 )
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
-from custom_components.area_occupancy.data.likelihood import Likelihood
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
 from custom_components.area_occupancy.storage import AreaOccupancyStorage
 from homeassistant.config_entries import ConfigEntry
@@ -438,9 +437,7 @@ def mock_coordinator(
     coordinator.storage = coordinator.sqlite_store
 
     # Config manager
-    coordinator.config_manager = Mock()
-    coordinator.config_manager.config = coordinator.config
-    coordinator.config_manager.update_config = AsyncMock()
+    coordinator.config.update_config = AsyncMock()
 
     # Only mock real public methods
     coordinator.async_shutdown = AsyncMock()
@@ -1902,12 +1899,10 @@ def mock_storage_with_db(mock_hass, db_engine, tmp_path):
     # Recreate helpers bound to the new engine
     from custom_components.area_occupancy.storage import (
         DatabaseExecutor,
-        DatabaseInitializer,
         DatabaseQueries,
     )
 
     storage.executor = DatabaseExecutor(db_engine)
-    storage.initializer = DatabaseInitializer(db_engine)
     storage.queries = DatabaseQueries(storage.db, storage.entry_id)
 
     # Create a fresh session for each test

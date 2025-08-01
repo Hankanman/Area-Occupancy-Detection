@@ -37,14 +37,14 @@ class TestAreaOccupancyStorage:
     async def test_async_initialize_success(
         self, storage_with_db: AreaOccupancyStorage
     ):
-        """Test successful async_initialize with in-memory database."""
-        await storage_with_db.async_initialize()
+        """Test successful database initialization with in-memory database."""
+        await storage_with_db._initialize_for_testing()
         assert storage_with_db.db is not None
         assert storage_with_db.engine is not None
 
     async def test_save_entity_config(self, storage_with_db: AreaOccupancyStorage):
         """Test saving entity configuration with in-memory database."""
-        await storage_with_db.async_initialize()
+        await storage_with_db._initialize_for_testing()
 
         record = {
             "entry_id": "test_entry_001",
@@ -71,7 +71,7 @@ class TestAreaOccupancyStorage:
 
     async def test_get_stats(self, storage_with_db: AreaOccupancyStorage):
         """Test getting database statistics with in-memory database."""
-        await storage_with_db.async_initialize()
+        await storage_with_db._initialize_for_testing()
 
         # Add some test data
         area_record = {
@@ -113,7 +113,7 @@ class TestAreaOccupancyStorage:
 
     async def test_save_area_occupancy(self, storage_with_db: AreaOccupancyStorage):
         """Test saving area occupancy with in-memory database."""
-        await storage_with_db.async_initialize()
+        await storage_with_db._initialize_for_testing()
 
         record = {
             "entry_id": "test_entry_001",

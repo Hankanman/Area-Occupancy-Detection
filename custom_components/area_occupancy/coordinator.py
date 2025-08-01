@@ -30,15 +30,13 @@ from .const import (
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
-    HA_RECORDER_DAYS,
     MIN_PROBABILITY,
 )
 from .data.config import Config
-from .data.entity import EntityManager
+from .data.entity import EntityFactory, EntityManager
 from .data.entity_type import EntityTypeManager
 from .data.prior import Prior
 from .data.purpose import PurposeManager
-from .storage import AreaOccupancyStorage
 from .utils import conditional_sorted_probability
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,9 +62,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass = hass
         self.config_entry = config_entry
         self.entry_id = config_entry.entry_id
-        self.config = Config(self)
         self.db = AreaOccupancyDB(self)
-        self.storage = AreaOccupancyStorage(self)
+        self.config = Config(self)
+        self.factory = EntityFactory(self)
         self.prior = Prior(self)
         self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
@@ -142,7 +140,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Load stored data
 
-            is_empty = await self.storage.is_state_intervals_empty()
+            is_empty = self.db.is_intervals_empty()
             if is_empty:
                 _LOGGER.info(
                     "State intervals table is empty for instance %s. Populating with initial data from recorder.",
@@ -150,36 +148,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 entity_ids = [eid for eid in set(self.config.entity_ids) if eid]
                 if entity_ids:
-                    await self.storage.import_intervals_from_recorder(
-                        entity_ids, days=HA_RECORDER_DAYS
-                    )
+                    await self.run_analysis()
                 else:
                     _LOGGER.warning(
                         "No entity IDs found in configuration to populate state intervals table for instance %s.",
                         self.entry_id,
                     )
-            # Initialize entities from storage or config
-            loaded_data = await self.storage.async_load_data()
-            if loaded_data:
-                self.entities = EntityManager.from_dict(dict(loaded_data), self)
-                await self.entities.__post_init__()
-                # Restore prior from storage if available
-                if "prior" in loaded_data and loaded_data["prior"] is not None:
-                    self.prior.set_global_prior(loaded_data["prior"])
             else:
-                self.entities = EntityManager(self)
-                await self.entities.__post_init__()
-            # Calculate priors and likelihoods if not restored from storage
-            if (
-                loaded_data is None
-                or "prior" not in loaded_data
-                or loaded_data["prior"] is None
-                or "entities" not in loaded_data
-            ):
-                await self.prior.update()
-                await self.entities.update_all_entity_likelihoods()
-            # Save data to storage
-            await self.storage.async_save_data()
+                _LOGGER.info(
+                    "State intervals table is not empty for instance %s. Loading data from database.",
+                    self.entry_id,
+                )
+                await self.db.load_data()
+
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
             # Start timers only after everything is ready
@@ -197,8 +178,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
-        # Save current state to storage
-        await self.storage.async_save_data()
+        # Save current state to database
+        await self.db.save_data()
 
         # Return current state data
         return {
@@ -227,7 +208,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer()
             self._analysis_timer = None
 
-        await self.storage.async_save_data()
+        await self.db.save_data()
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -261,7 +242,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.track_entity_state_changes(self.entities.entity_ids)
 
         # Force immediate save after configuration changes
-        await self.storage.async_save_data()
+        await self.db.save_data()
 
         await self.async_request_refresh()
 
@@ -330,32 +311,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         try:
             # Import recent data from recorder
-            entity_ids = list(self.entities.entities.keys())
-            if entity_ids:
-                await self.storage.import_intervals_from_recorder(
-                    entity_ids, days=HA_RECORDER_DAYS
-                )
-                import_stats = self.storage.import_stats
-                total_imported = sum(import_stats.values())
+            await self.db.sync_states()
 
-                if total_imported > 0:
-                    _LOGGER.info(
-                        "Historical import: %d intervals imported for %s",
-                        total_imported,
-                        self.config.name,
-                    )
+            # Recalculate priors with new data
+            await self.prior.update()
 
-                    # Recalculate priors with new data
-                    await self.prior.update()
-
-                    # Recalculate likelihoods with new data
-                    await self.entities.update_all_entity_likelihoods()
-
-                # Cleanup old data (yearly retention)
-                await self.storage.cleanup_old_intervals(retention_days=365)
+            # Recalculate likelihoods with new data
+            await self.entities.update_all_entity_likelihoods()
 
             # Refresh the coordinator
             await self.async_refresh()
+
+            # Save data to database
+            await self.db.save_data()
 
         except (ValueError, OSError) as err:
             _LOGGER.error("Analysis failed: %s", err)
