@@ -30,7 +30,7 @@ def test_initialization(mock_coordinator):
     assert prior.global_prior is None
     assert prior._prior_intervals is None
     assert prior._last_updated is None
-    assert prior._calculation_window_start is None
+    assert prior.calculation_window_start is None
 
 
 def test_value_property_clamping(mock_coordinator):
@@ -103,7 +103,7 @@ async def test_update_with_wasp_disabled(mock_coordinator):
     assert prior.global_prior is not None
     assert isinstance(prior._prior_intervals, list)
     assert prior._last_updated is not None
-    assert prior._calculation_window_start is not None
+    assert prior.calculation_window_start is not None
 
     # Verify call count: motion1, motion2 (wasp disabled)
     calls = mock_coordinator.storage.get_historical_intervals.call_args_list
@@ -233,7 +233,7 @@ def test_to_dict_and_from_dict(mock_coordinator):
     window_start = now - timedelta(days=10)
     prior.global_prior = 0.42
     prior._last_updated = now
-    prior._calculation_window_start = window_start
+    prior.calculation_window_start = window_start
     d = prior.to_dict()
     assert d["value"] == 0.42
     assert d["last_updated"] == now.isoformat()
@@ -242,7 +242,7 @@ def test_to_dict_and_from_dict(mock_coordinator):
     restored = Prior.from_dict(d, mock_coordinator)
     assert restored.global_prior == 0.42
     assert restored._last_updated == now
-    assert restored._calculation_window_start == window_start
+    assert restored.calculation_window_start == window_start
 
 
 def test_reset_calculation_window(mock_coordinator):
@@ -252,7 +252,7 @@ def test_reset_calculation_window(mock_coordinator):
     # Set some values
     prior.global_prior = 0.5
     prior._prior_intervals = [{"test": "data"}]
-    prior._calculation_window_start = dt_util.utcnow()
+    prior.calculation_window_start = dt_util.utcnow()
 
     # Reset the window
     prior.reset_calculation_window()
@@ -260,7 +260,7 @@ def test_reset_calculation_window(mock_coordinator):
     # Verify values are reset
     assert prior.global_prior is None
     assert prior._prior_intervals is None
-    assert prior._calculation_window_start is None
+    assert prior.calculation_window_start is None
 
 
 def test_prior_factor_constant():

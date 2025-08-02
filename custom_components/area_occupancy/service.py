@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-# ruff: noqa: SLF001
 def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordinator":
     """Get coordinator from entry_id with error handling."""
     for entry in hass.config_entries.async_entries(DOMAIN):
@@ -533,8 +532,8 @@ async def _reset_prior_window(hass: HomeAssistant, call: ServiceCall) -> dict[st
         return {
             "entry_id": entry_id,
             "prior_value": coordinator.prior.global_prior,
-            "calculation_window_start": coordinator.prior._calculation_window_start.isoformat()
-            if coordinator.prior._calculation_window_start
+            "calculation_window_start": coordinator.prior.calculation_window_start.isoformat()
+            if coordinator.prior.calculation_window_start
             else None,
             "message": "Prior calculation window reset successfully",
         }
