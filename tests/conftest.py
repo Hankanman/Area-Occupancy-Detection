@@ -703,22 +703,32 @@ def valid_storage_data() -> dict[str, Any]:
     }
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_frame_helper():
-    """Mock the Home Assistant frame helper for config flow tests."""
-    with patch("homeassistant.helpers.frame._hass") as mock_hass:
+    """Mock the Home Assistant frame helper for all tests."""
+    with (
+        patch("homeassistant.helpers.frame._hass") as mock_hass,
+        patch("homeassistant.helpers.frame.get_integration_frame") as mock_get_frame,
+        patch("homeassistant.helpers.frame.report_usage") as mock_report_usage,
+        patch(
+            "homeassistant.helpers.frame.report_non_thread_safe_operation"
+        ) as mock_report_thread,
+    ):
         mock_hass.hass = Mock()
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        mock_hass.hass.loop = loop
+        mock_hass.hass.loop = asyncio.get_event_loop()
+
+        # Mock the get_integration_frame function to return a valid frame
+        mock_frame = Mock()
+        mock_frame.filename = "/workspaces/Area-Occupancy-Detection/custom_components/area_occupancy/coordinator.py"
+        mock_frame.lineno = 1
+        mock_frame.function = "test_function"
+        mock_get_frame.return_value = mock_frame
+
+        # Mock the report functions to do nothing
+        mock_report_usage.return_value = None
+        mock_report_thread.return_value = None
+
         yield mock_hass
-        try:
-            if loop.is_running():
-                loop.stop()
-            if not loop.is_closed():
-                loop.close()
-        except (RuntimeError, AttributeError):
-            pass
 
 
 # Utility functions for common test patterns
