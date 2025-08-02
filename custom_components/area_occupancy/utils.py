@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime, timedelta
+from pathlib import Path
+import time
 from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
@@ -17,6 +20,36 @@ from .const import (
 
 if TYPE_CHECKING:
     from .data.entity import Entity
+
+
+class FileLock:
+    """Simple file-based lock using context manager."""
+
+    def __init__(self, lock_path: Path, timeout: int = 60):
+        """Initialize the lock."""
+        self.lock_path = lock_path
+        self.timeout = timeout
+
+    def __enter__(self):
+        """Enter the context manager."""
+        start_time = time.time()
+
+        # Wait for lock to be available
+        while self.lock_path.exists():
+            if time.time() - start_time > self.timeout:
+                raise TimeoutError(f"Timeout waiting for lock: {self.lock_path}")
+            time.sleep(0.1)
+
+        # Create lock file
+        self.lock_path.touch()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the context manager."""
+        # Remove lock file
+        with suppress(FileNotFoundError):
+            self.lock_path.unlink()
+
 
 # ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
 
@@ -283,8 +316,8 @@ def complementary_probability(entities: dict[str, Entity], prior: float) -> floa
     for e in contributing_entities:
         posterior = bayesian_probability(
             prior=prior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=True,
             decay_factor=e.decay_factor,
         )
@@ -319,8 +352,8 @@ def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
         effective_evidence = e.evidence or e.decay.is_decaying
         entity_posterior = bayesian_probability(
             prior=posterior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )
@@ -360,8 +393,8 @@ def conditional_sorted_probability(entities: dict[str, Entity], prior: float) ->
         effective_evidence = e.evidence or e.decay.is_decaying
         entity_posterior = bayesian_probability(
             prior=posterior,
-            prob_given_true=e.likelihood.prob_given_true,
-            prob_given_false=e.likelihood.prob_given_false,
+            prob_given_true=e.prob_given_true,
+            prob_given_false=e.prob_given_false,
             evidence=effective_evidence,
             decay_factor=e.decay_factor,
         )

@@ -218,7 +218,9 @@ class TestAsyncMigrateStorage:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            await async_migrate_storage(mock_hass, "test_entry_id")
+            await async_migrate_storage(
+                mock_hass, "test_entry_id", 1
+            )  # Add entry_major parameter
             # Should complete without error
 
     async def test_async_migrate_storage_error(self, mock_hass: Mock) -> None:
@@ -228,7 +230,9 @@ class TestAsyncMigrateStorage:
             new_callable=AsyncMock,
             side_effect=HomeAssistantError("Storage error"),
         ):
-            await async_migrate_storage(mock_hass, "test_entry_id")
+            await async_migrate_storage(
+                mock_hass, "test_entry_id", 1
+            )  # Add entry_major parameter
             # Should handle error gracefully
 
 
@@ -372,7 +376,6 @@ class TestAsyncMigrateEntry:
             result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
             assert result is True
 
-            # Should fix invalid threshold
             call_args = mock_hass.config_entries.async_update_entry.call_args
             updated_options = call_args[1]["options"]
             assert updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
@@ -455,9 +458,7 @@ class TestMigrationsIntegration:
                 CONF_PURPOSE in updated_data
             )  # Purpose should be added for configs with sensors
             assert updated_data[CONF_PURPOSE] == DEFAULT_PURPOSE
-            assert (
-                updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
-            )  # Fixed invalid threshold
+            assert updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
 
     def test_config_migration_edge_cases(self) -> None:
         """Test config migration with various edge cases."""

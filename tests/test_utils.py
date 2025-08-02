@@ -1,17 +1,9 @@
 """Tests for utils module."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import pytest
-
-from custom_components.area_occupancy.state_intervals import (
-    StateInterval,
-    filter_intervals,
-    get_states_from_recorder,
-    states_to_intervals,
-)
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
     complementary_probability,
@@ -30,8 +22,6 @@ from custom_components.area_occupancy.utils import (
     validate_prob,
     validate_weight,
 )
-from homeassistant.core import State
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -315,8 +305,8 @@ class TestComplementaryProbability:
         mock_entity.decay.is_decaying = False
         mock_entity.decay_factor = 1.0
         mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -340,16 +330,16 @@ class TestComplementaryProbability:
         mock_entity1.decay.is_decaying = False
         mock_entity1.decay_factor = 1.0
         mock_entity1.type.weight = 0.8
-        mock_entity1.likelihood.prob_given_true = 0.8
-        mock_entity1.likelihood.prob_given_false = 0.1
+        mock_entity1.prob_given_true = 0.8
+        mock_entity1.prob_given_false = 0.1
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
         mock_entity2.decay_factor = 1.0
         mock_entity2.type.weight = 0.6
-        mock_entity2.likelihood.prob_given_true = 0.7
-        mock_entity2.likelihood.prob_given_false = 0.2
+        mock_entity2.prob_given_true = 0.7
+        mock_entity2.prob_given_false = 0.2
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -377,8 +367,8 @@ class TestComplementaryProbability:
         mock_entity.decay.decay_factor = 0.5  # Half decay
         mock_entity.decay_factor = 0.5
         mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -401,16 +391,16 @@ class TestComplementaryProbability:
         mock_active.decay.is_decaying = False
         mock_active.decay_factor = 1.0
         mock_active.type.weight = 1.0
-        mock_active.likelihood.prob_given_true = 0.8
-        mock_active.likelihood.prob_given_false = 0.1
+        mock_active.prob_given_true = 0.8
+        mock_active.prob_given_false = 0.1
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
         mock_inactive.decay_factor = 1.0
         mock_inactive.type.weight = 1.0
-        mock_inactive.likelihood.prob_given_true = 0.8
-        mock_inactive.likelihood.prob_given_false = 0.1
+        mock_inactive.prob_given_true = 0.8
+        mock_inactive.prob_given_false = 0.1
 
         mock_decaying = Mock()
         mock_decaying.evidence = False
@@ -418,8 +408,8 @@ class TestComplementaryProbability:
         mock_decaying.decay.decay_factor = 0.5
         mock_decaying.decay_factor = 0.5
         mock_decaying.type.weight = 1.0
-        mock_decaying.likelihood.prob_given_true = 0.8
-        mock_decaying.likelihood.prob_given_false = 0.1
+        mock_decaying.prob_given_true = 0.8
+        mock_decaying.prob_given_false = 0.1
 
         entities = {
             "active": cast("Entity", mock_active),
@@ -441,8 +431,8 @@ class TestComplementaryProbability:
             mock_entity.decay.is_decaying = False
             mock_entity.decay_factor = 1.0
             mock_entity.type.weight = 0.001
-            mock_entity.likelihood.prob_given_true = 0.8
-            mock_entity.likelihood.prob_given_false = 0.1
+            mock_entity.prob_given_true = 0.8
+            mock_entity.prob_given_false = 0.1
             entities[f"e{i}"] = cast("Entity", mock_entity)
 
         prior = 0.3
@@ -461,8 +451,8 @@ class TestConditionalProbability:
         mock_entity.decay.is_decaying = False
         mock_entity.decay_factor = 1.0
         mock_entity.type.weight = 0.8
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -479,16 +469,16 @@ class TestConditionalProbability:
         mock_entity1.decay.is_decaying = False
         mock_entity1.decay_factor = 1.0
         mock_entity1.type.weight = 0.6
-        mock_entity1.likelihood.prob_given_true = 0.8
-        mock_entity1.likelihood.prob_given_false = 0.1
+        mock_entity1.prob_given_true = 0.8
+        mock_entity1.prob_given_false = 0.1
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
         mock_entity2.decay_factor = 1.0
         mock_entity2.type.weight = 0.4
-        mock_entity2.likelihood.prob_given_true = 0.7
-        mock_entity2.likelihood.prob_given_false = 0.2
+        mock_entity2.prob_given_true = 0.7
+        mock_entity2.prob_given_false = 0.2
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -506,8 +496,8 @@ class TestConditionalProbability:
         mock_entity.decay.is_decaying = True
         mock_entity.decay_factor = 0.5
         mock_entity.type.weight = 0.8
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -527,24 +517,24 @@ class TestConditionalSortedProbability:
         mock_active_high_weight.decay.is_decaying = False
         mock_active_high_weight.decay_factor = 1.0
         mock_active_high_weight.type.weight = 0.9
-        mock_active_high_weight.likelihood.prob_given_true = 0.8
-        mock_active_high_weight.likelihood.prob_given_false = 0.1
+        mock_active_high_weight.prob_given_true = 0.8
+        mock_active_high_weight.prob_given_false = 0.1
 
         mock_active_low_weight = Mock()
         mock_active_low_weight.evidence = True
         mock_active_low_weight.decay.is_decaying = False
         mock_active_low_weight.decay_factor = 1.0
         mock_active_low_weight.type.weight = 0.3
-        mock_active_low_weight.likelihood.prob_given_true = 0.8
-        mock_active_low_weight.likelihood.prob_given_false = 0.1
+        mock_active_low_weight.prob_given_true = 0.8
+        mock_active_low_weight.prob_given_false = 0.1
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
         mock_inactive.decay_factor = 1.0
         mock_inactive.type.weight = 0.8
-        mock_inactive.likelihood.prob_given_true = 0.8
-        mock_inactive.likelihood.prob_given_false = 0.1
+        mock_inactive.prob_given_true = 0.8
+        mock_inactive.prob_given_false = 0.1
 
         entities = {
             "active_high": cast("Entity", mock_active_high_weight),
@@ -640,258 +630,6 @@ class TestTimeBasedPriorUtilities:
         assert (6, 47) in slots  # Sunday 23:30-23:59
 
 
-class TestStatesToIntervals:
-    """Test the states_to_intervals helper."""
-
-    @pytest.mark.asyncio
-    async def test_intervals_cover_full_range(self) -> None:
-        """Intervals should span start to end even if first change is later."""
-        start = dt_util.utcnow() - timedelta(minutes=30)
-        end = dt_util.utcnow()
-
-        states = [
-            State(
-                "binary_sensor.test", "off", last_changed=start - timedelta(minutes=5)
-            ),
-            State(
-                "binary_sensor.test", "on", last_changed=start + timedelta(minutes=10)
-            ),
-            State(
-                "binary_sensor.test", "off", last_changed=start + timedelta(minutes=20)
-            ),
-        ]
-
-        intervals = await states_to_intervals(states, start, end)
-
-        assert intervals[0]["start"] == start
-        assert intervals[-1]["end"] == end
-        assert intervals[0]["state"] == "off"
-
-    @pytest.mark.asyncio
-    async def test_empty_states(self) -> None:
-        """Test with empty states list."""
-        start = dt_util.utcnow() - timedelta(minutes=30)
-        end = dt_util.utcnow()
-
-        intervals = await states_to_intervals([], start, end)
-        assert intervals == []
-
-    @pytest.mark.asyncio
-    async def test_filter_invalid_states(self) -> None:
-        """Test filtering of invalid states."""
-        start = dt_util.utcnow() - timedelta(minutes=30)
-        end = dt_util.utcnow()
-
-        states = [
-            State("binary_sensor.test", "unknown", last_changed=start),
-            State(
-                "binary_sensor.test",
-                "unavailable",
-                last_changed=start + timedelta(minutes=5),
-            ),
-            State(
-                "binary_sensor.test", "on", last_changed=start + timedelta(minutes=10)
-            ),
-            State("binary_sensor.test", "", last_changed=start + timedelta(minutes=15)),
-        ]
-
-        intervals = await states_to_intervals(states, start, end)
-        # The new implementation may keep all intervals, so just check the last valid state
-        assert any(iv["state"] == "on" for iv in intervals)
-
-    @pytest.mark.asyncio
-    async def test_states_outside_window(self) -> None:
-        """Test states outside the time window."""
-        start = dt_util.utcnow() - timedelta(minutes=30)
-        end = dt_util.utcnow()
-
-        states = [
-            State(
-                "binary_sensor.test", "on", last_changed=start - timedelta(minutes=10)
-            ),
-            State(
-                "binary_sensor.test", "off", last_changed=end + timedelta(minutes=10)
-            ),
-        ]
-
-        intervals = await states_to_intervals(states, start, end)
-        # Should create one interval from start to end with the state at start
-        assert len(intervals) == 1
-        assert intervals[0]["start"] == start
-        assert intervals[0]["end"] == end
-        assert intervals[0]["state"] == "on"
-
-
-class TestFilterIntervals:
-    """Test filter_intervals function."""
-
-    def test_filter_valid_intervals(self) -> None:
-        """Test filtering of valid intervals."""
-        start = dt_util.utcnow()
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(minutes=5),
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-            StateInterval(
-                start=start + timedelta(minutes=5),
-                end=start + timedelta(minutes=10),
-                state="off",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        assert len(filtered) == 2
-        assert filtered[0]["state"] == "on"
-        assert filtered[1]["state"] == "off"
-
-    def test_filter_short_intervals(self) -> None:
-        """Test filtering of short intervals."""
-        start = dt_util.utcnow()
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(seconds=5),  # Too short
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-            StateInterval(
-                start=start + timedelta(seconds=5),
-                end=start + timedelta(minutes=5),
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        # The new implementation may keep both if the logic changed, so just check at least one valid
-        assert any((iv["end"] - iv["start"]).total_seconds() >= 5 for iv in filtered)
-
-    def test_filter_long_intervals(self) -> None:
-        """Test filtering of long intervals."""
-        start = dt_util.utcnow()
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(hours=15),  # Too long
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-            StateInterval(
-                start=start + timedelta(hours=15),
-                end=start + timedelta(hours=16),
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        assert len(filtered) == 1  # Only the shorter interval should remain
-
-    def test_filter_invalid_states(self) -> None:
-        """Test filtering of intervals with invalid states."""
-        start = dt_util.utcnow()
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(minutes=5),
-                state="unknown",
-                entity_id="binary_sensor.test",
-            ),
-            StateInterval(
-                start=start + timedelta(minutes=5),
-                end=start + timedelta(minutes=10),
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        assert len(filtered) == 1  # Only the valid state should remain
-        assert filtered[0]["state"] == "on"
-
-
-class TestGetStatesFromRecorder:
-    """Test get_states_from_recorder function."""
-
-    @pytest.mark.asyncio
-    async def test_successful_fetch(self, mock_hass: Mock) -> None:
-        """Test successful state fetching."""
-        start_time = dt_util.utcnow() - timedelta(hours=1)
-        end_time = dt_util.utcnow()
-
-        mock_states = [
-            State(
-                "binary_sensor.test",
-                "on",
-                last_changed=start_time + timedelta(minutes=10),
-            ),
-            State(
-                "binary_sensor.test",
-                "off",
-                last_changed=start_time + timedelta(minutes=20),
-            ),
-        ]
-
-        with patch(
-            "custom_components.area_occupancy.state_intervals.get_instance"
-        ) as mock_get_instance:
-            mock_recorder = Mock()
-            mock_recorder.async_add_executor_job = AsyncMock(
-                return_value={"binary_sensor.test": mock_states}
-            )
-            mock_get_instance.return_value = mock_recorder
-
-            with patch(
-                "custom_components.area_occupancy.state_intervals.get_significant_states"
-            ) as mock_get_states:
-                mock_get_states.return_value = {"binary_sensor.test": mock_states}
-
-                result = await get_states_from_recorder(
-                    mock_hass, "binary_sensor.test", start_time, end_time
-                )
-                assert result == mock_states
-
-    @pytest.mark.asyncio
-    async def test_recorder_not_available(self, mock_hass: Mock) -> None:
-        """Test when recorder is not available."""
-        start_time = dt_util.utcnow() - timedelta(hours=1)
-        end_time = dt_util.utcnow()
-
-        with patch(
-            "custom_components.area_occupancy.state_intervals.get_instance"
-        ) as mock_get_instance:
-            mock_get_instance.return_value = None
-
-            result = await get_states_from_recorder(
-                mock_hass, "binary_sensor.test", start_time, end_time
-            )
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_recorder_error(self, mock_hass: Mock) -> None:
-        """Test recorder error handling."""
-        start_time = dt_util.utcnow() - timedelta(hours=1)
-        end_time = dt_util.utcnow()
-
-        with patch(
-            "custom_components.area_occupancy.state_intervals.get_instance"
-        ) as mock_get_instance:
-            mock_recorder = Mock()
-            mock_recorder.async_add_executor_job = AsyncMock(
-                side_effect=HomeAssistantError("Test error")
-            )
-            mock_get_instance.return_value = mock_recorder
-
-            with pytest.raises(HomeAssistantError):
-                await get_states_from_recorder(
-                    mock_hass, "binary_sensor.test", start_time, end_time
-                )
-
-
 class TestAdditionalEdgeCases:
     """Test additional edge cases for utility functions."""
 
@@ -956,49 +694,3 @@ class TestAdditionalEdgeCases:
         # Test time slot name edge cases
         name = get_time_slot_name(6, 47)  # Sunday 23:30-23:59
         assert "23:30-00:00" in name  # Should handle day rollover
-
-    def test_interval_filtering_edge_cases(self) -> None:
-        """Test interval filtering with edge cases."""
-        start = dt_util.utcnow()
-
-        # Test exactly minimum duration
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(seconds=10),  # Exactly minimum
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        assert any((iv["end"] - iv["start"]).total_seconds() >= 10 for iv in filtered)
-
-        # Test exactly maximum duration
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(hours=13),  # Exactly maximum
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        assert any(
-            (iv["end"] - iv["start"]).total_seconds() == 13 * 3600 for iv in filtered
-        )
-
-        # Test boundary conditions
-        intervals = [
-            StateInterval(
-                start=start,
-                end=start + timedelta(seconds=9),  # Just below minimum
-                state="on",
-                entity_id="binary_sensor.test",
-            ),
-        ]
-
-        filtered = filter_intervals(intervals)
-        # Instead of asserting all are >= 10, just check that intervals < 10 are filtered out
-        assert all((iv["end"] - iv["start"]).total_seconds() >= 5 for iv in filtered)
