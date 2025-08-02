@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime, timedelta
+from pathlib import Path
+import time
 from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
@@ -17,6 +20,36 @@ from .const import (
 
 if TYPE_CHECKING:
     from .data.entity import Entity
+
+
+class FileLock:
+    """Simple file-based lock using context manager."""
+
+    def __init__(self, lock_path: Path, timeout: int = 60):
+        """Initialize the lock."""
+        self.lock_path = lock_path
+        self.timeout = timeout
+
+    def __enter__(self):
+        """Enter the context manager."""
+        start_time = time.time()
+
+        # Wait for lock to be available
+        while self.lock_path.exists():
+            if time.time() - start_time > self.timeout:
+                raise TimeoutError(f"Timeout waiting for lock: {self.lock_path}")
+            time.sleep(0.1)
+
+        # Create lock file
+        self.lock_path.touch()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the context manager."""
+        # Remove lock file
+        with suppress(FileNotFoundError):
+            self.lock_path.unlink()
+
 
 # ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
 

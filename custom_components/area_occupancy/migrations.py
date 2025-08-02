@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock, Timeout
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -42,6 +41,7 @@ from .const import (
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
+from .utils import FileLock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -278,7 +278,7 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
 
     lock_path = storage_dir / (DB_NAME + ".lock")
     try:
-        with FileLock(str(lock_path), timeout=60):
+        with FileLock(lock_path):
             engine = create_engine(f"sqlite:///{db_path}")
             session = sessionmaker(bind=engine)()
 
@@ -341,7 +341,7 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
             _LOGGER.debug("Database engine disposed")
 
             _LOGGER.info("Tables dropped successfully")
-    except Timeout:
+    except TimeoutError:
         _LOGGER.error("Timeout while waiting for DB lock during table dropping")
         raise
     except Exception as err:
