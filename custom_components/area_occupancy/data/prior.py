@@ -173,7 +173,7 @@ class Prior:
             else None
         )
         prior._calculation_window_start = (
-            datetime.fromisoformat(data["calculation_window_start"])
+            datetime.fromisoformat(data.get("calculation_window_start"))
             if data.get("calculation_window_start")
             else None
         )
