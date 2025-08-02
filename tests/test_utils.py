@@ -305,8 +305,8 @@ class TestComplementaryProbability:
         mock_entity.decay.is_decaying = False
         mock_entity.decay_factor = 1.0
         mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -330,16 +330,16 @@ class TestComplementaryProbability:
         mock_entity1.decay.is_decaying = False
         mock_entity1.decay_factor = 1.0
         mock_entity1.type.weight = 0.8
-        mock_entity1.likelihood.prob_given_true = 0.8
-        mock_entity1.likelihood.prob_given_false = 0.1
+        mock_entity1.prob_given_true = 0.8
+        mock_entity1.prob_given_false = 0.1
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
         mock_entity2.decay_factor = 1.0
         mock_entity2.type.weight = 0.6
-        mock_entity2.likelihood.prob_given_true = 0.7
-        mock_entity2.likelihood.prob_given_false = 0.2
+        mock_entity2.prob_given_true = 0.7
+        mock_entity2.prob_given_false = 0.2
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -367,8 +367,8 @@ class TestComplementaryProbability:
         mock_entity.decay.decay_factor = 0.5  # Half decay
         mock_entity.decay_factor = 0.5
         mock_entity.type.weight = 1.0
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -391,16 +391,16 @@ class TestComplementaryProbability:
         mock_active.decay.is_decaying = False
         mock_active.decay_factor = 1.0
         mock_active.type.weight = 1.0
-        mock_active.likelihood.prob_given_true = 0.8
-        mock_active.likelihood.prob_given_false = 0.1
+        mock_active.prob_given_true = 0.8
+        mock_active.prob_given_false = 0.1
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
         mock_inactive.decay_factor = 1.0
         mock_inactive.type.weight = 1.0
-        mock_inactive.likelihood.prob_given_true = 0.8
-        mock_inactive.likelihood.prob_given_false = 0.1
+        mock_inactive.prob_given_true = 0.8
+        mock_inactive.prob_given_false = 0.1
 
         mock_decaying = Mock()
         mock_decaying.evidence = False
@@ -408,8 +408,8 @@ class TestComplementaryProbability:
         mock_decaying.decay.decay_factor = 0.5
         mock_decaying.decay_factor = 0.5
         mock_decaying.type.weight = 1.0
-        mock_decaying.likelihood.prob_given_true = 0.8
-        mock_decaying.likelihood.prob_given_false = 0.1
+        mock_decaying.prob_given_true = 0.8
+        mock_decaying.prob_given_false = 0.1
 
         entities = {
             "active": cast("Entity", mock_active),
@@ -431,8 +431,8 @@ class TestComplementaryProbability:
             mock_entity.decay.is_decaying = False
             mock_entity.decay_factor = 1.0
             mock_entity.type.weight = 0.001
-            mock_entity.likelihood.prob_given_true = 0.8
-            mock_entity.likelihood.prob_given_false = 0.1
+            mock_entity.prob_given_true = 0.8
+            mock_entity.prob_given_false = 0.1
             entities[f"e{i}"] = cast("Entity", mock_entity)
 
         prior = 0.3
@@ -451,8 +451,8 @@ class TestConditionalProbability:
         mock_entity.decay.is_decaying = False
         mock_entity.decay_factor = 1.0
         mock_entity.type.weight = 0.8
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -469,16 +469,16 @@ class TestConditionalProbability:
         mock_entity1.decay.is_decaying = False
         mock_entity1.decay_factor = 1.0
         mock_entity1.type.weight = 0.6
-        mock_entity1.likelihood.prob_given_true = 0.8
-        mock_entity1.likelihood.prob_given_false = 0.1
+        mock_entity1.prob_given_true = 0.8
+        mock_entity1.prob_given_false = 0.1
 
         mock_entity2 = Mock()
         mock_entity2.evidence = False
         mock_entity2.decay.is_decaying = False
         mock_entity2.decay_factor = 1.0
         mock_entity2.type.weight = 0.4
-        mock_entity2.likelihood.prob_given_true = 0.7
-        mock_entity2.likelihood.prob_given_false = 0.2
+        mock_entity2.prob_given_true = 0.7
+        mock_entity2.prob_given_false = 0.2
 
         entities = {
             "entity1": cast("Entity", mock_entity1),
@@ -496,8 +496,8 @@ class TestConditionalProbability:
         mock_entity.decay.is_decaying = True
         mock_entity.decay_factor = 0.5
         mock_entity.type.weight = 0.8
-        mock_entity.likelihood.prob_given_true = 0.8
-        mock_entity.likelihood.prob_given_false = 0.1
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.1
 
         entities = {"test_entity": cast("Entity", mock_entity)}
         prior = 0.3
@@ -517,24 +517,24 @@ class TestConditionalSortedProbability:
         mock_active_high_weight.decay.is_decaying = False
         mock_active_high_weight.decay_factor = 1.0
         mock_active_high_weight.type.weight = 0.9
-        mock_active_high_weight.likelihood.prob_given_true = 0.8
-        mock_active_high_weight.likelihood.prob_given_false = 0.1
+        mock_active_high_weight.prob_given_true = 0.8
+        mock_active_high_weight.prob_given_false = 0.1
 
         mock_active_low_weight = Mock()
         mock_active_low_weight.evidence = True
         mock_active_low_weight.decay.is_decaying = False
         mock_active_low_weight.decay_factor = 1.0
         mock_active_low_weight.type.weight = 0.3
-        mock_active_low_weight.likelihood.prob_given_true = 0.8
-        mock_active_low_weight.likelihood.prob_given_false = 0.1
+        mock_active_low_weight.prob_given_true = 0.8
+        mock_active_low_weight.prob_given_false = 0.1
 
         mock_inactive = Mock()
         mock_inactive.evidence = False
         mock_inactive.decay.is_decaying = False
         mock_inactive.decay_factor = 1.0
         mock_inactive.type.weight = 0.8
-        mock_inactive.likelihood.prob_given_true = 0.8
-        mock_inactive.likelihood.prob_given_false = 0.1
+        mock_inactive.prob_given_true = 0.8
+        mock_inactive.prob_given_false = 0.1
 
         entities = {
             "active_high": cast("Entity", mock_active_high_weight),
