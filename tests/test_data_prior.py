@@ -28,10 +28,9 @@ def test_initialization(mock_coordinator):
     assert prior.sensor_ids == ["binary_sensor.motion1", "binary_sensor.motion2"]
     assert prior.hass == mock_coordinator.hass
     assert prior.global_prior is None
-    assert prior.primary_sensors_prior is None
-    assert prior.occupancy_prior is None
     assert prior._prior_intervals is None
     assert prior._last_updated is None
+    assert prior._calculation_window_start is None
 
 
 def test_value_property_clamping(mock_coordinator):
@@ -79,11 +78,11 @@ def test_prior_intervals_property(mock_coordinator):
 
 @pytest.mark.asyncio
 async def test_update_with_wasp_disabled(mock_coordinator):
-    # Mock get_historical_intervals to return different intervals for different entities
+    # Mock get_historical_intervals to return intervals
     now = dt_util.utcnow()
 
-    # Primary sensors intervals (higher occupancy)
-    primary_intervals = [
+    # Motion sensor intervals
+    motion_intervals = [
         {
             "state": "on",
             "start": now,
@@ -92,46 +91,23 @@ async def test_update_with_wasp_disabled(mock_coordinator):
         },
     ]
 
-    # Occupancy intervals (lower occupancy)
-    occupancy_intervals = [
-        {
-            "state": "on",
-            "start": now,
-            "end": now + timedelta(minutes=10),
-            "entity_id": "binary_sensor.occupancy",
-        },
-    ]
-
-    def mock_get_intervals(entity_id, start_time, end_time, state_filter=None):
-        if entity_id == "binary_sensor.occupancy":
-            return occupancy_intervals
-        return primary_intervals
-
     mock_coordinator.storage.get_historical_intervals = AsyncMock(
-        side_effect=mock_get_intervals
+        return_value=motion_intervals
     )
     mock_coordinator.config.wasp_in_box.enabled = False
 
     prior = Prior(mock_coordinator)
     await prior.update()
 
-    # Should set all prior values
+    # Should set global prior value
     assert prior.global_prior is not None
-    assert prior.primary_sensors_prior is not None
-    assert prior.occupancy_prior is not None
     assert isinstance(prior._prior_intervals, list)
     assert prior._last_updated is not None
+    assert prior._calculation_window_start is not None
 
-    # Primary sensors should have higher prior (30 min out of total)
-    # Occupancy should have lower prior (10 min out of total)
-    assert prior.primary_sensors_prior > prior.occupancy_prior
-
-    # Global prior should be the higher one (primary sensors)
-    assert prior.global_prior == prior.primary_sensors_prior
-
-    # Verify call count: motion1, motion2, occupancy (wasp disabled)
+    # Verify call count: motion1, motion2 (wasp disabled)
     calls = mock_coordinator.storage.get_historical_intervals.call_args_list
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
@@ -158,8 +134,8 @@ async def test_update_with_wasp_enabled(mock_coordinator):
     # Verify that get_historical_intervals was called with wasp entity included
     calls = mock_coordinator.storage.get_historical_intervals.call_args_list
 
-    # Should be called 4 times: motion1, motion2, wasp (for primary sensors), and occupancy
-    assert len(calls) == 4
+    # Should be called 3 times: motion1, motion2, wasp (for primary sensors)
+    assert len(calls) == 3
 
     # Check if wasp entity was called
     called_entities = [
@@ -168,55 +144,37 @@ async def test_update_with_wasp_enabled(mock_coordinator):
     assert "binary_sensor.wasp" in called_entities
     assert "binary_sensor.motion1" in called_entities
     assert "binary_sensor.motion2" in called_entities
-    assert "binary_sensor.occupancy" in called_entities
 
 
 @pytest.mark.asyncio
 async def test_update_occupancy_higher_than_primary(mock_coordinator):
-    # Test case where occupancy prior is higher than primary sensors
+    # Test case where motion sensors have occupancy data
     now = dt_util.utcnow()
 
-    # Primary sensors intervals (lower occupancy)
-    primary_intervals = [
-        {
-            "state": "on",
-            "start": now,
-            "end": now + timedelta(minutes=5),
-            "entity_id": "binary_sensor.motion1",
-        },
-    ]
-
-    # Occupancy intervals (higher occupancy)
-    occupancy_intervals = [
+    # Motion sensor intervals
+    motion_intervals = [
         {
             "state": "on",
             "start": now,
             "end": now + timedelta(minutes=30),
-            "entity_id": "binary_sensor.occupancy",
+            "entity_id": "binary_sensor.motion1",
         },
     ]
 
-    def mock_get_intervals(entity_id, start_time, end_time, state_filter=None):
-        if entity_id == "binary_sensor.occupancy":
-            return occupancy_intervals
-        return primary_intervals
-
     mock_coordinator.storage.get_historical_intervals = AsyncMock(
-        side_effect=mock_get_intervals
+        return_value=motion_intervals
     )
 
     prior = Prior(mock_coordinator)
     await prior.update()
 
-    # Occupancy should have higher prior
-    assert prior.occupancy_prior > prior.primary_sensors_prior
+    # Should have calculated prior value
+    assert prior.global_prior is not None
+    assert prior.global_prior > 0
 
-    # Global prior should be the higher one (occupancy)
-    assert prior.global_prior == prior.occupancy_prior
-
-    # Verify call count: motion1, motion2, occupancy (wasp disabled by default)
+    # Verify call count: motion1, motion2 (wasp disabled by default)
     calls = mock_coordinator.storage.get_historical_intervals.call_args_list
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
@@ -272,15 +230,37 @@ async def test_calculate_prior_method(mock_coordinator):
 def test_to_dict_and_from_dict(mock_coordinator):
     prior = Prior(mock_coordinator)
     now = dt_util.utcnow()
+    window_start = now - timedelta(days=10)
     prior.global_prior = 0.42
     prior._last_updated = now
+    prior._calculation_window_start = window_start
     d = prior.to_dict()
     assert d["value"] == 0.42
     assert d["last_updated"] == now.isoformat()
+    assert d["calculation_window_start"] == window_start.isoformat()
     # from_dict
     restored = Prior.from_dict(d, mock_coordinator)
     assert restored.global_prior == 0.42
     assert restored._last_updated == now
+    assert restored._calculation_window_start == window_start
+
+
+def test_reset_calculation_window(mock_coordinator):
+    """Test the reset_calculation_window method."""
+    prior = Prior(mock_coordinator)
+
+    # Set some values
+    prior.global_prior = 0.5
+    prior._prior_intervals = [{"test": "data"}]
+    prior._calculation_window_start = dt_util.utcnow()
+
+    # Reset the window
+    prior.reset_calculation_window()
+
+    # Verify values are reset
+    assert prior.global_prior is None
+    assert prior._prior_intervals is None
+    assert prior._calculation_window_start is None
 
 
 def test_prior_factor_constant():

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+# ruff: noqa: SLF001
 def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordinator":
     """Get coordinator from entry_id with error handling."""
     for entry in hass.config_entries.async_entries(DOMAIN):
@@ -74,8 +75,6 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             "area_name": coordinator.config.name,
             "current_prior": coordinator.area_prior,
             "global_prior": coordinator.prior.global_prior,
-            "occupancy_prior": coordinator.prior.occupancy_prior,
-            "primary_sensors_prior": coordinator.prior.primary_sensors_prior,
             "prior_entity_ids": coordinator.prior.sensor_ids,
             "total_entities": len(coordinator.entities.entities),
             "import_stats": import_stats,
@@ -509,6 +508,38 @@ async def _purge_intervals(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         }
 
 
+async def _reset_prior_window(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Reset the prior calculation window to force recalculation with fresh data."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        _LOGGER.info("Resetting prior calculation window for entry %s", entry_id)
+
+        # Reset the prior calculation window
+        coordinator.prior.reset_calculation_window()
+
+        # Recalculate the prior with the new window
+        await coordinator.prior.update()
+
+        _LOGGER.info("Prior calculation window reset completed for entry %s", entry_id)
+
+    except Exception as err:
+        error_msg = f"Failed to reset prior window for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return {
+            "entry_id": entry_id,
+            "prior_value": coordinator.prior.global_prior,
+            "calculation_window_start": coordinator.prior._calculation_window_start.isoformat()
+            if coordinator.prior._calculation_window_start
+            else None,
+            "message": "Prior calculation window reset successfully",
+        }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -555,6 +586,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_purge_intervals(call: ServiceCall) -> dict[str, Any]:
         return await _purge_intervals(hass, call)
+
+    async def handle_reset_prior_window(call: ServiceCall) -> dict[str, Any]:
+        return await _reset_prior_window(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -628,4 +662,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)
+    hass.services.async_register(
+        DOMAIN,
+        "reset_prior_window",
+        handle_reset_prior_window,
+        schema=entry_id_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    _LOGGER.info("Registered %d services for %s integration", 10, DOMAIN)

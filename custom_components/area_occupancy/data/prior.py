@@ -32,10 +32,9 @@ class Prior:
         self.sensor_ids = coordinator.config.sensors.motion
         self.hass = coordinator.hass
         self.global_prior: float | None = None
-        self.primary_sensors_prior: float | None = None
-        self.occupancy_prior: float | None = None
         self._prior_intervals: list[StateInterval] | None = None
         self._last_updated: datetime | None = None
+        self._calculation_window_start: datetime | None = None
 
     @property
     def value(self) -> float:
@@ -59,28 +58,24 @@ class Prior:
         self.global_prior = prior
         self._last_updated = dt_util.utcnow()
 
+    def reset_calculation_window(self) -> None:
+        """Reset the calculation window to force recalculation with fresh data."""
+        self._calculation_window_start = None
+        self.global_prior = None
+        self._prior_intervals = None
+        _LOGGER.info("Reset prior calculation window")
+
     async def update(self) -> None:
         """Calculate and update the prior value."""
         try:
             entities = self.sensor_ids
             if self.coordinator.config.wasp_in_box.enabled:
                 entities.append(self.coordinator.wasp_entity_id)
-            (
-                primary_sensors_prior_value,
-                primary_sensors_merged_intervals,
-            ) = await self._calculate_prior(entities)
-            (
-                occupancy_prior_value,
-                occupancy_merged_intervals,
-            ) = await self._calculate_prior([self.coordinator.occupancy_entity_id])
-            self.primary_sensors_prior = primary_sensors_prior_value
-            self.occupancy_prior = occupancy_prior_value
-            if primary_sensors_prior_value > occupancy_prior_value:
-                self.global_prior = primary_sensors_prior_value
-                self._prior_intervals = primary_sensors_merged_intervals
-            else:
-                self.global_prior = occupancy_prior_value
-                self._prior_intervals = occupancy_merged_intervals
+
+            # Use a fixed calculation window to prevent data accumulation
+            self.global_prior, self._prior_intervals = await self._calculate_prior(
+                entities
+            )
         except Exception:
             _LOGGER.exception("Prior calculation failed, using default %.2f", MIN_PRIOR)
             self.global_prior = MIN_PRIOR
@@ -91,8 +86,29 @@ class Prior:
         self, entity_ids: list[str]
     ) -> tuple[float, list[StateInterval]]:
         """Calculate the global prior based on historical data."""
-        start_time = dt_util.utcnow() - timedelta(days=HA_RECORDER_DAYS)
-        end_time = dt_util.utcnow()
+        # Use a fixed calculation window to prevent data accumulation
+        # The window starts from a fixed point in time and doesn't slide
+        if self._calculation_window_start is None:
+            # Initialize the calculation window on first run
+            self._calculation_window_start = dt_util.utcnow() - timedelta(
+                days=HA_RECORDER_DAYS
+            )
+
+        start_time = self._calculation_window_start
+        end_time = start_time + timedelta(days=HA_RECORDER_DAYS)
+        current_time = dt_util.utcnow()
+
+        # If the calculation window is too old, reset it to a recent period
+        if end_time < current_time - timedelta(days=1):
+            self._calculation_window_start = current_time - timedelta(
+                days=HA_RECORDER_DAYS
+            )
+            start_time = self._calculation_window_start
+            end_time = start_time + timedelta(days=HA_RECORDER_DAYS)
+            _LOGGER.info(
+                "Reset prior calculation window to %s - %s", start_time, end_time
+            )
+
         total_seconds = int((end_time - start_time).total_seconds())
 
         all_intervals: list[StateInterval] = []
@@ -121,6 +137,13 @@ class Prior:
         else:
             prior_value = occupied_seconds / total_seconds
 
+        _LOGGER.debug(
+            "Prior calculation: %d occupied seconds / %d total seconds = %.4f",
+            occupied_seconds,
+            total_seconds,
+            prior_value,
+        )
+
         return prior_value, merged_intervals
 
     def to_dict(self) -> dict[str, Any]:
@@ -129,6 +152,11 @@ class Prior:
             "value": self.global_prior,
             "last_updated": (
                 self._last_updated.isoformat() if self._last_updated else None
+            ),
+            "calculation_window_start": (
+                self._calculation_window_start.isoformat()
+                if self._calculation_window_start
+                else None
             ),
         }
 
@@ -142,6 +170,11 @@ class Prior:
         prior._last_updated = (
             datetime.fromisoformat(data["last_updated"])
             if data["last_updated"]
+            else None
+        )
+        prior._calculation_window_start = (
+            datetime.fromisoformat(data["calculation_window_start"])
+            if data.get("calculation_window_start")
             else None
         )
         return prior

@@ -82,8 +82,6 @@ class TestRunAnalysis:
         )
         mock_coordinator.area_prior = 0.35
         mock_coordinator.prior.global_prior = 0.3
-        mock_coordinator.prior.occupancy_prior = 0.25
-        mock_coordinator.prior.primary_sensors_prior = 0.3
         mock_coordinator.prior.sensor_ids = [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
@@ -121,8 +119,6 @@ class TestRunAnalysis:
         assert "area_name" in result
         assert "current_prior" in result
         assert "global_prior" in result
-        assert "occupancy_prior" in result
-        assert "primary_sensors_prior" in result
         assert "prior_entity_ids" in result
         assert "total_entities" in result
         assert "import_stats" in result
@@ -136,8 +132,6 @@ class TestRunAnalysis:
         assert result["area_name"] == "Test Area"
         assert result["current_prior"] == 0.35
         assert result["global_prior"] == 0.3
-        assert result["occupancy_prior"] == 0.25
-        assert result["primary_sensors_prior"] == 0.3
         assert result["prior_entity_ids"] == [
             "binary_sensor.motion1",
             "binary_sensor.motion2",
