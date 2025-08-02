@@ -34,7 +34,7 @@ class Prior:
         self.global_prior: float | None = None
         self._prior_intervals: list[StateInterval] | None = None
         self._last_updated: datetime | None = None
-        self._calculation_window_start: datetime | None = None
+        self.calculation_window_start: datetime | None = None
 
     @property
     def value(self) -> float:
@@ -60,7 +60,7 @@ class Prior:
 
     def reset_calculation_window(self) -> None:
         """Reset the calculation window to force recalculation with fresh data."""
-        self._calculation_window_start = None
+        self.calculation_window_start = None
         self.global_prior = None
         self._prior_intervals = None
         _LOGGER.info("Reset prior calculation window")
@@ -88,22 +88,22 @@ class Prior:
         """Calculate the global prior based on historical data."""
         # Use a fixed calculation window to prevent data accumulation
         # The window starts from a fixed point in time and doesn't slide
-        if self._calculation_window_start is None:
+        if self.calculation_window_start is None:
             # Initialize the calculation window on first run
-            self._calculation_window_start = dt_util.utcnow() - timedelta(
+            self.calculation_window_start = dt_util.utcnow() - timedelta(
                 days=HA_RECORDER_DAYS
             )
 
-        start_time = self._calculation_window_start
+        start_time = self.calculation_window_start
         end_time = start_time + timedelta(days=HA_RECORDER_DAYS)
         current_time = dt_util.utcnow()
 
         # If the calculation window is too old, reset it to a recent period
         if end_time < current_time - timedelta(days=1):
-            self._calculation_window_start = current_time - timedelta(
+            self.calculation_window_start = current_time - timedelta(
                 days=HA_RECORDER_DAYS
             )
-            start_time = self._calculation_window_start
+            start_time = self.calculation_window_start
             end_time = start_time + timedelta(days=HA_RECORDER_DAYS)
             _LOGGER.info(
                 "Reset prior calculation window to %s - %s", start_time, end_time
@@ -154,8 +154,8 @@ class Prior:
                 self._last_updated.isoformat() if self._last_updated else None
             ),
             "calculation_window_start": (
-                self._calculation_window_start.isoformat()
-                if self._calculation_window_start
+                self.calculation_window_start.isoformat()
+                if self.calculation_window_start
                 else None
             ),
         }
@@ -172,8 +172,8 @@ class Prior:
             if data["last_updated"]
             else None
         )
-        prior._calculation_window_start = (
-            datetime.fromisoformat(data.get("calculation_window_start"))
+        prior.calculation_window_start = (
+            datetime.fromisoformat(data["calculation_window_start"])
             if data.get("calculation_window_start")
             else None
         )
