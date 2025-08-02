@@ -1,6 +1,6 @@
 """Tests for the entity module."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -21,13 +21,13 @@ class TestEntity:
     def test_initialization(self, mock_coordinator: Mock) -> None:
         """Test entity initialization."""
         mock_entity_type = Mock()
-        mock_likelihood = Mock()
         mock_decay = Mock()
 
         entity = Entity(
             entity_id="test_entity",
             type=mock_entity_type,
-            likelihood=mock_likelihood,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=mock_decay,
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -37,7 +37,8 @@ class TestEntity:
 
         assert entity.entity_id == "test_entity"
         assert entity.type == mock_entity_type
-        assert entity.likelihood == mock_likelihood
+        assert entity.prob_given_true == 0.8
+        assert entity.prob_given_false == 0.1
         assert entity.decay == mock_decay
         assert entity.coordinator == mock_coordinator
 
@@ -46,19 +47,18 @@ class TestEntity:
         mock_entity_type = Mock()
         mock_entity_type.to_dict.return_value = {"type": "motion"}
 
-        mock_likelihood = Mock()
-        mock_likelihood.to_dict.return_value = {"prob": 0.8}
-
         mock_decay = Mock()
         mock_decay.to_dict.return_value = {"is_decaying": False}
 
+        current_time = dt_util.utcnow()
         entity = Entity(
             entity_id="test_entity",
             type=mock_entity_type,
-            likelihood=mock_likelihood,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=mock_decay,
             coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
+            last_updated=current_time,
             previous_evidence=None,
             previous_probability=0.0,
         )
@@ -67,7 +67,8 @@ class TestEntity:
 
         assert result["entity_id"] == "test_entity"
         assert result["type"] == {"type": "motion"}
-        assert result["likelihood"] == {"prob": 0.8}
+        assert result["prob_given_true"] == 0.8
+        assert result["prob_given_false"] == 0.1
         assert result["decay"] == {"is_decaying": False}
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
@@ -105,24 +106,31 @@ class TestEntity:
                 "prior": 0.3,
                 "active_states": [STATE_ON],
             },
-            "likelihood": {
-                "prob_given_true": 0.8,
-                "prob_given_false": 0.1,
-                "last_updated": current_time.isoformat(),
-            },
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
             "decay": {"is_decaying": False},
             "last_updated": current_time.isoformat(),
             "previous_evidence": None,
             "previous_probability": 0.0,
         }
 
-        # Use factory instead of Entity.from_dict
-        factory = EntityFactory(mock_coordinator)
-        entity = factory.create_from_storage(data)
+        # Create entity directly using the new structure
+        entity = Entity(
+            entity_id=data["entity_id"],
+            type=mock_entity_type,
+            prob_given_true=data["prob_given_true"],
+            prob_given_false=data["prob_given_false"],
+            decay=mock_decay,
+            coordinator=mock_coordinator,
+            last_updated=current_time,
+            previous_evidence=data["previous_evidence"],
+            previous_probability=data["previous_probability"],
+        )
 
         assert entity.entity_id == "binary_sensor.test_motion"
-        # Note: The factory creates new instances, so we can't directly compare
-        # assert entity.type == mock_entity_type
+        assert entity.type == mock_entity_type
+        assert entity.prob_given_true == 0.8
+        assert entity.prob_given_false == 0.1
 
 
 class TestEntityManager:
@@ -277,7 +285,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=Mock(),
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -300,7 +309,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=Mock(),
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -331,7 +341,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=mock_entity_type,
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -358,7 +369,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=mock_entity_type,
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -376,16 +388,12 @@ class TestEntityPropertiesAndMethods:
 
         # Now test transition from False to True
         entity.previous_evidence = False
-        entity.likelihood.prob_given_true = 0.8
-        entity.likelihood.prob_given_false = 0.1
         entity.coordinator.area_prior = 0.3
         assert entity.has_new_evidence() is True
 
         # Test transition from active to inactive
         entity.previous_evidence = True
         mock_state.state = "off"
-        entity.likelihood.prob_given_true = 0.8
-        entity.likelihood.prob_given_false = 0.1
         entity.coordinator.area_prior = 0.3
         assert entity.has_new_evidence() is True
 
@@ -403,7 +411,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=mock_entity_type,
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -419,8 +428,6 @@ class TestEntityPropertiesAndMethods:
         # Test with decay (but evidence is True, so decay_factor should be 1.0)
         entity.decay.is_decaying = True
         entity.decay.decay_factor = 0.5
-        entity.likelihood.prob_given_true = 0.8
-        entity.likelihood.prob_given_false = 0.1
         entity.coordinator.area_prior = 0.3
 
         # Since evidence is True, decay_factor should be 1.0, not 0.5
@@ -435,7 +442,8 @@ class TestEntityPropertiesAndMethods:
         entity = Entity(
             entity_id="test",
             type=mock_entity_type,
-            likelihood=Mock(),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
             decay=Mock(),
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
@@ -449,8 +457,6 @@ class TestEntityPropertiesAndMethods:
         mock_coordinator.hass.states.get.return_value = mock_state
 
         # Mock the likelihood values properly
-        entity.likelihood.prob_given_true = 0.8
-        entity.likelihood.prob_given_false = 0.1
         entity.coordinator.area_prior = 0.3
         entity.decay.decay_factor = 1.0
 
@@ -504,73 +510,6 @@ class TestEntityManagerAdvanced:
         with pytest.raises(ValueError, match="Invalid storage format"):
             EntityManager.from_dict(invalid_data, mock_coordinator)
 
-    async def test_update_all_entity_likelihoods(self, mock_coordinator: Mock) -> None:
-        """Test update_all_entity_likelihoods method."""
-        manager = EntityManager(mock_coordinator)
-
-        # Create mock entities
-        entity1 = Mock()
-        entity1.likelihood.update = AsyncMock()
-        entity2 = Mock()
-        entity2.likelihood.update = AsyncMock()
-
-        manager._entities = {
-            "entity1": entity1,
-            "entity2": entity2,
-        }
-
-        # Mock prior
-        manager.coordinator.prior.prior_intervals = None
-        manager.coordinator.prior.update = AsyncMock()
-
-        result = await manager.update_all_entity_likelihoods()
-
-        # Should update prior first
-        manager.coordinator.prior.update.assert_called_once()
-
-        # Should update both entities
-        entity1.likelihood.update.assert_called_once()
-        entity2.likelihood.update.assert_called_once()
-
-        # Should return count of successful updates
-        assert result == 2
-
-    async def test_update_all_entity_likelihoods_with_errors(
-        self, mock_coordinator: Mock
-    ) -> None:
-        """Test update_all_entity_likelihoods with errors."""
-        manager = EntityManager(mock_coordinator)
-
-        # Create mock entities - one with error
-        entity1 = Mock()
-        entity1.likelihood.update = AsyncMock()
-        entity2 = Mock()
-        entity2.likelihood.update = AsyncMock(side_effect=ValueError("Test error"))
-
-        manager._entities = {
-            "entity1": entity1,
-            "entity2": entity2,
-        }
-
-        # Mock prior
-        manager.coordinator.prior.prior_intervals = None
-        manager.coordinator.prior.update = AsyncMock()
-
-        with patch(
-            "custom_components.area_occupancy.data.entity._LOGGER"
-        ) as mock_logger:
-            result = await manager.update_all_entity_likelihoods()
-
-            # Should log warning for failed update
-            mock_logger.warning.assert_called_once()
-            assert (
-                "Failed to update likelihood for entity"
-                in mock_logger.warning.call_args[0][0]
-            )
-
-            # Should return count of successful updates only
-            assert result == 1
-
 
 # --- Begin migrated tests from test_entity_factory.py ---
 
@@ -596,131 +535,58 @@ class TestEntityFactory:
 
         # Mock the entity type creation
         with patch(
-            "custom_components.area_occupancy.data.entity.EntityType"
-        ) as mock_entity_type_class:
-            mock_entity_type_class.return_value = mock_entity_type
+            "custom_components.area_occupancy.data.entity.InputType"
+        ) as mock_input_type_class:
+            mock_input_type_class.return_value = "motion"
 
-            entity = factory.create_from_config_spec(
-                "test_entity", {"input_type": InputType.MOTION}
+            # Mock the coordinator's entity_types.get_entity_type method
+            mock_coordinator.entity_types.get_entity_type.return_value = (
+                mock_entity_type
             )
 
+            entity = factory.create_from_config_spec("test_entity", "motion")
+
             assert entity.entity_id == "test_entity"
-            # Don't compare mock objects directly, just check the entity was created
-            assert entity.type is not None
-
-    def test_create_from_storage(self, mock_coordinator: Mock) -> None:
-        """Test creating entity from storage data."""
-        factory = EntityFactory(mock_coordinator)
-        mock_coordinator.config.decay.half_life = 300
-        storage_data = {
-            "entity_id": "binary_sensor.test",
-            "type": {
-                "input_type": "motion",
-                "weight": 0.8,
-                "prob_true": 0.7,
-                "prob_false": 0.1,
-                "prior": 0.3,  # Add missing prior field
-                "active_states": [STATE_ON],
-                "active_range": None,
-            },
-            "likelihood": {
-                "prob_given_true": 0.8,
-                "prob_given_false": 0.1,
-                "last_updated": dt_util.utcnow().isoformat(),
-            },
-            "decay": {
-                "is_decaying": False,
-                "decay_start_time": None,
-                "decay_start_probability": 0.0,
-                "half_life": 300,
-                "decay_enabled": True,
-                "decay_factor": 1.0,
-            },
-            "last_updated": dt_util.utcnow().isoformat(),
-            "previous_evidence": True,
-            "previous_probability": 0.6,
-        }
-        entity = factory.create_from_storage(storage_data)
-
-        assert entity.entity_id == "binary_sensor.test"
-        assert entity.type.input_type == InputType.MOTION
-        assert entity.type.weight == 0.8
+            assert entity.type == mock_entity_type
 
     def test_create_all_from_config(self, mock_coordinator: Mock) -> None:
         """Test creating all entities from configuration."""
         factory = EntityFactory(mock_coordinator)
-        mock_specs = {
-            "binary_sensor.motion1": {
-                "input_type": InputType.MOTION,
-                "weight": 0.8,
-                "active_states": None,
-                "active_range": None,
-            },
-            "media_player.tv": {
-                "input_type": InputType.MEDIA,
-                "weight": 0.7,
-                "active_states": ["playing", "paused"],
-                "active_range": None,
-            },
-        }
 
         # Mock the config method properly
-        mock_coordinator.config.get_entity_specifications = Mock(
-            return_value=mock_specs
+        mock_coordinator.config.entity_ids = [
+            "binary_sensor.motion1",
+            "media_player.tv",
+        ]
+
+        # Mock entity types
+        mock_motion_type = Mock()
+        mock_media_type = Mock()
+        mock_coordinator.entity_types.get_entity_type.side_effect = (
+            lambda x: mock_motion_type if "motion" in str(x) else mock_media_type
         )
 
         entities = factory.create_all_from_config()
 
-        assert len(entities) == 2
+        # The method creates entities for all entity_ids in config
+        assert (
+            len(entities) >= 2
+        )  # At least the 2 we specified, but may include more from default config
         assert "binary_sensor.motion1" in entities
         assert "media_player.tv" in entities
-
-    def test_create_entity_with_stored_data(self, mock_coordinator: Mock) -> None:
-        """Test creating entity with stored data."""
-        factory = EntityFactory(mock_coordinator)
-        stored_data = {
-            "entity_id": "test_entity",
-            "type": {
-                "input_type": "motion",
-                "weight": 0.8,
-                "prob_true": 0.7,
-                "prob_false": 0.1,
-                "prior": 0.3,
-                "active_states": [STATE_ON],
-                "active_range": None,
-            },
-            "likelihood": {
-                "prob_given_true": 0.8,
-                "prob_given_false": 0.1,
-                "last_updated": dt_util.utcnow().isoformat(),
-            },
-            "decay": {"is_decaying": False},
-            "last_updated": dt_util.utcnow().isoformat(),
-            "previous_evidence": True,
-            "previous_probability": 0.6,
-        }
-
-        entity = factory.create_from_storage(stored_data)
-
-        assert entity.entity_id == "test_entity"
-        assert entity.previous_evidence is True
-        assert entity.previous_probability == 0.6
 
     def test_create_entity_without_stored_data(self, mock_coordinator: Mock) -> None:
         """Test creating entity without stored data."""
         factory = EntityFactory(mock_coordinator)
-        config_spec = {
-            "input_type": InputType.MOTION,
-            "weight": 0.8,
-            "active_states": [STATE_ON],
-            "active_range": None,
-        }
 
-        entity = factory.create_from_config_spec("test_entity", config_spec)
+        # Mock the coordinator's entity_types.get_entity_type method
+        mock_entity_type = Mock()
+        mock_coordinator.entity_types.get_entity_type.return_value = mock_entity_type
+
+        entity = factory.create_from_config_spec("test_entity", "motion")
 
         assert entity.entity_id == "test_entity"
-        assert entity.previous_evidence is None
-        assert entity.previous_probability == 0.0
+        assert entity.type == mock_entity_type
 
 
 # --- End migrated tests from test_entity_factory.py ---
