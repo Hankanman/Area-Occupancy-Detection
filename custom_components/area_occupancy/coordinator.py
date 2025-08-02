@@ -175,6 +175,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 or loaded_data["prior"] is None
                 or "entities" not in loaded_data
             ):
+                # Reset the prior calculation window
+                self.prior.reset_calculation_window()
+                # Recalculate priors with new data
                 await self.prior.update()
                 await self.entities.update_all_entity_likelihoods()
             # Save data to storage
@@ -344,6 +347,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         total_imported,
                         self.config.name,
                     )
+                    # Reset the prior calculation window
+                    self.prior.reset_calculation_window()
 
                     # Recalculate priors with new data
                     await self.prior.update()
@@ -351,8 +356,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # Recalculate likelihoods with new data
                     await self.entities.update_all_entity_likelihoods()
 
-                # Cleanup old data (yearly retention)
-                await self.storage.cleanup_old_intervals(retention_days=365)
+                # Cleanup old data more aggressively to prevent accumulation
+                # Clean up data older than the prior calculation window plus a buffer
+                cleanup_days = HA_RECORDER_DAYS + 2  # 12 days total (10 + 2 buffer)
+                await self.storage.cleanup_old_intervals(retention_days=cleanup_days)
 
             # Refresh the coordinator
             await self.async_refresh()
