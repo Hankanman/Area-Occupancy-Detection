@@ -16,6 +16,18 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
+@pytest.fixture(autouse=True)
+def _disable_frame_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable Home Assistant frame reporting which requires special setup."""
+    monkeypatch.setattr(
+        "homeassistant.helpers.frame.report_usage", lambda *args, **kwargs: None
+    )
+
+
+# Automatically apply the frame helper mock to all tests in this module
+pytestmark = pytest.mark.usefixtures("mock_frame_helper")
+
+
 # ruff: noqa: SLF001
 class TestAreaOccupancyCoordinator:
     """Test AreaOccupancyCoordinator class."""
