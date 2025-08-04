@@ -57,34 +57,3 @@ get_problematic_entities:
       selector:
         config_entry:
           integration: area_occupancy
-
-get_entity_details:
-  name: Get Entity Details
-  description: "Get detailed information about specific entities including probabilities, decay status, and configuration."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-    entity_ids:
-      name: Entity IDs
-      description: "List of entity IDs to get details for (leave empty for all entities)."
-      required: false
-      selector:
-        entity:
-          multiple: true
-
-get_entity_type_learned_data:
-  name: Get Entity Type Learned Data
-  description: "Get the current learned prior, prob_true, and prob_false for each entity type. Useful for diagnostics and monitoring the learning process."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to get learned entity type data for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
