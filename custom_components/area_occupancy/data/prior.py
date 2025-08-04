@@ -64,6 +64,10 @@ class Prior:
         self.hass = coordinator.hass
         self.global_prior: float | None = None
         self._last_updated: datetime | None = None
+        # Cache for time_prior
+        self._cached_time_prior: float | None = None
+        self._cached_time_prior_day: int | None = None
+        self._cached_time_prior_slot: int | None = None
 
     @property
     def value(self) -> float:
@@ -101,6 +105,38 @@ class Prior:
         return result
 
     @property
+    def time_prior(self) -> float:
+        """Return the current time prior value or minimum if not calculated."""
+        current_day = self.day_of_week
+        current_slot = self.time_slot
+
+        # Check if we have a valid cache for the current time slot
+        if (
+            self._cached_time_prior is not None
+            and self._cached_time_prior_day == current_day
+            and self._cached_time_prior_slot == current_slot
+        ):
+            return self._cached_time_prior
+
+        # Cache miss - get from database and cache the result
+        self._cached_time_prior = self.get_time_prior()
+        self._cached_time_prior_day = current_day
+        self._cached_time_prior_slot = current_slot
+
+        return self._cached_time_prior
+
+    @property
+    def day_of_week(self) -> int:
+        """Return the current day of week (0=Monday, 6=Sunday)."""
+        return dt_util.utcnow().weekday()
+
+    @property
+    def time_slot(self) -> int:
+        """Return the current time slot based on DEFAULT_SLOT_MINUTES."""
+        now = dt_util.utcnow()
+        return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
+
+    @property
     def last_updated(self) -> datetime | None:
         """Return the last updated timestamp."""
         return self._last_updated
@@ -109,6 +145,12 @@ class Prior:
         """Set the global prior value."""
         self.global_prior = prior
         self._last_updated = dt_util.utcnow()
+
+    def _invalidate_time_prior_cache(self) -> None:
+        """Invalidate the time_prior cache."""
+        self._cached_time_prior = None
+        self._cached_time_prior_day = None
+        self._cached_time_prior_slot = None
 
     async def update(self) -> None:
         """Calculate and update the prior value."""
@@ -128,6 +170,8 @@ class Prior:
         try:
             self.compute_time_priors()
             _LOGGER.debug("Time priors calculated")
+            # Invalidate time_prior cache since we updated the time priors
+            self._invalidate_time_prior_cache()
         except SQLAlchemyError:
             _LOGGER.exception("Time prior calculation failed due to database error")
         except (ValueError, TypeError):
@@ -199,6 +243,44 @@ class Prior:
         )
 
         return prior
+
+    def get_time_prior(self) -> float:
+        """Get the time prior for the current time slot.
+
+        Returns:
+            float: Time prior value or default 0.5 if not found
+
+        """
+        _LOGGER.debug("Getting time prior")
+        db = self.db
+
+        try:
+            with db.get_session() as session:
+                prior = (
+                    session.query(db.Priors)
+                    .filter_by(
+                        entry_id=self.coordinator.entry_id,
+                        day_of_week=self.day_of_week,
+                        time_slot=self.time_slot,
+                    )
+                    .first()
+                )
+                return prior.prior_value if prior else DEFAULT_PRIOR
+        except OperationalError as e:
+            _LOGGER.error("Database connection error getting time prior: %s", e)
+            return DEFAULT_PRIOR
+        except DataError as e:
+            _LOGGER.error("Database data error getting time prior: %s", e)
+            return DEFAULT_PRIOR
+        except ProgrammingError as e:
+            _LOGGER.error("Database query error getting time prior: %s", e)
+            return DEFAULT_PRIOR
+        except SQLAlchemyError as e:
+            _LOGGER.error("Database error getting time prior: %s", e)
+            return DEFAULT_PRIOR
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error getting time prior: %s", e)
+            return DEFAULT_PRIOR
 
     def compute_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES):
         """Estimate P(occupied) per day_of_week and time_slot from motion sensor intervals."""
