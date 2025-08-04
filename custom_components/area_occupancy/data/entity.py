@@ -5,12 +5,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
-from ..db import AreaOccupancyDB
-from ..utils import bayesian_probability
+from ..db import AreaOccupancyDB as DB
 from .decay import Decay
 from .entity_type import EntityType, InputType
 
@@ -33,30 +32,12 @@ class Entity:
     coordinator: "AreaOccupancyCoordinator"
     last_updated: datetime
     previous_evidence: bool | None
-    previous_probability: float
 
     @property
     def name(self) -> str | None:
         """Get the entity name from Home Assistant state."""
         ha_state = self.coordinator.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
-
-    @property
-    def probability(self) -> float:
-        """Calculate this entity's raw contribution to area probability.
-
-        This shows what this entity would contribute if it were fully active,
-        using Bayesian calculation without decay factor applied.
-        """
-
-        # Calculate effective Bayesian posterior with decay applied
-        return bayesian_probability(
-            prior=self.coordinator.area_prior,
-            prob_given_true=self.prob_given_true,
-            prob_given_false=self.prob_given_false,
-            evidence=True,
-            decay_factor=self.decay_factor,
-        )
 
     @property
     def available(self) -> bool:
@@ -78,6 +59,11 @@ class Entity:
         ]:
             return ha_state.state
         return None
+
+    @property
+    def weight(self) -> float:
+        """Get the entity weight."""
+        return self.type.weight
 
     @property
     def evidence(self) -> bool | None:
@@ -135,8 +121,13 @@ class Entity:
         self.prob_given_false = prob_given_false
         self.last_updated = dt_util.utcnow()
 
+    def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
+        """Update the decay of the entity."""
+        self.decay.decay_start = decay_start
+        self.decay.is_decaying = is_decaying
+
     def has_new_evidence(self) -> bool:
-        """Update decay and probability on actual evidence transitions.
+        """Update decay on actual evidence transitions.
 
         Returns:
             bool: True if evidence transition occurred, False otherwise
@@ -165,36 +156,14 @@ class Entity:
         if transition_occurred:
             self.last_updated = dt_util.utcnow()
             if current_evidence:  # FALSE→TRUE transition
-                # Evidence appeared - jump probability up via Bayesian update
-                self.previous_probability = bayesian_probability(
-                    prior=self.previous_probability,
-                    prob_given_true=self.prob_given_true,
-                    prob_given_false=self.prob_given_false,
-                    evidence=True,
-                    decay_factor=1.0,  # No decay on evidence appearance
-                )
                 self.decay.stop_decay()
             else:  # TRUE→FALSE transition
-                # Evidence lost - start decay from current probability towards prob_given_false
-                # Working probability stays at current level and will decay over time
+                # Evidence lost - start decay
                 self.decay.start_decay()
 
         # Update previous evidence for next comparison
         self.previous_evidence = current_evidence
         return transition_occurred
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert entity to dictionary for storage."""
-        return {
-            "entity_id": self.entity_id,
-            "type": self.type.to_dict(),
-            "prob_given_true": self.prob_given_true,
-            "prob_given_false": self.prob_given_false,
-            "decay": self.decay.to_dict(),
-            "last_updated": self.last_updated.isoformat(),
-            "previous_evidence": self.previous_evidence,
-            "previous_probability": self.previous_probability,
-        }
 
 
 class EntityFactory:
@@ -205,75 +174,52 @@ class EntityFactory:
         self.coordinator = coordinator
         self.config = coordinator.config
 
-    def create_from_db(self, entity_obj: "AreaOccupancyDB.Entities") -> Entity:
+    def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data."""
-        # Find the existing entity type from the coordinator
-        entity_type = self.coordinator.entity_types.get_entity_type(
-            entity_obj.entity_type
+        # Create the entity type directly
+        entity_type = EntityType.create(
+            InputType(entity_obj.entity_type),
+            self.config,
+        )
+        decay = Decay.create(
+            decay_start=entity_obj.decay_start,
+            half_life=self.config.decay.half_life,
+            is_decaying=entity_obj.is_decaying,
         )
 
-        return self._create_entity(
+        return Entity(
             entity_id=entity_obj.entity_id,
-            entity_type=entity_type,
-            stored_prob_given_true=entity_obj.prob_given_true,
-            stored_prob_given_false=entity_obj.prob_given_false,
-            stored_decay=None,  # Decay data not stored in Entities table
+            type=entity_type,
+            prob_given_true=entity_obj.prob_given_true,
+            prob_given_false=entity_obj.prob_given_false,
+            decay=decay,
+            coordinator=self.coordinator,
             last_updated=entity_obj.last_updated,
-            previous_evidence=None,  # Not stored in Entities table
-            previous_probability=0.0,  # Default value
+            previous_evidence=entity_obj.evidence,
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
         """Create entity from configuration specification."""
-        # Get the entity type from coordinator (already built with proper defaults)
-        entity_type = self.coordinator.entity_types.get_entity_type(
-            InputType(input_type)
+        # Create the entity type directly
+        entity_type = EntityType.create(
+            InputType(input_type),
+            self.config,
+        )
+        decay = Decay.create(
+            decay_start=dt_util.utcnow(),
+            half_life=self.config.decay.half_life,
+            is_decaying=False,
         )
 
-        return self._create_entity(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            stored_prob_given_true=entity_type.prob_true,
-            stored_prob_given_false=entity_type.prob_false,
-            stored_decay=None,
-            last_updated=None,
-            previous_evidence=None,
-            previous_probability=0.0,
-        )
-
-    def _create_entity(
-        self,
-        entity_id: str,
-        entity_type: EntityType,
-        stored_prob_given_true: float | None = None,
-        stored_prob_given_false: float | None = None,
-        stored_decay: dict[str, Any] | None = None,
-        last_updated: datetime | None = None,
-        previous_evidence: bool | None = None,
-        previous_probability: float = 0.0,
-    ) -> Entity:
-        """Create entity with the given parameters."""
-
-        # Create decay
-        if stored_decay:
-            decay = Decay.from_dict(stored_decay)
-        else:
-            decay = Decay(
-                last_trigger_ts=dt_util.utcnow().timestamp(),
-                half_life=self.config.decay.half_life,
-            )
-
-        # Create entity
         return Entity(
             entity_id=entity_id,
             type=entity_type,
-            prob_given_true=stored_prob_given_true,
-            prob_given_false=stored_prob_given_false,
+            prob_given_true=entity_type.prob_given_true,
+            prob_given_false=entity_type.prob_given_false,
             decay=decay,
             coordinator=self.coordinator,
-            last_updated=last_updated or dt_util.utcnow(),
-            previous_evidence=previous_evidence,
-            previous_probability=previous_probability,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:
@@ -329,20 +275,23 @@ class EntityManager:
         self.coordinator = coordinator
         self.config = coordinator.config
         self.hass = coordinator.hass
-        self._entities: dict[str, Entity] = {}
         self._factory = EntityFactory(coordinator)
-
-    async def __post_init__(self) -> None:
-        """Post init - initialize entities from storage or config."""
-        if self._entities:
-            await self._sync_with_config()
-        else:
-            await self._create_from_config()
+        self._entities: dict[str, Entity] = self._factory.create_all_from_config()
 
     @property
     def entities(self) -> dict[str, Entity]:
         """Get the entities."""
         return self._entities
+
+    def get_entities_by_input_type(
+        self, input_type: "InputType"
+    ) -> dict[str, "Entity"]:
+        """Get entities filtered by InputType."""
+        return {
+            entity_id: entity
+            for entity_id, entity in self._entities.items()
+            if entity.type.input_type == input_type
+        }
 
     @property
     def entity_ids(self) -> list[str]:
@@ -374,43 +323,6 @@ class EntityManager:
             entity for entity in self._entities.values() if entity.decay.is_decaying
         ]
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert entity manager to dictionary for storage."""
-        return {
-            "entities": {
-                entity_id: entity.to_dict()
-                for entity_id, entity in self._entities.items()
-            }
-        }
-
-    @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
-    ) -> "EntityManager":
-        """Create entity manager from dictionary."""
-        manager = cls(coordinator=coordinator)
-
-        if "entities" not in data:
-            raise ValueError(
-                f"Invalid storage format: missing 'entities' key in data structure. "
-                f"Available keys: {list(data.keys())}."
-            )
-
-        entities_data = data["entities"]
-
-        try:
-            manager._entities = {
-                entity_id: manager._factory.create_from_db(entity)
-                for entity_id, entity in entities_data.items()
-            }
-        except (KeyError, ValueError, TypeError) as err:
-            raise ValueError(
-                f"Failed to deserialize entity data: {err}. "
-                f"Entity structure may be corrupted or incompatible."
-            ) from err
-
-        return manager
-
     def get_entity(self, entity_id: str) -> Entity:
         """Get the entity from an entity ID."""
         if entity_id not in self._entities:
@@ -421,66 +333,10 @@ class EntityManager:
         """Add an entity to the manager."""
         self._entities[entity.entity_id] = entity
 
-    def remove_entity(self, entity_id: str) -> None:
-        """Remove an entity from the manager."""
-        if entity_id in self._entities:
-            del self._entities[entity_id]
-
     async def cleanup(self) -> None:
         """Clean up resources and recreate from config."""
         self._entities.clear()
-        await self._create_from_config()
-
-    async def _create_from_config(self) -> None:
-        """Create entities from current configuration."""
-        # Validate configuration first
-        validation_errors = self.config.validate_entity_configuration()
-        if validation_errors:
-            _LOGGER.warning(
-                "Entity configuration validation issues: %s", validation_errors
-            )
-
-        # Create all entities using factory
         self._entities = self._factory.create_all_from_config()
-        _LOGGER.info("Created %d entities from configuration", len(self._entities))
-
-    async def _sync_with_config(self) -> None:
-        """Sync existing entities with current configuration."""
-        # Validate configuration first
-        validation_errors = self.config.validate_entity_configuration()
-        if validation_errors:
-            _LOGGER.warning(
-                "Entity configuration validation issues: %s", validation_errors
-            )
-
-        # Get required entities from config
-        required_entities = self._factory.create_all_from_config()
-        updated_entities: dict[str, Entity] = {}
-
-        # Process existing entities
-        for entity_id, existing_entity in self._entities.items():
-            if entity_id in required_entities:
-                # Entity still exists in config - update type configuration
-                new_entity = required_entities[entity_id]
-
-                # Update type configuration but preserve learned data
-                existing_entity.type.weight = new_entity.type.weight
-                existing_entity.type.active_states = new_entity.type.active_states
-                existing_entity.type.active_range = new_entity.type.active_range
-
-                updated_entities[entity_id] = existing_entity
-                del required_entities[entity_id]  # Mark as processed
-            else:
-                _LOGGER.info(
-                    "Entity %s removed from configuration, dropping stored data",
-                    entity_id,
-                )
-
-        # Add new entities
-        updated_entities.update(required_entities)
-
-        self._entities = updated_entities
-        _LOGGER.info("Entity sync complete: %d total entities", len(self._entities))
 
     async def update_likelihoods(self):
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
@@ -493,113 +349,151 @@ class EntityManager:
         sensor_ids = self.coordinator.config.sensors.motion
 
         with db.get_session() as session:
-            # Get all sensor configs for this area
-            sensors = session.query(db.Entities).filter_by(entry_id=entry_id).all()
-            occupied_intervals = (
-                session.query(db.Intervals.start_time, db.Intervals.end_time)
-                .join(
-                    db.Entities,
-                    db.Intervals.entity_id == db.Entities.entity_id,
-                )
-                .filter(
-                    db.Entities.entry_id == entry_id,
-                    db.Intervals.entity_id.in_(sensor_ids),
-                    db.Intervals.state == "on",
-                )
-                .order_by(db.Intervals.start_time)
-                .all()
-            )
-
-            # Get truth timeline from motion sensors (sorted for binary search)
-            occupied_times = [(start, end) for start, end in occupied_intervals]
-
-            def is_occupied(ts):
-                """Efficiently check if timestamp falls within any occupied interval using binary search."""
-                if not occupied_times:
-                    return False
-
-                # Binary search to find the rightmost interval that starts <= ts
-                idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
-
-                # Check if ts falls within the interval found
-                if idx > 0:
-                    start, end = occupied_times[idx - 1]
-                    if start <= ts < end:
-                        return True
-
-                return False
-
-            sensor_entity_ids = [entity.entity_id for entity in sensors]
-            if not sensor_entity_ids:
+            sensors = self._get_sensors(session, entry_id)
+            if not sensors:
                 return
 
-            # Get all intervals for all sensors in one query
-            all_intervals = (
-                session.query(db.Intervals)
-                .filter(db.Intervals.entity_id.in_(sensor_entity_ids))
-                .all()
-            )
+            occupied_times = self._get_occupied_times(session, entry_id, sensor_ids)
+            intervals_by_entity = self._get_intervals_by_entity(session, sensors)
 
-            # Group intervals by entity_id for processing
-            intervals_by_entity = defaultdict(list)
-            for interval in all_intervals:
-                intervals_by_entity[interval.entity_id].append(interval)
-
-            # Process each sensor's intervals
-            now = dt_util.utcnow()
             for entity in sensors:
-                # Get intervals for this specific sensor
-                intervals = intervals_by_entity[entity.entity_id]
-
-                # Get the corresponding Entity object to access its type configuration
-                entity_obj = self.get_entity(entity.entity_id)
-
-                # Count true readings during occupied vs empty
-                true_occ = false_occ = true_empty = false_empty = 0
-
-                for interval in intervals:
-                    occ = is_occupied(interval.start_time)
-
-                    # Determine if interval state is active based on entity type
-                    is_active = False
-                    if entity_obj.active_states:
-                        is_active = interval.state in entity_obj.active_states
-                    elif entity_obj.active_range:
-                        min_val, max_val = entity_obj.active_range
-                        try:
-                            state_val = float(interval.state)
-                            is_active = min_val <= state_val <= max_val
-                        except (ValueError, TypeError):
-                            is_active = False
-
-                    if is_active:
-                        if occ:
-                            true_occ += interval.duration_seconds
-                        else:
-                            true_empty += interval.duration_seconds
-                    elif occ:
-                        false_occ += interval.duration_seconds
-                    else:
-                        false_empty += interval.duration_seconds
-
-                # Avoid division by zero
-                prob_given_true = (
-                    true_occ / (true_occ + false_occ)
-                    if (true_occ + false_occ) > 0
-                    else 0.5
-                )
-                prob_given_false = (
-                    true_empty / (true_empty + false_empty)
-                    if (true_empty + false_empty) > 0
-                    else 0.5
-                )
-                # Update existing entity instead of creating new one
-                entity.prob_given_true = prob_given_true
-                entity.prob_given_false = prob_given_false
-                entity.last_updated = now
-                self.get_entity(entity.entity_id).update_likelihood(
-                    prob_given_true, prob_given_false
+                self._update_entity_likelihoods(
+                    entity, intervals_by_entity, occupied_times, dt_util.utcnow()
                 )
 
             session.commit()
             _LOGGER.debug("Likelihoods updated")
+
+    def _get_sensors(self, session, entry_id: str) -> list["DB.Entities"]:
+        """Get all sensor configs for this area."""
+        return (
+            session.query(self.coordinator.db.Entities)
+            .filter_by(entry_id=entry_id)
+            .all()
+        )
+
+    def _get_occupied_times(
+        self, session, entry_id: str, sensor_ids: list[str]
+    ) -> list[tuple[datetime, datetime]]:
+        """Get occupied time intervals from motion sensors."""
+        occupied_intervals = (
+            session.query(
+                self.coordinator.db.Intervals.start_time,
+                self.coordinator.db.Intervals.end_time,
+            )
+            .join(
+                self.coordinator.db.Entities,
+                self.coordinator.db.Intervals.entity_id
+                == self.coordinator.db.Entities.entity_id,
+            )
+            .filter(
+                self.coordinator.db.Entities.entry_id == entry_id,
+                self.coordinator.db.Intervals.entity_id.in_(sensor_ids),
+                self.coordinator.db.Intervals.state == "on",
+            )
+            .order_by(self.coordinator.db.Intervals.start_time)
+            .all()
+        )
+        return [(start, end) for start, end in occupied_intervals]
+
+    def _get_intervals_by_entity(
+        self,
+        session,
+        sensors: list["DB.Entities"],
+    ) -> dict[str, list["DB.Intervals"]]:
+        """Get all intervals grouped by entity_id."""
+        sensor_entity_ids = [entity.entity_id for entity in sensors]
+
+        all_intervals = (
+            session.query(self.coordinator.db.Intervals)
+            .filter(self.coordinator.db.Intervals.entity_id.in_(sensor_entity_ids))
+            .all()
+        )
+
+        intervals_by_entity = defaultdict(list)
+        for interval in all_intervals:
+            intervals_by_entity[interval.entity_id].append(interval)
+
+        return intervals_by_entity
+
+    def _update_entity_likelihoods(
+        self,
+        entity: "DB.Entities",
+        intervals_by_entity: dict[str, list["DB.Intervals"]],
+        occupied_times: list[tuple[datetime, datetime]],
+        now: datetime,
+    ) -> None:
+        """Update likelihoods for a single entity."""
+        intervals = intervals_by_entity[entity.entity_id]
+        entity_obj = self.get_entity(entity.entity_id)
+
+        # Count interval states
+        true_occ = false_occ = true_empty = false_empty = 0
+
+        for interval in intervals:
+            occ = self._is_occupied(interval.start_time, occupied_times)
+            is_active = self._is_interval_active(interval, entity_obj)
+
+            if is_active:
+                if occ:
+                    true_occ += interval.duration_seconds
+                else:
+                    true_empty += interval.duration_seconds
+            elif occ:
+                false_occ += interval.duration_seconds
+            else:
+                false_empty += interval.duration_seconds
+
+        # Calculate probabilities
+        prob_given_true = (
+            true_occ / (true_occ + false_occ) if (true_occ + false_occ) > 0 else 0.5
+        )
+        prob_given_false = (
+            true_empty / (true_empty + false_empty)
+            if (true_empty + false_empty) > 0
+            else 0.5
+        )
+
+        # Fallback to defaults if too low
+        if prob_given_true < 0.01:
+            prob_given_true = entity_obj.type.prob_given_true
+        if prob_given_false < 0.01:
+            prob_given_false = entity_obj.type.prob_given_false
+
+        # Update entity
+        entity_obj.prob_given_true = prob_given_true
+        entity_obj.prob_given_false = prob_given_false
+        entity_obj.last_updated = now
+        entity_obj.update_likelihood(prob_given_true, prob_given_false)
+
+    def _is_occupied(
+        self, ts: datetime, occupied_times: list[tuple[datetime, datetime]]
+    ) -> bool:
+        """Check if timestamp falls within any occupied interval."""
+        if not occupied_times:
+            return False
+
+        # Binary search to find the rightmost interval that starts <= ts
+        idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
+
+        # Check if ts falls within the interval found
+        if idx > 0:
+            start, end = occupied_times[idx - 1]
+            if start <= ts < end:
+                return True
+
+        return False
+
+    def _is_interval_active(self, interval: "DB.Intervals", entity_obj: Entity) -> bool:
+        """Determine if interval state is active based on entity type."""
+        if entity_obj.active_states:
+            return interval.state in entity_obj.active_states
+        if entity_obj.active_range:
+            min_val, max_val = entity_obj.active_range
+            try:
+                state_val = float(interval.state)
+            except (ValueError, TypeError):
+                return False
+            else:
+                return min_val <= state_val <= max_val
+        return False
