@@ -57,78 +57,7 @@ class EntityType:
     def create(cls, input_type: InputType, config: Any = None) -> "EntityType":
         """Create an EntityType with optional configuration overrides."""
         # Default data for each input type
-        data = {
-            InputType.MOTION: {
-                "weight": 1,
-                "prob_given_true": 0.85,
-                "prob_given_false": 0.05,
-                "active_states": [STATE_ON],
-                "active_range": None,
-            },
-            InputType.MEDIA: {
-                "weight": 0.85,
-                "prob_given_true": 0.65,
-                "prob_given_false": 0.02,
-                "active_states": [STATE_PLAYING, STATE_PAUSED],
-                "active_range": None,
-            },
-            InputType.APPLIANCE: {
-                "weight": 0.4,
-                "prob_given_true": 0.2,
-                "prob_given_false": 0.02,
-                "active_states": [STATE_ON, STATE_STANDBY],
-                "active_range": None,
-            },
-            InputType.DOOR: {
-                "weight": 0.3,
-                "prob_given_true": 0.2,
-                "prob_given_false": 0.02,
-                "active_states": [STATE_OFF],
-                "active_range": None,
-            },
-            InputType.WINDOW: {
-                "weight": 0.2,
-                "prob_given_true": 0.2,
-                "prob_given_false": 0.02,
-                "active_states": [STATE_ON],
-                "active_range": None,
-            },
-            InputType.TEMPERATURE: {
-                "weight": 0.1,
-                "prob_given_true": 0.09,
-                "prob_given_false": 0.01,
-                "active_states": None,
-                "active_range": (18.0, 24.0),
-            },
-            InputType.HUMIDITY: {
-                "weight": 0.1,
-                "prob_given_true": 0.09,
-                "prob_given_false": 0.01,
-                "active_states": None,
-                "active_range": (70.0, 100.0),
-            },
-            InputType.ILLUMINANCE: {
-                "weight": 0.1,
-                "prob_given_true": 0.09,
-                "prob_given_false": 0.01,
-                "active_states": None,
-                "active_range": (30.00, 100000.0),
-            },
-            InputType.ENVIRONMENTAL: {
-                "weight": 0.1,
-                "prob_given_true": 0.09,
-                "prob_given_false": 0.01,
-                "active_states": None,
-                "active_range": (0.0, 0.2),
-            },
-            InputType.UNKNOWN: {
-                "weight": 0.85,
-                "prob_given_true": 0.15,
-                "prob_given_false": 0.03,
-                "active_states": [STATE_ON],
-                "active_range": None,
-            },
-        }
+        data = DEFAULT_TYPES
 
         params = data[input_type].copy()
 
@@ -175,3 +104,77 @@ class EntityType:
                 params["active_states"] = None  # Clear states when range is set
 
         return cls(input_type=input_type, **params)
+
+
+DEFAULT_TYPES = {
+    InputType.MOTION: {
+        "weight": 1,
+        "prob_given_true": 0.85,
+        "prob_given_false": 0.05,
+        "active_states": [STATE_ON],
+        "active_range": None,
+    },
+    InputType.MEDIA: {
+        "weight": 0.85,
+        "prob_given_true": 0.65,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_PLAYING, STATE_PAUSED],
+        "active_range": None,
+    },
+    InputType.APPLIANCE: {
+        "weight": 0.4,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_ON, STATE_STANDBY],
+        "active_range": None,
+    },
+    InputType.DOOR: {
+        "weight": 0.3,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_OFF],
+        "active_range": None,
+    },
+    InputType.WINDOW: {
+        "weight": 0.2,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_ON],
+        "active_range": None,
+    },
+    InputType.TEMPERATURE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (18.0, 24.0),
+    },
+    InputType.HUMIDITY: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (70.0, 100.0),
+    },
+    InputType.ILLUMINANCE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (30.00, 100000.0),
+    },
+    InputType.ENVIRONMENTAL: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (0.0, 0.2),
+    },
+    InputType.UNKNOWN: {
+        "weight": 0.85,
+        "prob_given_true": 0.15,
+        "prob_given_false": 0.03,
+        "active_states": [STATE_ON],
+        "active_range": None,
+    },
+}

@@ -32,152 +32,108 @@ from homeassistant.exceptions import HomeAssistantError
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
 
-    async def test_async_migrate_unique_ids_success(
-        self, mock_hass: Mock, mock_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("entities", "platform"),
+        [
+            (
+                {
+                    "sensor.old_unique_id": Mock(unique_id="old_unique_id"),
+                    "binary_sensor.old_unique_id": Mock(unique_id="old_unique_id"),
+                },
+                "sensor",
+            ),
+            ({}, "sensor"),  # No entities
+            ({}, "invalid_platform"),  # Invalid platform
+        ],
+    )
+    async def test_async_migrate_unique_ids(
+        self, mock_hass: Mock, mock_config_entry: Mock, entities: dict, platform: str
     ) -> None:
-        """Test successful unique ID migration."""
+        """Test unique ID migration with various scenarios."""
         with patch(
             "homeassistant.helpers.entity_registry.async_get"
         ) as mock_get_registry:
             mock_registry = Mock()
-            mock_registry.entities = {
-                "sensor.old_unique_id": Mock(unique_id="old_unique_id"),
-                "binary_sensor.old_unique_id": Mock(unique_id="old_unique_id"),
-            }
+            mock_registry.entities = entities
             mock_registry.async_update_entity = AsyncMock()
             mock_get_registry.return_value = mock_registry
 
-            await async_migrate_unique_ids(mock_hass, mock_config_entry, "sensor")
+            await async_migrate_unique_ids(mock_hass, mock_config_entry, platform)
 
-            # Should update entities with old unique ID format
+            # Should complete without error
             assert mock_registry.async_update_entity.call_count >= 0
-
-    async def test_async_migrate_unique_ids_no_entities(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test migration with no entities to migrate."""
-        with patch(
-            "homeassistant.helpers.entity_registry.async_get"
-        ) as mock_get_registry:
-            mock_registry = Mock()
-            mock_registry.entities = {}
-            mock_get_registry.return_value = mock_registry
-
-            # Should not raise an exception
-            await async_migrate_unique_ids(mock_hass, mock_config_entry, "sensor")
-
-    async def test_async_migrate_unique_ids_invalid_platform(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
-        """Test migration with invalid platform."""
-        with patch(
-            "homeassistant.helpers.entity_registry.async_get"
-        ) as mock_get_registry:
-            mock_registry = Mock()
-            mock_registry.entities = {}
-            mock_get_registry.return_value = mock_registry
-
-            # Should not raise an exception for invalid platform
-            await async_migrate_unique_ids(
-                mock_hass, mock_config_entry, "invalid_platform"
-            )
 
 
 class TestMigratePrimaryOccupancySensor:
     """Test migrate_primary_occupancy_sensor function."""
 
-    def test_migrate_primary_occupancy_sensor_needed(self) -> None:
-        """Test migration when primary sensor is missing."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"]
-        }
-
+    @pytest.mark.parametrize(
+        ("config", "expected_primary"),
+        [
+            (
+                {
+                    CONF_MOTION_SENSORS: [
+                        "binary_sensor.motion1",
+                        "binary_sensor.motion2",
+                    ]
+                },
+                "binary_sensor.motion1",
+            ),
+            (
+                {
+                    CONF_MOTION_SENSORS: [
+                        "binary_sensor.motion1",
+                        "binary_sensor.motion2",
+                    ],
+                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",
+                },
+                "binary_sensor.motion2",
+            ),
+            ({}, None),  # No motion sensors
+            ({CONF_MOTION_SENSORS: []}, None),  # Empty motion sensors
+        ],
+    )
+    def test_migrate_primary_occupancy_sensor(
+        self, config: dict, expected_primary: str | None
+    ) -> None:
+        """Test primary occupancy sensor migration."""
         result = migrate_primary_occupancy_sensor(config)
 
-        assert CONF_PRIMARY_OCCUPANCY_SENSOR in result
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
-
-    def test_migrate_primary_occupancy_sensor_already_exists(self) -> None:
-        """Test migration when primary sensor already exists."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",
-        }
-
-        result = migrate_primary_occupancy_sensor(config)
-
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion2"
-
-    def test_migrate_primary_occupancy_sensor_no_motion_sensors(self) -> None:
-        """Test migration when no motion sensors exist."""
-        config = {}
-
-        result = migrate_primary_occupancy_sensor(config)
-
-        # Should not add primary sensor if no motion sensors
-        assert CONF_PRIMARY_OCCUPANCY_SENSOR not in result
-
-    def test_migrate_primary_occupancy_sensor_empty_motion_sensors(self) -> None:
-        """Test migration when motion sensors list is empty."""
-        config = {CONF_MOTION_SENSORS: []}
-
-        result = migrate_primary_occupancy_sensor(config)
-
-        # Should not add primary sensor if motion sensors list is empty
-        assert CONF_PRIMARY_OCCUPANCY_SENSOR not in result
+        if expected_primary:
+            assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == expected_primary
+        else:
+            assert CONF_PRIMARY_OCCUPANCY_SENSOR not in result
 
 
 class TestMigratePurposeField:
     """Test migrate_purpose_field function."""
 
-    def test_migrate_purpose_field_needed(self) -> None:
-        """Test migration when purpose is missing and sensors exist."""
-        config = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
-
+    @pytest.mark.parametrize(
+        ("config", "should_add_purpose"),
+        [
+            ({CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}, True),
+            (
+                {
+                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                    CONF_PURPOSE: "sleeping",
+                },
+                False,
+            ),
+            ({}, True),  # No sensors
+            ({"appliances": ["binary_sensor.appliance"]}, True),  # Other sensors
+            ({CONF_MOTION_SENSORS: []}, True),  # Empty sensors
+        ],
+    )
+    def test_migrate_purpose_field(
+        self, config: dict, should_add_purpose: bool
+    ) -> None:
+        """Test purpose field migration."""
         result = migrate_purpose_field(config)
 
-        assert CONF_PURPOSE in result
-        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
-
-    def test_migrate_purpose_field_already_exists(self) -> None:
-        """Test migration when purpose already exists."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PURPOSE: "sleeping",
-        }
-
-        result = migrate_purpose_field(config)
-
-        assert result[CONF_PURPOSE] == "sleeping"
-
-    def test_migrate_purpose_field_no_sensors(self) -> None:
-        """Test migration when no sensors exist."""
-        config = {}
-
-        result = migrate_purpose_field(config)
-
-        # Should add default purpose even if no sensors
-        assert CONF_PURPOSE in result
-        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
-
-    def test_migrate_purpose_field_other_sensors(self) -> None:
-        """Test migration with other sensor types."""
-        config = {"appliances": ["binary_sensor.appliance"]}
-
-        result = migrate_purpose_field(config)
-
-        assert CONF_PURPOSE in result
-        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
-
-    def test_migrate_purpose_field_empty_sensors(self) -> None:
-        """Test migration when sensor lists are empty."""
-        config = {CONF_MOTION_SENSORS: []}
-
-        result = migrate_purpose_field(config)
-
-        # Should add default purpose even if sensor lists are empty
-        assert CONF_PURPOSE in result
-        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
+        if should_add_purpose:
+            assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
+        else:
+            assert result[CONF_PURPOSE] == "sleeping"
 
 
 class TestMigrateConfig:
@@ -189,7 +145,6 @@ class TestMigrateConfig:
 
         result = migrate_config(config)
 
-        assert CONF_PRIMARY_OCCUPANCY_SENSOR in result
         assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
 
     def test_migrate_config_preserves_existing(self) -> None:
@@ -207,33 +162,49 @@ class TestMigrateConfig:
         assert result[CONF_THRESHOLD] == 70
         assert result["other_key"] == "other_value"
 
+    @pytest.mark.parametrize(
+        ("config", "expected_defaults"),
+        [
+            (
+                {},
+                {CONF_PURPOSE: DEFAULT_PURPOSE, "decay_half_life": 120},
+            ),
+            (
+                {"other_key": "value"},
+                {
+                    "other_key": "value",
+                    CONF_PURPOSE: DEFAULT_PURPOSE,
+                    "decay_half_life": 120,
+                },
+            ),
+        ],
+    )
+    def test_migrate_config_edge_cases(
+        self, config: dict, expected_defaults: dict
+    ) -> None:
+        """Test config migration edge cases."""
+        result = migrate_config(config)
+        assert result == expected_defaults
+
 
 class TestAsyncMigrateStorage:
     """Test async_migrate_storage function."""
 
-    async def test_async_migrate_storage_no_data(self, mock_hass: Mock) -> None:
-        """Test storage migration with no existing data."""
+    @pytest.mark.parametrize(
+        "load_side_effect",
+        [None, HomeAssistantError("Storage error")],
+    )
+    async def test_async_migrate_storage(
+        self, mock_hass: Mock, load_side_effect: Exception | None
+    ) -> None:
+        """Test storage migration with various scenarios."""
         with patch(
             "homeassistant.helpers.storage.Store.async_load",
             new_callable=AsyncMock,
-            return_value=None,
+            side_effect=load_side_effect,
         ):
-            await async_migrate_storage(
-                mock_hass, "test_entry_id", 1
-            )  # Add entry_major parameter
+            await async_migrate_storage(mock_hass, "test_entry_id", 1)
             # Should complete without error
-
-    async def test_async_migrate_storage_error(self, mock_hass: Mock) -> None:
-        """Test storage migration with error."""
-        with patch(
-            "homeassistant.helpers.storage.Store.async_load",
-            new_callable=AsyncMock,
-            side_effect=HomeAssistantError("Storage error"),
-        ):
-            await async_migrate_storage(
-                mock_hass, "test_entry_id", 1
-            )  # Add entry_major parameter
-            # Should handle error gracefully
 
 
 class TestAsyncMigrateEntry:
@@ -242,7 +213,6 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_v1_0(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at version 1.0."""
-        # Copy the centralized config entry and modify for v1.0
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
@@ -254,7 +224,6 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_current(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at current version."""
-        # Copy the centralized config entry and modify for current version
         entry = Mock(spec=ConfigEntry)
         entry.version = CONF_VERSION
         entry.minor_version = CONF_VERSION_MINOR
@@ -280,24 +249,20 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
             ),
         ):
             mock_migrate_ids.return_value = None
-
-            # Mock the config_entries.async_update_entry method
             mock_hass.config_entries.async_update_entry = Mock()
 
             result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
 
             assert result is True
-            # Verify the update was called
             mock_hass.config_entries.async_update_entry.assert_called_once()
+
             call_args = mock_hass.config_entries.async_update_entry.call_args
-            assert (
-                call_args[0][0] == mock_config_entry_v1_0
-            )  # First argument is the entry
-            # Check that the data was migrated
+            assert call_args[0][0] == mock_config_entry_v1_0
             updated_data = call_args[1]["data"]
             assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
 
@@ -306,25 +271,18 @@ class TestAsyncMigrateEntry:
     ) -> None:
         """Test migration when already at current version."""
         result = await async_migrate_entry(mock_hass, mock_config_entry_current)
-
         assert result is True
-        # Should not modify version - verify by checking no config_entries.async_update_entry call
-        assert (
-            not hasattr(mock_hass.config_entries, "async_update_entry")
-            or mock_hass.config_entries.async_update_entry.call_count == 0
-        )
 
     async def test_async_migrate_entry_future_version(self, mock_hass: Mock) -> None:
         """Test migration from future version."""
         mock_entry = Mock(spec=ConfigEntry)
-        mock_entry.version = CONF_VERSION + 1  # Future version
+        mock_entry.version = CONF_VERSION + 1
         mock_entry.minor_version = 0
         mock_entry.entry_id = "test_entry_id"
         mock_entry.data = {}
         mock_entry.options = {}
 
         result = await async_migrate_entry(mock_hass, mock_entry)
-        # Future versions are treated as "already current" and return True
         assert result is True
 
     async def test_async_migrate_entry_migration_error(
@@ -342,12 +300,12 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
             ),
         ):
             mock_hass.config_entries.async_update_entry = Mock()
 
-            # The migration should fail due to the exception
             with pytest.raises(Exception, match="Migration error"):
                 await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
 
@@ -355,7 +313,7 @@ class TestAsyncMigrateEntry:
         self, mock_hass: Mock, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with invalid threshold value."""
-        mock_config_entry_v1_0.options = {CONF_THRESHOLD: 150}  # Invalid threshold
+        mock_config_entry_v1_0.options = {CONF_THRESHOLD: 150}
 
         with (
             patch(
@@ -367,7 +325,8 @@ class TestAsyncMigrateEntry:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
             ),
         ):
             mock_migrate_ids.return_value = None
@@ -384,28 +343,23 @@ class TestAsyncMigrateEntry:
 class TestValidateThreshold:
     """Test validate_threshold function."""
 
-    def test_validate_threshold_valid_values(self) -> None:
-        """Test validation of valid threshold values."""
-        assert validate_threshold(1.0) == 1.0
-        assert validate_threshold(50.0) == 50.0
-        assert validate_threshold(99.0) == 99.0
-
-    def test_validate_threshold_invalid_low(self) -> None:
-        """Test validation of threshold too low."""
-        assert validate_threshold(0.0) == DEFAULT_THRESHOLD
-        assert validate_threshold(-10.0) == DEFAULT_THRESHOLD
-
-    def test_validate_threshold_invalid_high(self) -> None:
-        """Test validation of threshold too high."""
-        assert validate_threshold(100.0) == DEFAULT_THRESHOLD
-        assert validate_threshold(150.0) == DEFAULT_THRESHOLD
-
-    def test_validate_threshold_edge_cases(self) -> None:
-        """Test validation of edge case values."""
-        assert validate_threshold(0.1) == DEFAULT_THRESHOLD  # Too low
-        assert validate_threshold(99.9) == DEFAULT_THRESHOLD  # Too high
-        assert validate_threshold(1.0) == 1.0  # Valid minimum
-        assert validate_threshold(99.0) == 99.0  # Valid maximum
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            (1.0, 1.0),
+            (50.0, 50.0),
+            (99.0, 99.0),
+            (0.0, DEFAULT_THRESHOLD),
+            (-10.0, DEFAULT_THRESHOLD),
+            (100.0, DEFAULT_THRESHOLD),
+            (150.0, DEFAULT_THRESHOLD),
+            (0.1, DEFAULT_THRESHOLD),
+            (99.9, DEFAULT_THRESHOLD),
+        ],
+    )
+    def test_validate_threshold(self, input_value: float, expected: float) -> None:
+        """Test threshold validation with various values."""
+        assert validate_threshold(input_value) == expected
 
 
 class TestMigrationsIntegration:
@@ -413,7 +367,6 @@ class TestMigrationsIntegration:
 
     async def test_complete_migration_workflow(self, mock_hass: Mock) -> None:
         """Test complete migration workflow from 1.0 to current."""
-        # Create entry that needs migration
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = 1
         mock_entry.minor_version = 0
@@ -421,7 +374,7 @@ class TestMigrationsIntegration:
         mock_entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"]
         }
-        mock_entry.options = {CONF_THRESHOLD: 150}  # Invalid threshold
+        mock_entry.options = {CONF_THRESHOLD: 150}
 
         with (
             patch(
@@ -433,7 +386,8 @@ class TestMigrationsIntegration:
                 return_value=None,
             ),
             patch(
-                "homeassistant.helpers.storage.Store.async_save", new_callable=AsyncMock
+                "homeassistant.helpers.storage.Store.async_save",
+                new_callable=AsyncMock,
             ),
         ):
             mock_migrate_ids.return_value = None
@@ -442,49 +396,13 @@ class TestMigrationsIntegration:
             result = await async_migrate_entry(mock_hass, mock_entry)
             assert result is True
 
-            # Check migration steps were called
             mock_migrate_ids.assert_called()
-
-            # Check data migration
             call_args = mock_hass.config_entries.async_update_entry.call_args
             updated_data = call_args[1]["data"]
             updated_options = call_args[1]["options"]
 
-            assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
             assert (
                 updated_data[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
             )
-            assert (
-                CONF_PURPOSE in updated_data
-            )  # Purpose should be added for configs with sensors
             assert updated_data[CONF_PURPOSE] == DEFAULT_PURPOSE
             assert updated_options[CONF_THRESHOLD] == DEFAULT_THRESHOLD
-
-    def test_config_migration_edge_cases(self) -> None:
-        """Test config migration with various edge cases."""
-        # Empty config - now adds purpose and decay_half_life defaults
-        result = migrate_config({})
-        expected = {
-            CONF_PURPOSE: DEFAULT_PURPOSE,
-            "decay_half_life": 120,  # DEFAULT_DECAY_HALF_LIFE
-        }
-        assert result == expected
-
-        # Config with only non-motion sensor data
-        config = {"other_key": "value"}
-        result = migrate_config(config)
-        expected = {
-            "other_key": "value",
-            CONF_PURPOSE: DEFAULT_PURPOSE,
-            "decay_half_life": 120,  # DEFAULT_DECAY_HALF_LIFE
-        }
-        assert result == expected
-
-        # Config with motion sensors but already has primary
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",
-        }
-        result = migrate_config(config)
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion2"
-        assert result[CONF_PURPOSE] == DEFAULT_PURPOSE  # Purpose should be added

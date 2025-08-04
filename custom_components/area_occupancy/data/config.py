@@ -98,7 +98,7 @@ class Sensors:
         if (
             coordinator
             and coordinator.config.wasp_in_box.enabled
-            and coordinator.wasp_entity_id
+            and getattr(coordinator, "wasp_entity_id", None)
         ):
             motion_sensors.append(coordinator.wasp_entity_id)
             _LOGGER.debug(
