@@ -34,10 +34,10 @@ from .const import (
 )
 from .data.config import Config
 from .data.entity import EntityFactory, EntityManager
-from .data.entity_type import EntityTypeManager
+from .data.entity_type import InputType
 from .data.prior import Prior
 from .data.purpose import PurposeManager
-from .utils import conditional_sorted_probability
+from .utils import bayesian_probability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +66,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config = Config(self)
         self.factory = EntityFactory(self)
         self.prior = Prior(self)
-        self.entity_types = EntityTypeManager(self)
         self.purpose = PurposeManager(self)
         self.entities = EntityManager(self)
         self.occupancy_entity_id: str | None = None
@@ -92,9 +91,64 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.entities.entities:
             return MIN_PROBABILITY
 
-        return conditional_sorted_probability(
-            entities=self.entities.entities, prior=self.area_prior
+        return bayesian_probability(
+            entities=self.entities.entities,
+            area_prior=self.prior.value,
+            time_prior=self.prior.time_prior,
         )
+
+    @property
+    def type_probabilities(self) -> dict[str, float]:
+        """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0)."""
+        if not self.entities.entities:
+            return {}
+
+        return {
+            InputType.MOTION: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.MOTION),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.MEDIA: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.MEDIA),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.APPLIANCE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.APPLIANCE),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.DOOR: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.DOOR),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.WINDOW: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.WINDOW),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.ILLUMINANCE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(
+                    InputType.ILLUMINANCE
+                ),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.HUMIDITY: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.HUMIDITY),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+            InputType.TEMPERATURE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(
+                    InputType.TEMPERATURE
+                ),
+                area_prior=self.prior.value,
+                time_prior=self.prior.time_prior,
+            ),
+        }
 
     @property
     def area_prior(self) -> float:
@@ -135,12 +189,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Initialize purpose manager
             await self.purpose.async_initialize()
 
-            # Build Default Entity Types
-            await self.entity_types.async_initialize()
-
-            # Initialize entities
-            await self.entities.__post_init__()
-
             # Ensure area exists in database
             await self.db.save_area_data()
 
@@ -163,10 +211,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
             else:
                 _LOGGER.info(
-                    "State intervals table is not empty for instance %s. Loading data from database.",
+                    "State intervals table is not empty for instance %s. Data already loaded from database.",
                     self.entry_id,
                 )
-                await self.db.load_data()
 
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
@@ -237,10 +284,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info(
             "Configuration updated, re-initializing entities for %s", self.config.name
         )
-
-        # Update entity types with new configuration
-        self.entity_types.cleanup()
-        await self.entity_types.async_initialize()
 
         # Clean up existing entity tracking and re-initialize
         await self.entities.cleanup()
