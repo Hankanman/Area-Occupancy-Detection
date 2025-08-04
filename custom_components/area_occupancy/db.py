@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -242,6 +243,9 @@ class AreaOccupancyDB:
         created_at = Column(
             DateTime(timezone=True), nullable=False, default=dt_util.utcnow
         )
+        is_decaying = Column(Boolean, nullable=False, default=False)
+        decay_start = Column(DateTime(timezone=True), nullable=True)
+        evidence = Column(Boolean, nullable=False, default=False)
         intervals = relationship("Intervals", back_populates="entity")
         area = relationship("Areas", back_populates="entities")
 
@@ -261,6 +265,9 @@ class AreaOccupancyDB:
                 "prob_given_false": self.prob_given_false,
                 "last_updated": self.last_updated,
                 "created_at": self.created_at,
+                "is_decaying": self.is_decaying,
+                "decay_start": self.decay_start,
+                "evidence": self.evidence,
             }
 
         @classmethod
@@ -279,6 +286,9 @@ class AreaOccupancyDB:
                 ),
                 last_updated=data.get("last_updated", dt_util.utcnow()),
                 created_at=data.get("created_at", dt_util.utcnow()),
+                is_decaying=data.get("is_decaying", False),
+                decay_start=data.get("decay_start"),
+                evidence=data.get("evidence", False),
             )
 
     class Priors(Base):
@@ -529,8 +539,37 @@ class AreaOccupancyDB:
                     .all()
                 )
                 if entities:
-                    for entity in entities:
-                        self.coordinator.factory.create_from_db(entity)
+                    for entity_obj in entities:
+                        # Try to get existing entity from coordinator
+                        try:
+                            existing_entity = self.coordinator.entities.get_entity(
+                                entity_obj.entity_id
+                            )
+                            # Update existing entity with database values (preserve database timestamp)
+                            existing_entity.update_decay(
+                                entity_obj.decay_start,
+                                entity_obj.is_decaying,
+                            )
+                            existing_entity.update_likelihood(
+                                entity_obj.prob_given_true,
+                                entity_obj.prob_given_false,
+                            )
+                            existing_entity.last_updated = entity_obj.last_updated
+                            existing_entity.previous_evidence = entity_obj.evidence
+                            _LOGGER.debug(
+                                "Updated existing entity %s with database values",
+                                entity_obj.entity_id,
+                            )
+                        except ValueError:
+                            # Entity not found in coordinator, create new one from database
+                            _LOGGER.warning(
+                                "Entity %s not found in coordinator, creating from database",
+                                entity_obj.entity_id,
+                            )
+                            new_entity = self.coordinator.factory.create_from_db(
+                                entity_obj
+                            )
+                            self.coordinator.entities.add_entity(new_entity)
                 _LOGGER.debug("Loaded area occupancy data")
         except Exception as err:
             _LOGGER.error("Failed to load area occupancy data: %s", err)
@@ -654,6 +693,8 @@ class AreaOccupancyDB:
                             "prob_given_true": entity.prob_given_true,
                             "prob_given_false": entity.prob_given_false,
                             "last_updated": entity.last_updated,
+                            "is_decaying": entity.decay.is_decaying,
+                            "decay_start": entity.decay.decay_start,
                         },
                     )
             _LOGGER.debug("Saved entity data")
