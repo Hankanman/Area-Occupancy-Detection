@@ -66,6 +66,7 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             "area_name": coordinator.config.name,
             "current_prior": coordinator.area_prior,
             "global_prior": coordinator.prior.global_prior,
+            "time_prior": coordinator.prior.time_prior,
             "prior_entity_ids": coordinator.prior.sensor_ids,
             "total_entities": len(coordinator.entities.entities),
             "entity_states": entity_states,
@@ -181,57 +182,6 @@ async def _get_problematic_entities(
         return {"problems": problems}
 
 
-async def _get_entity_details(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Get detailed information about specific entities."""
-    entry_id = call.data["entry_id"]
-    entity_ids = call.data.get("entity_ids", [])
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        entities = coordinator.entities
-
-        details = {}
-        if not entity_ids:
-            # Get all entities if none specified
-            entity_ids = list(entities.entities.keys())
-
-        for entity_id in entity_ids:
-            try:
-                entity = entities.get_entity(entity_id)
-                details[entity_id] = {
-                    "state": entity.state,
-                    "evidence": entity.evidence,
-                    "available": entity.available,
-                    "last_updated": entity.last_updated.isoformat(),
-                    "probability": entity.probability,
-                    "decay_factor": entity.decay.decay_factor,
-                    "is_decaying": entity.decay.is_decaying,
-                    "entity_type": {
-                        "input_type": entity.type.input_type.value,
-                        "weight": entity.type.weight,
-                        "prob_true": entity.type.prob_true,
-                        "prob_false": entity.type.prob_false,
-                        "prior": entity.type.prior,
-                        "active_states": entity.type.active_states,
-                        "active_range": entity.type.active_range,
-                    },
-                    "prob_given_true": entity.prob_given_true,
-                    "prob_given_false": entity.prob_given_false,
-                }
-            except ValueError:
-                details[entity_id] = {"error": "Entity not found"}
-
-        _LOGGER.info(
-            "Retrieved details for %d entities in entry %s", len(details), entry_id
-        )
-    except Exception as err:
-        error_msg = f"Failed to get entity details for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {"entity_details": details}
-
-
 async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Get current area occupancy status and confidence."""
     entry_id = call.data["entry_id"]
@@ -304,42 +254,11 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         return {"area_status": status}
 
 
-async def _get_entity_type_learned_data(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Return the learned entity_type data for an entry_id."""
-    entry_id = call.data["entry_id"]
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        entity_types = coordinator.entity_types.entity_types
-        learned_data = {}
-        for input_type, et in entity_types.items():
-            learned_data[input_type.value] = {
-                "prior": et.prior,
-                "prob_true": et.prob_true,
-                "prob_false": et.prob_false,
-                "weight": et.weight,
-                "active_states": et.active_states,
-                "active_range": et.active_range,
-            }
-        _LOGGER.info("Retrieved learned entity_type data for entry %s", entry_id)
-    except Exception as err:
-        error_msg = f"Failed to get entity_type learned data for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {"entity_types": learned_data}
-
-
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
     # Service schemas
     entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
-
-    entity_details_schema = vol.Schema(
-        {vol.Required("entry_id"): str, vol.Optional("entity_ids", default=[]): [str]}
-    )
 
     # Create async wrapper functions to properly handle the service calls
 
@@ -355,14 +274,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_get_problematic_entities(call: ServiceCall) -> dict[str, Any]:
         return await _get_problematic_entities(hass, call)
 
-    async def handle_get_entity_details(call: ServiceCall) -> dict[str, Any]:
-        return await _get_entity_details(hass, call)
-
     async def handle_get_area_status(call: ServiceCall) -> dict[str, Any]:
         return await _get_area_status(hass, call)
-
-    async def handle_get_entity_type_learned_data(call: ServiceCall) -> dict[str, Any]:
-        return await _get_entity_type_learned_data(hass, call)
 
     # Register services with async wrapper functions
     hass.services.async_register(
@@ -394,24 +307,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(
         DOMAIN,
-        "get_entity_details",
-        handle_get_entity_details,
-        schema=entity_details_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
         "get_area_status",
         handle_get_area_status,
-        schema=entry_id_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "get_entity_type_learned_data",
-        handle_get_entity_type_learned_data,
         schema=entry_id_schema,
         supports_response=SupportsResponse.ONLY,
     )
