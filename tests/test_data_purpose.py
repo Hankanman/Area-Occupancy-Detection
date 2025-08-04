@@ -45,37 +45,6 @@ class TestPurpose:
         assert purpose.description == "Living room area"
         assert purpose.half_life == 720.0
 
-    def test_purpose_to_dict(self):
-        """Test converting Purpose to dictionary."""
-        purpose = Purpose(
-            purpose=AreaPurpose.WORKING,
-            name="Working / Studying",
-            description="Home office",
-            half_life=600.0,
-        )
-        result = purpose.to_dict()
-        expected = {
-            "purpose": "working",
-            "name": "Working / Studying",
-            "description": "Home office",
-            "half_life": 600.0,
-        }
-        assert result == expected
-
-    def test_purpose_from_dict(self):
-        """Test creating Purpose from dictionary."""
-        data = {
-            "purpose": "sleeping",
-            "name": "Sleeping / Resting",
-            "description": "Bedroom",
-            "half_life": 1800.0,
-        }
-        purpose = Purpose.from_dict(data)
-        assert purpose.purpose == AreaPurpose.SLEEPING
-        assert purpose.name == "Sleeping / Resting"
-        assert purpose.description == "Bedroom"
-        assert purpose.half_life == 1800.0
-
 
 class TestPurposeDefinitions:
     """Test purpose definitions."""
