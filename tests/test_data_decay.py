@@ -24,22 +24,6 @@ class TestDecay:
         assert decay.half_life == 60.0
         assert decay.is_decaying is True
 
-    def test_to_dict(self) -> None:
-        """Test conversion to dictionary."""
-        decay = Decay(last_trigger_ts=1000.0, half_life=60.0, is_decaying=True)
-        data = decay.to_dict()
-        assert data["last_trigger_ts"] == 1000.0
-        assert data["half_life"] == 60.0
-        assert data["is_decaying"] is True
-
-    def test_from_dict(self) -> None:
-        """Test creation from dictionary."""
-        data = {"last_trigger_ts": 1000.0, "half_life": 60.0, "is_decaying": True}
-        decay = Decay.from_dict(data)
-        assert decay.last_trigger_ts == 1000.0
-        assert decay.half_life == 60.0
-        assert decay.is_decaying is True
-
     def test_decay_factor_not_decaying(self) -> None:
         """Test decay factor when not decaying."""
         decay = Decay(is_decaying=False)

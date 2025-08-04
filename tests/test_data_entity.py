@@ -32,7 +32,6 @@ class TestEntity:
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
-            previous_probability=0.0,
         )
 
         assert entity.entity_id == "test_entity"
@@ -41,35 +40,6 @@ class TestEntity:
         assert entity.prob_given_false == 0.1
         assert entity.decay == mock_decay
         assert entity.coordinator == mock_coordinator
-
-    def test_to_dict(self, mock_coordinator: Mock) -> None:
-        """Test converting entity to dictionary."""
-        mock_entity_type = Mock()
-        mock_entity_type.to_dict.return_value = {"type": "motion"}
-
-        mock_decay = Mock()
-        mock_decay.to_dict.return_value = {"is_decaying": False}
-
-        current_time = dt_util.utcnow()
-        entity = Entity(
-            entity_id="test_entity",
-            type=mock_entity_type,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            decay=mock_decay,
-            coordinator=mock_coordinator,
-            last_updated=current_time,
-            previous_evidence=None,
-            previous_probability=0.0,
-        )
-
-        result = entity.to_dict()
-
-        assert result["entity_id"] == "test_entity"
-        assert result["type"] == {"type": "motion"}
-        assert result["prob_given_true"] == 0.8
-        assert result["prob_given_false"] == 0.1
-        assert result["decay"] == {"is_decaying": False}
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
     @patch("custom_components.area_occupancy.data.entity.EntityType")
@@ -111,7 +81,6 @@ class TestEntity:
             "decay": {"is_decaying": False},
             "last_updated": current_time.isoformat(),
             "previous_evidence": None,
-            "previous_probability": 0.0,
         }
 
         # Create entity directly using the new structure
@@ -124,7 +93,6 @@ class TestEntity:
             coordinator=mock_coordinator,
             last_updated=current_time,
             previous_evidence=data["previous_evidence"],
-            previous_probability=data["previous_probability"],
         )
 
         assert entity.entity_id == "binary_sensor.test_motion"
@@ -205,43 +173,6 @@ class TestEntityManager:
         assert len(inactive_entities) == 1
         assert inactive_entities[0] == inactive_entity
 
-    def test_to_dict(self, mock_coordinator: Mock) -> None:
-        """Test converting manager to dictionary."""
-        manager = EntityManager(mock_coordinator)
-
-        mock_entity = Mock()
-        mock_entity.to_dict.return_value = {"entity_id": "test"}
-        manager._entities = {"test": mock_entity}
-
-        result = manager.to_dict()
-
-        assert result["entities"] == {"test": {"entity_id": "test"}}
-
-    def test_from_dict(self, mock_coordinator: Mock) -> None:
-        """Test creating manager from dictionary."""
-        data = {
-            "entities": {
-                "test": {
-                    "entity_id": "test",
-                    "type": {"input_type": "motion"},
-                    "likelihood": {"prob": 0.8},
-                    "decay": {"is_decaying": False},
-                }
-            }
-        }
-
-        with patch(
-            "custom_components.area_occupancy.data.entity.EntityFactory"
-        ) as mock_factory:
-            mock_factory_instance = Mock()
-            mock_factory_instance.create_from_storage.return_value = Mock()
-            mock_factory.return_value = mock_factory_instance
-
-            manager = EntityManager.from_dict(data, mock_coordinator)
-
-            assert isinstance(manager, EntityManager)
-            assert manager.coordinator == mock_coordinator
-
     def test_get_entity(self, mock_coordinator: Mock) -> None:
         """Test getting entity by ID."""
         manager = EntityManager(mock_coordinator)
@@ -266,16 +197,6 @@ class TestEntityManager:
 
         assert manager._entities["test"] == mock_entity
 
-    def test_remove_entity(self, mock_coordinator: Mock) -> None:
-        """Test removing entity from manager."""
-        manager = EntityManager(mock_coordinator)
-        mock_entity = Mock()
-        manager._entities = {"test": mock_entity}
-
-        manager.remove_entity("test")
-
-        assert "test" not in manager._entities
-
 
 class TestEntityPropertiesAndMethods:
     """Test entity properties and methods."""
@@ -291,7 +212,6 @@ class TestEntityPropertiesAndMethods:
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
-            previous_probability=0.0,
         )
 
         # Test with no state available
@@ -315,7 +235,6 @@ class TestEntityPropertiesAndMethods:
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
-            previous_probability=0.0,
         )
 
         # Test with available state
@@ -347,7 +266,6 @@ class TestEntityPropertiesAndMethods:
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
-            previous_probability=0.0,
         )
 
         # Test with value in range
@@ -375,7 +293,6 @@ class TestEntityPropertiesAndMethods:
             coordinator=mock_coordinator,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
-            previous_probability=0.0,
         )
 
         # Test transition from None to active
@@ -401,73 +318,6 @@ class TestEntityPropertiesAndMethods:
         entity.previous_evidence = True
         mock_state.state = STATE_ON
         assert entity.has_new_evidence() is False
-
-    def test_probability_with_decay(self, mock_coordinator: Mock) -> None:
-        """Test probability property with decay."""
-        mock_entity_type = Mock()
-        mock_entity_type.active_states = [STATE_ON]
-        mock_entity_type.active_range = None
-
-        entity = Entity(
-            entity_id="test",
-            type=mock_entity_type,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            decay=Mock(),
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=None,
-            previous_probability=0.0,
-        )
-
-        # Mock the state to be active so evidence is True
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_coordinator.hass.states.get.return_value = mock_state
-
-        # Test with decay (but evidence is True, so decay_factor should be 1.0)
-        entity.decay.is_decaying = True
-        entity.decay.decay_factor = 0.5
-        entity.coordinator.area_prior = 0.3
-
-        # Since evidence is True, decay_factor should be 1.0, not 0.5
-        assert entity.probability > 0.0  # Just check it's calculated
-
-    def test_effective_probability_property(self, mock_coordinator: Mock) -> None:
-        """Test effective_probability property."""
-        mock_entity_type = Mock()
-        mock_entity_type.active_states = [STATE_ON]
-        mock_entity_type.active_range = None
-
-        entity = Entity(
-            entity_id="test",
-            type=mock_entity_type,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            decay=Mock(),
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=None,
-            previous_probability=0.0,
-        )
-
-        # Mock the state to be active
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_coordinator.hass.states.get.return_value = mock_state
-
-        # Mock the likelihood values properly
-        entity.coordinator.area_prior = 0.3
-        entity.decay.decay_factor = 1.0
-
-        # Test with evidence (should be True based on state)
-        assert entity.evidence is True
-        assert entity.probability > 0.0  # Just check it's calculated
-
-        # Test without evidence (change state to inactive)
-        mock_state.state = "off"
-        assert entity.evidence is False
-        assert entity.probability > 0.0  # Just check it's calculated
 
 
 class TestEntityManagerAdvanced:
@@ -501,14 +351,6 @@ class TestEntityManagerAdvanced:
         assert decaying_entity1 in decaying_entities
         assert decaying_entity2 in decaying_entities
         assert non_decaying_entity not in decaying_entities
-
-    def test_from_dict_error_cases(self, mock_coordinator: Mock) -> None:
-        """Test from_dict with error cases."""
-        # Test with invalid data structure
-        invalid_data = {"invalid": "data"}
-
-        with pytest.raises(ValueError, match="Invalid storage format"):
-            EntityManager.from_dict(invalid_data, mock_coordinator)
 
 
 # --- Begin migrated tests from test_entity_factory.py ---

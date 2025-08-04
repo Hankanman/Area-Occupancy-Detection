@@ -616,14 +616,100 @@ class TestAreaOccupancyDBUtilities:
         await self.test_save_entity_data(configured_db)  # populate entities table
 
         called = []
+        created_entities = []
+
+        # Mock the prior setter
         db.coordinator.prior = SimpleNamespace(
-            set_global_prior=lambda v: called.append("prior")
+            set_global_prior=lambda v: called.append(("prior", v))
         )
+
+        # Mock the entities manager
+        db.coordinator.entities = SimpleNamespace(
+            get_entity=lambda entity_id: SimpleNamespace(
+                prob_given_true=0.5, prob_given_false=0.1, last_updated=dt_util.utcnow()
+            ),
+            add_entity=lambda entity: created_entities.append(entity.entity_id),
+        )
+
+        # Mock the factory
         db.coordinator.factory = SimpleNamespace(
-            create_from_db=lambda ent: called.append(ent.entity_id)
+            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
         )
+
         await db.load_data()
-        assert "prior" in called
+
+        # Check that prior was set
+        assert any(call[0] == "prior" for call in called)
+
+        # Check that entities were processed (either updated or created)
+        # The exact behavior depends on whether entities exist in coordinator
+        # This test verifies the method completes without errors
+
+    @pytest.mark.asyncio
+    async def test_load_data_entity_handling(self, configured_db, monkeypatch):
+        """Test the entity handling logic in load_data method."""
+        db = configured_db
+        await db.save_area_data()
+        await self.test_save_entity_data(configured_db)  # populate entities table
+
+        created_entities = []
+
+        # Mock the prior setter
+        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
+
+        # Mock the entities manager to simulate existing entities
+        def mock_get_entity(entity_id):
+            if entity_id == "binary_sensor.motion":
+                # Return existing entity that should be updated
+                return SimpleNamespace(
+                    prob_given_true=0.5,
+                    prob_given_false=0.1,
+                    last_updated=dt_util.utcnow(),
+                )
+            # Raise ValueError to simulate entity not found
+            raise ValueError(f"Entity {entity_id} not found")
+
+        db.coordinator.entities = SimpleNamespace(
+            get_entity=mock_get_entity,
+            add_entity=lambda entity: created_entities.append(entity.entity_id),
+        )
+
+        # Mock the factory to create new entities
+        db.coordinator.factory = SimpleNamespace(
+            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
+        )
+
+        await db.load_data()
+
+        # Verify that new entities were created for entities not found in coordinator
+        # The exact count depends on the entities saved in test_save_entity_data
+        assert len(created_entities) > 0
+
+    @pytest.mark.asyncio
+    async def test_load_data_error_handling(self, configured_db, monkeypatch):
+        """Test error handling in load_data method."""
+        db = configured_db
+        await db.save_area_data()
+        await self.test_save_entity_data(configured_db)  # populate entities table
+
+        # Mock the prior setter
+        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
+
+        # Mock the entities manager to always raise ValueError
+        db.coordinator.entities = SimpleNamespace(
+            get_entity=lambda entity_id: (_ for _ in ()).throw(
+                ValueError(f"Entity {entity_id} not found")
+            ),
+            add_entity=lambda entity: None,
+        )
+
+        # Mock the factory
+        db.coordinator.factory = SimpleNamespace(
+            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
+        )
+
+        # This should not raise an exception - it should handle the ValueError gracefully
+        await db.load_data()
 
     @pytest.mark.asyncio
     async def test_sync_states(self, configured_db, monkeypatch):
