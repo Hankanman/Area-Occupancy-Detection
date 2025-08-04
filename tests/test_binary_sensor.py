@@ -52,63 +52,72 @@ class TestOccupancy:
         # Should clear occupancy entity ID in coordinator
         assert mock_coordinator.occupancy_entity_id is None
 
-    def test_icon_property(self, mock_coordinator: Mock) -> None:
-        """Test icon property."""
+    @pytest.mark.parametrize(
+        ("occupied", "expected_icon", "expected_is_on"),
+        [
+            (True, "mdi:home-account", True),
+            (False, "mdi:home-outline", False),
+        ],
+    )
+    def test_state_properties(
+        self,
+        mock_coordinator: Mock,
+        occupied: bool,
+        expected_icon: str,
+        expected_is_on: bool,
+    ) -> None:
+        """Test icon and is_on properties based on occupancy state."""
         entity = Occupancy(mock_coordinator, "test_entry_id")
+        mock_coordinator.occupied = occupied
 
-        # Test occupied state
-        mock_coordinator.occupied = True
-        assert entity.icon == "mdi:home-account"
+        assert entity.icon == expected_icon
+        assert entity.is_on is expected_is_on
 
-        # Test unoccupied state
-        mock_coordinator.occupied = False
-        assert entity.icon == "mdi:home-outline"
 
-    def test_is_on_property(self, mock_coordinator: Mock) -> None:
-        """Test is_on property."""
-        entity = Occupancy(mock_coordinator, "test_entry_id")
+# Shared fixtures for WaspInBoxSensor tests
+@pytest.fixture
+def wasp_coordinator(mock_coordinator: Mock) -> Mock:
+    """Create a coordinator with wasp-specific configuration."""
+    # Customize the coordinator for wasp tests
+    mock_coordinator.config.wasp_in_box = Mock()
+    mock_coordinator.config.wasp_in_box.enabled = True
+    mock_coordinator.config.wasp_in_box.motion_timeout = 60
+    mock_coordinator.config.wasp_in_box.max_duration = 3600
+    mock_coordinator.config.wasp_in_box.weight = 0.85
+    mock_coordinator.config.sensors = Mock()
+    mock_coordinator.config.sensors.doors = ["binary_sensor.door1"]
+    mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
 
-        # Test occupied state
-        mock_coordinator.occupied = True
-        assert entity.is_on is True
+    # Add missing entities attribute with AsyncMock
+    mock_coordinator.entities = Mock()
+    mock_coordinator.entities.async_initialize = AsyncMock()
 
-        # Test unoccupied state
-        mock_coordinator.occupied = False
-        assert entity.is_on is False
+    return mock_coordinator
+
+
+@pytest.fixture
+def wasp_config_entry(mock_config_entry: Mock) -> Mock:
+    """Create a config entry with wasp-specific data."""
+    mock_config_entry.data.update(
+        {
+            "door_sensors": ["binary_sensor.door1"],
+            "motion_sensors": ["binary_sensor.motion1"],
+        }
+    )
+    return mock_config_entry
+
+
+def create_wasp_entity(
+    mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+) -> WaspInBoxSensor:
+    """Create a WaspInBoxSensor with common setup."""
+    entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+    entity.entity_id = "binary_sensor.test_wasp_in_box"
+    return entity
 
 
 class TestWaspInBoxSensor:
     """Test WaspInBoxSensor binary sensor entity."""
-
-    @pytest.fixture
-    def wasp_coordinator(self, mock_coordinator: Mock) -> Mock:
-        """Create a coordinator with wasp-specific configuration."""
-        # Customize the coordinator for wasp tests
-        mock_coordinator.config.wasp_in_box = Mock()
-        mock_coordinator.config.wasp_in_box.enabled = True
-        mock_coordinator.config.wasp_in_box.motion_timeout = 60
-        mock_coordinator.config.wasp_in_box.max_duration = 3600
-        mock_coordinator.config.wasp_in_box.weight = 0.85
-        mock_coordinator.config.sensors = Mock()
-        mock_coordinator.config.sensors.doors = ["binary_sensor.door1"]
-        mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-
-        # Add missing entities attribute with AsyncMock
-        mock_coordinator.entities = Mock()
-        mock_coordinator.entities.async_initialize = AsyncMock()
-
-        return mock_coordinator
-
-    @pytest.fixture
-    def wasp_config_entry(self, mock_config_entry: Mock) -> Mock:
-        """Create a config entry with wasp-specific data."""
-        mock_config_entry.data.update(
-            {
-                "door_sensors": ["binary_sensor.door1"],
-                "motion_sensors": ["binary_sensor.motion1"],
-            }
-        )
-        return mock_config_entry
 
     def test_initialization(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -141,45 +150,51 @@ class TestWaspInBoxSensor:
         # Should set wasp entity ID in coordinator
         assert wasp_coordinator.wasp_entity_id == entity.entity_id
 
-    async def test_restore_previous_state_no_data(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("has_previous_state", "expected_is_on"),
+        [
+            (False, False),
+            (True, True),
+        ],
+    )
+    async def test_restore_previous_state(
+        self,
+        mock_hass: Mock,
+        wasp_coordinator: Mock,
+        wasp_config_entry: Mock,
+        has_previous_state: bool,
+        expected_is_on: bool,
     ) -> None:
-        """Test restoring previous state with no stored data."""
+        """Test restoring previous state with and without stored data."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
-        # Mock RestoreEntity.async_get_last_state to return None
-        with patch.object(entity, "async_get_last_state", return_value=None):
-            await entity._restore_previous_state()
-
-            # Should have default state
-            assert entity._attr_is_on is False
-
-    async def test_restore_previous_state_with_data(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test restoring previous state with stored data."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Mock previous state
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_state.attributes = {
-            "last_occupied_time": "2023-01-01T12:00:00+00:00",
-            "last_door_time": "2023-01-01T11:59:00+00:00",
-            "last_motion_time": "2023-01-01T11:58:00+00:00",
-        }
+        if has_previous_state:
+            # Mock previous state
+            mock_state = Mock()
+            mock_state.state = STATE_ON
+            mock_state.attributes = {
+                "last_occupied_time": "2023-01-01T12:00:00+00:00",
+                "last_door_time": "2023-01-01T11:59:00+00:00",
+                "last_motion_time": "2023-01-01T11:58:00+00:00",
+            }
+            mock_get_state = AsyncMock(return_value=mock_state)
+            mock_timer = Mock()
+        else:
+            mock_get_state = AsyncMock(return_value=None)
+            mock_timer = Mock()
 
         with (
-            patch.object(entity, "async_get_last_state", return_value=mock_state),
-            patch.object(entity, "_start_max_duration_timer") as mock_timer,
+            patch.object(entity, "async_get_last_state", mock_get_state),
+            patch.object(entity, "_start_max_duration_timer", mock_timer),
         ):
             await entity._restore_previous_state()
 
-            # Should restore state and attributes
-            assert entity._attr_is_on is True
-            assert entity._state == STATE_ON
-            assert entity._last_occupied_time is not None
-            mock_timer.assert_called_once()
+            # Should have expected state
+            assert entity._attr_is_on is expected_is_on
+            if has_previous_state:
+                assert entity._state == STATE_ON
+                assert entity._last_occupied_time is not None
+                mock_timer.assert_called_once()
 
     async def test_async_will_remove_from_hass(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
@@ -190,9 +205,7 @@ class TestWaspInBoxSensor:
         # Set up some state to clean up
         entity._remove_timer = Mock()
         listener_mock = Mock()
-        entity._remove_state_listener = (
-            listener_mock  # Set up the mock after entity creation
-        )
+        entity._remove_state_listener = listener_mock
         wasp_coordinator.wasp_entity_id = entity.entity_id
 
         await entity.async_will_remove_from_hass()
@@ -215,20 +228,23 @@ class TestWaspInBoxSensor:
 
         attributes = entity.extra_state_attributes
 
-        assert "door_state" in attributes
-        assert "motion_state" in attributes
-        assert "last_motion_time" in attributes
-        assert "last_door_time" in attributes
-        assert "last_occupied_time" in attributes
-        assert "motion_timeout" in attributes
-        assert "max_duration" in attributes
+        expected_attrs = [
+            "door_state",
+            "motion_state",
+            "last_motion_time",
+            "last_door_time",
+            "last_occupied_time",
+            "motion_timeout",
+            "max_duration",
+        ]
+        for attr in expected_attrs:
+            assert attr in attributes
 
     def test_weight_property(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test weight property."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
         assert entity.weight == 0.85
 
     def test_get_valid_entities(
@@ -257,10 +273,7 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test _initialize_from_current_states method."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set entity_id to avoid NoEntitySpecifiedError
-        entity.entity_id = "binary_sensor.test_wasp_in_box"
+        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
 
         valid_entities = {
             "doors": ["binary_sensor.door1"],
@@ -278,106 +291,83 @@ class TestWaspInBoxSensor:
         assert entity._door_state == STATE_OFF
         assert entity._motion_state == STATE_OFF
 
-    def test_handle_state_change_door_opening(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("entity_type", "new_state", "expected_method"),
+        [
+            ("binary_sensor.door1", STATE_ON, "_process_door_state"),
+            ("binary_sensor.motion1", STATE_ON, "_process_motion_state"),
+        ],
+    )
+    def test_handle_state_change(
+        self,
+        mock_hass: Mock,
+        wasp_coordinator: Mock,
+        wasp_config_entry: Mock,
+        entity_type: str,
+        new_state: str,
+        expected_method: str,
     ) -> None:
-        """Test handling door opening state change."""
+        """Test handling state changes for different entity types."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
-        # Set up initial state - occupied
-        entity._attr_is_on = True
+        # Set up initial state - occupied for door test
+        if entity_type == "binary_sensor.door1":
+            entity._attr_is_on = True
 
-        # Mock event for door opening
+        # Mock event
         mock_event = Mock()
         mock_event.data = {
-            "entity_id": "binary_sensor.door1",
-            "new_state": Mock(state=STATE_ON),
+            "entity_id": entity_type,
+            "new_state": Mock(state=new_state),
             "old_state": Mock(state=STATE_OFF),
         }
 
-        with patch.object(entity, "_process_door_state") as mock_process:
+        with patch.object(entity, expected_method) as mock_process:
             entity._handle_state_change(mock_event)
-            mock_process.assert_called_once_with("binary_sensor.door1", STATE_ON)
+            mock_process.assert_called_once_with(entity_type, new_state)
 
-    def test_handle_state_change_motion_detected(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("initial_occupied", "door_state", "expected_state"),
+        [
+            (True, STATE_ON, STATE_OFF),  # Door opens when occupied -> unoccupied
+            (False, STATE_OFF, STATE_ON),  # Door closes with motion -> occupied
+        ],
+    )
+    def test_process_door_state_scenarios(
+        self,
+        mock_hass: Mock,
+        wasp_coordinator: Mock,
+        wasp_config_entry: Mock,
+        initial_occupied: bool,
+        door_state: str,
+        expected_state: str,
     ) -> None:
-        """Test handling motion detection state change."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        """Test processing door state changes in different scenarios."""
+        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
 
-        # Mock event for motion detection
-        mock_event = Mock()
-        mock_event.data = {
-            "entity_id": "binary_sensor.motion1",
-            "new_state": Mock(state=STATE_ON),
-            "old_state": Mock(state=STATE_OFF),
-        }
+        # Set up initial state
+        entity._attr_is_on = initial_occupied
+        entity._state = STATE_ON if initial_occupied else STATE_OFF
+        entity._door_state = STATE_OFF if initial_occupied else STATE_ON
 
-        with patch.object(entity, "_process_motion_state") as mock_process:
-            entity._handle_state_change(mock_event)
-            mock_process.assert_called_once_with("binary_sensor.motion1", STATE_ON)
-
-    def test_process_door_state_opening_when_occupied(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test processing door opening when currently occupied."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set entity_id to avoid NoEntitySpecifiedError
-        entity.entity_id = "binary_sensor.test_wasp_in_box"
-
-        # Set up initial state - occupied with door closed
-        entity._attr_is_on = True
-        entity._state = STATE_ON
-        entity._door_state = STATE_OFF  # Door was closed
+        # For the door closing scenario, add recent motion
+        if not initial_occupied:
+            entity._motion_state = STATE_ON
+            entity._last_motion_time = dt_util.utcnow() - timedelta(seconds=30)
 
         # Mock async_write_ha_state to avoid entity registration issues
         with (
             patch.object(entity, "async_write_ha_state"),
             patch.object(entity, "_set_state") as mock_set_state,
         ):
-            # Door opens (STATE_ON) while occupied
-            entity._process_door_state("binary_sensor.door1", STATE_ON)
-
-            # Should transition to unoccupied
-            mock_set_state.assert_called_once_with(STATE_OFF)
-
-    def test_process_door_state_closing_with_recent_motion(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test processing door closing with recent motion."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set entity_id to avoid NoEntitySpecifiedError
-        entity.entity_id = "binary_sensor.test_wasp_in_box"
-
-        # Set up initial state - unoccupied with motion detected
-        entity._attr_is_on = False
-        entity._state = STATE_OFF
-        entity._motion_state = STATE_ON  # Motion is active
-        entity._last_motion_time = dt_util.utcnow() - timedelta(
-            seconds=30
-        )  # Recent motion
-
-        # Mock async_write_ha_state to avoid entity registration issues
-        with (
-            patch.object(entity, "async_write_ha_state"),
-            patch.object(entity, "_set_state") as mock_set_state,
-        ):
-            # Door closes (STATE_OFF) with motion detected
-            entity._process_door_state("binary_sensor.door1", STATE_OFF)
-
-            # Should transition to occupied
-            mock_set_state.assert_called_once_with(STATE_ON)
+            entity._process_door_state("binary_sensor.door1", door_state)
+            mock_set_state.assert_called_once_with(expected_state)
 
     def test_process_motion_state_detected(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test processing motion detection."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set entity_id to avoid NoEntitySpecifiedError
-        entity.entity_id = "binary_sensor.test_wasp_in_box"
+        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
 
         # Mock async_write_ha_state to avoid entity registration issues
         with patch.object(entity, "async_write_ha_state"):
@@ -387,106 +377,83 @@ class TestWaspInBoxSensor:
         assert entity._motion_state == STATE_ON
         assert entity._last_motion_time is not None
 
-    def test_set_state_to_occupied(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("new_state", "expected_actions"),
+        [
+            (STATE_ON, ["start_timer", "write_state"]),
+            (STATE_OFF, ["cancel_timer", "write_state"]),
+        ],
+    )
+    def test_set_state_scenarios(
+        self,
+        mock_hass: Mock,
+        wasp_coordinator: Mock,
+        wasp_config_entry: Mock,
+        new_state: str,
+        expected_actions: list[str],
     ) -> None:
-        """Test setting state to occupied."""
+        """Test setting state to occupied and unoccupied."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+
+        # Set up initial state for unoccupied test
+        if new_state == STATE_OFF:
+            entity._attr_is_on = True
+            entity._last_occupied_time = dt_util.utcnow()
+            entity._remove_timer = Mock()
 
         with (
             patch.object(entity, "_start_max_duration_timer") as mock_start_timer,
+            patch.object(entity, "_cancel_max_duration_timer") as mock_cancel_timer,
             patch.object(entity, "async_write_ha_state") as mock_write_state,
         ):
-            entity._set_state(STATE_ON)
+            entity._set_state(new_state)
 
-            assert entity._attr_is_on is True
-            assert entity._last_occupied_time is not None
-            mock_start_timer.assert_called_once()
-            mock_write_state.assert_called_once()
+            # Check state was set correctly
+            assert entity._attr_is_on is (new_state == STATE_ON)
 
-    def test_set_state_to_unoccupied(
+            # Check expected actions were called
+            if "start_timer" in expected_actions:
+                mock_start_timer.assert_called_once()
+                assert entity._last_occupied_time is not None
+            if "cancel_timer" in expected_actions:
+                mock_cancel_timer.assert_called_once()
+            if "write_state" in expected_actions:
+                mock_write_state.assert_called_once()
+
+    def test_timer_management(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
-        """Test setting state to unoccupied."""
+        """Test timer start, cancel, and timeout handling."""
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
-        # Set up occupied state
-        entity._attr_is_on = True
-        entity._last_occupied_time = dt_util.utcnow()
-        entity._remove_timer = Mock()
-
-        with (
-            patch.object(entity, "async_write_ha_state") as mock_write_state,
-            patch.object(entity, "_cancel_max_duration_timer") as mock_cancel,
-        ):
-            entity._set_state(STATE_OFF)
-
-            assert entity._attr_is_on is False
-            # The implementation doesn't clear _last_occupied_time in _set_state
-            # It only clears it when the state actually changes to OFF
-            mock_cancel.assert_called_once()
-            mock_write_state.assert_called_once()
-
-    def test_start_max_duration_timer(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test starting max duration timer."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set up the entity with max duration enabled
-        entity._max_duration = 3600  # 1 hour
+        # Test starting timer
+        entity._max_duration = 3600
         entity._last_occupied_time = dt_util.utcnow()
 
-        # Mock the async_track_point_in_time function directly
         with patch(
             "custom_components.area_occupancy.binary_sensor.async_track_point_in_time"
         ) as mock_track:
             entity._start_max_duration_timer()
-
             mock_track.assert_called_once()
             assert entity._remove_timer is not None
 
-    def test_cancel_max_duration_timer(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test canceling max duration timer."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set up timer - ensure it's a Mock object
+        # Test canceling timer
         timer_mock = Mock()
         entity._remove_timer = timer_mock
-
         entity._cancel_max_duration_timer()
-
         timer_mock.assert_called_once()
         assert entity._remove_timer is None
 
-    def test_handle_max_duration_timeout(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test handling max duration timeout."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
+        # Test timeout handling
+        entity._state = STATE_ON
         with patch.object(entity, "_reset_after_max_duration") as mock_reset:
             entity._handle_max_duration_timeout(dt_util.utcnow())
-
             mock_reset.assert_called_once()
-            # The timer should be cleared after timeout
             assert entity._remove_timer is None
 
-    def test_reset_after_max_duration(
-        self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
-    ) -> None:
-        """Test resetting after max duration timeout."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set up occupied state
-        entity._state = STATE_ON
-
-        # Mock the _set_state method since the actual implementation calls it
+        # Test reset after timeout
         with patch.object(entity, "_set_state") as mock_set_state:
             entity._reset_after_max_duration()
-
             mock_set_state.assert_called_once_with(STATE_OFF)
 
 
@@ -502,37 +469,36 @@ class TestAsyncSetupEntry:
         mock_config_entry.runtime_data.config.wasp_in_box.enabled = True
         return mock_config_entry
 
-    async def test_async_setup_entry_with_wasp_enabled(
-        self, mock_hass: Mock, setup_config_entry: Mock
+    @pytest.mark.parametrize(
+        ("wasp_enabled", "expected_entity_count", "expected_types"),
+        [
+            (True, 2, [Occupancy, WaspInBoxSensor]),
+            (False, 1, [Occupancy]),
+        ],
+    )
+    async def test_async_setup_entry(
+        self,
+        mock_hass: Mock,
+        setup_config_entry: Mock,
+        wasp_enabled: bool,
+        expected_entity_count: int,
+        expected_types: list,
     ) -> None:
-        """Test setup entry with wasp enabled."""
+        """Test setup entry with wasp enabled and disabled."""
+        # Configure wasp setting
+        setup_config_entry.runtime_data.config.wasp_in_box.enabled = wasp_enabled
+
         mock_async_add_entities = Mock()
 
         await async_setup_entry(mock_hass, setup_config_entry, mock_async_add_entities)
 
-        # Should add both occupancy and wasp entities
+        # Should add expected entities
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
-        assert len(entities) == 2
-        assert isinstance(entities[0], Occupancy)
-        assert isinstance(entities[1], WaspInBoxSensor)
+        assert len(entities) == expected_entity_count
 
-    async def test_async_setup_entry_with_wasp_disabled(
-        self, mock_hass: Mock, setup_config_entry: Mock
-    ) -> None:
-        """Test setup entry with wasp disabled."""
-        # Disable wasp
-        setup_config_entry.runtime_data.config.wasp_in_box.enabled = False
-
-        mock_async_add_entities = Mock()
-
-        await async_setup_entry(mock_hass, setup_config_entry, mock_async_add_entities)
-
-        # Should add only occupancy entity
-        mock_async_add_entities.assert_called_once()
-        entities = mock_async_add_entities.call_args[0][0]
-        assert len(entities) == 1
-        assert isinstance(entities[0], Occupancy)
+        for i, expected_type in enumerate(expected_types):
+            assert isinstance(entities[i], expected_type)
 
 
 class TestWaspInBoxIntegration:
@@ -543,10 +509,7 @@ class TestWaspInBoxIntegration:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> WaspInBoxSensor:
         """Create a comprehensive wasp sensor for testing."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
-
-        # Set entity_id to avoid NoEntitySpecifiedError
-        entity.entity_id = "binary_sensor.test_wasp_in_box"
+        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
 
         # Initialize with known state
         entity._door_state = STATE_OFF
@@ -554,36 +517,6 @@ class TestWaspInBoxIntegration:
         entity._attr_is_on = False
 
         return entity
-
-    @pytest.fixture
-    def wasp_coordinator(self, mock_coordinator: Mock) -> Mock:
-        """Create a coordinator with wasp-specific configuration."""
-        # Customize the coordinator for wasp tests
-        mock_coordinator.config.wasp_in_box = Mock()
-        mock_coordinator.config.wasp_in_box.enabled = True
-        mock_coordinator.config.wasp_in_box.motion_timeout = 60
-        mock_coordinator.config.wasp_in_box.max_duration = 3600
-        mock_coordinator.config.wasp_in_box.weight = 0.85
-        mock_coordinator.config.sensors = Mock()
-        mock_coordinator.config.sensors.doors = ["binary_sensor.door1"]
-        mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-
-        # Add missing entities attribute with AsyncMock
-        mock_coordinator.entities = Mock()
-        mock_coordinator.entities.async_initialize = AsyncMock()
-
-        return mock_coordinator
-
-    @pytest.fixture
-    def wasp_config_entry(self, mock_config_entry: Mock) -> Mock:
-        """Create a config entry with wasp-specific data."""
-        mock_config_entry.data.update(
-            {
-                "door_sensors": ["binary_sensor.door1"],
-                "motion_sensors": ["binary_sensor.motion1"],
-            }
-        )
-        return mock_config_entry
 
     def test_complete_wasp_occupancy_cycle(
         self, comprehensive_wasp_sensor: WaspInBoxSensor
@@ -612,8 +545,6 @@ class TestWaspInBoxIntegration:
                 entity._process_door_state("binary_sensor.door1", STATE_ON)
 
             assert entity._attr_is_on is False
-            # The implementation doesn't clear _last_occupied_time immediately
-            # It's cleared when the state actually changes to OFF
 
     def test_wasp_timeout_scenarios(
         self, comprehensive_wasp_sensor: WaspInBoxSensor
@@ -660,9 +591,9 @@ class TestWaspInBoxIntegration:
         attributes = entity.extra_state_attributes
 
         # Verify all necessary state is included
-        assert "last_occupied_time" in attributes
-        assert "door_state" in attributes
-        assert "motion_state" in attributes
+        expected_attrs = ["last_occupied_time", "door_state", "motion_state"]
+        for attr in expected_attrs:
+            assert attr in attributes
         assert attributes["door_state"] == STATE_OFF
         assert attributes["motion_state"] == STATE_ON
 

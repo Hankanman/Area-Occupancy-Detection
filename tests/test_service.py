@@ -19,6 +19,30 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
+# Helper functions to reduce code duplication
+def _setup_coordinator_test(
+    mock_hass: Mock,
+    mock_config_entry: Mock,
+    mock_coordinator: Mock,
+    entry_id: str = "test_entry_id",
+) -> None:
+    """Set up common coordinator test configuration."""
+    mock_config_entry.runtime_data = mock_coordinator
+    mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+
+def _create_service_call(entry_id: str = "test_entry_id", **kwargs) -> Mock:
+    """Create a mock service call with common data."""
+    mock_call = Mock(spec=ServiceCall)
+    mock_call.data = {"entry_id": entry_id, **kwargs}
+    return mock_call
+
+
+def _create_missing_entry_service_call() -> Mock:
+    """Create a service call with missing entry_id."""
+    return _create_service_call(entry_id=None)
+
+
 class TestGetCoordinator:
     """Test _get_coordinator helper function."""
 
@@ -26,17 +50,13 @@ class TestGetCoordinator:
         self, mock_hass: Mock, mock_config_entry: Mock, mock_coordinator: Mock
     ) -> None:
         """Test successful coordinator retrieval."""
-        mock_config_entry.runtime_data = mock_coordinator
-
-        # Mock hass.config_entries.async_entries to return list with our config entry
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
 
         result = _get_coordinator(mock_hass, "test_entry_id")
         assert result == mock_coordinator
 
     def test_get_coordinator_missing_domain(self, mock_hass: Mock) -> None:
         """Test coordinator retrieval with missing domain."""
-        # Mock async_entries to return empty list
         mock_hass.config_entries.async_entries.return_value = []
 
         with pytest.raises(
@@ -48,7 +68,6 @@ class TestGetCoordinator:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test coordinator retrieval with missing entry."""
-        # Different entry_id than what we're looking for
         mock_config_entry.entry_id = "different_entry_id"
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
 
@@ -65,13 +84,11 @@ class TestRunAnalysis:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test successful analysis run."""
-        # Mock coordinator properties
+        # Set up coordinator with test data
         mock_coordinator.config.name = "Test Area"
-        # Use PropertyMock for entity_ids since it's a property
         type(mock_coordinator.config).entity_ids = PropertyMock(
             return_value=["binary_sensor.motion1", "binary_sensor.motion2"]
         )
@@ -82,50 +99,44 @@ class TestRunAnalysis:
             "binary_sensor.motion2",
         ]
 
-        # Mock entities
+        # Create test entity
         mock_entity = Mock()
         mock_entity.type.input_type.value = "motion"
         mock_entity.type.weight = 0.85
         mock_entity.prob_given_true = 0.8
         mock_entity.prob_given_false = 0.1
-
         mock_coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
-
         mock_coordinator.db.import_stats = {"binary_sensor.motion1": 100}
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _run_analysis(mock_hass, mock_service_call)
 
-        # Check the actual return structure instead of assuming 'success' key
         assert isinstance(result, dict)
-        # The service may return different structure, just verify it's a valid response
         assert len(result) > 0
 
     async def test_run_analysis_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test analysis run with missing entry_id."""
-        mock_call = Mock(spec=ServiceCall)
-        mock_call.data = {}
+        mock_service_call = _create_missing_entry_service_call()
 
-        # The actual service implementation will raise KeyError for missing entry_id
-        with pytest.raises(KeyError):
-            await _run_analysis(mock_hass, mock_call)
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to run analysis for None: Config entry None not found",
+        ):
+            await _run_analysis(mock_hass, mock_service_call)
 
     async def test_run_analysis_coordinator_error(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test analysis run with coordinator error."""
         mock_coordinator.run_analysis.side_effect = RuntimeError("Analysis failed")
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         with pytest.raises(
             HomeAssistantError,
@@ -141,13 +152,11 @@ class TestResetEntities:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test successful entity reset."""
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         await _reset_entities(mock_hass, mock_service_call)
 
@@ -156,12 +165,13 @@ class TestResetEntities:
 
     async def test_reset_entities_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test entity reset with missing entry_id."""
-        mock_call = Mock(spec=ServiceCall)
-        mock_call.data = {}
+        mock_service_call = _create_missing_entry_service_call()
 
-        # The actual service implementation will raise KeyError for missing entry_id
-        with pytest.raises(KeyError):
-            await _reset_entities(mock_hass, mock_call)
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to reset entities for None: Config entry None not found",
+        ):
+            await _reset_entities(mock_hass, mock_service_call)
 
 
 class TestGetEntityMetrics:
@@ -171,57 +181,51 @@ class TestGetEntityMetrics:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
         mock_active_entity: Mock,
         mock_inactive_entity: Mock,
     ) -> None:
         """Test successful entity metrics retrieval."""
-        # Use centralized entity fixtures
         mock_coordinator.entities.entities = {
             "binary_sensor.motion1": mock_active_entity,
             "binary_sensor.appliance": mock_inactive_entity,
         }
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _get_entity_metrics(mock_hass, mock_service_call)
 
-        # The service returns metrics summary, not individual entity data
         assert "metrics" in result
         metrics = result["metrics"]
         assert metrics["total_entities"] == 2
-        assert metrics["active_entities"] == 1  # mock_active_entity has evidence=True
-        assert metrics["available_entities"] == 2  # both entities are available
+        assert metrics["active_entities"] == 1
+        assert metrics["available_entities"] == 2
         assert metrics["unavailable_entities"] == 0
 
     async def test_get_entity_metrics_missing_entry_id(self, mock_hass: Mock) -> None:
         """Test entity metrics with missing entry_id."""
-        mock_call = Mock(spec=ServiceCall)
-        mock_call.data = {}
+        mock_service_call = _create_missing_entry_service_call()
 
-        # The actual service implementation will raise KeyError for missing entry_id
-        with pytest.raises(KeyError):
-            await _get_entity_metrics(mock_hass, mock_call)
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to get entity metrics for None: Config entry None not found",
+        ):
+            await _get_entity_metrics(mock_hass, mock_service_call)
 
     async def test_get_entity_metrics_coordinator_error(
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test entity metrics with coordinator error."""
-        # Create a mock that will raise an exception when len() is called on it
         mock_entities = Mock()
         mock_entities.__len__ = Mock(side_effect=Exception("Access error"))
         mock_coordinator.entities.entities = mock_entities
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         with pytest.raises(
             HomeAssistantError,
@@ -237,21 +241,18 @@ class TestGetProblematicEntities:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
         mock_unavailable_entity: Mock,
         mock_stale_entity: Mock,
     ) -> None:
         """Test successful problematic entities retrieval."""
-        # Use centralized entity fixtures that already have problematic states
         mock_coordinator.entities.entities = {
-            "binary_sensor.motion1": mock_unavailable_entity,  # available=False
-            "binary_sensor.appliance": mock_stale_entity,  # last_updated > 1 hour ago
+            "binary_sensor.motion1": mock_unavailable_entity,
+            "binary_sensor.appliance": mock_stale_entity,
         }
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _get_problematic_entities(mock_hass, mock_service_call)
 
@@ -266,21 +267,17 @@ class TestGetProblematicEntities:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
         mock_active_entity: Mock,
     ) -> None:
         """Test problematic entities with no issues."""
-        # Use active entity that has no issues - need to update its last_updated to recent
         mock_active_entity.last_updated = dt_util.utcnow() - timedelta(minutes=30)
-
         mock_coordinator.entities.entities = {
             "binary_sensor.motion1": mock_active_entity
         }
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _get_problematic_entities(mock_hass, mock_service_call)
 
@@ -293,18 +290,15 @@ class TestGetProblematicEntities:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
     ) -> None:
         """Test problematic entities with coordinator error."""
-        # Create a mock that will raise an exception when .items() is called on it
         mock_entities = Mock()
         mock_entities.items = Mock(side_effect=Exception("Access error"))
         mock_coordinator.entities.entities = mock_entities
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         with pytest.raises(
             HomeAssistantError,
@@ -320,24 +314,19 @@ class TestGetAreaStatus:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
         mock_last_updated: Mock,
     ) -> None:
         """Test successful area status retrieval."""
-        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-        mock_coordinator.probability = 0.9  # High confidence (> 0.8)
+        mock_coordinator.probability = 0.9
         mock_coordinator.occupied = True
         mock_coordinator.prior.value = 0.3
-
-        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _get_area_status(mock_hass, mock_service_call)
 
@@ -352,24 +341,19 @@ class TestGetAreaStatus:
         self,
         mock_hass: Mock,
         mock_config_entry: Mock,
-        mock_service_call: Mock,
         mock_coordinator: Mock,
         mock_last_updated: Mock,
     ) -> None:
         """Test area status with no occupancy state."""
-        # Override specific properties needed for this test
         mock_coordinator.config.name = "Test Area"
         mock_coordinator.entities.entities = {}
-        mock_coordinator.probability = None  # No probability available
+        mock_coordinator.probability = None
         mock_coordinator.occupied = False
         mock_coordinator.prior.value = 0.3
-
-        # Use centralized mock_last_updated fixture
         mock_coordinator.last_updated = mock_last_updated
 
-        mock_config_entry.runtime_data = mock_coordinator
-        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
-        mock_service_call.data = {"entry_id": "test_entry_id"}
+        _setup_coordinator_test(mock_hass, mock_config_entry, mock_coordinator)
+        mock_service_call = _create_service_call()
 
         result = await _get_area_status(mock_hass, mock_service_call)
 

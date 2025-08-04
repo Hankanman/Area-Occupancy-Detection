@@ -4,23 +4,35 @@ from unittest.mock import Mock
 
 import pytest
 
-from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.entity_type import (
+    DEFAULT_TYPES,
+    EntityType,
+    InputType,
+)
 from homeassistant.const import STATE_ON
-from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: PLC0415
 class TestInputType:
     """Test InputType enum."""
 
-    def test_input_type_values(self) -> None:
+    @pytest.mark.parametrize(
+        ("input_type", "expected_value"),
+        [
+            (InputType.MOTION, "motion"),
+            (InputType.MEDIA, "media"),
+            (InputType.APPLIANCE, "appliance"),
+            (InputType.DOOR, "door"),
+            (InputType.WINDOW, "window"),
+            (InputType.TEMPERATURE, "temperature"),
+            (InputType.HUMIDITY, "humidity"),
+            (InputType.ILLUMINANCE, "illuminance"),
+            (InputType.ENVIRONMENTAL, "environmental"),
+            (InputType.UNKNOWN, "unknown"),
+        ],
+    )
+    def test_input_type_values(self, input_type, expected_value) -> None:
         """Test that InputType has expected values."""
-        assert InputType.MOTION.value == "motion"
-        assert InputType.MEDIA.value == "media"
-        assert InputType.APPLIANCE.value == "appliance"
-        assert InputType.DOOR.value == "door"
-        assert InputType.WINDOW.value == "window"
-        assert InputType.ENVIRONMENTAL.value == "environmental"
+        assert input_type.value == expected_value
 
 
 class TestEntityType:
@@ -31,15 +43,15 @@ class TestEntityType:
         entity_type = EntityType(
             input_type=InputType.MOTION,
             weight=0.8,
-            prob_true=0.25,
-            prob_false=0.05,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
             active_states=[STATE_ON],
         )
 
         assert entity_type.input_type == InputType.MOTION
         assert entity_type.weight == 0.8
-        assert entity_type.prob_true == 0.25
-        assert entity_type.prob_false == 0.05
+        assert entity_type.prob_given_true == 0.25
+        assert entity_type.prob_given_false == 0.05
         assert entity_type.active_states == [STATE_ON]
         assert entity_type.active_range is None
 
@@ -48,8 +60,8 @@ class TestEntityType:
         entity_type = EntityType(
             input_type=InputType.ENVIRONMENTAL,
             weight=0.3,
-            prob_true=0.09,
-            prob_false=0.01,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
             active_range=(0.0, 0.2),
         )
 
@@ -57,146 +69,126 @@ class TestEntityType:
         assert entity_type.active_range == (0.0, 0.2)
         assert entity_type.active_states is None
 
-    def test_initialization_validation(self) -> None:
-        """Test that invalid values are validated during initialization."""
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=-0.1,  # Invalid
-            prob_true=1.5,  # Invalid
-            prob_false=-0.1,  # Invalid
-            active_states=[STATE_ON],
-        )
-
-        assert entity_type.weight == 0.01  # Clamped to minimum
-        assert entity_type.prob_true == 1.0  # Clamped to maximum
-        assert entity_type.prob_false == 0.001  # Clamped to minimum (0.001, not 0.0)
-
-    def test_initialization_errors(self) -> None:
+    @pytest.mark.parametrize(
+        ("test_case", "params", "expected_error"),
+        [
+            (
+                "both_active_states_and_range",
+                {
+                    "input_type": InputType.MOTION,
+                    "weight": 0.8,
+                    "prob_given_true": 0.25,
+                    "prob_given_false": 0.05,
+                    "active_states": [STATE_ON],
+                    "active_range": (0.0, 1.0),
+                },
+                "Cannot provide both active_states and active_range",
+            ),
+            (
+                "neither_active_states_nor_range",
+                {
+                    "input_type": InputType.MOTION,
+                    "weight": 0.8,
+                    "prob_given_true": 0.25,
+                    "prob_given_false": 0.05,
+                },
+                "Either active_states or active_range must be provided",
+            ),
+        ],
+    )
+    def test_initialization_errors(self, test_case, params, expected_error) -> None:
         """Test initialization errors for invalid configurations."""
-        # Both active_states and active_range provided
-        with pytest.raises(
-            ValueError, match="Cannot provide both active_states and active_range"
-        ):
-            EntityType(
-                input_type=InputType.MOTION,
-                weight=0.8,
-                prob_true=0.25,
-                prob_false=0.05,
-                active_states=[STATE_ON],
-                active_range=(0.0, 1.0),
-            )
+        with pytest.raises(ValueError, match=expected_error):
+            EntityType(**params)
 
-        # Neither active_states nor active_range provided
-        with pytest.raises(
-            ValueError, match="Either active_states or active_range must be provided"
-        ):
-            EntityType(
-                input_type=InputType.MOTION,
-                weight=0.8,
-                prob_true=0.25,
-                prob_false=0.05,
-            )
+    @pytest.mark.parametrize(
+        ("input_type", "expected_config"),
+        [(input_type, config) for input_type, config in DEFAULT_TYPES.items()],
+    )
+    def test_create_classmethod_defaults(self, input_type, expected_config) -> None:
+        """Test the create classmethod for different input types with default values."""
+        entity_type = EntityType.create(input_type)
 
-    def test_has_evidence_with_states(self) -> None:
-        """Test Entity evidence detection with active_states."""
-        from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity
+        assert entity_type.input_type == input_type
+        assert entity_type.weight == expected_config["weight"]
+        assert entity_type.prob_given_true == expected_config["prob_given_true"]
+        assert entity_type.prob_given_false == expected_config["prob_given_false"]
+        assert entity_type.active_states == expected_config["active_states"]
+        assert entity_type.active_range == expected_config["active_range"]
 
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=0.8,
-            prob_true=0.25,
-            prob_false=0.05,
-            active_states=[STATE_ON],
-        )
+    def test_create_classmethod_with_config_override(self) -> None:
+        """Test the create classmethod with configuration overrides."""
+        mock_config = Mock()
+        mock_config.weights = Mock()
+        mock_config.weights.motion = 0.9
+        mock_config.sensor_states = Mock()
+        mock_config.sensor_states.motion = ["on", "detected"]
+        # Ensure no unexpected attributes exist
+        mock_config.motion_active_range = None
 
-        # Create mock coordinator with proper state mocking
-        mock_coordinator = Mock()
-        mock_state = Mock()
-        mock_state.state = STATE_ON
-        mock_state.attributes = {"friendly_name": "Test Sensor"}
-        mock_coordinator.hass.states.get.return_value = mock_state
+        entity_type = EntityType.create(InputType.MOTION, mock_config)
 
-        # Create a test entity
-        test_entity = Entity(
-            entity_id="binary_sensor.test",
-            type=entity_type,
-            prob_given_true=0.25,
-            prob_given_false=0.05,
-            decay=Decay(),
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=None,
-        )
+        assert entity_type.input_type == InputType.MOTION
+        assert entity_type.weight == 0.9  # Overridden
+        assert entity_type.active_states == ["on", "detected"]  # Overridden
+        assert entity_type.active_range is None
 
-        # Should have evidence when state is "on"
-        assert test_entity.evidence
+    def test_create_classmethod_with_active_range_override(self) -> None:
+        """Test the create classmethod with active range override."""
+        mock_config = Mock()
+        mock_config.weights = Mock()
+        mock_config.weights.environmental = 0.2  # Override weight
+        # Explicitly set sensor_states to None to avoid Mock creating unexpected attributes
+        mock_config.sensor_states = None
+        mock_config.environmental_active_range = (0.1, 0.3)  # Override range
 
-        # Change state to "off" and test again
-        mock_state.state = "off"
-        assert not test_entity.evidence
+        entity_type = EntityType.create(InputType.ENVIRONMENTAL, mock_config)
 
-    def test_has_evidence_with_range(self) -> None:
-        """Test Entity evidence detection with active_range."""
-        from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity
+        assert entity_type.input_type == InputType.ENVIRONMENTAL
+        assert entity_type.weight == 0.2  # Overridden
+        assert entity_type.active_states is None  # Cleared when range is set
+        assert entity_type.active_range == (0.1, 0.3)  # Overridden
 
-        entity_type = EntityType(
-            input_type=InputType.ENVIRONMENTAL,
-            weight=0.3,
-            prob_true=0.09,
-            prob_false=0.01,
-            active_range=(0.0, 1.0),
-        )
+    @pytest.mark.parametrize(
+        ("test_case", "config_setup", "expected_error"),
+        [
+            (
+                "invalid_weight",
+                lambda: Mock(
+                    weights=Mock(motion=1.5),  # Invalid weight > 1
+                ),
+                "Invalid weight for motion: 1.5",
+            ),
+            (
+                "invalid_states",
+                lambda: Mock(
+                    weights=Mock(motion=0.8),  # Valid weight
+                    sensor_states=Mock(motion="invalid"),  # Should be list
+                ),
+                "Invalid active states for motion: invalid",
+            ),
+            (
+                "invalid_active_range",
+                lambda: Mock(
+                    weights=Mock(environmental=0.1),  # Valid weight
+                    sensor_states=None,  # Explicitly set to None
+                    environmental_active_range="invalid",  # Should be tuple
+                ),
+                "Invalid active range for environmental: invalid",
+            ),
+        ],
+    )
+    def test_create_classmethod_config_errors(
+        self, test_case, config_setup, expected_error
+    ) -> None:
+        """Test the create classmethod with invalid configuration."""
+        mock_config = config_setup()
 
-        # Create mock coordinator with proper state mocking
-        mock_coordinator = Mock()
-        mock_state = Mock()
-        mock_state.state = "0.5"  # Within range
-        mock_state.attributes = {"friendly_name": "Test Sensor"}
-        mock_coordinator.hass.states.get.return_value = mock_state
+        # Use the appropriate input type based on the test case
+        if test_case == "invalid_active_range":
+            input_type = InputType.ENVIRONMENTAL
+        else:
+            input_type = InputType.MOTION
 
-        # Create a test entity
-        test_entity = Entity(
-            entity_id="sensor.test",
-            type=entity_type,
-            prob_given_true=0.09,
-            prob_given_false=0.01,
-            decay=Decay(),
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=None,
-        )
-
-        # Should have evidence when value is within range (0.0, 1.0)
-        assert test_entity.evidence
-
-        # Change state to outside range
-        mock_state.state = "2.0"
-        assert not test_entity.evidence
-
-        # Change state to invalid value
-        mock_state.state = "invalid"
-        assert not test_entity.evidence
-
-    def test_to_dict(self) -> None:
-        """Test converting EntityType to dictionary."""
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=0.8,
-            prob_true=0.25,
-            prob_false=0.05,
-            active_states=[STATE_ON],
-        )
-
-        result = entity_type.to_dict()
-        expected = {
-            "input_type": "motion",
-            "weight": 0.8,
-            "prob_true": 0.25,
-            "prob_false": 0.05,
-            "active_states": [STATE_ON],
-            "active_range": None,
-        }
-
-        assert result == expected
+        with pytest.raises(ValueError, match=expected_error):
+            EntityType.create(input_type, mock_config)

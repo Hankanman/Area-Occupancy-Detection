@@ -1,5 +1,7 @@
 """Tests for state_mapping module."""
 
+import pytest
+
 from custom_components.area_occupancy.state_mapping import (
     StateOption,
     get_default_state,
@@ -7,6 +9,10 @@ from custom_components.area_occupancy.state_mapping import (
     get_state_icon,
     get_state_options,
 )
+
+# Constants for test data
+KNOWN_PLATFORMS = ["door", "window", "media", "appliance"]
+UNKNOWN_PLATFORM = "unknown_platform"
 
 
 class TestStateOption:
@@ -32,9 +38,10 @@ class TestStateOption:
 class TestGetStateOptions:
     """Test get_state_options function."""
 
-    def test_door_states(self) -> None:
-        """Test getting door state options."""
-        result = get_state_options("door")
+    @pytest.mark.parametrize("platform", KNOWN_PLATFORMS)
+    def test_known_platforms(self, platform: str) -> None:
+        """Test getting state options for known platforms."""
+        result = get_state_options(platform)
 
         assert "options" in result
         assert "default" in result
@@ -46,36 +53,13 @@ class TestGetStateOptions:
             assert hasattr(option, "value")
             assert hasattr(option, "name")
 
-    def test_window_states(self) -> None:
-        """Test getting window state options."""
-        result = get_state_options("window")
-
-        assert "options" in result
-        assert "default" in result
-        assert isinstance(result["options"], list)
-        assert len(result["options"]) > 0
-
-    def test_media_states(self) -> None:
-        """Test getting media state options."""
-        result = get_state_options("media")
-
-        assert "options" in result
-        assert "default" in result
-        assert isinstance(result["options"], list)
-        assert len(result["options"]) > 0
-
-    def test_appliance_states(self) -> None:
-        """Test getting appliance state options."""
-        result = get_state_options("appliance")
-
-        assert "options" in result
-        assert "default" in result
-        assert isinstance(result["options"], list)
-        assert len(result["options"]) > 0
+        # Verify default is in options
+        option_values = [opt.value for opt in result["options"]]
+        assert result["default"] in option_values
 
     def test_unknown_platform(self) -> None:
         """Test getting state options for unknown platform."""
-        result = get_state_options("unknown_platform")
+        result = get_state_options(UNKNOWN_PLATFORM)
 
         # Should return motion states as default fallback
         assert "options" in result
@@ -83,54 +67,41 @@ class TestGetStateOptions:
         assert len(result["options"]) == 2  # on/off states
         assert result["default"] == "on"
 
-    def test_all_known_platforms(self) -> None:
-        """Test that all known platforms return valid state options."""
-        known_platforms = ["door", "window", "media", "appliance"]
-
-        for platform in known_platforms:
-            result = get_state_options(platform)
-            assert len(result["options"]) > 0
-            assert result["default"] != ""
-
-            # Verify default is in options
-            option_values = [opt.value for opt in result["options"]]
-            assert result["default"] in option_values
-
 
 class TestGetFriendlyStateName:
     """Test get_friendly_state_name function."""
 
-    def test_door_state_names(self) -> None:
-        """Test getting friendly names for door states."""
-        # Test known states
-        name = get_friendly_state_name("door", "closed")
+    @pytest.mark.parametrize(
+        ("platform", "state"),
+        [
+            ("door", "closed"),
+            ("media", "playing"),
+        ],
+    )
+    def test_known_states(self, platform: str, state: str) -> None:
+        """Test getting friendly names for known states."""
+        name = get_friendly_state_name(platform, state)
         assert isinstance(name, str)
         assert len(name) > 0
 
-    def test_media_state_names(self) -> None:
-        """Test getting friendly names for media states."""
-        name = get_friendly_state_name("media", "playing")
-        assert isinstance(name, str)
-        assert len(name) > 0
-
-    def test_unknown_state(self) -> None:
-        """Test getting friendly name for unknown state."""
-        name = get_friendly_state_name("door", "unknown_state")
-        assert name == "unknown_state"  # Should return the original state
-
-    def test_unknown_platform(self) -> None:
-        """Test getting friendly name for unknown platform."""
-        name = get_friendly_state_name("unknown_platform", "some_state")
-        assert name == "some_state"  # Should return the original state
+    @pytest.mark.parametrize(
+        ("platform", "state"),
+        [
+            ("door", "unknown_state"),
+            (UNKNOWN_PLATFORM, "some_state"),
+        ],
+    )
+    def test_unknown_states_return_original(self, platform: str, state: str) -> None:
+        """Test that unknown states return the original state name."""
+        name = get_friendly_state_name(platform, state)
+        assert name == state
 
     def test_case_sensitivity(self) -> None:
         """Test that state name lookup is case sensitive."""
-        # Test that exact case matching is required
         name1 = get_friendly_state_name("door", "closed")
         name2 = get_friendly_state_name("door", "CLOSED")
 
         # If the mapping is case sensitive, these should be different
-        # (one should be the friendly name, the other the original)
         if name1 != "CLOSED":
             assert name2 == "CLOSED"
 
@@ -138,36 +109,37 @@ class TestGetFriendlyStateName:
 class TestGetStateIcon:
     """Test get_state_icon function."""
 
-    def test_door_state_icons(self) -> None:
-        """Test getting icons for door states."""
-        icon = get_state_icon("door", "closed")
+    @pytest.mark.parametrize(
+        ("platform", "state"),
+        [
+            ("door", "closed"),
+            ("media", "playing"),
+        ],
+    )
+    def test_known_states(self, platform: str, state: str) -> None:
+        """Test getting icons for known states."""
+        icon = get_state_icon(platform, state)
         # Icon might be None or a string, both are valid
         assert icon is None or isinstance(icon, str)
 
-    def test_media_state_icons(self) -> None:
-        """Test getting icons for media states."""
-        icon = get_state_icon("media", "playing")
-        assert icon is None or isinstance(icon, str)
-
-    def test_unknown_state_icon(self) -> None:
-        """Test getting icon for unknown state."""
-        icon = get_state_icon("door", "unknown_state")
-        assert icon is None
-
-    def test_unknown_platform_icon(self) -> None:
-        """Test getting icon for unknown platform."""
-        icon = get_state_icon("unknown_platform", "some_state")
+    @pytest.mark.parametrize(
+        ("platform", "state"),
+        [
+            ("door", "unknown_state"),
+            (UNKNOWN_PLATFORM, "some_state"),
+        ],
+    )
+    def test_unknown_states_return_none(self, platform: str, state: str) -> None:
+        """Test that unknown states return None for icons."""
+        icon = get_state_icon(platform, state)
         assert icon is None
 
     def test_icon_format(self) -> None:
         """Test that returned icons have correct format."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
+        for platform in KNOWN_PLATFORMS:
             options = get_state_options(platform)
             for option in options["options"]:
                 if option.icon is not None:
-                    # Icons should start with 'mdi:' typically
                     assert isinstance(option.icon, str)
                     assert len(option.icon) > 0
 
@@ -175,49 +147,22 @@ class TestGetStateIcon:
 class TestGetDefaultState:
     """Test get_default_state function."""
 
-    def test_door_default(self) -> None:
-        """Test getting default state for door."""
-        default = get_default_state("door")
+    @pytest.mark.parametrize("platform", KNOWN_PLATFORMS)
+    def test_known_platforms(self, platform: str) -> None:
+        """Test getting default state for known platforms."""
+        default = get_default_state(platform)
         assert isinstance(default, str)
         assert len(default) > 0
 
-    def test_window_default(self) -> None:
-        """Test getting default state for window."""
-        default = get_default_state("window")
-        assert isinstance(default, str)
-        assert len(default) > 0
-
-    def test_media_default(self) -> None:
-        """Test getting default state for media."""
-        default = get_default_state("media")
-        assert isinstance(default, str)
-        assert len(default) > 0
-
-    def test_appliance_default(self) -> None:
-        """Test getting default state for appliance."""
-        default = get_default_state("appliance")
-        assert isinstance(default, str)
-        assert len(default) > 0
+        # Verify consistency with get_state_options
+        options = get_state_options(platform)
+        assert default == options["default"]
+        assert default in [opt.value for opt in options["options"]]
 
     def test_unknown_platform_default(self) -> None:
         """Test getting default state for unknown platform."""
-        default = get_default_state("unknown_platform")
+        default = get_default_state(UNKNOWN_PLATFORM)
         assert default == "on"  # Should return motion default
-
-    def test_default_consistency(self) -> None:
-        """Test that default states are consistent with options."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
-            default = get_default_state(platform)
-            options = get_state_options(platform)
-
-            # Default should match the default from get_state_options
-            assert default == options["default"]
-
-            # Default should be in the list of option values
-            option_values = [opt.value for opt in options["options"]]
-            assert default in option_values
 
 
 class TestStateMapping:
@@ -225,10 +170,7 @@ class TestStateMapping:
 
     def test_mapping_completeness(self) -> None:
         """Test that all platforms have complete mappings."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
-            # Get options
+        for platform in KNOWN_PLATFORMS:
             options = get_state_options(platform)
             assert len(options["options"]) > 0
 
@@ -250,9 +192,7 @@ class TestStateMapping:
 
     def test_state_option_uniqueness(self) -> None:
         """Test that state option values are unique within each platform."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
+        for platform in KNOWN_PLATFORMS:
             options = get_state_options(platform)
             values = [opt.value for opt in options["options"]]
 
@@ -263,9 +203,7 @@ class TestStateMapping:
 
     def test_state_option_names_exist(self) -> None:
         """Test that all state options have non-empty names."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
+        for platform in KNOWN_PLATFORMS:
             options = get_state_options(platform)
 
             for option in options["options"]:
@@ -274,9 +212,7 @@ class TestStateMapping:
 
     def test_return_type_consistency(self) -> None:
         """Test that return types are consistent across functions."""
-        platforms = ["door", "window", "media", "appliance"]
-
-        for platform in platforms:
+        for platform in KNOWN_PLATFORMS:
             # get_state_options should return dict with specific structure
             options = get_state_options(platform)
             assert isinstance(options, dict)
