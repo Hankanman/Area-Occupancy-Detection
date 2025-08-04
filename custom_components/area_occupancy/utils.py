@@ -3,21 +3,13 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from datetime import datetime
+import math
 import os
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
-from homeassistant.util import dt as dt_util
-
-from .const import (
-    MAX_PROBABILITY,
-    MAX_WEIGHT,
-    MIN_PROBABILITY,
-    MIN_WEIGHT,
-    ROUNDING_PRECISION,
-)
+from .const import ROUNDING_PRECISION
 
 if TYPE_CHECKING:
     from .data.entity import Entity
@@ -67,40 +59,6 @@ class FileLock:
             self.lock_path.unlink()
 
 
-# ───────────────────────────────────────── Validation ────────────────────────
-def validate_prob(value: complex) -> float:
-    """Validate probability value, handling complex numbers."""
-    # Handle complex numbers by taking the real part
-    if isinstance(value, complex):
-        value = value.real
-
-    # Ensure it's a valid float
-    if not isinstance(value, (int, float)) or not (-1e10 < value < 1e10):
-        return 0.5
-
-    return max(0.001, min(float(value), 1.0))
-
-
-def validate_prior(value: float) -> float:
-    """Validate prior probability value."""
-    return max(0.000001, min(value, 0.999999))
-
-
-def validate_datetime(value: datetime | None) -> datetime:
-    """Validate datetime value."""
-    return value if isinstance(value, datetime) else dt_util.utcnow()
-
-
-def validate_weight(value: float) -> float:
-    """Validate weight value."""
-    return max(MIN_WEIGHT, min(value, MAX_WEIGHT))
-
-
-def validate_decay_factor(value: float) -> float:
-    """Validate decay factor value."""
-    return max(MIN_PROBABILITY, min(value, MAX_PROBABILITY))
-
-
 def format_float(value: float) -> float:
     """Format float value."""
     return round(float(value), ROUNDING_PRECISION)
@@ -111,176 +69,66 @@ def format_percentage(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
-EPS = 1e-12
-
-
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def bayesian_probability(
-    *,  # keyword-only → prevents accidental positional mix-ups
-    prior: float,
-    prob_given_true: float,
-    prob_given_false: float,
-    evidence: bool | None,
-    decay_factor: float,  # Remove weight parameter
-) -> float:
-    """Simplified Bayesian update - weight is already applied in likelihood values.
+    entities: dict[str, Entity], area_prior: float = 0.5, time_prior: float = 0.5
+):
+    """Compute posterior probability of occupancy given current features, area prior, and time prior.
 
     Args:
-        prior: Prior probability
-        prob_given_true: Weighted probability of evidence given true
-        prob_given_false: Weighted probability of evidence given false
-        evidence: Evidence
-        decay_factor: Decay factor
-
-    Returns:
-        Posterior probability
+        entities: Dict mapping entity_id to Entity objects containing evidence and likelihood
+        area_prior: Base prior probability of occupancy for this area (default: 0.5)
+        time_prior: Time-based modifier for the prior (default: 0.5)
 
     """
-    if evidence is None or decay_factor == 0:
-        return prior
+    # Clamp priors to avoid log(0) or log(1)
+    area_prior = max(0.001, min(0.999, area_prior))
+    time_prior = max(0.001, min(0.999, time_prior))
 
-    # Validate inputs first
-    prob_given_true = max(0.001, min(prob_given_true, 0.999))
-    prob_given_false = max(0.001, min(prob_given_false, 0.999))
-    prior = max(0.001, min(prior, 0.999))
+    # Combine area prior with time prior modifier
+    # Use time_prior as a multiplier on the area_prior
+    combined_prior = area_prior * time_prior / 0.5  # Normalize by default time prior
 
-    # Calculate Bayes factor
-    bayes_factor = (
-        (prob_given_true + EPS) / (prob_given_false + EPS)
-        if evidence
-        else (1 - prob_given_true + EPS) / (1 - prob_given_false + EPS)
-    )
+    # Clamp combined prior
+    combined_prior = max(0.001, min(0.999, combined_prior))
 
-    # Ensure bayes_factor is positive to avoid complex numbers
-    bayes_factor = max(EPS, bayes_factor)
+    # log-space for numerical stability
+    log_true = math.log(combined_prior)
+    log_false = math.log(1 - combined_prior)
 
-    # Apply only decay factor (weight already applied in likelihood)
-    if decay_factor != 1.0:
-        bayes_factor = bayes_factor**decay_factor
+    for entity in entities.values():
+        value = entity.evidence
+        decay_factor = entity.decay.decay_factor
+        is_decaying = entity.decay.is_decaying
 
-    # Calculate posterior odds
-    odds = prior / (1.0 - prior + EPS)
-    posterior_odds = odds * bayes_factor
+        # Determine effective evidence: True if evidence is True OR if decaying
+        effective_evidence = value or is_decaying
 
-    # Return posterior probability
-    return posterior_odds / (1.0 + posterior_odds)
+        if effective_evidence:
+            # Evidence is present (either current or decaying) - use likelihoods with decay applied
+            p_t = entity.prob_given_true
+            p_f = entity.prob_given_false
 
+            # Apply decay factor to reduce the strength of the evidence
+            if is_decaying and decay_factor < 1.0:
+                # When decaying, interpolate between neutral (0.5) and full evidence based on decay factor
+                neutral_prob = 0.5
+                p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
+                p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
+        else:
+            # No evidence present - use neutral probabilities
+            p_t = 0.5
+            p_f = 0.5
 
-# ─────────────────────────────── Area-level fusion ───────────────────────────
-# Not used
-def complementary_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Calculate the complementary probability.
+        # Clamp probabilities to avoid log(0) or log(1)
+        p_t = max(0.001, min(0.999, p_t))
+        p_f = max(0.001, min(0.999, p_f))
 
-    This function computes the probability that at least ONE entity provides
-    evidence for occupancy, using the complement rule:
-    P(at least one) = 1 - product(P(not each)). For each contributing entity,
-    a Bayesian update is performed assuming evidence is True (or decaying),
-    and the complement of the posterior is multiplied across all such entities.
-    Is not affected by the order of the entities.
-    Does not consider negative evidence.
+        log_true += math.log(p_t) * entity.weight
+        log_false += math.log(p_f) * entity.weight
 
-    Args:
-        entities: Dictionary of Entity objects to consider.
-        prior: The prior probability of occupancy.
-
-    Returns:
-        The combined probability that at least one contributing entity
-        indicates occupancy, after Bayesian updates and decay are applied.
-
-    """
-
-    contributing_entities = [
-        e for e in entities.values() if e.evidence or e.decay.is_decaying
-    ]
-
-    product = 1.0
-    for e in contributing_entities:
-        posterior = bayesian_probability(
-            prior=prior,
-            prob_given_true=e.prob_given_true,
-            prob_given_false=e.prob_given_false,
-            evidence=True,
-            decay_factor=e.decay_factor,
-        )
-        weighted_posterior = posterior * e.type.weight
-        product *= 1 - weighted_posterior
-
-    return 1 - product
-
-
-# Not used
-def conditional_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Return conditional probability, accounting for entity weights.
-
-    Sequentially update the prior probability by applying Bayes' theorem for each entity,
-    using the entity's evidence and likelihoods. The posterior from each step becomes the
-    prior for the next entity. Each entity's weight is used to interpolate between the
-    previous posterior and the new posterior, so that higher-weight entities have more
-    influence on the result.
-
-    Args:
-        entities: Dictionary of Entity objects to process.
-        prior: Initial prior probability.
-
-    Returns:
-        The final posterior probability after all updates.
-
-    """
-
-    posterior = prior
-    for e in entities.values():
-        # Use effective evidence: True if evidence is True OR if decaying
-        effective_evidence = e.evidence or e.decay.is_decaying
-        entity_posterior = bayesian_probability(
-            prior=posterior,
-            prob_given_true=e.prob_given_true,
-            prob_given_false=e.prob_given_false,
-            evidence=effective_evidence,
-            decay_factor=e.decay_factor,
-        )
-        # Interpolate between previous posterior and entity_posterior using entity weight
-        weight = e.type.weight
-        posterior = posterior * (1 - weight) + entity_posterior * weight
-
-    return posterior
-
-
-def conditional_sorted_probability(entities: dict[str, Entity], prior: float) -> float:
-    """Return conditional sorted probability.
-
-    Sequentially update the prior probability by applying Bayes' theorem for each entity,
-    using the entity's evidence and likelihoods. The posterior from each step becomes the
-    prior for the next entity. This method reflects the effect of each entity's evidence
-    (and decay, if applicable) on the overall probability. The entities are sorted by
-    evidence status (active first) and then by weight (highest weight first) to ensure
-    that the most relevant entities are considered first.
-
-    Args:
-        entities: Dictionary of Entity objects to process.
-        prior: Initial prior probability.
-
-    Returns:
-        The final posterior probability after all updates.
-
-    """
-
-    sorted_entities = sorted(
-        entities.values(),
-        key=lambda x: (not (x.evidence or x.decay.is_decaying), -x.type.weight),
-    )
-    posterior = prior
-    for e in sorted_entities:
-        # Use effective evidence: True if evidence is True OR if decaying
-        effective_evidence = e.evidence or e.decay.is_decaying
-        entity_posterior = bayesian_probability(
-            prior=posterior,
-            prob_given_true=e.prob_given_true,
-            prob_given_false=e.prob_given_false,
-            evidence=effective_evidence,
-            decay_factor=e.decay_factor,
-        )
-        # Interpolate between previous posterior and entity_posterior using entity weight
-        weight = e.type.weight
-        posterior = posterior * (1 - weight) + entity_posterior * weight
-
-    return posterior
+    # convert back
+    max_log = max(log_true, log_false)
+    true_prob = math.exp(log_true - max_log)
+    false_prob = math.exp(log_false - max_log)
+    return true_prob / (true_prob + false_prob)
