@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import datetime
+import os
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
@@ -22,168 +23,48 @@ if TYPE_CHECKING:
     from .data.entity import Entity
 
 
+# ─────────────────────────────────────── File Lock ───────────────────────────
 class FileLock:
-    """Simple file-based lock using context manager."""
+    """Simple file-based lock using context manager with atomic file creation."""
 
     def __init__(self, lock_path: Path, timeout: int = 60):
         """Initialize the lock."""
         self.lock_path = lock_path
         self.timeout = timeout
+        self._lock_fd = None
 
     def __enter__(self):
         """Enter the context manager."""
         start_time = time.time()
 
-        # Wait for lock to be available
-        while self.lock_path.exists():
-            if time.time() - start_time > self.timeout:
-                raise TimeoutError(f"Timeout waiting for lock: {self.lock_path}")
-            time.sleep(0.1)
-
-        # Create lock file
-        self.lock_path.touch()
-        return self
+        while True:
+            try:
+                # Atomic file creation with O_EXCL flag
+                # This ensures only one process can create the file
+                self._lock_fd = os.open(
+                    self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode=0o644
+                )
+                # Write PID to lock file for debugging
+                os.write(self._lock_fd, str(os.getpid()).encode())
+                os.fsync(self._lock_fd)  # Ensure data is written to disk
+            except FileExistsError:
+                # Lock file already exists, check timeout
+                if time.time() - start_time > self.timeout:
+                    raise TimeoutError(
+                        f"Timeout waiting for lock: {self.lock_path}"
+                    ) from None
+                time.sleep(0.1)
+            else:
+                return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context manager."""
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
         # Remove lock file
         with suppress(FileNotFoundError):
             self.lock_path.unlink()
-
-
-# ──────────────────────────────────── Time-Based Prior Utilities ──────────────────────────────────
-
-
-def ensure_timezone_aware(dt: datetime) -> datetime:
-    """Ensure datetime is timezone-aware."""
-    if dt.tzinfo is None:
-        # If naive, assume UTC (Home Assistant stores times in UTC)
-
-        return dt.replace(tzinfo=dt_util.UTC)
-    return dt
-
-
-def datetime_to_time_slot(dt: datetime) -> tuple[int, int]:
-    """Convert datetime to day of week and time slot.
-
-    Args:
-        dt: Datetime to convert
-
-    Returns:
-        Tuple of (day_of_week, time_slot) where:
-        - day_of_week: 0=Monday, 6=Sunday
-        - time_slot: 0-47 (30-minute intervals, 00:00-00:29=0, 00:30-00:59=1, etc.)
-
-    """
-    # weekday() already returns Monday=0, Tuesday=1, ..., Sunday=6
-    day_of_week = dt.weekday()
-
-    # Calculate time slot (0-47 for 30-minute intervals)
-    hour = dt.hour
-    minute = dt.minute
-    time_slot = hour * 2 + (1 if minute >= 30 else 0)
-
-    return day_of_week, time_slot
-
-
-def time_slot_to_datetime_range(
-    day_of_week: int, time_slot: int, base_date: datetime | None = None
-) -> tuple[datetime, datetime]:
-    """Convert day of week and time slot to datetime range.
-
-    Args:
-        day_of_week: 0=Monday, 6=Sunday
-        time_slot: 0-47 (30-minute intervals)
-        base_date: Base date to use (defaults to current date)
-
-    Returns:
-        Tuple of (start_datetime, end_datetime) for the 30-minute slot
-
-    """
-    if base_date is None:
-        base_date = dt_util.utcnow()
-
-    # Calculate start hour and minute
-    start_hour = time_slot // 2
-    start_minute = (time_slot % 2) * 30
-
-    # Calculate end hour and minute
-    if start_minute == 30:
-        end_hour = (start_hour + 1) % 24
-        end_minute = 0
-    else:
-        end_hour = start_hour
-        end_minute = 30
-
-    # Find the target day of week
-    current_weekday = base_date.weekday()  # weekday() already returns Monday=0
-    days_diff = (day_of_week - current_weekday) % 7
-
-    # Calculate target date
-    target_date = base_date.date() + timedelta(days=days_diff)
-
-    # Create start and end datetimes
-    start_dt = datetime.combine(
-        target_date, datetime.min.time().replace(hour=start_hour, minute=start_minute)
-    )
-    end_dt = datetime.combine(
-        target_date, datetime.min.time().replace(hour=end_hour, minute=end_minute)
-    )
-
-    return start_dt, end_dt
-
-
-def get_current_time_slot() -> tuple[int, int]:
-    """Get the current day of week and time slot.
-
-    Returns:
-        Tuple of (day_of_week, time_slot) for current time
-
-    """
-    return datetime_to_time_slot(dt_util.utcnow())
-
-
-def get_time_slot_name(day_of_week: int, time_slot: int) -> str:
-    """Get a human-readable name for a time slot.
-
-    Args:
-        day_of_week: 0=Monday, 6=Sunday
-        time_slot: 0-47 (30-minute intervals)
-
-    Returns:
-        Human-readable time slot name (e.g., "Monday 13:00-13:29")
-
-    """
-    day_names = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    ]
-    start_hour = time_slot // 2
-    start_minute = (time_slot % 2) * 30
-
-    if start_minute == 30:
-        end_hour = (start_hour + 1) % 24
-        end_minute = 0
-    else:
-        end_hour = start_hour
-        end_minute = 30
-
-    return f"{day_names[day_of_week]} {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d}"
-
-
-def get_all_time_slots() -> list[tuple[int, int]]:
-    """Get all possible day of week and time slot combinations.
-
-    Returns:
-        List of (day_of_week, time_slot) tuples for all 336 slots (7 days × 48 slots)
-
-    """
-    return [(day, slot) for day in range(7) for slot in range(48)]
 
 
 # ───────────────────────────────────────── Validation ────────────────────────
