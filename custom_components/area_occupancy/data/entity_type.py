@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from homeassistant.const import (
     STATE_OFF,
@@ -11,19 +11,6 @@ from homeassistant.const import (
     STATE_PLAYING,
     STATE_STANDBY,
 )
-
-from ..const import (
-    DEFAULT_WEIGHT_APPLIANCE,
-    DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_ENVIRONMENTAL,
-    DEFAULT_WEIGHT_MEDIA,
-    DEFAULT_WEIGHT_MOTION,
-    DEFAULT_WEIGHT_WINDOW,
-)
-from ..utils import validate_prior, validate_prob, validate_weight
-
-if TYPE_CHECKING:
-    from ..coordinator import AreaOccupancyCoordinator
 
 
 class InputType(StrEnum):
@@ -47,18 +34,13 @@ class EntityType:
 
     input_type: InputType
     weight: float
-    prob_true: float
-    prob_false: float
-    prior: float
+    prob_given_true: float
+    prob_given_false: float
     active_states: list[str] | None = None
     active_range: tuple[float, float] | None = None
 
     def __post_init__(self):
         """Post init."""
-        self.weight = validate_weight(self.weight)
-        self.prob_true = validate_prob(self.prob_true)
-        self.prob_false = validate_prob(self.prob_false)
-        self.prior = validate_prior(self.prior)
 
         # Validate that we have exactly one of active_states or active_range
         has_active_states = (
@@ -71,253 +53,125 @@ class EntityType:
         if has_active_states and has_active_range:
             raise ValueError("Cannot provide both active_states and active_range")
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert entity type to dictionary for storage."""
-        return {
-            "input_type": self.input_type.value,
-            "weight": self.weight,
-            "prob_true": self.prob_true,
-            "prob_false": self.prob_false,
-            "prior": self.prior,
-            "active_states": self.active_states,
-            "active_range": self.active_range,
+    @classmethod
+    def create(cls, input_type: InputType, config: Any = None) -> "EntityType":
+        """Create an EntityType with optional configuration overrides."""
+        # Default data for each input type
+        data = {
+            InputType.MOTION: {
+                "weight": 1,
+                "prob_given_true": 0.85,
+                "prob_given_false": 0.05,
+                "active_states": [STATE_ON],
+                "active_range": None,
+            },
+            InputType.MEDIA: {
+                "weight": 0.85,
+                "prob_given_true": 0.65,
+                "prob_given_false": 0.02,
+                "active_states": [STATE_PLAYING, STATE_PAUSED],
+                "active_range": None,
+            },
+            InputType.APPLIANCE: {
+                "weight": 0.4,
+                "prob_given_true": 0.2,
+                "prob_given_false": 0.02,
+                "active_states": [STATE_ON, STATE_STANDBY],
+                "active_range": None,
+            },
+            InputType.DOOR: {
+                "weight": 0.3,
+                "prob_given_true": 0.2,
+                "prob_given_false": 0.02,
+                "active_states": [STATE_OFF],
+                "active_range": None,
+            },
+            InputType.WINDOW: {
+                "weight": 0.2,
+                "prob_given_true": 0.2,
+                "prob_given_false": 0.02,
+                "active_states": [STATE_ON],
+                "active_range": None,
+            },
+            InputType.TEMPERATURE: {
+                "weight": 0.1,
+                "prob_given_true": 0.09,
+                "prob_given_false": 0.01,
+                "active_states": None,
+                "active_range": (18.0, 24.0),
+            },
+            InputType.HUMIDITY: {
+                "weight": 0.1,
+                "prob_given_true": 0.09,
+                "prob_given_false": 0.01,
+                "active_states": None,
+                "active_range": (70.0, 100.0),
+            },
+            InputType.ILLUMINANCE: {
+                "weight": 0.1,
+                "prob_given_true": 0.09,
+                "prob_given_false": 0.01,
+                "active_states": None,
+                "active_range": (30.00, 100000.0),
+            },
+            InputType.ENVIRONMENTAL: {
+                "weight": 0.1,
+                "prob_given_true": 0.09,
+                "prob_given_false": 0.01,
+                "active_states": None,
+                "active_range": (0.0, 0.2),
+            },
+            InputType.UNKNOWN: {
+                "weight": 0.85,
+                "prob_given_true": 0.15,
+                "prob_given_false": 0.03,
+                "active_states": [STATE_ON],
+                "active_range": None,
+            },
         }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EntityType":
-        """Create entity type from dictionary."""
-        return cls(
-            input_type=InputType(data["input_type"]),
-            weight=data["weight"],
-            prob_true=data["prob_true"],
-            prob_false=data["prob_false"],
-            prior=data["prior"],
-            active_states=data.get("active_states"),
-            active_range=data.get("active_range"),
-        )
+        params = data[input_type].copy()
 
+        # Apply configuration overrides if available
+        if config:
+            # Apply weight override
+            weights = getattr(config, "weights", None)
+            if weights:
+                weight_attr = getattr(weights, input_type.value, None)
 
-class EntityTypeManager:
-    """Entity type manager."""
+                if weight_attr is not None:
+                    if (
+                        not isinstance(weight_attr, (int, float))
+                        or not 0 <= weight_attr <= 1
+                    ):
+                        raise ValueError(
+                            f"Invalid weight for {input_type}: {weight_attr}"
+                        )
+                    params["weight"] = weight_attr
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the entity type manager."""
-        self.coordinator = coordinator
-        self.config = coordinator.config
-        self._entity_types: dict[InputType, EntityType] = {}
+            # Apply active states override
+            sensor_states = getattr(config, "sensor_states", None)
+            if sensor_states:
+                states_attr = getattr(sensor_states, input_type.value, None)
+                if states_attr is not None:
+                    if not isinstance(states_attr, list) or not all(
+                        isinstance(s, str) for s in states_attr
+                    ):
+                        raise ValueError(
+                            f"Invalid active states for {input_type}: {states_attr}"
+                        )
+                    params["active_states"] = states_attr
+                    params["active_range"] = None  # Clear range when states are set
 
-    async def async_initialize(self) -> None:
-        """Initialize the entity type manager."""
-        self._entity_types = self._build_entity_types()
+            # Apply active range override
+            range_config_attr = f"{input_type.value}_active_range"
+            range_attr = getattr(config, range_config_attr, None)
+            if range_attr is not None:
+                if not isinstance(range_attr, tuple) or len(range_attr) != 2:
+                    raise ValueError(
+                        f"Invalid active range for {input_type}: {range_attr}"
+                    )
+                params["active_range"] = range_attr
+                params["active_states"] = None  # Clear states when range is set
 
-    @property
-    def entity_types(self) -> dict[InputType, EntityType]:
-        """Get the entity types."""
-        return self._entity_types
-
-    def cleanup(self) -> None:
-        """Clean up the entity type manager."""
-        self._entity_types = {}
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert entity type manager to dictionary for storage."""
-        return {
-            "entity_types": {
-                input_type.value: entity_type.to_dict()
-                for input_type, entity_type in self._entity_types.items()
-            }
-        }
-
-    @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], coordinator: "AreaOccupancyCoordinator"
-    ) -> "EntityTypeManager":
-        """Create entity type manager from dictionary."""
-        manager = cls(coordinator=coordinator)
-        if "entity_types" not in data:
-            raise ValueError(
-                "Invalid storage format: missing 'entity_types' key in data structure. "
-                f"Available keys: {list(data.keys())}. "
-                f"This should have been caught by storage validation."
-            )
-
-        try:
-            manager._entity_types = {
-                InputType(input_type): EntityType.from_dict(entity_type)
-                for input_type, entity_type in data["entity_types"].items()
-            }
-        except Exception as err:
-            raise ValueError(f"Invalid entity type data: {err}") from err
-
-        return manager
-
-    def get_entity_type(self, input_type: InputType) -> EntityType:
-        """Get the entity type for an input type."""
-        return self._entity_types[input_type]
-
-    def _build_entity_types(self) -> dict[InputType, EntityType]:
-        """Build the entity types with configuration overrides."""
-        types: dict[InputType, EntityType] = {}
-
-        for input_type, params in _ENTITY_TYPE_DATA.items():
-            p = params.copy()
-
-            # Apply configuration overrides if available
-            if self.config:
-                # Weight from config
-                self._apply_weight(input_type, p)
-
-                # Active states from config
-                self._apply_states(input_type, p)
-
-                # Active range from config (for range-based sensors)
-                self._apply_range(input_type, p)
-
-            try:
-                types[input_type] = EntityType(input_type=input_type, **p)
-            except Exception as err:
-                raise ValueError(
-                    f"Failed to create entity type for {input_type}: {err}"
-                ) from err
-
-        return types
-
-    def _apply_weight(self, input_type: InputType, params: dict[str, Any]) -> None:
-        """Apply weight override from configuration."""
-        weights = getattr(self.config, "weights", None)
-        if not weights:
-            return
-
-        # Handle environmental sensor types - they all use the environmental weight
-        if input_type in [
-            InputType.ILLUMINANCE,
-            InputType.HUMIDITY,
-            InputType.TEMPERATURE,
-        ]:
-            weight_attr = getattr(weights, "environmental", None)
-        else:
-            weight_attr = getattr(weights, input_type.value, None)
-
-        if weight_attr is None:
-            return
-
-        if not isinstance(weight_attr, (int, float)) or not 0 <= weight_attr <= 1:
-            raise ValueError(f"Invalid weight for {input_type}: {weight_attr}")
-
-        params["weight"] = weight_attr
-
-    def _apply_states(self, input_type: InputType, params: dict[str, Any]) -> None:
-        """Apply active states override from configuration."""
-        sensor_states = getattr(self.config, "sensor_states", None)
-        if not sensor_states:
-            return
-
-        states_attr = getattr(sensor_states, input_type.value, None)
-        if states_attr is None:
-            return
-
-        if not isinstance(states_attr, list) or not all(
-            isinstance(s, str) for s in states_attr
-        ):
-            raise ValueError(f"Invalid active states for {input_type}: {states_attr}")
-
-        params["active_states"] = states_attr
-        params["active_range"] = None  # Clear range when states are set
-
-    def _apply_range(self, input_type: InputType, params: dict[str, Any]) -> None:
-        """Apply active range override from configuration."""
-        # Check for generic range override (extensible to other sensor types)
-        range_config_attr = f"{input_type.value}_active_range"
-        range_attr = getattr(self.config, range_config_attr, None)
-
-        if range_attr is not None:
-            if not isinstance(range_attr, tuple) or len(range_attr) != 2:
-                raise ValueError(f"Invalid active range for {input_type}: {range_attr}")
-
-            params["active_range"] = range_attr
-            params["active_states"] = None  # Clear states when range is set
-
-
-# Central definition of types—add or change defaults here.
-_ENTITY_TYPE_DATA: dict[InputType, dict[str, Any]] = {
-    InputType.MOTION: {
-        "weight": DEFAULT_WEIGHT_MOTION,
-        "prob_true": 0.25,
-        "prob_false": 0.05,
-        "prior": 0.35,
-        "active_states": [STATE_ON],
-        "active_range": None,
-    },
-    InputType.MEDIA: {
-        "weight": DEFAULT_WEIGHT_MEDIA,
-        "prob_true": 0.25,
-        "prob_false": 0.02,
-        "prior": 0.3,
-        "active_states": [STATE_PLAYING, STATE_PAUSED],
-        "active_range": None,
-    },
-    InputType.APPLIANCE: {
-        "weight": DEFAULT_WEIGHT_APPLIANCE,
-        "prob_true": 0.2,
-        "prob_false": 0.02,
-        "prior": 0.2356,
-        "active_states": [STATE_ON, STATE_STANDBY],
-        "active_range": None,
-    },
-    InputType.DOOR: {
-        "weight": DEFAULT_WEIGHT_DOOR,
-        "prob_true": 0.2,
-        "prob_false": 0.02,
-        "prior": 0.1356,
-        "active_states": [STATE_OFF],
-        "active_range": None,
-    },
-    InputType.WINDOW: {
-        "weight": DEFAULT_WEIGHT_WINDOW,
-        "prob_true": 0.2,
-        "prob_false": 0.02,
-        "prior": 0.1569,
-        "active_states": [STATE_ON],
-        "active_range": None,
-    },
-    InputType.TEMPERATURE: {
-        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
-        "prob_true": 0.09,
-        "prob_false": 0.01,
-        "prior": 0.0769,
-        "active_states": None,
-        "active_range": (18.0, 24.0),
-    },
-    InputType.HUMIDITY: {
-        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
-        "prob_true": 0.09,
-        "prob_false": 0.01,
-        "prior": 0.0769,
-        "active_states": None,
-        "active_range": (70.0, 100.0),
-    },
-    InputType.ILLUMINANCE: {
-        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
-        "prob_true": 0.09,
-        "prob_false": 0.01,
-        "prior": 0.0769,
-        "active_states": None,
-        "active_range": (30.00, 100000.0),
-    },
-    InputType.ENVIRONMENTAL: {
-        "weight": DEFAULT_WEIGHT_ENVIRONMENTAL,
-        "prob_true": 0.09,
-        "prob_false": 0.01,
-        "prior": 0.0769,
-        "active_states": None,
-        "active_range": (0.0, 0.2),
-    },
-    InputType.UNKNOWN: {
-        "weight": DEFAULT_WEIGHT_MOTION,  # Use motion weight as fallback
-        "prob_true": 0.15,  # Conservative default
-        "prob_false": 0.03,  # Conservative default
-        "prior": 0.2,  # Conservative default
-        "active_states": [STATE_ON],  # Default to motion-like behavior
-        "active_range": None,
-    },
-}
+        return cls(input_type=input_type, **params)
