@@ -382,12 +382,13 @@ class TestSensorIntegration:
     def test_sensor_error_handling(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test sensor error handling scenarios."""
         # Test evidence sensor error handling
-        mock_coordinator_with_sensors.entities.entities = Mock(
-            side_effect=Exception("Test error")
+        mock_coordinator_with_sensors.entities.entities = Mock()
+        mock_coordinator_with_sensors.entities.entities.__len__ = Mock(
+            side_effect=TypeError("Test error")
         )
         evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(TypeError):
             _ = evidence_sensor.native_value
 
         # Test decay sensor error handling

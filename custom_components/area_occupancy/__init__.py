@@ -94,7 +94,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # Clean up coordinator
         coordinator = entry.runtime_data
-        await coordinator.async_shutdown()
+        if coordinator is not None:
+            await coordinator.async_shutdown()
 
     return unload_ok
 
