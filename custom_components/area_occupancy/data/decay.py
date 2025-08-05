@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from homeassistant.util import dt as dt_util
+
 DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
 
 
@@ -12,7 +14,7 @@ DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
 class Decay:
     """Decay model for Area Occupancy Detection."""
 
-    decay_start: datetime = field(default_factory=datetime.now)  # when decay began
+    decay_start: datetime = field(default_factory=dt_util.utcnow)  # when decay began
     half_life: float = DEFAULT_HALF_LIFE  # purpose-based half-life
     is_decaying: bool = False
 
@@ -21,7 +23,7 @@ class Decay:
         """Freshness of last motion edge ∈[0,1]; auto-stops below 5 %."""
         if not self.is_decaying:
             return 1.0
-        age = (datetime.now() - self.decay_start).total_seconds()
+        age = (dt_util.utcnow() - self.decay_start).total_seconds()
         factor = 0.5 ** (age / self.half_life)
         if factor < 0.05:  # practical zero
             self.is_decaying = False
@@ -32,7 +34,7 @@ class Decay:
         """Begin decay **only if not already running**."""
         if not self.is_decaying:
             self.is_decaying = True
-            self.decay_start = datetime.now()
+            self.decay_start = dt_util.utcnow()
 
     def stop_decay(self) -> None:
         """Stop decay **only if already running**."""
@@ -48,7 +50,7 @@ class Decay:
     ) -> Decay:
         """Create a Decay instance with optional parameters."""
         return cls(
-            decay_start=decay_start if decay_start is not None else datetime.now(),
+            decay_start=decay_start if decay_start is not None else dt_util.utcnow(),
             half_life=half_life if half_life is not None else DEFAULT_HALF_LIFE,
             is_decaying=is_decaying if is_decaying is not None else False,
         )

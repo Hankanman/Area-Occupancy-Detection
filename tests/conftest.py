@@ -1883,9 +1883,9 @@ def mock_db_with_engine(mock_hass, db_engine, tmp_path):
 
 def _create_sample_data() -> dict[str, Any]:
     """Create sample data for testing."""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
-    now = datetime.now()
+    now = dt_util.utcnow()
     start_time = now
     end_time = start_time + timedelta(hours=1)
 

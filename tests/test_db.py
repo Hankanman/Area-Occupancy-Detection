@@ -53,8 +53,8 @@ def create_test_area_data(entry_id="test_entry_001", **overrides):
         "purpose": "living",
         "threshold": 0.5,
         "area_prior": 0.3,
-        "created_at": datetime.now(),
-        "updated_at": datetime.now(),
+        "created_at": dt_util.utcnow(),
+        "updated_at": dt_util.utcnow(),
     }
     data.update(overrides)
     return data
@@ -71,8 +71,8 @@ def create_test_entity_data(
         "weight": 0.85,
         "prob_given_true": 0.8,
         "prob_given_false": 0.1,
-        "last_updated": datetime.now(),
-        "created_at": datetime.now(),
+        "last_updated": dt_util.utcnow(),
+        "created_at": dt_util.utcnow(),
     }
     data.update(overrides)
     return data
@@ -86,7 +86,7 @@ def create_test_prior_data(entry_id="test_entry_001", **overrides):
         "time_slot": 14,  # 2 PM
         "prior_value": 0.35,
         "data_points": 10,
-        "last_updated": datetime.now(),
+        "last_updated": dt_util.utcnow(),
     }
     data.update(overrides)
     return data
@@ -94,7 +94,7 @@ def create_test_prior_data(entry_id="test_entry_001", **overrides):
 
 def create_test_interval_data(entity_id="binary_sensor.motion_1", **overrides):
     """Create standardized test interval data."""
-    start_time = datetime.now()
+    start_time = dt_util.utcnow()
     end_time = start_time + timedelta(hours=1)
     data = {
         "entity_id": entity_id,
@@ -102,7 +102,7 @@ def create_test_interval_data(entity_id="binary_sensor.motion_1", **overrides):
         "start_time": start_time,
         "end_time": end_time,
         "duration_seconds": 3600.0,
-        "created_at": datetime.now(),
+        "created_at": dt_util.utcnow(),
     }
     data.update(overrides)
     return data
@@ -300,8 +300,8 @@ class TestDatabaseOperations:
             purpose="living",
             threshold=0.5,
             area_prior=0.3,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            created_at=dt_util.utcnow(),
+            updated_at=dt_util.utcnow(),
         )
 
         db_session.add(test_area)

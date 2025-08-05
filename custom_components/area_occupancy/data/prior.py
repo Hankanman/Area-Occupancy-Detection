@@ -375,7 +375,7 @@ class Prior:
                 continue
 
         # Generate priors for all time slots
-        now = datetime.now(UTC)
+        now = dt_util.utcnow()
         db = self.db
 
         try:
