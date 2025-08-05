@@ -79,8 +79,8 @@ DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 
 # Safety bounds
-MIN_PROBABILITY: Final = 0.0
-MAX_PROBABILITY: Final = 1.0
+MIN_PROBABILITY: Final = 0.01
+MAX_PROBABILITY: Final = 0.99
 MIN_PRIOR: Final[float] = 0.1
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01

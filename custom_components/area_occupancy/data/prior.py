@@ -22,8 +22,9 @@ from sqlalchemy.exc import (
 
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_PRIOR, MIN_PRIOR
+from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
 from ..data.entity_type import InputType
+from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -31,10 +32,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 # Prior calculation constants
-PRIOR_FACTOR = 1.1
+PRIOR_FACTOR = 1.05
 DEFAULT_PRIOR = 0.5
-MIN_PROBABILITY = 0.0
-MAX_PROBABILITY = 1.0
 SIGNIFICANT_CHANGE_THRESHOLD = 0.1
 
 # Time slot constants
@@ -75,27 +74,30 @@ class Prior:
         if self.global_prior is None:
             return MIN_PRIOR
 
+        if self.time_prior is None:
+            prior = self.global_prior
+        else:
+            prior = combine_priors(self.global_prior, self.time_prior)
+
         # Validate that global_prior is within reasonable bounds before applying factor
-        if not (MIN_PROBABILITY <= self.global_prior <= MAX_PROBABILITY):
+        if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
             _LOGGER.warning(
                 "Global prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
-                self.global_prior,
+                prior,
                 MIN_PROBABILITY,
                 MAX_PROBABILITY,
             )
-            self.global_prior = max(
-                MIN_PROBABILITY, min(MAX_PROBABILITY, self.global_prior)
-            )
+            prior = clamp_probability(prior)
 
         # Apply factor and clamp to bounds
-        adjusted_prior = self.global_prior * PRIOR_FACTOR
-        result = min(max(adjusted_prior, MIN_PRIOR), MAX_PRIOR)
+        adjusted_prior = prior * PRIOR_FACTOR
+        result = clamp_probability(adjusted_prior)
 
         # Log if the factor caused a significant change
-        if abs(result - self.global_prior) > SIGNIFICANT_CHANGE_THRESHOLD:
+        if abs(result - prior) > SIGNIFICANT_CHANGE_THRESHOLD:
             _LOGGER.debug(
                 "Prior adjusted by factor: %.4f -> %.4f (factor: %.2f, bounds: [%.2f, %.2f])",
-                self.global_prior,
+                prior,
                 result,
                 PRIOR_FACTOR,
                 MIN_PRIOR,
@@ -233,7 +235,7 @@ class Prior:
         prior = total_occupied_seconds / total_seconds
 
         # Ensure result is within valid probability bounds
-        prior = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prior))
+        prior = clamp_probability(prior)
 
         _LOGGER.debug(
             "Calculated prior: %.4f (occupied: %.2fs, total: %.2fs)",
@@ -388,7 +390,7 @@ class Prior:
                         if total_slot_seconds > 0:
                             p = occupied_slot_seconds / total_slot_seconds
                             # Ensure probability is within valid bounds
-                            p = max(MIN_PROBABILITY, min(MAX_PROBABILITY, p))
+                            p = clamp_probability(p)
                         else:
                             _LOGGER.warning(
                                 "Zero total slot seconds for day=%d, slot=%d", day, slot
