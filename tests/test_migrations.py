@@ -8,11 +8,13 @@ import pytest
 
 from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
+    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
 )
@@ -167,7 +169,11 @@ class TestMigrateConfig:
         [
             (
                 {},
-                {CONF_PURPOSE: DEFAULT_PURPOSE, "decay_half_life": 120},
+                {
+                    CONF_PURPOSE: DEFAULT_PURPOSE,
+                    "decay_half_life": 120,
+                    CONF_MOTION_TIMEOUT: DEFAULT_MOTION_TIMEOUT,
+                },
             ),
             (
                 {"other_key": "value"},
@@ -175,6 +181,7 @@ class TestMigrateConfig:
                     "other_key": "value",
                     CONF_PURPOSE: DEFAULT_PURPOSE,
                     "decay_half_life": 120,
+                    CONF_MOTION_TIMEOUT: DEFAULT_MOTION_TIMEOUT,
                 },
             ),
         ],

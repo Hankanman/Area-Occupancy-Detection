@@ -348,14 +348,13 @@ class EntityManager:
         _LOGGER.debug("Updating likelihoods")
         db = self.coordinator.db
         entry_id = self.coordinator.entry_id
-        sensor_ids = self.coordinator.config.sensors.motion
 
         with db.get_session() as session:
             sensors = self._get_sensors(session, entry_id)
             if not sensors:
                 return
 
-            occupied_times = self._get_occupied_times(session, entry_id, sensor_ids)
+            occupied_times = self.coordinator.prior.get_occupied_intervals()
             intervals_by_entity = self._get_intervals_by_entity(session, sensors)
 
             for entity in sensors:
@@ -373,30 +372,6 @@ class EntityManager:
             .filter_by(entry_id=entry_id)
             .all()
         )
-
-    def _get_occupied_times(
-        self, session, entry_id: str, sensor_ids: list[str]
-    ) -> list[tuple[datetime, datetime]]:
-        """Get occupied time intervals from motion sensors."""
-        occupied_intervals = (
-            session.query(
-                self.coordinator.db.Intervals.start_time,
-                self.coordinator.db.Intervals.end_time,
-            )
-            .join(
-                self.coordinator.db.Entities,
-                self.coordinator.db.Intervals.entity_id
-                == self.coordinator.db.Entities.entity_id,
-            )
-            .filter(
-                self.coordinator.db.Entities.entry_id == entry_id,
-                self.coordinator.db.Intervals.entity_id.in_(sensor_ids),
-                self.coordinator.db.Intervals.state == "on",
-            )
-            .order_by(self.coordinator.db.Intervals.start_time)
-            .all()
-        )
-        return [(start, end) for start, end in occupied_intervals]
 
     def _get_intervals_by_entity(
         self,
@@ -456,11 +431,42 @@ class EntityManager:
             else 0.5
         )
 
-        # Fallback to defaults if too low
-        if prob_given_true < MIN_PROBABILITY:
-            prob_given_true = entity_obj.type.prob_given_true
-        if prob_given_false < MIN_PROBABILITY:
-            prob_given_false = entity_obj.type.prob_given_false
+        # Special handling for motion sensors (ground truth)
+        if entity_obj.type.input_type == InputType.MOTION:
+            # Check data quality for motion sensors
+            total_occupied_time = true_occ + false_occ
+            if total_occupied_time < 3600:  # Less than 1 hour of occupied time
+                _LOGGER.warning(
+                    "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
+                    entity.entity_id,
+                    total_occupied_time,
+                )
+                prob_given_true = entity_obj.type.prob_given_true
+                prob_given_false = entity_obj.type.prob_given_false
+            else:
+                # Motion sensors should have high prob_given_true for ground truth
+                if prob_given_true < 0.8:  # Higher threshold for motion sensors
+                    _LOGGER.warning(
+                        "Motion sensor %s has low prob_given_true (%.3f), using default (%.3f)",
+                        entity.entity_id,
+                        prob_given_true,
+                        entity_obj.type.prob_given_true,
+                    )
+                    prob_given_true = entity_obj.type.prob_given_true
+                if prob_given_false > 0.1:  # Lower threshold for false positives
+                    _LOGGER.warning(
+                        "Motion sensor %s has high prob_given_false (%.3f), using default (%.3f)",
+                        entity.entity_id,
+                        prob_given_false,
+                        entity_obj.type.prob_given_false,
+                    )
+                    prob_given_false = entity_obj.type.prob_given_false
+        else:
+            # Fallback to defaults if too low for other sensors
+            if prob_given_true < MIN_PROBABILITY:
+                prob_given_true = entity_obj.type.prob_given_true
+            if prob_given_false < MIN_PROBABILITY:
+                prob_given_false = entity_obj.type.prob_given_false
 
         # Update entity
         entity_obj.prob_given_true = clamp_probability(prob_given_true)

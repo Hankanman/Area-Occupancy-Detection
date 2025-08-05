@@ -22,6 +22,7 @@ from .const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -32,6 +33,7 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
@@ -208,6 +210,15 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def migrate_motion_timeout(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add motion timeout."""
+    if CONF_MOTION_TIMEOUT not in config:
+        config[CONF_MOTION_TIMEOUT] = DEFAULT_MOTION_TIMEOUT
+        _LOGGER.debug("Added motion timeout to config: %s", DEFAULT_MOTION_TIMEOUT)
+
+    return config
+
+
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to latest version.
 
@@ -225,7 +236,8 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     config = remove_decay_window_key(config)
     config = remove_lights_key(config)
     config = remove_history_keys(config)
-    return migrate_purpose_field(config)
+    config = migrate_purpose_field(config)
+    return migrate_motion_timeout(config)
 
 
 LEGACY_STORAGE_KEY = "area_occupancy.storage"
