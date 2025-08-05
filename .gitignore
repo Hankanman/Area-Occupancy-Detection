@@ -21,3 +21,4 @@ config/*
 commit_messages.txt
 release_diff.txt
 codex.patch
+testlog.log
