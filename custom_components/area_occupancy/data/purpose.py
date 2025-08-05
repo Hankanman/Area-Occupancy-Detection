@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -32,25 +32,6 @@ class Purpose:
     description: str
     half_life: float  # in seconds
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert purpose to dictionary for storage."""
-        return {
-            "purpose": self.purpose.value,
-            "name": self.name,
-            "description": self.description,
-            "half_life": self.half_life,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Purpose:
-        """Create purpose from dictionary."""
-        return cls(
-            purpose=AreaPurpose(data["purpose"]),
-            name=data["name"],
-            description=data["description"],
-            half_life=data["half_life"],
-        )
-
 
 class PurposeManager:
     """Purpose manager for area purposes."""
@@ -58,7 +39,7 @@ class PurposeManager:
     def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Initialize the purpose manager."""
         self.coordinator = coordinator
-        self.config = coordinator.config_manager.config
+        self.config = coordinator.config
         self._current_purpose: Purpose | None = None
 
     async def async_initialize(self) -> None:
