@@ -8,9 +8,13 @@ import pytest
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_DOOR_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_NAME,
+    CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
@@ -19,6 +23,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
+    CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
@@ -45,9 +50,11 @@ from custom_components.area_occupancy.data.config import (
     Weights,
 )
 from homeassistant.const import STATE_ON
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
+# ruff: noqa: SLF001
 class TestSensors:
     """Test Sensors dataclass."""
 
@@ -112,6 +119,35 @@ class TestSensors:
 
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == expected_result
+
+    def test_get_motion_sensors_with_none_coordinator(self) -> None:
+        """Test get_motion_sensors with None coordinator."""
+        sensors = Sensors(motion=["binary_sensor.motion1"])
+        result = sensors.get_motion_sensors(None)
+        assert result == ["binary_sensor.motion1"]
+
+    def test_get_motion_sensors_with_empty_motion_list(self) -> None:
+        """Test get_motion_sensors with empty motion list."""
+        sensors = Sensors(motion=[])
+        mock_coordinator = Mock()
+        mock_coordinator.config.wasp_in_box.enabled = True
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+
+        result = sensors.get_motion_sensors(mock_coordinator)
+        assert result == ["binary_sensor.wasp"]
+
+    def test_get_motion_sensors_without_wasp_config(self) -> None:
+        """Test get_motion_sensors when coordinator has no wasp_in_box config."""
+        sensors = Sensors(motion=["binary_sensor.motion1"])
+        mock_coordinator = Mock()
+        # Mock the config.wasp_in_box.enabled to be False
+        mock_coordinator.config = Mock()
+        mock_coordinator.config.wasp_in_box = Mock()
+        mock_coordinator.config.wasp_in_box.enabled = False
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+
+        result = sensors.get_motion_sensors(mock_coordinator)
+        assert result == ["binary_sensor.motion1"]
 
 
 class TestSensorStates:
@@ -295,6 +331,39 @@ class TestConfig:
         assert config.sensors.motion == ["binary_sensor.motion1"]
         assert config.weights.motion == 0.9
 
+    def test_initialization_with_missing_weights(self, mock_coordinator: Mock) -> None:
+        """Test Config initialization with missing weight values."""
+        # Create minimal data without weights
+        test_data = {
+            CONF_NAME: "Test Area",
+            CONF_THRESHOLD: 50,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        # This should raise KeyError due to missing weight values
+        with pytest.raises(KeyError):
+            Config(mock_coordinator)
+
+    def test_initialization_with_string_threshold(self, mock_coordinator: Mock) -> None:
+        """Test Config initialization with string threshold value."""
+        test_data = {
+            CONF_NAME: "Test Area",
+            CONF_THRESHOLD: "75",  # String instead of int
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        assert config.threshold == 0.75  # Should convert string to float
+
     @pytest.mark.parametrize(
         ("property_name", "expected_type", "time_tolerance"),
         [
@@ -351,6 +420,75 @@ class TestConfig:
         for entity_id in expected_entities:
             assert entity_id in entity_ids
 
+    def test_entity_ids_property_with_all_sensor_types(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test entity_ids property with all sensor types populated."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
+            CONF_MEDIA_DEVICES: ["media_player.tv", "media_player.speaker"],
+            CONF_APPLIANCES: ["switch.computer", "switch.lamp"],
+            CONF_DOOR_SENSORS: ["binary_sensor.door1", "binary_sensor.door2"],
+            CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
+            CONF_ILLUMINANCE_SENSORS: ["sensor.illuminance1", "sensor.illuminance2"],
+            CONF_HUMIDITY_SENSORS: ["sensor.humidity1"],
+            CONF_TEMPERATURE_SENSORS: ["sensor.temperature1", "sensor.temperature2"],
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        entity_ids = config.entity_ids
+
+        expected_entities = [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+            "media_player.tv",
+            "media_player.speaker",
+            "switch.computer",
+            "switch.lamp",
+            "binary_sensor.door1",
+            "binary_sensor.door2",
+            "binary_sensor.window1",
+            "sensor.illuminance1",
+            "sensor.illuminance2",
+            "sensor.humidity1",
+            "sensor.temperature1",
+            "sensor.temperature2",
+        ]
+
+        assert len(entity_ids) == len(expected_entities)
+        for entity_id in expected_entities:
+            assert entity_id in entity_ids
+
+    def test_entity_ids_property_with_empty_sensors(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test entity_ids property with empty sensor lists."""
+        test_data = {
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        entity_ids = config.entity_ids
+
+        assert entity_ids == []
+
     @pytest.mark.parametrize(
         ("key", "default", "expected_result"),
         [
@@ -396,6 +534,227 @@ class TestConfig:
             mock_load_config.assert_called_once()
             mock_refresh.assert_called_once()
 
+    async def test_update_config_with_exception(self, mock_coordinator: Mock) -> None:
+        """Test update_config method when an exception occurs."""
+        config = Config(mock_coordinator)
+        options = {CONF_NAME: "Updated Name"}
+
+        # Mock the update_entry method to raise an exception
+        with patch.object(
+            mock_coordinator.hass.config_entries, "async_update_entry"
+        ) as mock_update_entry:
+            mock_update_entry.side_effect = Exception("Update failed")
+
+            with pytest.raises(
+                HomeAssistantError, match="Failed to update configuration"
+            ):
+                await config.update_config(options)
+
+    def test_validate_entity_configuration_valid(self, mock_coordinator: Mock) -> None:
+        """Test validate_entity_configuration with valid configuration."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert errors == []
+
+    def test_validate_entity_configuration_duplicate_entities(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test validate_entity_configuration with duplicate entity IDs."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.sensor1"],
+            CONF_MEDIA_DEVICES: ["binary_sensor.sensor1"],  # Duplicate
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert len(errors) == 1
+        assert "Duplicate entity IDs found" in errors[0]
+        assert "binary_sensor.sensor1" in errors[0]
+
+    def test_validate_entity_configuration_no_sensors(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test validate_entity_configuration with no motion, media, or appliance sensors."""
+        test_data = {
+            CONF_DOOR_SENSORS: ["binary_sensor.door1"],  # Only door sensors
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert len(errors) == 1
+        assert "No motion, media, or appliance sensors configured" in errors[0]
+
+    def test_validate_entity_configuration_invalid_entity_ids(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test validate_entity_configuration with invalid entity IDs."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "", "   "],  # Invalid IDs
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert len(errors) == 1
+        assert "Invalid motion sensor entity IDs" in errors[0]
+
+    def test_validate_entity_configuration_non_string_entity_ids(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test validate_entity_configuration with non-string entity IDs."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1", 123, None],  # Non-string IDs
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert len(errors) == 1
+        assert "Invalid motion sensor entity IDs" in errors[0]
+
+    def test_validate_entity_configuration_multiple_errors(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test validate_entity_configuration with multiple validation errors."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.sensor1", ""],  # Invalid ID
+            CONF_MEDIA_DEVICES: ["binary_sensor.sensor1"],  # Duplicate
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+        errors = config.validate_entity_configuration()
+
+        assert len(errors) == 2
+        assert any("Duplicate entity IDs found" in error for error in errors)
+        assert any("Invalid motion sensor entity IDs" in error for error in errors)
+
+    def test_update_from_entry(self, mock_coordinator: Mock) -> None:
+        """Test update_from_entry method."""
+        config = Config(mock_coordinator)
+
+        # Create a new config entry with different data
+        new_config_entry = Mock()
+        new_config_entry.data = {
+            CONF_NAME: "New Area Name",
+            CONF_THRESHOLD: 80,
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        new_config_entry.options = {}
+
+        config.update_from_entry(new_config_entry)
+
+        assert config.name == "New Area Name"
+        assert config.threshold == 0.8
+        assert config.config_entry == new_config_entry
+
+    def test_merge_entry_static_method(self) -> None:
+        """Test _merge_entry static method."""
+        config_entry = Mock()
+        config_entry.data = {"key1": "value1", "key2": "value2"}
+        config_entry.options = {"key2": "new_value2", "key3": "value3"}
+
+        merged = Config._merge_entry(config_entry)
+
+        expected = {"key1": "value1", "key2": "new_value2", "key3": "value3"}
+        assert merged == expected
+
+    def test_merge_entry_with_empty_options(self) -> None:
+        """Test _merge_entry with empty options."""
+        config_entry = Mock()
+        config_entry.data = {"key1": "value1", "key2": "value2"}
+        config_entry.options = {}
+
+        merged = Config._merge_entry(config_entry)
+
+        assert merged == {"key1": "value1", "key2": "value2"}
+
+    def test_merge_entry_with_empty_data(self) -> None:
+        """Test _merge_entry with empty data."""
+        config_entry = Mock()
+        config_entry.data = {}
+        config_entry.options = {"key1": "value1", "key2": "value2"}
+
+        merged = Config._merge_entry(config_entry)
+
+        assert merged == {"key1": "value1", "key2": "value2"}
+
+    def test_merge_entry_with_both_empty(self) -> None:
+        """Test _merge_entry with both data and options empty."""
+        config_entry = Mock()
+        config_entry.data = {}
+        config_entry.options = {}
+
+        merged = Config._merge_entry(config_entry)
+
+        assert merged == {}
+
 
 class TestConfigIntegration:
     """Test Config integration scenarios."""
@@ -422,3 +781,115 @@ class TestConfigIntegration:
 
         # Test entity_ids property
         assert isinstance(config.entity_ids, list)
+
+    def test_config_with_all_sensor_types_and_validation(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Test config with all sensor types and validation."""
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_MEDIA_DEVICES: ["media_player.tv"],
+            CONF_APPLIANCES: ["switch.computer"],
+            CONF_DOOR_SENSORS: ["binary_sensor.door1"],
+            CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
+            CONF_ILLUMINANCE_SENSORS: ["sensor.illuminance1"],
+            CONF_HUMIDITY_SENSORS: ["sensor.humidity1"],
+            CONF_TEMPERATURE_SENSORS: ["sensor.temperature1"],
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+
+        # Test validation passes
+        errors = config.validate_entity_configuration()
+        assert errors == []
+
+        # Test entity_ids includes all sensors
+        entity_ids = config.entity_ids
+        expected_count = 8  # One of each sensor type
+        assert len(entity_ids) == expected_count
+
+        # Test all expected entities are present
+        expected_entities = [
+            "binary_sensor.motion1",
+            "media_player.tv",
+            "switch.computer",
+            "binary_sensor.door1",
+            "binary_sensor.window1",
+            "sensor.illuminance1",
+            "sensor.humidity1",
+            "sensor.temperature1",
+        ]
+        for entity_id in expected_entities:
+            assert entity_id in entity_ids
+
+    def test_config_edge_cases(self, mock_coordinator: Mock) -> None:
+        """Test config edge cases and boundary conditions."""
+        # Test with minimal valid configuration
+        test_data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.data = test_data
+        mock_coordinator.config_entry.options = {}
+
+        config = Config(mock_coordinator)
+
+        # Test with extreme threshold values
+        assert config.threshold > 0
+        assert config.threshold <= 1.0
+
+        # Test time properties are recent
+        now = dt_util.utcnow()
+        assert (
+            abs(
+                (
+                    config.start_time - (now - timedelta(days=HA_RECORDER_DAYS))
+                ).total_seconds()
+            )
+            < 60
+        )
+        assert abs((config.end_time - now).total_seconds()) < 60
+
+        # Test validation passes with minimal config
+        errors = config.validate_entity_configuration()
+        assert errors == []
+
+    def test_config_with_options_override(self, mock_coordinator: Mock) -> None:
+        """Test config where options override data values."""
+        # Set up data and options with conflicting values
+        mock_coordinator.config_entry.data = {
+            CONF_NAME: "Data Name",
+            CONF_THRESHOLD: 50,
+            CONF_WEIGHT_MOTION: 0.9,
+            CONF_WEIGHT_MEDIA: 0.7,
+            CONF_WEIGHT_APPLIANCE: 0.6,
+            CONF_WEIGHT_DOOR: 0.5,
+            CONF_WEIGHT_WINDOW: 0.4,
+            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+            CONF_WASP_WEIGHT: 0.8,
+        }
+        mock_coordinator.config_entry.options = {
+            CONF_NAME: "Options Name",
+            CONF_THRESHOLD: 75,
+        }
+
+        config = Config(mock_coordinator)
+
+        # Options should override data
+        assert config.name == "Options Name"
+        assert config.threshold == 0.75  # 75 / 100

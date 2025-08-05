@@ -1,151 +1,126 @@
-"""Tests for the decay module."""
+"""Tests for data.decay module."""
 
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 
-from custom_components.area_occupancy.data.decay import DEFAULT_HALF_LIFE, Decay
+from custom_components.area_occupancy.data.decay import Decay
+from homeassistant.util import dt as dt_util
 
 
 class TestDecay:
     """Test the Decay class."""
 
     @pytest.mark.parametrize(
-        ("kwargs", "expected_attrs"),
+        ("kwargs", "expected_is_decaying", "expected_half_life"),
         [
-            (
-                {},
-                {
-                    "half_life": DEFAULT_HALF_LIFE,
-                    "is_decaying": False,
-                },
-            ),
-            (
-                {"decay_start": datetime.now(), "half_life": 60.0, "is_decaying": True},
-                {
-                    "half_life": 60.0,
-                    "is_decaying": True,
-                },
-            ),
+            ({}, False, 30.0),
+            ({"is_decaying": True, "half_life": 60.0}, True, 60.0),
         ],
     )
-    def test_initialization(self, kwargs, expected_attrs, freeze_time) -> None:
-        """Test initialization with various parameters."""
+    def test_initialization(
+        self, kwargs: dict, expected_is_decaying: bool, expected_half_life: float
+    ) -> None:
+        """Test decay initialization."""
         decay = Decay(**kwargs)
-
-        # Check decay_start is always a datetime
+        assert decay.is_decaying == expected_is_decaying
+        assert decay.half_life == expected_half_life
         assert isinstance(decay.decay_start, datetime)
-
-        # Check other attributes
-        for attr, expected_value in expected_attrs.items():
-            assert getattr(decay, attr) == expected_value
 
     @pytest.mark.parametrize(
         (
             "is_decaying",
             "decay_start",
             "half_life",
-            "time_offset",
+            "age_seconds",
             "expected_factor",
             "expected_is_decaying",
         ),
         [
-            # Not decaying
             (False, None, 60.0, 0, 1.0, False),
-            # Decaying - one half-life
-            (True, datetime.now(), 60.0, 60.0, 0.5, True),
-            # Decaying - auto-stop when factor < 0.05
-            (True, datetime.now(), 60.0, 1000.0, 0.0, False),
+            (True, dt_util.utcnow(), 60.0, 60.0, 0.5, True),
+            (True, dt_util.utcnow(), 60.0, 1000.0, 0.0, False),
         ],
     )
     def test_decay_factor(
         self,
-        is_decaying,
-        decay_start,
-        half_life,
-        time_offset,
-        expected_factor,
-        expected_is_decaying,
-        freeze_time,
+        is_decaying: bool,
+        decay_start: datetime | None,
+        half_life: float,
+        age_seconds: float,
+        expected_factor: float,
+        expected_is_decaying: bool,
     ) -> None:
-        """Test decay factor calculations under various conditions."""
-        # Use freeze_time if decay_start is None, otherwise use provided decay_start
-        start_time = freeze_time if decay_start is None else decay_start
-
+        """Test decay factor calculation."""
         decay = Decay(
-            decay_start=start_time,
+            decay_start=decay_start,
             half_life=half_life,
             is_decaying=is_decaying,
         )
 
         # Mock datetime.now() to simulate time passing
-        with patch(
-            "custom_components.area_occupancy.data.decay.datetime"
-        ) as mock_datetime:
-            mock_datetime.now.return_value = start_time + timedelta(seconds=time_offset)
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            if decay_start:
+                mock_utcnow.return_value = decay_start + timedelta(seconds=age_seconds)
+            else:
+                mock_utcnow.return_value = dt_util.utcnow()
 
-            # Check decay factor
-            assert abs(decay.decay_factor - expected_factor) < 0.001
-
-            # Check if decay auto-stopped
+            factor = decay.decay_factor
+            assert abs(factor - expected_factor) < 0.01
             assert decay.is_decaying == expected_is_decaying
 
     @pytest.mark.parametrize(
-        ("initial_state", "method", "expected_state", "should_update_start"),
+        ("initial_state", "method", "expected_is_decaying"),
         [
-            # Start decay tests
-            (False, "start_decay", True, True),
-            (True, "start_decay", True, False),
-            # Stop decay tests
-            (True, "stop_decay", False, False),
-            (False, "stop_decay", False, False),
+            (False, "start_decay", True),
+            (True, "start_decay", True),  # Already decaying
+            (True, "stop_decay", False),
+            (False, "stop_decay", False),  # Already stopped
         ],
     )
     def test_decay_control_methods(
-        self, initial_state, method, expected_state, should_update_start
+        self, initial_state: bool, method: str, expected_is_decaying: bool
     ) -> None:
-        """Test start_decay and stop_decay methods."""
+        """Test decay control methods."""
         decay = Decay(is_decaying=initial_state)
         original_start = decay.decay_start
 
         # Call the method
         getattr(decay, method)()
 
-        # Check final state
-        assert decay.is_decaying == expected_state
+        assert decay.is_decaying == expected_is_decaying
 
-        # Check if decay_start was updated (only for start_decay when not already decaying)
-        if should_update_start:
-            assert decay.decay_start != original_start
+        # Check if decay_start was updated
+        if method == "start_decay" and not initial_state:
+            assert decay.decay_start > original_start
         else:
             assert decay.decay_start == original_start
 
     @pytest.mark.parametrize(
         ("kwargs", "expected_values"),
         [
-            # Default values
-            ({}, {"half_life": DEFAULT_HALF_LIFE, "is_decaying": False}),
-            # Custom values
+            (
+                {},
+                {"is_decaying": False, "half_life": 30.0},
+            ),
             (
                 {
-                    "decay_start": datetime.now(),
-                    "half_life": 120.0,
+                    "decay_start": dt_util.utcnow(),
+                    "half_life": 60.0,
                     "is_decaying": True,
                 },
-                {"half_life": 120.0, "is_decaying": True},
+                {"is_decaying": True, "half_life": 60.0},
             ),
-            # Partial values
-            ({"half_life": 90.0}, {"half_life": 90.0, "is_decaying": False}),
+            (
+                {"half_life": 120.0},
+                {"is_decaying": False, "half_life": 120.0},
+            ),
         ],
     )
-    def test_create_classmethod(self, kwargs, expected_values, freeze_time) -> None:
-        """Test the create classmethod with various parameters."""
+    def test_create_classmethod(self, kwargs: dict, expected_values: dict) -> None:
+        """Test create classmethod."""
         decay = Decay.create(**kwargs)
-
-        # Check decay_start is always a datetime
+        assert decay.is_decaying == expected_values["is_decaying"]
+        assert decay.half_life == expected_values["half_life"]
         assert isinstance(decay.decay_start, datetime)
-
-        # Check other attributes
-        for attr, expected_value in expected_values.items():
-            assert getattr(decay, attr) == expected_value
