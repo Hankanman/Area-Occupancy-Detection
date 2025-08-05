@@ -19,33 +19,37 @@ This entity shows the overall occupancy status, you can use it in automations su
 
 This entity shows the calculated probability of occupancy based on the sensors and their weights that are currently active based on your configuration.
 
-It has the following attributes:
+**Attributes:**
 
-| Attribute                | Description                                                       |
-| ------------------------ | ----------------------------------------------------------------- |
-| **Active Triggers**      | The triggers (sensors) that are currently active                  |
-| **Sensor Probabilities** | The probabilities from each sensor, shown in format: `Sensor Name | W: Weight | P: Probability | WP: Weighted Probability`. Example: `Living Room Motion Sensor | W: 0.85 | P: 0.75 | WP: 0.64` |
+| Attribute | Description |
+|-----------|-------------|
+| `type_probabilities` | Mapping of each sensor type to its individual occupancy probability contribution |
 
 ### Prior Probability
 
 The prior probability is the probability of occupancy before any sensors are active. It is used to provide a baseline probability of occupancy.
 
-It has the following attributes:
+**Attributes:**
 
-| Attribute                | Description                                                                 |
-| ------------------------ | --------------------------------------------------------------------------- |
-| **Motion**               | The combined prior probability from all motion sensors                      |
-| **Media**                | The combined prior probability from all media sensors                       |
-| **Appliance**            | The combined prior probability from all appliance sensors                   |
-| **Door**                 | The combined prior probability from all door sensors                        |
-| **Window**               | The combined prior probability from all window sensors                      |
-| **Light**                | The combined prior probability from all light sensors                       |
-| **Environmental**        | The combined prior probability from all environmental sensors               |
-| **Prior Probability**    | The probability of occupancy before any sensors are active                  |
-| **Last Updated**         | The last time the prior probability was updated                             |
-| **Total Period**         | The time over which the prior probability was calculated                    |
-| **Entity Count**         | The number of entities used to calculate the prior probability              |
-| **Using Learned Priors** | Whether the prior probability is being used (false if using default priors) |
+| Attribute | Description |
+|-----------|-------------|
+| `global_prior` | Baseline prior derived from historical analysis |
+| `time_prior` | Time-based modifier applied to the prior |
+| `day_of_week` | Day-of-week index used for time prior |
+| `time_slot` | Time slot index used for time prior |
+
+### Evidence
+
+Lists active and inactive entities and provides detailed information about each entity.
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `evidence` | Comma-separated list of active entity names |
+| `no_evidence` | Comma-separated list of inactive entity names |
+| `total` | Total number of entities |
+| `details` | Detailed information for each entity including probabilities and decay status |
 
 ### Decay Status
 
