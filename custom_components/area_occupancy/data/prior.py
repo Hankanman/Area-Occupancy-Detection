@@ -6,7 +6,8 @@ defensive default when data are sparse or sensors are being re-configured.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -24,7 +25,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
 from ..data.entity_type import InputType
-from ..utils import clamp_probability, combine_priors
+from ..utils import apply_motion_timeout, clamp_probability, combine_priors
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -91,7 +92,7 @@ class Prior:
 
         # Apply factor and clamp to bounds
         adjusted_prior = prior * PRIOR_FACTOR
-        result = clamp_probability(adjusted_prior)
+        result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
         # Log if the factor caused a significant change
         if abs(result - prior) > SIGNIFICANT_CHANGE_THRESHOLD:
@@ -201,7 +202,7 @@ class Prior:
             return DEFAULT_PRIOR
 
         # Get total occupied time from motion sensors
-        total_occupied_seconds = self.get_total_occupied_seconds(entity_ids)
+        total_occupied_seconds = self.get_total_occupied_seconds()
 
         # Get total time period
         first_time, last_time = self.get_time_bounds(entity_ids)
@@ -452,88 +453,59 @@ class Prior:
     def get_interval_aggregates(
         self, slot_minutes: int = DEFAULT_SLOT_MINUTES
     ) -> list[tuple[int, int, float]]:
-        """Get aggregated interval data for time prior computation.
+        """Get aggregated interval data for time prior computation using unified logic.
 
         Args:
-            entry_id: Area entry ID
             slot_minutes: Time slot size in minutes
 
         Returns:
             List of (day_of_week, time_slot, total_occupied_seconds) tuples
 
         """
-        _LOGGER.debug("Getting interval aggregates")
-        entry_id = self.coordinator.entry_id
-        db = self.db
+        _LOGGER.debug("Getting interval aggregates using unified logic")
 
-        try:
-            with db.get_session() as session:
-                interval_aggregates = (
-                    session.query(
-                        func.extract("dow", db.Intervals.start_time).label(
-                            "day_of_week"
-                        ),
-                        func.floor(
-                            (
-                                func.extract("hour", db.Intervals.start_time)
-                                * MINUTES_PER_HOUR
-                                + func.extract("minute", db.Intervals.start_time)
-                            )
-                            / slot_minutes
-                        ).label("time_slot"),
-                        func.sum(db.Intervals.duration_seconds).label(
-                            "total_occupied_seconds"
-                        ),
-                    )
-                    .join(
-                        db.Entities,
-                        db.Intervals.entity_id == db.Entities.entity_id,
-                    )
-                    .filter(
-                        db.Entities.entry_id == entry_id,
-                        db.Entities.entity_type == InputType.MOTION,
-                        db.Intervals.state == "on",
-                    )
-                    .group_by("day_of_week", "time_slot")
-                    .all()
+        # Use the unified method to get occupied intervals
+        extended_intervals = self.get_occupied_intervals()
+
+        if not extended_intervals:
+            return []
+
+        # Aggregate extended intervals by time slots
+        slot_seconds = defaultdict(float)
+        for start_time, end_time in extended_intervals:
+            # Calculate which slots this interval covers
+            current_time = start_time
+            while current_time < end_time:
+                day_of_week = current_time.weekday()
+                hour = current_time.hour
+                minute = current_time.minute
+                slot = (hour * MINUTES_PER_HOUR + minute) // slot_minutes
+
+                # Calculate how much of this interval falls in this slot
+                slot_start = current_time.replace(
+                    minute=(slot * slot_minutes) % MINUTES_PER_HOUR,
+                    second=0,
+                    microsecond=0,
                 )
+                slot_end = slot_start + timedelta(minutes=slot_minutes)
 
-                # Validate and convert results safely
-                result = []
-                for day, slot, total_seconds in interval_aggregates:
-                    try:
-                        day_int = int(day) if day is not None else 0
-                        slot_int = int(slot) if slot is not None else 0
-                        seconds_float = float(total_seconds or DEFAULT_OCCUPIED_SECONDS)
-                        result.append((day_int, slot_int, seconds_float))
-                    except (ValueError, TypeError) as e:
-                        _LOGGER.warning(
-                            "Invalid interval aggregate data: day=%s, slot=%s, seconds=%s, error=%s",
-                            day,
-                            slot,
-                            total_seconds,
-                            e,
-                        )
-                        continue
+                # Calculate overlap duration
+                overlap_start = max(current_time, slot_start)
+                overlap_end = min(end_time, slot_end)
+                overlap_duration = (overlap_end - overlap_start).total_seconds()
 
-                return result
-        except OperationalError as e:
-            _LOGGER.error(
-                "Database connection error getting interval aggregates: %s", e
-            )
-            return []
-        except DataError as e:
-            _LOGGER.error("Database data error getting interval aggregates: %s", e)
-            return []
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error getting interval aggregates: %s", e)
-            return []
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error getting interval aggregates: %s", e)
-            return []
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error getting interval aggregates: %s", e)
-            return []
+                if overlap_duration > 0:
+                    slot_seconds[(day_of_week, slot)] += overlap_duration
+
+                # Move to next slot
+                current_time = slot_end
+
+        # Convert to result format
+        result = []
+        for (day, slot), seconds in slot_seconds.items():
+            result.append((day, slot, seconds))
+
+        return result
 
     def get_time_bounds(
         self, entity_ids: list[str] | None = None
@@ -590,36 +562,92 @@ class Prior:
             _LOGGER.error("Unexpected error getting time bounds: %s", e)
             return (None, None)
 
-    def get_total_occupied_seconds(self, entity_ids: list[str]) -> float:
-        """Get total occupied seconds for specific entities."""
-        _LOGGER.debug("Getting total occupied seconds")
+    def get_total_occupied_seconds(self) -> float:
+        """Get total occupied seconds using unified occupancy logic."""
+        _LOGGER.debug("Getting total occupied seconds using unified logic")
+
+        # Use the unified method to get occupied intervals
+        occupied_intervals = self.get_occupied_intervals()
+
+        if not occupied_intervals:
+            return DEFAULT_OCCUPIED_SECONDS
+
+        # Calculate total duration from occupied intervals
+        total_seconds = 0.0
+        for start_time, end_time in occupied_intervals:
+            duration = (end_time - start_time).total_seconds()
+            total_seconds += duration
+
+        _LOGGER.debug("Total occupied seconds: %.1f", total_seconds)
+        return total_seconds
+
+    def get_occupied_intervals(self) -> list[tuple[datetime, datetime]]:
+        """Get occupied time intervals from motion sensors using unified logic.
+
+        This method provides a single source of truth for determining occupancy
+        intervals that can be used by both prior and likelihood calculations.
+
+        Returns:
+            List of (start_time, end_time) tuples representing occupied periods
+
+        """
+        _LOGGER.debug("Getting occupied intervals with unified logic")
+        entry_id = self.coordinator.entry_id
         db = self.db
 
         try:
             with db.get_session() as session:
-                query = session.query(func.sum(db.Intervals.duration_seconds)).filter(
-                    db.Intervals.state == "on",
-                    db.Intervals.entity_id.in_(entity_ids),
+                # Get motion sensor intervals with state='on'
+                intervals = (
+                    session.query(
+                        db.Intervals.start_time,
+                        db.Intervals.end_time,
+                    )
+                    .join(
+                        db.Entities,
+                        db.Intervals.entity_id == db.Entities.entity_id,
+                    )
+                    .filter(
+                        db.Entities.entry_id == entry_id,
+                        db.Entities.entity_type == InputType.MOTION,
+                        db.Intervals.state == "on",
+                    )
+                    .order_by(db.Intervals.start_time)
+                    .all()
                 )
-                result = query.scalar()
-                return float(result or DEFAULT_OCCUPIED_SECONDS)
-        except OperationalError as e:
-            _LOGGER.error(
-                "Database connection error getting total occupied seconds: %s", e
-            )
-            return DEFAULT_OCCUPIED_SECONDS
-        except DataError as e:
-            _LOGGER.error("Database data error getting total occupied seconds: %s", e)
-            return DEFAULT_OCCUPIED_SECONDS
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error getting total occupied seconds: %s", e)
-            return DEFAULT_OCCUPIED_SECONDS
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error getting total occupied seconds: %s", e)
-            return DEFAULT_OCCUPIED_SECONDS
+
+                if not intervals:
+                    _LOGGER.debug("No motion intervals found for occupancy calculation")
+                    return []
+
+                # Convert to tuples and apply motion timeout
+                raw_intervals = [(start, end) for start, end in intervals]
+                timeout_seconds = self.coordinator.config.sensors.motion_timeout
+
+                _LOGGER.debug(
+                    "Applying motion timeout of %d seconds to %d intervals for unified occupancy calculation",
+                    timeout_seconds,
+                    len(raw_intervals),
+                )
+
+                extended_intervals = apply_motion_timeout(
+                    raw_intervals, timeout_seconds
+                )
+
+                _LOGGER.debug(
+                    "Unified occupancy calculation: %d raw intervals -> %d extended intervals",
+                    len(raw_intervals),
+                    len(extended_intervals),
+                )
+
+                return extended_intervals
+
+        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
+            _LOGGER.error("Database error getting occupied intervals: %s", e)
+            return []
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error getting total occupied seconds: %s", e)
-            return DEFAULT_OCCUPIED_SECONDS
+            _LOGGER.error("Unexpected error getting occupied intervals: %s", e)
+            return []
 
     def to_dict(self) -> dict[str, Any]:
         """Convert prior to dictionary for storage."""

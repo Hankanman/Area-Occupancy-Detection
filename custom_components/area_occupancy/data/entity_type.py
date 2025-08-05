@@ -109,8 +109,8 @@ class EntityType:
 DEFAULT_TYPES = {
     InputType.MOTION: {
         "weight": 1,
-        "prob_given_true": 0.85,
-        "prob_given_false": 0.05,
+        "prob_given_true": 0.95,  # Much higher for ground truth
+        "prob_given_false": 0.02,  # Lower false positive rate
         "active_states": [STATE_ON],
         "active_range": None,
     },

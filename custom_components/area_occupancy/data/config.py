@@ -23,6 +23,7 @@ from ..const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
@@ -45,6 +46,7 @@ from ..const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
@@ -72,6 +74,7 @@ class Sensors:
     """Sensors configuration."""
 
     motion: list[str] = field(default_factory=list)
+    motion_timeout: int = DEFAULT_MOTION_TIMEOUT
     primary_occupancy: str | None = None
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
@@ -184,6 +187,7 @@ class Config:
 
         self.sensors = Sensors(
             motion=data.get(CONF_MOTION_SENSORS, []),
+            motion_timeout=int(data.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)),
             primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),
