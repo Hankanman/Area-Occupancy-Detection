@@ -29,7 +29,6 @@ You will be prompted to select entities for various categories. You only need to
 | Door Sensors | `binary_sensor` | Relevant door sensors. | Default: `Closed` |
 | Window Sensors | `binary_sensor` | Relevant window sensors. | Default: `Open` |
 | Media Devices | `media_player` | Relevant media players. | Default: `playing`, `paused` |
-| Lights | `light` | Relevant light entities. | `on` |
 | Appliances | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances. | Default: `on`, `standby` |
 | Environmental Sensors (Optional) | `sensor` | - Illuminance sensors measuring light levels (lux)<br>- Temperature sensors measuring temperature<br>- Humidity sensors measuring humidity<br>*(Note: Environmental sensors typically have a lower default weight and may require more history for their priors to become meaningful)* | N/A |
 
@@ -48,12 +47,11 @@ Adjust the influence of different *types* of sensors on the final probability ca
 
 | Sensor Type | Default Weight |
 |-------------|---------------|
-| Motion Sensor | 0.85 |
+| Motion Sensor | 1.00 |
 | Media Device | 0.70 |
 | Appliance | 0.40 |
 | Door Sensor | 0.30 |
 | Window Sensor | 0.20 |
-| Light | 0.20 |
 | Environmental Sensor | 0.10 |
 
 ## Reconfiguring an Existing Area
@@ -78,20 +76,12 @@ The integration automatically:
 
 After configuration, the integration creates:
 
-1. **Occupancy Probability Sensor**
-
-      - Shows the calculated probability as a percentage
-      - Updates in real-time based on sensor states
-
-2. **Occupancy Status Binary Sensor**
-
-      - ON when probability exceeds threshold
-      - OFF when probability is below threshold
-
-3. **Individual Prior Sensors**
-
-      - One for each sensor category
-      - Shows contribution to overall probability
+1. **Occupancy Probability Sensor** – Shows the calculated probability as a percentage.
+2. **Occupancy Status Binary Sensor** – Indicates if the area is occupied based on the threshold.
+3. **Prior Probability Sensor** – Displays the combined prior used for calculations.
+4. **Evidence Sensor** – Lists entities providing evidence and those that are inactive.
+5. **Decay Status Sensor** – Indicates progress of probability decay.
+6. **Occupancy Threshold Number** – Allows adjusting the threshold used by the binary sensor.
 
 ## Adjusting Configuration
 

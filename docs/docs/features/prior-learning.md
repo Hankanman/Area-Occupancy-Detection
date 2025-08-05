@@ -38,7 +38,7 @@ This learning process relies heavily on the **Primary Occupancy Sensor** you des
     - **Calculate `P(Active | Not Occupied)`:** It measures the total duration the sensor was _active_ during the times the primary sensor indicated the area was _not occupied_. This duration is divided by the total time the area was considered _not occupied_.
     - **Calculate `P(Occupied)` (Prior):** For the primary sensor itself, its prior is calculated as the total time it was `on` divided by the total analysis period duration. For other sensors, their individual priors are also calculated based on their own total active time.
 5.  **Storage:** These learned `prob_given_true`, `prob_given_false`, and `prior` values are stored persistently for each sensor. They override the default probabilities defined in the integration's constants.
-6.  **Averaging for Type Priors:** The learned priors for individual entities are averaged to calculate priors for each _sensor type_ (e.g., the average prior for all configured lights).
+6.  **Averaging for Type Priors:** The learned priors for individual entities are averaged to calculate priors for each _sensor type_ (e.g., the average prior for all configured motion sensors).
 7.  **Overall Prior:** The overall prior probability for the area (used in the main Bayesian calculation and shown by the Prior Probability sensor) is calculated by averaging the priors of the _active_ sensor types.
 
 ## When Learning Occurs
