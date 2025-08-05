@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
+from ..const import MIN_PROBABILITY
 from ..db import AreaOccupancyDB as DB
+from ..utils import clamp_probability
 from .decay import Decay
 from .entity_type import EntityType, InputType
 
@@ -117,8 +119,8 @@ class Entity:
         self, prob_given_true: float, prob_given_false: float
     ) -> None:
         """Update the likelihood of the entity."""
-        self.prob_given_true = prob_given_true
-        self.prob_given_false = prob_given_false
+        self.prob_given_true = clamp_probability(prob_given_true)
+        self.prob_given_false = clamp_probability(prob_given_false)
         self.last_updated = dt_util.utcnow()
 
     def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
@@ -455,14 +457,14 @@ class EntityManager:
         )
 
         # Fallback to defaults if too low
-        if prob_given_true < 0.01:
+        if prob_given_true < MIN_PROBABILITY:
             prob_given_true = entity_obj.type.prob_given_true
-        if prob_given_false < 0.01:
+        if prob_given_false < MIN_PROBABILITY:
             prob_given_false = entity_obj.type.prob_given_false
 
         # Update entity
-        entity_obj.prob_given_true = prob_given_true
-        entity_obj.prob_given_false = prob_given_false
+        entity_obj.prob_given_true = clamp_probability(prob_given_true)
+        entity_obj.prob_given_false = clamp_probability(prob_given_false)
         entity_obj.last_updated = now
         entity_obj.update_likelihood(prob_given_true, prob_given_false)
 

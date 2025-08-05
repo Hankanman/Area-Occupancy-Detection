@@ -9,10 +9,28 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
-from .const import ROUNDING_PRECISION
+from .const import MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 if TYPE_CHECKING:
     from .data.entity import Entity
+
+
+# ─────────────────────────────────────── Utility Functions ───────────────────
+
+
+def format_float(value: float) -> float:
+    """Format float value."""
+    return round(float(value), ROUNDING_PRECISION)
+
+
+def format_percentage(value: float) -> str:
+    """Format float value as percentage."""
+    return f"{value * 100:.2f}%"
+
+
+def clamp_probability(value: float) -> float:
+    """Clamp probability to valid range."""
+    return max(MIN_PROBABILITY, min(MAX_PROBABILITY, value))
 
 
 # ─────────────────────────────────────── File Lock ───────────────────────────
@@ -59,16 +77,6 @@ class FileLock:
             self.lock_path.unlink()
 
 
-def format_float(value: float) -> float:
-    """Format float value."""
-    return round(float(value), ROUNDING_PRECISION)
-
-
-def format_percentage(value: float) -> str:
-    """Format float value as percentage."""
-    return f"{value * 100:.2f}%"
-
-
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def bayesian_probability(
     entities: dict[str, Entity], area_prior: float = 0.5, time_prior: float = 0.5
@@ -81,16 +89,49 @@ def bayesian_probability(
         time_prior: Time-based modifier for the prior (default: 0.5)
 
     """
-    # Clamp priors to avoid log(0) or log(1)
-    area_prior = max(0.001, min(0.999, area_prior))
-    time_prior = max(0.001, min(0.999, time_prior))
+    # Handle edge cases first
+    if not entities:
+        # No entities provided - return combined prior
+        return combine_priors(area_prior, time_prior)
 
-    # Combine area prior with time prior modifier
-    # Use time_prior as a multiplier on the area_prior
-    combined_prior = area_prior * time_prior / 0.5  # Normalize by default time prior
+    # Check for entities with zero weights (they contribute nothing)
+    active_entities = {k: v for k, v in entities.items() if v.weight > 0.0}
+
+    if not active_entities:
+        # All entities have zero weight - return combined prior
+        return combine_priors(area_prior, time_prior)
+
+    # Check for entities with invalid likelihoods
+    entities_to_remove = []
+    for entity_id, entity in active_entities.items():
+        if (
+            entity.prob_given_true <= 0.0
+            or entity.prob_given_true >= 1.0
+            or entity.prob_given_false <= 0.0
+            or entity.prob_given_false >= 1.0
+        ):
+            # Mark entities with invalid likelihoods for removal
+            entities_to_remove.append(entity_id)
+
+    # Remove invalid entities after iteration
+    for entity_id in entities_to_remove:
+        active_entities.pop(entity_id, None)
+
+    if not active_entities:
+        # All entities had invalid likelihoods - return combined prior
+        return combine_priors(area_prior, time_prior)
+
+    # Check for extreme decay factors
+    for entity in active_entities.values():
+        if entity.decay.decay_factor < 0.0 or entity.decay.decay_factor > 1.0:
+            # Clamp decay factor to valid range
+            entity.decay.decay_factor = max(0.0, min(1.0, entity.decay.decay_factor))
+
+    # Combine area prior with time prior using the helper function
+    combined_prior = combine_priors(area_prior, time_prior)
 
     # Clamp combined prior
-    combined_prior = max(0.001, min(0.999, combined_prior))
+    combined_prior = clamp_probability(combined_prior)
 
     # log-space for numerical stability
     log_true = math.log(combined_prior)
@@ -121,8 +162,8 @@ def bayesian_probability(
             p_f = 0.5
 
         # Clamp probabilities to avoid log(0) or log(1)
-        p_t = max(0.001, min(0.999, p_t))
-        p_f = max(0.001, min(0.999, p_f))
+        p_t = clamp_probability(p_t)
+        p_f = clamp_probability(p_f)
 
         log_true += math.log(p_t) * entity.weight
         log_false += math.log(p_f) * entity.weight
@@ -131,4 +172,79 @@ def bayesian_probability(
     max_log = max(log_true, log_false)
     true_prob = math.exp(log_true - max_log)
     false_prob = math.exp(log_false - max_log)
-    return true_prob / (true_prob + false_prob)
+
+    # Handle numerical overflow/underflow edge case
+    total_prob = true_prob + false_prob
+    if total_prob == 0.0:
+        # Both probabilities are zero - return combined prior as fallback
+        return combined_prior
+
+    return true_prob / total_prob
+
+
+def combine_priors(
+    area_prior: float, time_prior: float, time_weight: float = 0.2
+) -> float:
+    """Combine area prior and time prior using weighted averaging in logit space.
+
+    Args:
+        area_prior: Base prior probability of occupancy for this area
+        time_prior: Time-based modifier for the prior
+        time_weight: Weight given to time_prior (0.0 to 1.0, default: 0.2)
+
+    Returns:
+        float: Combined prior probability
+
+    """
+    # Handle edge cases first
+    if time_weight == 0.0:
+        # No time influence, return area_prior
+        return clamp_probability(area_prior)
+
+    if time_weight == 1.0:
+        # Full time influence, return time_prior (with clamping)
+        return clamp_probability(time_prior)
+
+    if time_prior == 0.0:
+        # Time slot has never been occupied - this is strong evidence
+        # Use a very small probability but not zero
+        time_prior = MIN_PROBABILITY
+    elif time_prior == 1.0:
+        # Time slot has always been occupied - this is strong evidence
+        time_prior = MAX_PROBABILITY
+
+    # Handle area_prior edge cases
+    if area_prior == 0.0:
+        # Area has never been occupied - this is strong evidence
+        area_prior = MIN_PROBABILITY
+    elif area_prior == 1.0:
+        # Area has always been occupied - this is strong evidence
+        area_prior = MAX_PROBABILITY
+
+    # Handle identical priors case
+    if abs(area_prior - time_prior) < 1e-10:
+        # Priors are essentially identical, return the common value
+        return area_prior
+
+    # Clamp other inputs to valid ranges
+    area_prior = clamp_probability(area_prior)
+    time_weight = max(0.0, min(1.0, time_weight))
+
+    area_weight = 1.0 - time_weight
+
+    # Convert to logit space for better interpolation
+    def prob_to_logit(p):
+        return math.log(p / (1 - p))
+
+    def logit_to_prob(logit):
+        return 1 / (1 + math.exp(-logit))
+
+    # Interpolate in logit space for more principled combination
+    area_logit = prob_to_logit(area_prior)
+    time_logit = prob_to_logit(time_prior)
+
+    # Weighted combination in logit space
+    combined_logit = area_weight * area_logit + time_weight * time_logit
+    combined_prior = logit_to_prob(combined_logit)
+
+    return clamp_probability(combined_prior)
