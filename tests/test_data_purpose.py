@@ -17,16 +17,22 @@ from custom_components.area_occupancy.data.purpose import (
 class TestAreaPurpose:
     """Test AreaPurpose enum."""
 
-    def test_area_purpose_values(self):
+    @pytest.mark.parametrize(
+        ("purpose_enum", "expected_value"),
+        [
+            (AreaPurpose.PASSAGEWAY, "passageway"),
+            (AreaPurpose.UTILITY, "utility"),
+            (AreaPurpose.FOOD_PREP, "food_prep"),
+            (AreaPurpose.EATING, "eating"),
+            (AreaPurpose.WORKING, "working"),
+            (AreaPurpose.SOCIAL, "social"),
+            (AreaPurpose.RELAXING, "relaxing"),
+            (AreaPurpose.SLEEPING, "sleeping"),
+        ],
+    )
+    def test_area_purpose_values(self, purpose_enum, expected_value):
         """Test that AreaPurpose enum has correct values."""
-        assert AreaPurpose.PASSAGEWAY == "passageway"
-        assert AreaPurpose.UTILITY == "utility"
-        assert AreaPurpose.FOOD_PREP == "food_prep"
-        assert AreaPurpose.EATING == "eating"
-        assert AreaPurpose.WORKING == "working"
-        assert AreaPurpose.SOCIAL == "social"
-        assert AreaPurpose.RELAXING == "relaxing"
-        assert AreaPurpose.SLEEPING == "sleeping"
+        assert purpose_enum == expected_value
 
 
 class TestPurpose:
@@ -45,37 +51,6 @@ class TestPurpose:
         assert purpose.description == "Living room area"
         assert purpose.half_life == 720.0
 
-    def test_purpose_to_dict(self):
-        """Test converting Purpose to dictionary."""
-        purpose = Purpose(
-            purpose=AreaPurpose.WORKING,
-            name="Working / Studying",
-            description="Home office",
-            half_life=600.0,
-        )
-        result = purpose.to_dict()
-        expected = {
-            "purpose": "working",
-            "name": "Working / Studying",
-            "description": "Home office",
-            "half_life": 600.0,
-        }
-        assert result == expected
-
-    def test_purpose_from_dict(self):
-        """Test creating Purpose from dictionary."""
-        data = {
-            "purpose": "sleeping",
-            "name": "Sleeping / Resting",
-            "description": "Bedroom",
-            "half_life": 1800.0,
-        }
-        purpose = Purpose.from_dict(data)
-        assert purpose.purpose == AreaPurpose.SLEEPING
-        assert purpose.name == "Sleeping / Resting"
-        assert purpose.description == "Bedroom"
-        assert purpose.half_life == 1800.0
-
 
 class TestPurposeDefinitions:
     """Test purpose definitions."""
@@ -85,16 +60,22 @@ class TestPurposeDefinitions:
         for purpose_type in AreaPurpose:
             assert purpose_type in PURPOSE_DEFINITIONS
 
-    def test_purpose_half_lives(self):
+    @pytest.mark.parametrize(
+        ("purpose_enum", "expected_half_life"),
+        [
+            (AreaPurpose.PASSAGEWAY, 60.0),
+            (AreaPurpose.UTILITY, 120.0),
+            (AreaPurpose.FOOD_PREP, 300.0),
+            (AreaPurpose.EATING, 600.0),
+            (AreaPurpose.WORKING, 600.0),
+            (AreaPurpose.SOCIAL, 720.0),
+            (AreaPurpose.RELAXING, 900.0),
+            (AreaPurpose.SLEEPING, 1800.0),
+        ],
+    )
+    def test_purpose_half_lives(self, purpose_enum, expected_half_life):
         """Test that purpose half-lives match the expected values."""
-        assert PURPOSE_DEFINITIONS[AreaPurpose.PASSAGEWAY].half_life == 60.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.UTILITY].half_life == 120.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.FOOD_PREP].half_life == 300.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.EATING].half_life == 600.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.WORKING].half_life == 600.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life == 720.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life == 900.0
-        assert PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life == 1800.0
+        assert PURPOSE_DEFINITIONS[purpose_enum].half_life == expected_half_life
 
     def test_get_purpose_options(self):
         """Test getting purpose options for UI."""
@@ -114,7 +95,7 @@ class TestPurposeManager:
     def mock_coordinator(self):
         """Create a mock coordinator."""
         coordinator = MagicMock()
-        coordinator.config_manager.config.purpose = "social"
+        coordinator.config.purpose = "social"
         return coordinator
 
     @pytest.fixture
@@ -134,22 +115,45 @@ class TestPurposeManager:
         assert purpose_manager.half_life == 720.0
 
     @pytest.mark.asyncio
-    async def test_async_initialize_with_invalid_purpose(self, mock_coordinator):
-        """Test initialization with invalid purpose."""
-        mock_coordinator.config_manager.config.purpose = "invalid"
+    @pytest.mark.parametrize(
+        ("invalid_purpose", "expected_fallback"),
+        [
+            ("invalid", AreaPurpose.SOCIAL),
+            (None, AreaPurpose.SOCIAL),
+        ],
+    )
+    async def test_async_initialize_with_invalid_purpose(
+        self, mock_coordinator, invalid_purpose, expected_fallback
+    ):
+        """Test initialization with invalid or missing purpose."""
+        mock_coordinator.config.purpose = invalid_purpose
         purpose_manager = PurposeManager(mock_coordinator)
         await purpose_manager.async_initialize()
         # Should fall back to social
-        assert purpose_manager.current_purpose.purpose == AreaPurpose.SOCIAL
+        assert purpose_manager.current_purpose.purpose == expected_fallback
 
     @pytest.mark.asyncio
-    async def test_async_initialize_with_no_purpose(self, mock_coordinator):
-        """Test initialization with no purpose configured."""
-        mock_coordinator.config_manager.config.purpose = None
-        purpose_manager = PurposeManager(mock_coordinator)
-        await purpose_manager.async_initialize()
-        # Should default to social
-        assert purpose_manager.current_purpose.purpose == AreaPurpose.SOCIAL
+    async def test_async_initialize_with_key_error_fallback(self, mock_coordinator):
+        """Test initialization with purpose that causes KeyError."""
+        # Mock the PURPOSE_DEFINITIONS to raise KeyError for a specific purpose
+        with pytest.MonkeyPatch().context() as m:
+            # Temporarily modify PURPOSE_DEFINITIONS to simulate missing key
+            # but keep SOCIAL for the fallback
+            original_definitions = PURPOSE_DEFINITIONS.copy()
+            m.setattr(
+                "custom_components.area_occupancy.data.purpose.PURPOSE_DEFINITIONS",
+                {
+                    k: v
+                    for k, v in original_definitions.items()
+                    if k != AreaPurpose.WORKING
+                },
+            )
+
+            mock_coordinator.config.purpose = "working"
+            purpose_manager = PurposeManager(mock_coordinator)
+            await purpose_manager.async_initialize()
+            # Should fall back to social since working is missing from definitions
+            assert purpose_manager.current_purpose.purpose == AreaPurpose.SOCIAL
 
     def test_get_purpose(self, purpose_manager):
         """Test getting specific purpose."""

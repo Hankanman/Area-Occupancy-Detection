@@ -20,8 +20,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.7.5"
-CONF_VERSION: Final = 10
+DEVICE_SW_VERSION: Final = "2025.8.1-pre2"
+CONF_VERSION: Final = 12
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -48,6 +48,7 @@ CONF_AREA_ID: Final = "area_id"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
+CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
@@ -69,9 +70,10 @@ DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
+DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 
 # Default weights
-DEFAULT_WEIGHT_MOTION: Final = 0.85
+DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
@@ -79,8 +81,8 @@ DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 
 # Safety bounds
-MIN_PROBABILITY: Final = 0.0
-MAX_PROBABILITY: Final = 1.0
+MIN_PROBABILITY: Final = 0.01
+MAX_PROBABILITY: Final = 0.99
 MIN_PRIOR: Final[float] = 0.1
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
@@ -90,10 +92,10 @@ MAX_WEIGHT: Final[float] = 0.99
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
-# Motion sensor defaults
-MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25
-MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05
-MOTION_DEFAULT_PRIOR: Final[float] = 0.35
+# Motion sensor defaults (deprecated - use DEFAULT_TYPES in entity_type.py)
+# MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25  # DEPRECATED
+# MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05  # DEPRECATED
+# MOTION_DEFAULT_PRIOR: Final[float] = 0.35  # DEPRECATED
 
 # Primary occupancy sensor defaults (optimized for ground truth reliability)
 PRIMARY_PROB_GIVEN_TRUE: Final[float] = (

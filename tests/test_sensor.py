@@ -2,6 +2,8 @@
 
 from unittest.mock import Mock
 
+import pytest
+
 from custom_components.area_occupancy.sensor import (
     AreaOccupancySensorBase,
     DecaySensor,
@@ -20,20 +22,15 @@ class TestAreaOccupancySensorBase:
     def test_initialization(self, mock_coordinator: Mock) -> None:
         """Test base sensor initialization."""
         sensor = AreaOccupancySensorBase(mock_coordinator, "test_entry")
-
         assert sensor.coordinator == mock_coordinator
-        # Base sensor doesn't store _entry_id, just uses it for subclass unique_id generation
-        # Base sensor doesn't set _attr_entity_registry_enabled_default initially - it's set via set_enabled_default method
 
     def test_set_enabled_default(self, mock_coordinator: Mock) -> None:
         """Test setting enabled default."""
         sensor = AreaOccupancySensorBase(mock_coordinator, "test_entry")
 
-        # Test setting to False
         sensor.set_enabled_default(False)
         assert sensor._attr_entity_registry_enabled_default is False
 
-        # Test setting to True
         sensor.set_enabled_default(True)
         assert sensor._attr_entity_registry_enabled_default is True
 
@@ -41,90 +38,83 @@ class TestAreaOccupancySensorBase:
         """Test available property."""
         sensor = AreaOccupancySensorBase(mock_coordinator, "test_entry")
 
-        # Test when coordinator is available (CoordinatorEntity uses last_update_success)
         mock_coordinator.last_update_success = True
         assert sensor.available is True
 
-        # Test when coordinator is not available
         mock_coordinator.last_update_success = False
         assert sensor.available is False
 
     def test_device_info_property(self, mock_coordinator: Mock) -> None:
         """Test device_info property."""
         sensor = AreaOccupancySensorBase(mock_coordinator, "test_entry")
-
-        expected_device_info = mock_coordinator.device_info
-        assert sensor.device_info == expected_device_info
+        assert sensor.device_info == mock_coordinator.device_info
 
 
-class TestPriorsSensor:
-    """Test PriorsSensor class."""
+class TestPercentageSensors:
+    """Test sensors that convert values to percentages."""
 
-    def test_initialization(self, mock_coordinator: Mock) -> None:
-        """Test PriorsSensor initialization."""
-        sensor = PriorsSensor(mock_coordinator, "test_entry")
+    @pytest.mark.parametrize(
+        ("sensor_class", "coordinator_attr", "expected_name", "expected_unique_id"),
+        [
+            (
+                PriorsSensor,
+                "area_prior",
+                "Prior Probability",
+                "test_entry_prior_probability",
+            ),
+            (
+                ProbabilitySensor,
+                "probability",
+                "Occupancy Probability",
+                "test_entry_occupancy_probability",
+            ),
+        ],
+    )
+    def test_initialization(
+        self,
+        mock_coordinator: Mock,
+        sensor_class,
+        coordinator_attr,
+        expected_name,
+        expected_unique_id,
+    ) -> None:
+        """Test percentage sensor initialization."""
+        sensor = sensor_class(mock_coordinator, "test_entry")
 
-        # Actual unique_id format from implementation
-        assert sensor.unique_id == "test_entry_prior_probability"
-        assert sensor.name == "Prior Probability"
-        # PriorsSensor doesn't have an icon property
+        assert sensor.unique_id == expected_unique_id
+        assert sensor.name == expected_name
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1
-        assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
-    def test_native_value_property(self, mock_coordinator: Mock) -> None:
-        """Test native_value property."""
-        sensor = PriorsSensor(mock_coordinator, "test_entry")
-
-        # Test with coordinator area_prior (default is 0.3 from conftest.py)
-        mock_coordinator.area_prior = 0.3
-        assert sensor.native_value == 30.0  # Converted to percentage
-
-        # Test with different prior
-        mock_coordinator.area_prior = 0.75
-        assert sensor.native_value == 75.0
-
-        # Test with edge values
-        mock_coordinator.area_prior = 0.0
-        assert sensor.native_value == 0.0
-
-        mock_coordinator.area_prior = 1.0
-        assert sensor.native_value == 100.0
-
-
-class TestProbabilitySensor:
-    """Test ProbabilitySensor class."""
-
-    def test_initialization(self, mock_coordinator: Mock) -> None:
-        """Test ProbabilitySensor initialization."""
-        sensor = ProbabilitySensor(mock_coordinator, "test_entry")
-
-        # Actual unique_id format from implementation
-        assert sensor.unique_id == "test_entry_occupancy_probability"
-        assert sensor.name == "Occupancy Probability"
-        # ProbabilitySensor doesn't have an icon property
-        assert sensor.native_unit_of_measurement == "%"
-        assert sensor.suggested_display_precision == 1
-        # ProbabilitySensor doesn't have entity_category set (defaults to None)
-
-    def test_native_value_property(self, mock_coordinator: Mock) -> None:
-        """Test native_value property."""
-        sensor = ProbabilitySensor(mock_coordinator, "test_entry")
-
-        # Test with coordinator probability
-        mock_coordinator.probability = 0.65
-        assert sensor.native_value == 65.0  # Converted to percentage
-
-        # Test with different probability
-        mock_coordinator.probability = 0.25
-        assert sensor.native_value == 25.0
-
-        # Test with edge values
-        mock_coordinator.probability = 0.0
-        assert sensor.native_value == 0.0
-
-        mock_coordinator.probability = 1.0
-        assert sensor.native_value == 100.0
+    @pytest.mark.parametrize(
+        ("sensor_class", "coordinator_attr"),
+        [
+            (PriorsSensor, "area_prior"),
+            (ProbabilitySensor, "probability"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("input_value", "expected_percentage"),
+        [
+            (0.0, 0.0),
+            (0.25, 25.0),
+            (0.5, 50.0),
+            (0.75, 75.0),
+            (1.0, 100.0),
+        ],
+    )
+    def test_native_value_conversion(
+        self,
+        mock_coordinator: Mock,
+        sensor_class,
+        coordinator_attr,
+        input_value,
+        expected_percentage,
+    ) -> None:
+        """Test percentage conversion for different input values."""
+        sensor = sensor_class(mock_coordinator, "test_entry")
+        setattr(mock_coordinator, coordinator_attr, input_value)
+        assert sensor.native_value == expected_percentage
 
 
 class TestEvidenceSensor:
@@ -136,27 +126,21 @@ class TestEvidenceSensor:
 
         assert sensor.unique_id == "test_entry_evidence"
         assert sensor.name == "Evidence"
-        # EvidenceSensor doesn't have an icon property
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
     def test_native_value_property(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test native_value property."""
         sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
-
-        # Should return total number of entities from coordinator.entities.entities
         assert sensor.native_value == 4
 
-    def test_native_value_no_entity_manager(self, mock_coordinator: Mock) -> None:
-        """Test native_value when no entity manager."""
-        # Set up coordinator with no entities
+    def test_native_value_no_entities(self, mock_coordinator: Mock) -> None:
+        """Test native_value when no entities."""
         mock_coordinator.entities.entities = {}
         sensor = EvidenceSensor(mock_coordinator, "test_entry")
-
         assert sensor.native_value == 0
 
     def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test extra_state_attributes property."""
-        # Set up coordinator.data to be truthy and mock active/inactive entities
         mock_coordinator_with_sensors.data = {"test": "data"}
         mock_coordinator_with_sensors.entities.active_entities = []
         mock_coordinator_with_sensors.entities.inactive_entities = []
@@ -164,19 +148,14 @@ class TestEvidenceSensor:
         sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
         attributes = sensor.extra_state_attributes
 
-        # Should return the expected structure
         assert "evidence" in attributes
         assert "no_evidence" in attributes
 
-    def test_extra_state_attributes_no_entity_manager(
-        self, mock_coordinator: Mock
-    ) -> None:
+    def test_extra_state_attributes_no_data(self, mock_coordinator: Mock) -> None:
         """Test extra_state_attributes when no coordinator data."""
         mock_coordinator.data = None
         sensor = EvidenceSensor(mock_coordinator, "test_entry")
-
-        attributes = sensor.extra_state_attributes
-        assert attributes == {}
+        assert sensor.extra_state_attributes == {}
 
 
 class TestDecaySensor:
@@ -186,63 +165,55 @@ class TestDecaySensor:
         """Test DecaySensor initialization."""
         sensor = DecaySensor(mock_coordinator, "test_entry")
 
-        # Actual unique_id format from implementation
         assert sensor.unique_id == "test_entry_decay_status"
         assert sensor.name == "Decay Status"
-        # DecaySensor doesn't have an icon property
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
-    def test_native_value_property(self, mock_coordinator: Mock) -> None:
-        """Test native_value property."""
+    @pytest.mark.parametrize(
+        ("decay_value", "expected_percentage"),
+        [
+            (0.0, 100.0),  # (1 - 0.0) * 100
+            (0.15, 85.0),  # (1 - 0.15) * 100
+            (0.5, 50.0),  # (1 - 0.5) * 100
+            (0.85, 15.0),  # (1 - 0.85) * 100
+            (1.0, 0.0),  # (1 - 1.0) * 100
+        ],
+    )
+    def test_native_value_property(
+        self, mock_coordinator: Mock, decay_value: float, expected_percentage: float
+    ) -> None:
+        """Test native_value property with different decay values."""
         sensor = DecaySensor(mock_coordinator, "test_entry")
+        mock_coordinator.decay = decay_value
+        assert sensor.native_value == expected_percentage
 
-        # DecaySensor returns (1 - coordinator.decay) * 100
-        # So if decay = 0.85, it returns (1 - 0.85) * 100 = 15.0
-        mock_coordinator.decay = 0.85
-        assert sensor.native_value == 15.0  # (1 - 0.85) * 100
+    def test_extra_state_attributes_with_decaying_entities(
+        self, mock_coordinator_with_sensors: Mock
+    ) -> None:
+        """Test extra_state_attributes with decaying entities."""
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        mock_entity.decay.decay_factor = 0.8
 
-        # Test with different decay
-        mock_coordinator.decay = 0.5
-        assert sensor.native_value == 50.0  # (1 - 0.5) * 100
-
-        # Test with edge values
-        mock_coordinator.decay = 0.0
-        assert sensor.native_value == 100.0  # (1 - 0.0) * 100
-
-        mock_coordinator.decay = 1.0
-        assert sensor.native_value == 0.0  # (1 - 1.0) * 100
-
-    def test_extra_state_attributes(self, mock_coordinator_with_sensors: Mock) -> None:
-        """Test extra_state_attributes property."""
-        # Set up mock decaying entities with decay information
-        mock_entity1 = Mock()
-        mock_entity1.entity_id = "binary_sensor.motion1"
-        mock_entity1.decay.decay_factor = 0.8
-
-        mock_coordinator_with_sensors.entities.decaying_entities = [mock_entity1]
+        mock_coordinator_with_sensors.entities.decaying_entities = [mock_entity]
 
         sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
         attributes = sensor.extra_state_attributes
 
-        # Should return the expected structure from implementation
         assert "decaying" in attributes
         assert len(attributes["decaying"]) == 1
 
-    def test_extra_state_attributes_no_entity_manager(
+    def test_extra_state_attributes_error_handling(
         self, mock_coordinator: Mock
     ) -> None:
-        """Test extra_state_attributes when no entity manager."""
-        # Make decaying_entities raise an exception to trigger the except block
+        """Test extra_state_attributes error handling."""
         mock_coordinator.entities.decaying_entities = Mock(
             side_effect=AttributeError("No entities")
         )
         sensor = DecaySensor(mock_coordinator, "test_entry")
-
-        attributes = sensor.extra_state_attributes
-        # Should return empty dict due to exception handling
-        assert attributes == {}
+        assert sensor.extra_state_attributes == {}
 
     def test_extra_state_attributes_empty_entities(
         self, mock_coordinator: Mock
@@ -250,9 +221,7 @@ class TestDecaySensor:
         """Test extra_state_attributes with empty entities."""
         mock_coordinator.entities.decaying_entities = []
         sensor = DecaySensor(mock_coordinator, "test_entry")
-
-        attributes = sensor.extra_state_attributes
-        assert attributes == {"decaying": []}
+        assert sensor.extra_state_attributes == {"decaying": []}
 
 
 class TestAsyncSetupEntry:
@@ -263,31 +232,30 @@ class TestAsyncSetupEntry:
     ) -> None:
         """Test successful setup entry."""
         mock_async_add_entities = Mock()
-
-        # Set up runtime_data with a mock coordinator
         mock_coordinator = Mock()
         mock_coordinator.device_info = {"test": "device_info"}
         mock_config_entry.runtime_data = mock_coordinator
 
         await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
 
-        # Should add all sensor entities
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
         assert len(entities) == 4
 
-        # Check entity types
         entity_types = [type(entity).__name__ for entity in entities]
-        assert "PriorsSensor" in entity_types
-        assert "ProbabilitySensor" in entity_types
-        assert "EvidenceSensor" in entity_types
-        assert "DecaySensor" in entity_types
+        expected_types = [
+            "PriorsSensor",
+            "ProbabilitySensor",
+            "EvidenceSensor",
+            "DecaySensor",
+        ]
+        for expected_type in expected_types:
+            assert expected_type in entity_types
 
     async def test_async_setup_entry_with_coordinator_data(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test setup entry with coordinator data."""
-        # Set up coordinator with specific data
         mock_coordinator = Mock()
         mock_coordinator.probability = 0.8
         mock_coordinator.prior = 0.3
@@ -296,14 +264,11 @@ class TestAsyncSetupEntry:
         mock_config_entry.runtime_data = mock_coordinator
 
         mock_async_add_entities = Mock()
-
         await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
 
-        # Verify entities were created with correct coordinator
         entities = mock_async_add_entities.call_args[0][0]
         for entity in entities:
             assert entity.coordinator == mock_coordinator
-            # Base sensor doesn't store _entry_id attribute
 
 
 class TestSensorIntegration:
@@ -313,24 +278,20 @@ class TestSensorIntegration:
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
         """Test all sensors with comprehensive coordinator data."""
-        # Set up coordinator with specific values
         mock_coordinator_with_sensors.area_prior = 0.35
         mock_coordinator_with_sensors.probability = 0.65
-        mock_coordinator_with_sensors.decay = 0.15  # Will result in (1-0.15)*100 = 85.0
+        mock_coordinator_with_sensors.decay = 0.15
 
-        # Create all sensor types
-        priors_sensor = PriorsSensor(mock_coordinator_with_sensors, "test_entry")
-        probability_sensor = ProbabilitySensor(
-            mock_coordinator_with_sensors, "test_entry"
-        )
-        evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
-        decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
+        sensors = [
+            PriorsSensor(mock_coordinator_with_sensors, "test_entry"),
+            ProbabilitySensor(mock_coordinator_with_sensors, "test_entry"),
+            EvidenceSensor(mock_coordinator_with_sensors, "test_entry"),
+            DecaySensor(mock_coordinator_with_sensors, "test_entry"),
+        ]
 
-        # Test native values
-        assert priors_sensor.native_value == 35.0
-        assert probability_sensor.native_value == 65.0
-        assert evidence_sensor.native_value == 4  # From mock_coordinator_with_sensors
-        assert decay_sensor.native_value == 85.0  # (1 - 0.15) * 100
+        expected_values = [35.0, 65.0, 4, 85.0]  # 85.0 = (1 - 0.15) * 100
+        for sensor, expected_value in zip(sensors, expected_values, strict=False):
+            assert sensor.native_value == expected_value
 
     def test_sensor_availability_changes(
         self, mock_coordinator_with_sensors: Mock
@@ -343,16 +304,13 @@ class TestSensorIntegration:
             DecaySensor(mock_coordinator_with_sensors, "test_entry"),
         ]
 
-        # Test when available (CoordinatorEntity uses last_update_success)
         mock_coordinator_with_sensors.last_update_success = True
         for sensor in sensors:
             assert sensor.available is True
 
-        # Test when unavailable
         mock_coordinator_with_sensors.last_update_success = False
         for sensor in sensors:
             assert sensor.available is False
-            # Sensors still return values even when unavailable - they don't check availability in native_value
 
     def test_sensor_value_updates(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test sensor value updates when coordinator data changes."""
@@ -369,33 +327,29 @@ class TestSensorIntegration:
 
         assert probability_sensor.native_value == 65.0
         assert priors_sensor.native_value == 35.0
-        assert decay_sensor.native_value == 85.0  # (1 - 0.15) * 100
+        assert decay_sensor.native_value == 85.0
 
         # Update coordinator values
         mock_coordinator_with_sensors.probability = 0.8
         mock_coordinator_with_sensors.area_prior = 0.4
         mock_coordinator_with_sensors.decay = 0.3
 
-        # Check updated values
         assert probability_sensor.native_value == 80.0
         assert priors_sensor.native_value == 40.0
-        assert decay_sensor.native_value == 70.0  # (1 - 0.3) * 100
+        assert decay_sensor.native_value == 70.0
 
-    def test_entities_sensor_dynamic_updates(
+    def test_evidence_sensor_dynamic_updates(
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
-        """Test entities sensor with dynamic entity updates."""
+        """Test evidence sensor with dynamic entity updates."""
         evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
-
-        # Initial state - 4 entities from mock_coordinator_with_sensors
         assert evidence_sensor.native_value == 4
 
-        # Add more entities
-        new_entity = Mock()
-        mock_coordinator_with_sensors.entities.entities["new_sensor"] = new_entity
+        # Add entity
+        mock_coordinator_with_sensors.entities.entities["new_sensor"] = Mock()
         assert evidence_sensor.native_value == 5
 
-        # Remove entities
+        # Remove entity
         del mock_coordinator_with_sensors.entities.entities["binary_sensor.motion1"]
         assert evidence_sensor.native_value == 4
 
@@ -403,7 +357,6 @@ class TestSensorIntegration:
         self, mock_coordinator_with_sensors: Mock
     ) -> None:
         """Test decay sensor with dynamic decay state updates."""
-        # Set up mock decaying entities
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
         mock_entity1.decay.decay_factor = 0.8
@@ -411,10 +364,7 @@ class TestSensorIntegration:
         mock_coordinator_with_sensors.entities.decaying_entities = [mock_entity1]
 
         decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
-
-        # Initial state
         attrs = decay_sensor.extra_state_attributes
-        assert "decaying" in attrs
         assert len(attrs["decaying"]) == 1
 
         # Add another decaying entity
@@ -426,32 +376,24 @@ class TestSensorIntegration:
             mock_entity1,
             mock_entity2,
         ]
-
         attrs = decay_sensor.extra_state_attributes
         assert len(attrs["decaying"]) == 2
 
     def test_sensor_error_handling(self, mock_coordinator_with_sensors: Mock) -> None:
         """Test sensor error handling scenarios."""
-        # Test with entities that raise exceptions
-        mock_coordinator_with_sensors.entities.entities = Mock(
-            side_effect=Exception("Test error")
+        # Test evidence sensor error handling
+        mock_coordinator_with_sensors.entities.entities = Mock()
+        mock_coordinator_with_sensors.entities.entities.__len__ = Mock(
+            side_effect=TypeError("Test error")
         )
-
         evidence_sensor = EvidenceSensor(mock_coordinator_with_sensors, "test_entry")
-        decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
 
-        # Should handle gracefully and not crash
-        try:  # noqa: SIM105
-            # This should raise the exception since it's not caught in native_value
-            evidence_sensor.native_value  # noqa: B018
-        except Exception:  # noqa: BLE001
-            # This is expected since the implementation doesn't handle the error
-            pass
+        with pytest.raises(TypeError):
+            _ = evidence_sensor.native_value
 
         # Test decay sensor error handling
         mock_coordinator_with_sensors.entities.decaying_entities = Mock(
             side_effect=Exception("Test error")
         )
-        attrs = decay_sensor.extra_state_attributes
-        # Should return empty dict due to exception handling in implementation
-        assert attrs == {}
+        decay_sensor = DecaySensor(mock_coordinator_with_sensors, "test_entry")
+        assert decay_sensor.extra_state_attributes == {}

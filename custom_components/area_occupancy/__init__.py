@@ -77,28 +77,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Handle removal of a config entry and clean up storage."""
-    entry_id = entry.entry_id
-    _LOGGER.info("Removing Area Occupancy config entry: %s", entry_id)
-
-    try:
-        # Check if runtime_data exists and has a coordinator
-        if hasattr(entry, "runtime_data") and entry.runtime_data:
-            # Use the existing coordinator's sqlite store
-            storage = entry.runtime_data.storage
-        else:
-            # Create a temporary coordinator just for cleanup
-            temp_coordinator = AreaOccupancyCoordinator(hass, entry)
-            storage = temp_coordinator.storage
-
-        # Remove the per-entry storage file
-        await storage.async_reset()
-        _LOGGER.info("Per-entry storage removed for instance %s", entry_id)
-
-    except Exception:
-        # Log error but don't prevent removal flow
-        _LOGGER.exception("Error removing instance %s data from storage", entry_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -114,7 +94,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # Clean up coordinator
         coordinator = entry.runtime_data
-        await coordinator.async_shutdown()
+        if coordinator is not None:
+            await coordinator.async_shutdown()
 
     return unload_ok
 
