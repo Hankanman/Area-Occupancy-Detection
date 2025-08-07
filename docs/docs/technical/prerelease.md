@@ -12,7 +12,7 @@ You can try out the pre-releases by downloading them via HACS. You can find the 
     ![HACS Redownload](../images/prerelease2.png)
 5. Select the version you want to install after expanding the "Need a different version?" section (e.g. `2025.8.1-pre2`) and click on "Download"
     ![HACS Download](../images/prerelease3.png)
-7. Restart Home Assistant
+6. Restart Home Assistant
 
 
 ## Issues
