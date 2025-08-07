@@ -82,17 +82,18 @@ extra_javascript:
 nav:
   - Home: index.md
   - Getting Started:
-    - Installation: getting-started/installation.md
-    - Configuration: getting-started/configuration.md
-    - Basic Usage: getting-started/basic-usage.md
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+      - Basic Usage: getting-started/basic-usage.md
   - Features:
-    - Bayesian Calculation: features/calculation.md
-    - Prior Learning: features/prior-learning.md
-    - Sensor Likelihoods: features/likelihood.md
-    - Area Purpose: features/purpose.md
-    - Wasp in Box: features/wasp-in-box.md
-    - Probability Decay: features/decay.md
-    - Entities: features/entities.md
-    - Services: features/services.md
+      - Bayesian Calculation: features/calculation.md
+      - Prior Learning: features/prior-learning.md
+      - Sensor Likelihoods: features/likelihood.md
+      - Area Purpose: features/purpose.md
+      - Wasp in Box: features/wasp-in-box.md
+      - Probability Decay: features/decay.md
+      - Entities: features/entities.md
+      - Services: features/services.md
   - Technical:
-    - Deep Dive: technical/deep-dive.md
+      - Deep Dive: technical/deep-dive.md
+      - Pre-Releases: technical/prerelease.md
