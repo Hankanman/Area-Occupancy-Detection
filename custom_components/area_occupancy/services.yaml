@@ -129,3 +129,15 @@ purge_intervals:
       selector:
         entity:
           multiple: true
+
+reset_prior_window:
+  name: Reset Prior Calculation Window
+  description: "Reset the prior calculation window to force recalculation with fresh data. This can help if the prior value has been increasing over time due to data accumulation."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to reset the prior window for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
