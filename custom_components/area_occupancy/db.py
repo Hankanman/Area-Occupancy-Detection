@@ -684,7 +684,7 @@ class AreaOccupancyDB:
                         continue
 
                     conn.execute(
-                        self.Entities.__table__.insert().prefix_with("OR IGNORE"),
+                        self.Entities.__table__.insert().prefix_with("OR REPLACE"),
                         {
                             "entry_id": self.coordinator.entry_id,
                             "entity_id": entity.entity_id,
@@ -695,6 +695,7 @@ class AreaOccupancyDB:
                             "last_updated": entity.last_updated,
                             "is_decaying": entity.decay.is_decaying,
                             "decay_start": entity.decay.decay_start,
+                            "evidence": entity.evidence,
                         },
                     )
             _LOGGER.debug("Saved entity data")
