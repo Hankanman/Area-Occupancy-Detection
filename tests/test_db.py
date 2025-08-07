@@ -467,6 +467,7 @@ class TestAreaOccupancyDBUtilities:
                 is_decaying=False,
                 decay_start=dt_util.utcnow(),
             ),
+            evidence=True,
         )
         missing_type = SimpleNamespace(
             entity_id="binary_sensor.bad",
@@ -474,6 +475,7 @@ class TestAreaOccupancyDBUtilities:
                 is_decaying=False,
                 decay_start=dt_util.utcnow(),
             ),
+            evidence=False,
         )
         no_input = SimpleNamespace(
             entity_id="binary_sensor.noinput",
@@ -485,6 +487,7 @@ class TestAreaOccupancyDBUtilities:
                 is_decaying=False,
                 decay_start=dt_util.utcnow(),
             ),
+            evidence=None,
         )
         db.coordinator.entities = SimpleNamespace(
             entities={
@@ -549,7 +552,10 @@ class TestAreaOccupancyDBUtilities:
         # Mock the entities manager
         def create_mock_entity():
             entity = SimpleNamespace(
-                prob_given_true=0.5, prob_given_false=0.1, last_updated=dt_util.utcnow()
+                prob_given_true=0.5,
+                prob_given_false=0.1,
+                last_updated=dt_util.utcnow(),
+                evidence=True,
             )
             entity.update_decay = Mock()
             entity.update_likelihood = Mock()
@@ -590,6 +596,7 @@ class TestAreaOccupancyDBUtilities:
                     prob_given_true=0.5,
                     prob_given_false=0.1,
                     last_updated=dt_util.utcnow(),
+                    evidence=True,
                 )
                 entity.update_decay = Mock()
                 entity.update_likelihood = Mock()
