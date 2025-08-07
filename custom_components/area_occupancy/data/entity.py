@@ -469,9 +469,6 @@ class EntityManager:
                 prob_given_false = entity_obj.type.prob_given_false
 
         # Update entity
-        entity_obj.prob_given_true = clamp_probability(prob_given_true)
-        entity_obj.prob_given_false = clamp_probability(prob_given_false)
-        entity_obj.last_updated = now
         entity_obj.update_likelihood(prob_given_true, prob_given_false)
 
     def _is_occupied(
