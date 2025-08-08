@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
-from ..const import MIN_PROBABILITY
+from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
 from ..db import AreaOccupancyDB as DB
 from ..utils import clamp_probability
 from .decay import Decay
@@ -183,6 +183,12 @@ class EntityFactory:
             InputType(entity_obj.entity_type),
             self.config,
         )
+        # DB weight should take priority over configured default
+        try:
+            if MIN_WEIGHT <= float(entity_obj.weight) <= MAX_WEIGHT:
+                entity_type.weight = float(entity_obj.weight)
+        except (TypeError, ValueError):
+            pass
         decay = Decay.create(
             decay_start=entity_obj.decay_start,
             half_life=self.config.decay.half_life,

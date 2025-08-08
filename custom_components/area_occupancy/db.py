@@ -31,7 +31,13 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION
+from .const import (
+    CONF_VERSION,
+    MAX_PROBABILITY,
+    MAX_WEIGHT,
+    MIN_PROBABILITY,
+    MIN_WEIGHT,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
@@ -554,6 +560,16 @@ class AreaOccupancyDB:
                                 entity_obj.prob_given_true,
                                 entity_obj.prob_given_false,
                             )
+                            # DB weight takes priority over configured defaults when valid
+                            if hasattr(existing_entity, "type") and hasattr(
+                                existing_entity.type, "weight"
+                            ):
+                                try:
+                                    weight_val = float(entity_obj.weight)
+                                    if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
+                                        existing_entity.type.weight = weight_val
+                                except (TypeError, ValueError):
+                                    pass
                             existing_entity.last_updated = entity_obj.last_updated
                             existing_entity.previous_evidence = entity_obj.evidence
                             _LOGGER.debug(
@@ -675,13 +691,38 @@ class AreaOccupancyDB:
                         continue
 
                     entity_type = getattr(entity.type, "input_type", None)
-                    weight = getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
-
                     if entity_type is None:
                         _LOGGER.warning(
                             "Entity %s has no input_type, skipping", entity.entity_id
                         )
                         continue
+
+                    # Normalize values before persisting
+                    try:
+                        weight = float(
+                            getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
+                        )
+                    except (TypeError, ValueError):
+                        weight = DEFAULT_ENTITY_WEIGHT
+                    # Clamp weight to bounds
+                    weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
+
+                    # Clamp likelihoods to valid probability bounds
+                    prob_true = max(
+                        MIN_PROBABILITY,
+                        min(MAX_PROBABILITY, float(entity.prob_given_true)),
+                    )
+                    prob_false = max(
+                        MIN_PROBABILITY,
+                        min(MAX_PROBABILITY, float(entity.prob_given_false)),
+                    )
+
+                    # Evidence must be a boolean for the DB schema
+                    evidence_val = (
+                        bool(entity.evidence) if entity.evidence is not None else False
+                    )
+
+                    last_updated = entity.last_updated or dt_util.utcnow()
 
                     conn.execute(
                         self.Entities.__table__.insert().prefix_with("OR REPLACE"),
@@ -690,12 +731,12 @@ class AreaOccupancyDB:
                             "entity_id": entity.entity_id,
                             "entity_type": entity_type,
                             "weight": weight,
-                            "prob_given_true": entity.prob_given_true,
-                            "prob_given_false": entity.prob_given_false,
-                            "last_updated": entity.last_updated,
+                            "prob_given_true": prob_true,
+                            "prob_given_false": prob_false,
+                            "last_updated": last_updated,
                             "is_decaying": entity.decay.is_decaying,
                             "decay_start": entity.decay.decay_start,
-                            "evidence": entity.evidence,
+                            "evidence": evidence_val,
                         },
                     )
             _LOGGER.debug("Saved entity data")
