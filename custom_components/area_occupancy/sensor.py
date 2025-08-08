@@ -204,8 +204,8 @@ class DecaySensor(AreaOccupancySensorBase):
             return {
                 "decaying": [
                     {
-                        "id": {entity.entity_id},
-                        "decay": {format_percentage(entity.decay.decay_factor)},
+                        "id": entity.entity_id,
+                        "decay": format_percentage(entity.decay.decay_factor),
                     }
                     for entity in self.coordinator.entities.decaying_entities
                 ]

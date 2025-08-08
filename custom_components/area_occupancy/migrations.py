@@ -275,16 +275,14 @@ async def async_migrate_storage(
         _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
 
 
-async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) -> None:
-    """Drop tables for schema migration if needed."""
+def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
+    """Blocking helper: perform locked drop of legacy tables if needed."""
     if entry_major >= 11:
         _LOGGER.debug("Skipping table dropping for version %s", entry_major)
         return
 
     _LOGGER.info("Dropping tables for schema migration")
-    storage_dir = Path(hass.config.config_dir) / ".storage"
     db_path = storage_dir / DB_NAME
-
     if not db_path.exists():
         return
 
@@ -294,7 +292,6 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
             engine = create_engine(f"sqlite:///{db_path}")
             session = sessionmaker(bind=engine)()
 
-            # Check if metadata table exists and get version
             db_version = 0
             try:
                 result = session.execute(
@@ -304,12 +301,10 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
                 if row:
                     db_version = int(row[0])
             except Exception:  # noqa: BLE001
-                # Table doesn't exist or query failed, assume version 0
                 db_version = 0
 
             if db_version < 3:
                 _LOGGER.info("Dropping tables for schema migration")
-                # Update or insert db_version
                 try:
                     session.execute(
                         text(
@@ -318,7 +313,6 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
                         {"version": str(DB_VERSION)},
                     )
                     if session.execute(text("SELECT changes()")).scalar() == 0:
-                        # No rows updated, insert new record
                         session.execute(
                             text(
                                 "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
@@ -326,7 +320,6 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
                             {"version": str(DB_VERSION)},
                         )
                 except Exception:  # noqa: BLE001
-                    # Table might not exist, continue with dropping
                     pass
                 session.commit()
 
@@ -347,26 +340,23 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
                     conn.commit()
                     _LOGGER.info("All tables dropped successfully")
 
-            # Close session and dispose engine before releasing lock
             session.close()
             engine.dispose()
             _LOGGER.debug("Database engine disposed")
-
             _LOGGER.info("Tables dropped successfully")
-    except TimeoutError:
-        _LOGGER.error("Timeout while waiting for DB lock during table dropping")
-        raise
-    except Exception as err:
-        _LOGGER.error("Error during database table dropping: %s", err)
-        raise
     finally:
-        # Safety cleanup: ensure lock is removed if it still exists
         try:
             if lock_path.exists():
                 lock_path.unlink()
                 _LOGGER.debug("Removed leftover lock file: %s", lock_path)
         except Exception as cleanup_err:  # noqa: BLE001
             _LOGGER.debug("Error during lock cleanup: %s", cleanup_err)
+
+
+async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) -> None:
+    """Drop tables for schema migration if needed in an async-friendly manner."""
+    storage_dir = Path(hass.config.config_dir) / ".storage"
+    await hass.async_add_executor_job(_drop_tables_locked, storage_dir, entry_major)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

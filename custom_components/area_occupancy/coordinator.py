@@ -240,7 +240,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "probability": self.probability,
             "occupied": self.occupied,
             "threshold": self.threshold,
-            "prior": self.prior,
+            "prior": self.area_prior,
             "decay": self.decay,
             "last_updated": dt_util.utcnow(),
         }

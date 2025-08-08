@@ -771,7 +771,7 @@ class AreaOccupancyDB:
             _LOGGER.error("Error ensuring area exists: %s", e)
 
     def get_latest_interval(self) -> datetime | None:
-        """Return the latest interval end time minus 1 day, or None if no intervals."""
+        """Return the latest interval end time minus 1 hour, or default window if none."""
         try:
             with self.get_session() as session:
                 result = session.execute(
