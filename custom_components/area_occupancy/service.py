@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .utils import ensure_timezone_aware
 
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
@@ -161,7 +162,8 @@ async def _get_problematic_entities(
         stale_updates = [
             eid
             for eid, e in entities.items()
-            if e.last_updated and (now - e.last_updated).total_seconds() > 3600
+            if e.last_updated
+            and (now - ensure_timezone_aware(e.last_updated)).total_seconds() > 3600
         ]
 
         problems = {
