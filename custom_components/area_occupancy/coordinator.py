@@ -189,11 +189,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Initialize purpose manager
             await self.purpose.async_initialize()
 
-            # Ensure area exists in database
-            await self.db.save_area_data()
-
-            # Load stored data
+            # Load stored data first to restore prior from DB
             await self.db.load_data()
+
+            # Ensure area exists and persist current configuration/state
+            await self.db.save_area_data()
 
             is_empty = self.db.is_intervals_empty()
             if is_empty:
