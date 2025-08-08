@@ -313,4 +313,4 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d services for %s integration", 9, DOMAIN)
+    _LOGGER.info("Registered %d services for %s integration", 5, DOMAIN)

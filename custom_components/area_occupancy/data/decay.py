@@ -7,7 +7,9 @@ from datetime import datetime
 
 from homeassistant.util import dt as dt_util
 
-DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
+# Note: Actual half-life is purpose-driven via PurposeManager.
+# This fallback is used only when no purpose is configured.
+DEFAULT_HALF_LIFE = 30.0  # seconds
 
 
 @dataclass

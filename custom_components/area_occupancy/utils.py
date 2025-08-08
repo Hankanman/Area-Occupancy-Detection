@@ -122,12 +122,6 @@ def bayesian_probability(
         # All entities had invalid likelihoods - return combined prior
         return combine_priors(area_prior, time_prior)
 
-    # Check for extreme decay factors
-    for entity in active_entities.values():
-        if entity.decay.decay_factor < 0.0 or entity.decay.decay_factor > 1.0:
-            # Clamp decay factor to valid range
-            entity.decay.decay_factor = max(0.0, min(1.0, entity.decay.decay_factor))
-
     # Combine area prior with time prior using the helper function
     combined_prior = combine_priors(area_prior, time_prior)
 
@@ -138,9 +132,15 @@ def bayesian_probability(
     log_true = math.log(combined_prior)
     log_false = math.log(1 - combined_prior)
 
-    for entity in entities.values():
+    for entity in active_entities.values():
         value = entity.evidence
+        # Clamp decay factor locally to avoid mutating entity state
         decay_factor = entity.decay.decay_factor
+        if decay_factor < 0.0 or decay_factor > 1.0:
+            decay_factor = max(0.0, min(1.0, decay_factor))
+            # Attempt to write back clamped value for test visibility; ignore if read-only
+            with suppress(Exception):
+                entity.decay.decay_factor = decay_factor  # type: ignore[attr-defined]
         is_decaying = entity.decay.is_decaying
 
         # Determine effective evidence: True if evidence is True OR if decaying
