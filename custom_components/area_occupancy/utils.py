@@ -1,4 +1,4 @@
-"""Utility functions for the Area Occupancy component."""
+"""Utility functions for Area Occupancy Detection."""
 
 from __future__ import annotations
 
@@ -10,13 +10,27 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
+from homeassistant.util import dt as dt_util
+
 from .const import MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 if TYPE_CHECKING:
     from .data.entity import Entity
 
 
-# ─────────────────────────────────────── Utility Functions ───────────────────
+def ensure_timezone_aware(dt: datetime) -> datetime:
+    """Ensure a datetime is timezone-aware, assuming UTC if naive.
+
+    Args:
+        dt: The datetime object to make timezone-aware
+
+    Returns:
+        A timezone-aware datetime object
+
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=dt_util.UTC)
+    return dt
 
 
 def format_float(value: float) -> float:
@@ -30,7 +44,7 @@ def format_percentage(value: float) -> str:
 
 
 def clamp_probability(value: float) -> float:
-    """Clamp probability to valid range."""
+    """Clamp probability value to valid range [MIN_PROBABILITY, MAX_PROBABILITY]."""
     return max(MIN_PROBABILITY, min(MAX_PROBABILITY, value))
 
 

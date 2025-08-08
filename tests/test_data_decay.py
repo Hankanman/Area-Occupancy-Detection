@@ -119,8 +119,30 @@ class TestDecay:
         ],
     )
     def test_create_classmethod(self, kwargs: dict, expected_values: dict) -> None:
-        """Test create classmethod."""
+        """Test the create classmethod."""
         decay = Decay.create(**kwargs)
-        assert decay.is_decaying == expected_values["is_decaying"]
-        assert decay.half_life == expected_values["half_life"]
-        assert isinstance(decay.decay_start, datetime)
+        for key, expected_value in expected_values.items():
+            assert getattr(decay, key) == expected_value
+
+    def test_timezone_naive_datetime_handling(self) -> None:
+        """Test that timezone-naive datetimes are handled correctly."""
+        # Create a timezone-naive datetime
+        naive_datetime = datetime(2023, 1, 1, 12, 0, 0)  # No timezone info
+
+        # Create decay with naive datetime
+        decay = Decay.create(decay_start=naive_datetime, is_decaying=True)
+
+        # Verify the datetime is now timezone-aware
+        assert decay.decay_start.tzinfo is not None
+        assert decay.decay_start.tzinfo == dt_util.UTC
+
+        # Test that decay_factor calculation works with the timezone-aware datetime
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            # Mock current time to be 60 seconds after the decay start
+            mock_utcnow.return_value = naive_datetime.replace(
+                tzinfo=dt_util.UTC
+            ) + timedelta(seconds=60)
+
+            # Should calculate decay factor without timezone errors
+            factor = decay.decay_factor
+            assert 0.0 <= factor <= 1.0

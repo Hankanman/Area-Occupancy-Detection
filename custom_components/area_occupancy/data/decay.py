@@ -7,6 +7,8 @@ from datetime import datetime
 
 from homeassistant.util import dt as dt_util
 
+from ..utils import ensure_timezone_aware
+
 # Note: Actual half-life is purpose-driven via PurposeManager.
 # This fallback is used only when no purpose is configured.
 DEFAULT_HALF_LIFE = 30.0  # seconds
@@ -25,7 +27,10 @@ class Decay:
         """Freshness of last motion edge ∈[0,1]; auto-stops below 5 %."""
         if not self.is_decaying:
             return 1.0
-        age = (dt_util.utcnow() - self.decay_start).total_seconds()
+
+        # Ensure decay_start is timezone-aware to avoid subtraction errors
+        decay_start_aware = ensure_timezone_aware(self.decay_start)
+        age = (dt_util.utcnow() - decay_start_aware).total_seconds()
         factor = 0.5 ** (age / self.half_life)
         if factor < 0.05:  # practical zero
             self.is_decaying = False
@@ -51,6 +56,10 @@ class Decay:
         is_decaying: bool | None = None,
     ) -> Decay:
         """Create a Decay instance with optional parameters."""
+        # Ensure decay_start is timezone-aware if provided
+        if decay_start is not None:
+            decay_start = ensure_timezone_aware(decay_start)
+
         return cls(
             decay_start=decay_start if decay_start is not None else dt_util.utcnow(),
             half_life=half_life if half_life is not None else DEFAULT_HALF_LIFE,
