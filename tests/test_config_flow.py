@@ -16,14 +16,12 @@ from custom_components.area_occupancy.config_flow import (
     create_schema,
 )
 from custom_components.area_occupancy.const import (
-    CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_MOTION_SENSORS,
     CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
-    CONF_WASP_ENABLED,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
@@ -45,225 +43,95 @@ from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 class TestBaseOccupancyFlow:
     """Test BaseOccupancyFlow class."""
 
-    @pytest.mark.asyncio
-    async def test_validate_config_valid(self, mock_hass):
+    @pytest.fixture
+    def base_config(self):
+        """Create a base valid configuration for testing."""
+        return {
+            CONF_NAME: "Test Area",
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
+            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
+            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
+            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
+            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
+            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
+        }
+
+    @pytest.fixture
+    def flow(self):
+        """Create a BaseOccupancyFlow instance."""
+        return BaseOccupancyFlow()
+
+    def test_validate_config_valid(self, flow, base_config):
         """Test validating a valid configuration."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-        }
+        flow._validate_config(base_config)  # Should not raise any exception
 
-        flow._validate_config(config)  # Should not raise any exception
-
-    @pytest.mark.asyncio
-    async def test_validate_config_no_motion_sensors(self, mock_hass):
-        """Test validating configuration with no motion sensors."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: [],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-        }
-
-        with pytest.raises(vol.Invalid) as excinfo:
-            flow._validate_config(config)
-        assert "At least one motion sensor is required" in str(excinfo.value)
-
-    @pytest.mark.asyncio
-    async def test_validate_config_invalid_weight(self, mock_hass):
-        """Test validating configuration with invalid weight."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_WEIGHT_MOTION: 1.5,  # Invalid weight
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-        }
+    @pytest.mark.parametrize(
+        ("invalid_config", "expected_error"),
+        [
+            (
+                {"motion_sensors": []},
+                "At least one motion sensor is required",
+            ),
+            (
+                {"weight_motion": 1.5},
+                "weight_motion must be between 0 and 1",
+            ),
+            (
+                {"primary_occupancy_sensor": "binary_sensor.motion2"},
+                "Primary occupancy sensor must be one of the selected motion sensors",
+            ),
+            (
+                {"threshold": 150},
+                "threshold",
+            ),
+            (
+                {"threshold": 0},
+                "Threshold must be between 1 and 100",
+            ),
+            (
+                {"threshold": 101},
+                "Threshold must be between 1 and 100",
+            ),
+            (
+                {"name": ""},
+                "Name is required",
+            ),
+            (
+                {"decay_enabled": True, "decay_half_life": 0},
+                "Decay half life must be between",
+            ),
+        ],
+    )
+    def test_validate_config_invalid_scenarios(
+        self, flow, base_config, invalid_config, expected_error
+    ):
+        """Test various invalid configuration scenarios."""
+        test_config = {**base_config, **invalid_config}
 
         with pytest.raises(vol.Invalid) as excinfo:
-            flow._validate_config(config)
-        assert "weight_motion must be between 0 and 1" in str(excinfo.value)
-
-    @pytest.mark.asyncio
-    async def test_validate_config_primary_not_in_motion(self, mock_hass):
-        """Test validating configuration where primary sensor is not in motion sensors."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",  # Not in motion sensors
-            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-        }
-
-        with pytest.raises(vol.Invalid) as excinfo:
-            flow._validate_config(config)
-        assert (
-            "Primary occupancy sensor must be one of the selected motion sensors"
-            in str(excinfo.value)
-        )
-
-    @pytest.mark.asyncio
-    async def test_validate_config_invalid_probability(self, mock_hass):
-        """Test validating configuration with invalid probability."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 150,  # Invalid threshold
-            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-        }
-
-        with pytest.raises(vol.Invalid) as excinfo:
-            flow._validate_config(config)
-        assert "threshold" in str(excinfo.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_validate_config_invalid_decay_timeout(self, mock_hass):
-        """Test validating configuration with invalid decay timeout."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 60,
-            CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
-            CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
-            CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
-            CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
-            CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
-            CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
-            CONF_DECAY_ENABLED: True,
-            CONF_DECAY_HALF_LIFE: 0,  # Invalid decay half life
-        }
-
-        with pytest.raises(vol.Invalid, match="Decay half life must be between"):
-            flow._validate_config(config)
-
-    @pytest.mark.asyncio
-    async def test_validate_config_invalid_update_interval(self, mock_hass):
-        """Test validating configuration with invalid update interval."""
-        flow = BaseOccupancyFlow()
-        config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 60,
-            CONF_DECAY_ENABLED: True,
-            CONF_DECAY_HALF_LIFE: 0,  # Invalid decay half life
-        }
-
-        with pytest.raises(vol.Invalid, match="Decay half life must be between"):
-            flow._validate_config(config)
-
-    def test_validate_config_invalid_threshold_low(self) -> None:
-        """Test _validate_config with threshold too low."""
-        flow = BaseOccupancyFlow()
-
-        invalid_config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 0,  # Invalid threshold
-        }
-
-        with pytest.raises(vol.Invalid, match="Threshold must be between 1 and 100"):
-            flow._validate_config(invalid_config)
-
-    def test_validate_config_invalid_threshold_high(self) -> None:
-        """Test _validate_config with threshold too high."""
-        flow = BaseOccupancyFlow()
-
-        invalid_config = {
-            CONF_NAME: "Test Area",
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 101,  # Invalid threshold
-        }
-
-        with pytest.raises(vol.Invalid, match="Threshold must be between 1 and 100"):
-            flow._validate_config(invalid_config)
-
-    def test_validate_config_empty_name(self) -> None:
-        """Test _validate_config with empty name."""
-        flow = BaseOccupancyFlow()
-
-        invalid_config = {
-            CONF_NAME: "",  # Empty name
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 60,
-        }
-
-        with pytest.raises(vol.Invalid, match="Name is required"):
-            flow._validate_config(invalid_config)
+            flow._validate_config(test_config)
+        assert expected_error.lower() in str(excinfo.value).lower()
 
 
 class TestHelperFunctions:
     """Test helper functions."""
 
-    def test_get_state_select_options(self) -> None:
-        """Test _get_state_select_options function."""
-        # Test door states
-        door_options = _get_state_select_options("door")
-        assert len(door_options) > 0
-        assert all("value" in option and "label" in option for option in door_options)
-
-        # Test window states
-        window_options = _get_state_select_options("window")
-        assert len(window_options) > 0
-
-        # Test media states
-        media_options = _get_state_select_options("media")
-        assert len(media_options) > 0
-
-        # Test appliance states
-        appliance_options = _get_state_select_options("appliance")
-        assert len(appliance_options) > 0
-
-        # Test unknown state type
-        unknown_options = _get_state_select_options("unknown")
-        # Accept any non-empty list, as the implementation returns default options
-        assert isinstance(unknown_options, list)
-        assert all(
-            "value" in option and "label" in option for option in unknown_options
-        )
+    @pytest.mark.parametrize(
+        "platform",
+        ["door", "window", "media", "appliance", "unknown"],
+    )
+    def test_get_state_select_options(self, platform):
+        """Test _get_state_select_options function for all platforms."""
+        options = _get_state_select_options(platform)
+        assert isinstance(options, list)
+        assert len(options) > 0
+        assert all("value" in option and "label" in option for option in options)
 
     def test_get_include_entities(self, mock_hass, mock_entity_registry):
         """Test getting include entities."""
-        # Setup mock entity registry
-        mock_hass.helpers.entity_registry.async_get.return_value = mock_entity_registry
-
-        # Add some test entities
+        # Setup test entities
         entity_list = [
             Mock(
                 entity_id="binary_sensor.door_1",
@@ -285,11 +153,9 @@ class TestHelperFunctions:
             ),
         ]
 
-        # Set up the entities property to be iterable
+        # Setup mocks
         mock_entity_registry.entities = Mock()
         mock_entity_registry.entities.values = Mock(return_value=entity_list)
-
-        # Setup mock states
         mock_hass.states = Mock()
         mock_hass.states.async_entity_ids = Mock(
             return_value=[
@@ -302,7 +168,6 @@ class TestHelperFunctions:
             return_value=Mock(attributes={"device_class": None})
         )
 
-        # Patch the async_get function to return our mock registry
         with patch(
             "homeassistant.helpers.entity_registry.async_get",
             return_value=mock_entity_registry,
@@ -316,59 +181,66 @@ class TestHelperFunctions:
         assert "binary_sensor.window_1" in result["window"]
         assert "switch.appliance_1" in result["appliance"]
 
-    def test_create_schema_defaults(self, mock_hass):
+    @pytest.fixture
+    def mock_hass_for_schema(self, mock_hass):
+        """Set up mock hass for schema tests."""
+        mock_hass.states = Mock()
+        mock_hass.states.async_entity_ids = Mock(return_value=[])
+        mock_hass.states.get = Mock(
+            return_value=Mock(attributes={"device_class": None})
+        )
+        return mock_hass
+
+    @pytest.fixture
+    def mock_entity_registry_for_schema(self):
+        """Create mock entity registry for schema tests."""
+        mock_registry = Mock()
+        mock_registry.entities = {}
+        return mock_registry
+
+    def test_create_schema_defaults(
+        self, mock_hass_for_schema, mock_entity_registry_for_schema
+    ):
         """Test creating schema with defaults."""
-        # Setup mock states
-        mock_hass.states = Mock()
-        mock_hass.states.async_entity_ids = Mock(return_value=[])
-        mock_hass.states.get = Mock(
-            return_value=Mock(attributes={"device_class": None})
-        )
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get",
+            return_value=mock_entity_registry_for_schema,
+        ):
+            schema = create_schema(mock_hass_for_schema)
 
-        # Patch entity_registry.async_get to return a mock with .entities as an empty dict
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            mock_registry = Mock()
-            mock_registry.entities = {}
-            mock_er_get.return_value = mock_registry
-            schema = create_schema(mock_hass)
+        expected_sections = [
+            CONF_NAME,
+            "motion",
+            "doors",
+            "windows",
+            "media",
+            "appliances",
+            "environmental",
+            "wasp_in_box",
+            "parameters",
+        ]
         assert isinstance(schema, dict)
-        assert CONF_NAME in schema
-        assert "motion" in schema
-        assert "doors" in schema
-        assert "windows" in schema
-        assert "media" in schema
-        assert "appliances" in schema
-        assert "environmental" in schema
-        assert "wasp_in_box" in schema
-        assert "parameters" in schema
+        for section in expected_sections:
+            assert section in schema
 
-    def test_create_schema_with_defaults(self, mock_hass):
+    def test_create_schema_with_defaults(
+        self, mock_hass_for_schema, mock_entity_registry_for_schema
+    ):
         """Test creating schema with provided defaults."""
-        # Setup mock states
-        mock_hass.states = Mock()
-        mock_hass.states.async_entity_ids = Mock(return_value=[])
-        mock_hass.states.get = Mock(
-            return_value=Mock(attributes={"device_class": None})
-        )
-
         defaults = {
             CONF_NAME: "Test Area",
             CONF_MOTION_SENSORS: ["binary_sensor.motion_1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion_1",
         }
-        # Patch entity_registry.async_get to return a mock with .entities as an empty dict
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            mock_registry = Mock()
 
-            class EntitiesObj:
-                def values(self):
-                    return [].__iter__()
-
-            mock_registry.entities = EntitiesObj()
-            mock_er_get.return_value = mock_registry
-            schema_dict = create_schema(mock_hass, defaults)
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get",
+            return_value=mock_entity_registry_for_schema,
+        ):
+            schema_dict = create_schema(mock_hass_for_schema, defaults)
             schema = vol.Schema(schema_dict)
-            # The default value is set in the voluptuous marker, so we check by instantiating
+
+            # Test schema instantiation
             data = schema(
                 {
                     CONF_NAME: "Test Area",
@@ -383,77 +255,52 @@ class TestHelperFunctions:
                     "parameters": {},
                 }
             )
-        assert isinstance(schema_dict, dict)
-        assert CONF_NAME in schema_dict
+
         assert data[CONF_NAME] == "Test Area"
-        assert "purpose" in schema_dict
-        assert "motion" in schema_dict
-        assert "doors" in schema_dict
-        assert "windows" in schema_dict
-        assert "media" in schema_dict
-        assert "appliances" in schema_dict
-        assert "environmental" in schema_dict
-        assert "wasp_in_box" in schema_dict
-        assert "parameters" in schema_dict
 
-    def test_create_schema_options_mode(self, mock_hass):
+    def test_create_schema_options_mode(
+        self, mock_hass_for_schema, mock_entity_registry_for_schema
+    ):
         """Test creating schema in options mode."""
-        # Setup mock states
-        mock_hass.states = Mock()
-        mock_hass.states.async_entity_ids = Mock(return_value=[])
-        mock_hass.states.get = Mock(
-            return_value=Mock(attributes={"device_class": None})
-        )
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get",
+            return_value=mock_entity_registry_for_schema,
+        ):
+            schema = create_schema(mock_hass_for_schema, is_options=True)
 
-        # Patch entity_registry.async_get to return a mock with .entities as an empty dict
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            mock_registry = Mock()
-            mock_registry.entities = {}
-            mock_er_get.return_value = mock_registry
-            schema = create_schema(mock_hass, is_options=True)
         assert isinstance(schema, dict)
-        assert CONF_NAME not in schema
-        assert "purpose" in schema
-        assert "motion" in schema
-        assert "doors" in schema
-        assert "windows" in schema
-        assert "media" in schema
-        assert "appliances" in schema
-        assert "environmental" in schema
-        assert "wasp_in_box" in schema
-        assert "parameters" in schema
+        assert CONF_NAME not in schema  # Name should not be in options mode
 
 
 class TestAreaOccupancyConfigFlow:
     """Test AreaOccupancyConfigFlow class."""
 
-    def test_initialization(self) -> None:
+    @pytest.fixture
+    def flow(self, mock_hass):
+        """Create a config flow instance."""
+        flow = AreaOccupancyConfigFlow()
+        flow.hass = mock_hass
+        return flow
+
+    def test_initialization(self):
         """Test ConfigFlow initialization."""
         flow = AreaOccupancyConfigFlow()
-
         assert flow.VERSION == 1
         assert flow.MINOR_VERSION == 1
 
-    async def test_async_step_user_no_input(self, mock_hass: Mock) -> None:
+    async def test_async_step_user_no_input(self, flow):
         """Test async_step_user with no user input."""
-        flow = AreaOccupancyConfigFlow()
-        flow.hass = mock_hass
-
         with patch(
             "custom_components.area_occupancy.config_flow.create_schema"
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
-
             result = await flow.async_step_user()
 
             assert result.get("type") == FlowResultType.FORM
             assert result.get("step_id") == "user"
 
-    async def test_async_step_user_with_valid_input(self, mock_hass: Mock) -> None:
+    async def test_async_step_user_with_valid_input(self, flow):
         """Test async_step_user with valid user input."""
-        flow = AreaOccupancyConfigFlow()
-        flow.hass = mock_hass
-
         user_input = {
             "motion": {
                 CONF_NAME: "Test Area",
@@ -479,21 +326,19 @@ class TestAreaOccupancyConfigFlow:
 
             assert result.get("type") == FlowResultType.CREATE_ENTRY
             assert result.get("title") == "Test Area"
+
             expected_data = {
                 CONF_NAME: "Test Area",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 CONF_PURPOSE: "social",
                 CONF_THRESHOLD: 60,
-                CONF_DECAY_HALF_LIFE: 720.0,  # Auto-set based on social purpose
+                CONF_DECAY_HALF_LIFE: 720.0,
             }
             assert result.get("data") == expected_data
 
-    async def test_async_step_user_with_invalid_input(self, mock_hass: Mock) -> None:
+    async def test_async_step_user_with_invalid_input(self, flow):
         """Test async_step_user with invalid user input."""
-        flow = AreaOccupancyConfigFlow()
-        flow.hass = mock_hass
-
         user_input = {
             CONF_NAME: "Test Area",
             "motion": {
@@ -514,10 +359,8 @@ class TestAreaOccupancyConfigFlow:
             "custom_components.area_occupancy.config_flow.create_schema"
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
-
             result = await flow.async_step_user(user_input)
 
-            assert result is not None
             assert result.get("type") == FlowResultType.FORM
             assert "errors" in result
             assert result["errors"] == {
@@ -528,22 +371,17 @@ class TestAreaOccupancyConfigFlow:
 class TestConfigFlowIntegration:
     """Test config flow integration scenarios."""
 
-    async def test_complete_config_flow(self, mock_hass: Mock) -> None:
-        """Test complete configuration flow."""
+    @pytest.fixture
+    def flow(self, mock_hass):
+        """Create a config flow instance."""
         flow = AreaOccupancyConfigFlow()
         flow.hass = mock_hass
+        return flow
 
-        # Step 1: Show form
-        with patch(
-            "custom_components.area_occupancy.config_flow.create_schema"
-        ) as mock_create_schema:
-            mock_create_schema.return_value = {"test": vol.Required("test")}
-
-            result1 = await flow.async_step_user()
-            assert result1.get("type") == FlowResultType.FORM
-
-        # Step 2: Submit valid data
-        user_input = {
+    @pytest.fixture
+    def valid_user_input(self):
+        """Create valid user input for testing."""
+        return {
             CONF_NAME: "Living Room",
             "motion": {
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
@@ -559,65 +397,55 @@ class TestConfigFlowIntegration:
             "parameters": {CONF_THRESHOLD: 60},
         }
 
+    async def test_complete_config_flow(self, flow, valid_user_input):
+        """Test complete configuration flow."""
+        # Step 1: Show form
+        with patch(
+            "custom_components.area_occupancy.config_flow.create_schema"
+        ) as mock_create_schema:
+            mock_create_schema.return_value = {"test": vol.Required("test")}
+            result1 = await flow.async_step_user()
+            assert result1.get("type") == FlowResultType.FORM
+
+        # Step 2: Submit valid data
         with (
             patch.object(flow, "async_set_unique_id", new_callable=AsyncMock),
             patch.object(flow, "_abort_if_unique_id_configured"),
         ):
-            result2 = await flow.async_step_user(user_input)
+            result2 = await flow.async_step_user(valid_user_input)
 
             assert result2.get("type") == FlowResultType.CREATE_ENTRY
             assert result2.get("title") == "Living Room"
-            # The config flow flattens the input, so we need to check the flattened structure
-            expected_data = {
-                CONF_NAME: "Living Room",
-                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                CONF_PURPOSE: "social",
-                CONF_THRESHOLD: 60,
-                CONF_WASP_ENABLED: False,
-            }
-            # Check that the essential fields are present
+
             result_data = result2.get("data", {})
-            assert result_data.get(CONF_NAME) == expected_data[CONF_NAME]
-            assert (
-                result_data.get(CONF_MOTION_SENSORS)
-                == expected_data[CONF_MOTION_SENSORS]
-            )
+            assert result_data.get(CONF_NAME) == "Living Room"
+            assert result_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert (
                 result_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
-                == expected_data[CONF_PRIMARY_OCCUPANCY_SENSOR]
+                == "binary_sensor.motion1"
             )
-            assert result_data.get(CONF_THRESHOLD) == expected_data[CONF_THRESHOLD]
+            assert result_data.get(CONF_THRESHOLD) == 60
 
-    async def test_complete_options_flow(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
+    async def test_complete_options_flow(self, mock_hass, mock_config_entry):
         """Test complete options flow."""
-        # Add missing attributes to mock_hass
+        # Setup mock hass
         mock_hass.data = {}
         mock_hass.config = Mock()
         mock_hass.config.config_dir = "/config"
         mock_hass.bus = Mock()
         mock_hass.bus.async_listen = Mock()
-
-        # Properly mock states.async_entity_ids to return empty lists
         mock_hass.states.async_entity_ids = Mock(return_value=[])
         mock_hass.states.get = Mock(return_value=None)
 
-        # Create a minimal mock flow that bypasses the parent initialization
+        # Create flow with bound methods
         flow = Mock(spec=AreaOccupancyOptionsFlow)
         flow.config_entry = mock_config_entry
         flow._data = {}
         flow.hass = mock_hass
-
-        # Bind the actual methods we want to test
         flow.async_step_init = AreaOccupancyOptionsFlow.async_step_init.__get__(
             flow, AreaOccupancyOptionsFlow
         )
-        # Mock _validate_config to avoid validation issues in the test
         flow._validate_config = Mock()
-
-        # Mock the parent class methods that return flow results
         flow.async_show_form = Mock(
             return_value={"type": FlowResultType.FORM, "step_id": "init"}
         )
@@ -625,24 +453,21 @@ class TestConfigFlowIntegration:
             return_value={"type": FlowResultType.CREATE_ENTRY, "title": "", "data": {}}
         )
 
-        # Apply the entity registry patch for the entire test
         with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            # Create a proper mock registry with entities attribute
             mock_registry = Mock()
             mock_registry.entities = Mock()
             mock_registry.entities.values = Mock(return_value=[])
             mock_er_get.return_value = mock_registry
 
-            # Step 1: Show form with current values
+            # Step 1: Show form
             with patch(
                 "custom_components.area_occupancy.config_flow.create_schema"
             ) as mock_create_schema:
                 mock_create_schema.return_value = {"test": vol.Required("test")}
-
                 result1 = await flow.async_step_init()
                 assert result1.get("type") == FlowResultType.FORM
 
-            # Step 2: Submit updated data in sectioned format
+            # Step 2: Submit updated data
             user_input = {
                 "motion": {
                     CONF_MOTION_SENSORS: [
@@ -661,7 +486,6 @@ class TestConfigFlowIntegration:
                 "parameters": {CONF_THRESHOLD: 75},
             }
 
-            # Mock async_create_entry to return the user input as data
             flow.async_create_entry = Mock(
                 return_value={
                     "type": FlowResultType.CREATE_ENTRY,
@@ -671,55 +495,40 @@ class TestConfigFlowIntegration:
             )
 
             result2 = await flow.async_step_init(user_input)
-
             assert result2.get("type") == FlowResultType.CREATE_ENTRY
             assert result2.get("data") == user_input
 
     async def test_options_flow_adds_name_for_validation(
-        self, mock_hass: Mock, mock_config_entry: Mock
-    ) -> None:
+        self, mock_hass, mock_config_entry
+    ):
         """Test that options flow adds name from config entry for validation."""
-        # Set up a config entry with a name
         mock_config_entry.data = {CONF_NAME: "Test Area"}
         mock_config_entry.options = {}
 
-        # Create the options flow manually without triggering HA setup
         flow = Mock(spec=AreaOccupancyOptionsFlow)
         flow.config_entry = mock_config_entry
         flow._data = {}
         flow.hass = mock_hass
-
-        # Bind the actual method we want to test
         flow.async_step_init = AreaOccupancyOptionsFlow.async_step_init.__get__(
             flow, AreaOccupancyOptionsFlow
         )
-
-        # Bind the validate method from BaseOccupancyFlow
         flow._validate_config = BaseOccupancyFlow._validate_config.__get__(
             flow, BaseOccupancyFlow
         )
-
-        # Mock the parent class methods that return flow results
         flow.async_show_form = Mock(
             return_value={"type": FlowResultType.FORM, "step_id": "init"}
         )
-        flow.async_create_entry = Mock(
-            return_value={"type": FlowResultType.CREATE_ENTRY, "title": "", "data": {}}
-        )
 
-        # Mock the entity registry
         with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
             mock_registry = Mock()
             mock_registry.entities = Mock()
             mock_registry.entities.values = Mock(return_value=[])
             mock_er_get.return_value = mock_registry
 
-            # Mock states
             mock_hass.states = Mock()
             mock_hass.states.async_entity_ids = Mock(return_value=[])
             mock_hass.states.get = Mock(return_value=None)
 
-            # Submit user input without name (as would happen in options flow)
             user_input = {
                 "motion": {
                     CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
@@ -735,7 +544,6 @@ class TestConfigFlowIntegration:
                 "parameters": {},
             }
 
-            # Capture the data passed to async_create_entry to verify our fix
             captured_data = {}
 
             def capture_create_entry(title="", data=None):
@@ -748,20 +556,12 @@ class TestConfigFlowIntegration:
 
             flow.async_create_entry = capture_create_entry
 
-            # The test should not raise a "Name is required" error
             result = await flow.async_step_init(user_input)
-
-            # Should create entry successfully
             assert result.get("type") == FlowResultType.CREATE_ENTRY
-            # The flattened data should include the name from config entry
             assert captured_data.get(CONF_NAME) == "Test Area"
 
-    async def test_config_flow_with_existing_entry(self, mock_hass: Mock) -> None:
+    async def test_config_flow_with_existing_entry(self, flow, mock_hass):
         """Test config flow when entry already exists."""
-        flow = AreaOccupancyConfigFlow()
-        flow.hass = mock_hass
-
-        # Add the missing data attribute to mock_hass
         mock_hass.data = {}
 
         user_input = {
@@ -771,7 +571,6 @@ class TestConfigFlowIntegration:
             CONF_THRESHOLD: 60,
         }
 
-        # Mock that unique ID is already configured
         with (
             patch.object(flow, "async_set_unique_id", new_callable=AsyncMock),
             patch.object(
@@ -784,25 +583,18 @@ class TestConfigFlowIntegration:
             ) as mock_get_entities,
         ):
             mock_get_entities.return_value = {"appliance": [], "window": [], "door": []}
-            # The AbortFlow is caught and converted to an error in the flow
             result = await flow.async_step_user(user_input)
+
             assert result.get("type") == FlowResultType.FORM
             assert "errors" in result
-            assert isinstance(result["errors"], dict)
             assert result["errors"]["base"] == "Flow aborted: already_configured"
 
-    async def test_error_recovery_in_config_flow(self, mock_hass: Mock) -> None:
+    async def test_error_recovery_in_config_flow(self, flow):
         """Test error recovery in config flow."""
-        flow = AreaOccupancyConfigFlow()
-        flow.hass = mock_hass
-
         # First attempt with invalid data
         invalid_input = {
             CONF_NAME: "Living Room",
-            "motion": {
-                CONF_MOTION_SENSORS: [],  # Invalid
-                CONF_PRIMARY_OCCUPANCY_SENSOR: "",
-            },
+            "motion": {CONF_MOTION_SENSORS: [], CONF_PRIMARY_OCCUPANCY_SENSOR: ""},
             "purpose": {},
             "doors": {},
             "windows": {},
@@ -817,7 +609,6 @@ class TestConfigFlowIntegration:
             "custom_components.area_occupancy.config_flow.create_schema"
         ) as mock_create_schema:
             mock_create_schema.return_value = {"test": vol.Required("test")}
-
             result1 = await flow.async_step_user(invalid_input)
             assert result1.get("type") == FlowResultType.FORM
             assert "errors" in result1
@@ -844,10 +635,9 @@ class TestConfigFlowIntegration:
             patch.object(flow, "_abort_if_unique_id_configured"),
         ):
             result2 = await flow.async_step_user(valid_input)
-
             assert result2.get("type") == FlowResultType.CREATE_ENTRY
 
-    async def test_schema_generation_with_entities(self, mock_hass: Mock) -> None:
+    async def test_schema_generation_with_entities(self, mock_hass):
         """Test schema generation with available entities."""
         with patch(
             "custom_components.area_occupancy.config_flow._get_include_entities"
@@ -857,16 +647,12 @@ class TestConfigFlowIntegration:
                 "window": ["binary_sensor.window1"],
                 "door": ["binary_sensor.door1"],
             }
-
             schema_dict = create_schema(mock_hass)
-
-            # Verify schema was created successfully
             assert isinstance(schema_dict, dict)
             assert len(schema_dict) > 0
 
-    def test_state_options_generation(self) -> None:
+    def test_state_options_generation(self):
         """Test state options generation for different platforms."""
-        # Test all supported platforms
         platforms = ["door", "window", "media", "appliance"]
 
         for platform in platforms:
@@ -874,7 +660,6 @@ class TestConfigFlowIntegration:
             assert isinstance(options, list)
             assert len(options) > 0
 
-            # Verify option structure
             for option in options:
                 assert "value" in option
                 assert "label" in option

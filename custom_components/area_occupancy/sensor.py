@@ -62,6 +62,21 @@ class PriorsSensor(AreaOccupancySensorBase):
         """Return the overall occupancy prior as the state."""
         return format_float(self.coordinator.area_prior * 100)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data:
+            return {}
+        try:
+            return {
+                "global_prior": self.coordinator.area_prior,
+                "time_prior": self.coordinator.prior.time_prior,
+                "day_of_week": self.coordinator.prior.day_of_week,
+                "time_slot": self.coordinator.prior.time_slot,
+            }
+        except (TypeError, AttributeError, KeyError):
+            return {}
+
 
 class ProbabilitySensor(AreaOccupancySensorBase):
     """Probability sensor for current area occupancy."""
@@ -82,6 +97,13 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         """Return the current occupancy probability as a percentage."""
 
         return format_float(self.coordinator.probability * 100)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data:
+            return {}
+        return self.coordinator.type_probabilities
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -135,12 +157,14 @@ class EvidenceSensor(AreaOccupancySensorBase):
                 "details": [
                     {
                         "id": entity.entity_id,
-                        "evidence": entity.evidence,
-                        "probability": entity.probability,
-                        "weight": entity.type.weight,
                         "name": entity.name,
+                        "evidence": entity.evidence,
+                        "prob_given_true": entity.prob_given_true,
+                        "prob_given_false": entity.prob_given_false,
+                        "weight": entity.weight,
                         "state": entity.state,
                         "decaying": entity.decay.is_decaying,
+                        "decay_factor": entity.decay.decay_factor,
                     }
                     for entity in sorted(
                         self.coordinator.entities.entities.values(),
@@ -180,8 +204,8 @@ class DecaySensor(AreaOccupancySensorBase):
             return {
                 "decaying": [
                     {
-                        "id": {entity.entity_id},
-                        "decay": {format_percentage(entity.decay.decay_factor)},
+                        "id": entity.entity_id,
+                        "decay": format_percentage(entity.decay.decay_factor),
                     }
                     for entity in self.coordinator.entities.decaying_entities
                 ]

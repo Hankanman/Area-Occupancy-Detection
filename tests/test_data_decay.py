@@ -1,65 +1,148 @@
-"""Tests for the decay module."""
+"""Tests for data.decay module."""
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from custom_components.area_occupancy.data.decay import DEFAULT_HALF_LIFE, Decay
+import pytest
+
+from custom_components.area_occupancy.data.decay import Decay
+from homeassistant.util import dt as dt_util
 
 
 class TestDecay:
     """Test the Decay class."""
 
-    def test_initialization(self) -> None:
-        """Test basic initialization."""
-        decay = Decay()
-        assert decay.last_trigger_ts > 0
-        assert decay.half_life == DEFAULT_HALF_LIFE
-        assert decay.is_decaying is False
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_is_decaying", "expected_half_life"),
+        [
+            ({}, False, 30.0),
+            ({"is_decaying": True, "half_life": 60.0}, True, 60.0),
+        ],
+    )
+    def test_initialization(
+        self, kwargs: dict, expected_is_decaying: bool, expected_half_life: float
+    ) -> None:
+        """Test decay initialization."""
+        decay = Decay(**kwargs)
+        assert decay.is_decaying == expected_is_decaying
+        assert decay.half_life == expected_half_life
+        assert isinstance(decay.decay_start, datetime)
 
-    def test_initialization_with_validation(self, freeze_time) -> None:
-        """Test initialization with validation."""
+    @pytest.mark.parametrize(
+        (
+            "is_decaying",
+            "decay_start",
+            "half_life",
+            "age_seconds",
+            "expected_factor",
+            "expected_is_decaying",
+        ),
+        [
+            (False, None, 60.0, 0, 1.0, False),
+            (True, dt_util.utcnow(), 60.0, 60.0, 0.5, True),
+            (True, dt_util.utcnow(), 60.0, 1000.0, 0.0, False),
+        ],
+    )
+    def test_decay_factor(
+        self,
+        is_decaying: bool,
+        decay_start: datetime | None,
+        half_life: float,
+        age_seconds: float,
+        expected_factor: float,
+        expected_is_decaying: bool,
+    ) -> None:
+        """Test decay factor calculation."""
         decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
+            decay_start=decay_start,
+            half_life=half_life,
+            is_decaying=is_decaying,
         )
-        assert decay.last_trigger_ts == freeze_time.timestamp()
-        assert decay.half_life == 60.0
-        assert decay.is_decaying is True
 
-    def test_to_dict(self) -> None:
-        """Test conversion to dictionary."""
-        decay = Decay(last_trigger_ts=1000.0, half_life=60.0, is_decaying=True)
-        data = decay.to_dict()
-        assert data["last_trigger_ts"] == 1000.0
-        assert data["half_life"] == 60.0
-        assert data["is_decaying"] is True
+        # Mock datetime.now() to simulate time passing
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            if decay_start:
+                mock_utcnow.return_value = decay_start + timedelta(seconds=age_seconds)
+            else:
+                mock_utcnow.return_value = dt_util.utcnow()
 
-    def test_from_dict(self) -> None:
-        """Test creation from dictionary."""
-        data = {"last_trigger_ts": 1000.0, "half_life": 60.0, "is_decaying": True}
-        decay = Decay.from_dict(data)
-        assert decay.last_trigger_ts == 1000.0
-        assert decay.half_life == 60.0
-        assert decay.is_decaying is True
+            factor = decay.decay_factor
+            assert abs(factor - expected_factor) < 0.01
+            assert decay.is_decaying == expected_is_decaying
 
-    def test_decay_factor_not_decaying(self) -> None:
-        """Test decay factor when not decaying."""
-        decay = Decay(is_decaying=False)
-        assert decay.decay_factor == 1.0
+    @pytest.mark.parametrize(
+        ("initial_state", "method", "expected_is_decaying"),
+        [
+            (False, "start_decay", True),
+            (True, "start_decay", True),  # Already decaying
+            (True, "stop_decay", False),
+            (False, "stop_decay", False),  # Already stopped
+        ],
+    )
+    def test_decay_control_methods(
+        self, initial_state: bool, method: str, expected_is_decaying: bool
+    ) -> None:
+        """Test decay control methods."""
+        decay = Decay(is_decaying=initial_state)
+        original_start = decay.decay_start
 
-    def test_decay_factor_decaying(self, freeze_time) -> None:
-        """Test decay factor when decaying."""
-        decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
-        )
-        # After one half-life, factor should be 0.5
-        with patch("time.time", return_value=freeze_time.timestamp() + 60.0):
-            assert abs(decay.decay_factor - 0.5) < 0.001
+        # Call the method
+        getattr(decay, method)()
 
-    def test_decay_factor_auto_stop(self, freeze_time) -> None:
-        """Test auto-stop of decay when factor becomes negligible."""
-        decay = Decay(
-            last_trigger_ts=freeze_time.timestamp(), half_life=60.0, is_decaying=True
-        )
-        # After many half-lives, decay should auto-stop
-        with patch("time.time", return_value=freeze_time.timestamp() + 1000.0):
-            assert decay.decay_factor == 0.0
-            assert decay.is_decaying is False
+        assert decay.is_decaying == expected_is_decaying
+
+        # Check if decay_start was updated
+        if method == "start_decay" and not initial_state:
+            assert decay.decay_start > original_start
+        else:
+            assert decay.decay_start == original_start
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_values"),
+        [
+            (
+                {},
+                {"is_decaying": False, "half_life": 30.0},
+            ),
+            (
+                {
+                    "decay_start": dt_util.utcnow(),
+                    "half_life": 60.0,
+                    "is_decaying": True,
+                },
+                {"is_decaying": True, "half_life": 60.0},
+            ),
+            (
+                {"half_life": 120.0},
+                {"is_decaying": False, "half_life": 120.0},
+            ),
+        ],
+    )
+    def test_create_classmethod(self, kwargs: dict, expected_values: dict) -> None:
+        """Test the create classmethod."""
+        decay = Decay.create(**kwargs)
+        for key, expected_value in expected_values.items():
+            assert getattr(decay, key) == expected_value
+
+    def test_timezone_naive_datetime_handling(self) -> None:
+        """Test that timezone-naive datetimes are handled correctly."""
+        # Create a timezone-naive datetime
+        naive_datetime = datetime(2023, 1, 1, 12, 0, 0)  # No timezone info
+
+        # Create decay with naive datetime
+        decay = Decay.create(decay_start=naive_datetime, is_decaying=True)
+
+        # Verify the datetime is now timezone-aware
+        assert decay.decay_start.tzinfo is not None
+        assert decay.decay_start.tzinfo == dt_util.UTC
+
+        # Test that decay_factor calculation works with the timezone-aware datetime
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            # Mock current time to be 60 seconds after the decay start
+            mock_utcnow.return_value = naive_datetime.replace(
+                tzinfo=dt_util.UTC
+            ) + timedelta(seconds=60)
+
+            # Should calculate decay factor without timezone errors
+            factor = decay.decay_factor
+            assert 0.0 <= factor <= 1.0

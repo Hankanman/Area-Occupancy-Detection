@@ -48,7 +48,7 @@ WINDOW_STATES: Final[PlatformStates] = {
         StateOption(STATE_OPEN, "Open", "mdi:window-open"),
         StateOption(STATE_CLOSED, "Closed", "mdi:window-closed"),
     ],
-    "default": STATE_CLOSED,
+    "default": STATE_OPEN,
 }
 
 # Media player states configuration

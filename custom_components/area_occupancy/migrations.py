@@ -6,6 +6,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -19,6 +22,7 @@ from .const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -29,14 +33,17 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
 )
+from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
+from .utils import FileLock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -173,7 +180,7 @@ def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
                 motion_sensors[0],
             )
         else:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "No motion sensors found for primary occupancy sensor migration"
             )
 
@@ -203,6 +210,15 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def migrate_motion_timeout(config: dict[str, Any]) -> dict[str, Any]:
+    """Migrate configuration to add motion timeout."""
+    if CONF_MOTION_TIMEOUT not in config:
+        config[CONF_MOTION_TIMEOUT] = DEFAULT_MOTION_TIMEOUT
+        _LOGGER.debug("Added motion timeout to config: %s", DEFAULT_MOTION_TIMEOUT)
+
+    return config
+
+
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to latest version.
 
@@ -220,13 +236,16 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     config = remove_decay_window_key(config)
     config = remove_lights_key(config)
     config = remove_history_keys(config)
-    return migrate_purpose_field(config)
+    config = migrate_purpose_field(config)
+    return migrate_motion_timeout(config)
 
 
 LEGACY_STORAGE_KEY = "area_occupancy.storage"
 
 
-async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
+async def async_migrate_storage(
+    hass: HomeAssistant, entry_id: str, entry_major: int
+) -> None:
     """Migrate legacy multi-instance storage to per-entry storage format."""
     try:
         _LOGGER.debug("Starting storage migration for entry %s", entry_id)
@@ -248,9 +267,96 @@ async def async_migrate_storage(hass: HomeAssistant, entry_id: str) -> None:
                     "Error removing legacy storage file %s: %s", legacy_file, err
                 )
 
+        # Reset database for version < 11
+        await async_reset_database_if_needed(hass, entry_major)
+
         _LOGGER.debug("Storage migration completed for entry %s", entry_id)
     except (HomeAssistantError, OSError, ValueError) as err:
         _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
+
+
+def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
+    """Blocking helper: perform locked drop of legacy tables if needed."""
+    if entry_major >= 11:
+        _LOGGER.debug("Skipping table dropping for version %s", entry_major)
+        return
+
+    _LOGGER.info("Dropping tables for schema migration")
+    db_path = storage_dir / DB_NAME
+    if not db_path.exists():
+        return
+
+    lock_path = storage_dir / (DB_NAME + ".lock")
+    try:
+        with FileLock(lock_path):
+            engine = create_engine(f"sqlite:///{db_path}")
+            session = sessionmaker(bind=engine)()
+
+            db_version = 0
+            try:
+                result = session.execute(
+                    text("SELECT value FROM metadata WHERE key = 'db_version'")
+                )
+                row = result.fetchone()
+                if row:
+                    db_version = int(row[0])
+            except Exception:  # noqa: BLE001
+                db_version = 0
+
+            if db_version < 3:
+                _LOGGER.info("Dropping tables for schema migration")
+                try:
+                    session.execute(
+                        text(
+                            "UPDATE metadata SET value = :version WHERE key = 'db_version'"
+                        ),
+                        {"version": str(DB_VERSION)},
+                    )
+                    if session.execute(text("SELECT changes()")).scalar() == 0:
+                        session.execute(
+                            text(
+                                "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
+                            ),
+                            {"version": str(DB_VERSION)},
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                session.commit()
+
+                with engine.connect() as conn:
+                    tables_to_drop = [
+                        "intervals",
+                        "priors",
+                        "entities",
+                        "areas",
+                        "metadata",
+                    ]
+                    for table_name in tables_to_drop:
+                        try:
+                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                            _LOGGER.debug("Dropped table: %s", table_name)
+                        except Exception as e:  # noqa: BLE001
+                            _LOGGER.debug("Error dropping table %s: %s", table_name, e)
+                    conn.commit()
+                    _LOGGER.info("All tables dropped successfully")
+
+            session.close()
+            engine.dispose()
+            _LOGGER.debug("Database engine disposed")
+            _LOGGER.info("Tables dropped successfully")
+    finally:
+        try:
+            if lock_path.exists():
+                lock_path.unlink()
+                _LOGGER.debug("Removed leftover lock file: %s", lock_path)
+        except Exception as cleanup_err:  # noqa: BLE001
+            _LOGGER.debug("Error during lock cleanup: %s", cleanup_err)
+
+
+async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) -> None:
+    """Drop tables for schema migration if needed in an async-friendly manner."""
+    storage_dir = Path(hass.config.config_dir) / ".storage"
+    await hass.async_add_executor_job(_drop_tables_locked, storage_dir, entry_major)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -287,7 +393,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     # --- Run Storage File Migration First ---
     _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)
-    await async_migrate_storage(hass, config_entry.entry_id)
+    await async_migrate_storage(hass, config_entry.entry_id, entry_major)
     _LOGGER.debug("Storage migration completed for %s", config_entry.entry_id)
     # --------------------------------------
 

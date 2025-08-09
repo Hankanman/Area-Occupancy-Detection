@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import time
-from typing import Any
+from datetime import datetime
 
-DEFAULT_HALF_LIFE = 30.0  # seconds - default to social area (12 minutes)
+from homeassistant.util import dt as dt_util
+
+from ..utils import ensure_timezone_aware
+
+# Note: Actual half-life is purpose-driven via PurposeManager.
+# This fallback is used only when no purpose is configured.
+DEFAULT_HALF_LIFE = 30.0  # seconds
 
 
 @dataclass
 class Decay:
     """Decay model for Area Occupancy Detection."""
 
-    last_trigger_ts: float = field(default_factory=time.time)  # UNIX epoch seconds
+    decay_start: datetime = field(default_factory=dt_util.utcnow)  # when decay began
     half_life: float = DEFAULT_HALF_LIFE  # purpose-based half-life
     is_decaying: bool = False
 
@@ -22,7 +27,10 @@ class Decay:
         """Freshness of last motion edge ∈[0,1]; auto-stops below 5 %."""
         if not self.is_decaying:
             return 1.0
-        age = time.time() - self.last_trigger_ts
+
+        # Ensure decay_start is timezone-aware to avoid subtraction errors
+        decay_start_aware = ensure_timezone_aware(self.decay_start)
+        age = (dt_util.utcnow() - decay_start_aware).total_seconds()
         factor = 0.5 ** (age / self.half_life)
         if factor < 0.05:  # practical zero
             self.is_decaying = False
@@ -33,26 +41,27 @@ class Decay:
         """Begin decay **only if not already running**."""
         if not self.is_decaying:
             self.is_decaying = True
-            self.last_trigger_ts = time.time()
+            self.decay_start = dt_util.utcnow()
 
     def stop_decay(self) -> None:
         """Stop decay **only if already running**."""
         if self.is_decaying:
             self.is_decaying = False
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert decay to dictionary for storage."""
-        return {
-            "last_trigger_ts": self.last_trigger_ts,
-            "half_life": self.half_life,
-            "is_decaying": self.is_decaying,
-        }
-
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Decay:
-        """Create decay from dictionary."""
-        return Decay(
-            last_trigger_ts=data.get("last_trigger_ts", time.time()),
-            half_life=data.get("half_life", DEFAULT_HALF_LIFE),
-            is_decaying=data.get("is_decaying", False),
+    def create(
+        cls,
+        decay_start: datetime | None = None,
+        half_life: float | None = None,
+        is_decaying: bool | None = None,
+    ) -> Decay:
+        """Create a Decay instance with optional parameters."""
+        # Ensure decay_start is timezone-aware if provided
+        if decay_start is not None:
+            decay_start = ensure_timezone_aware(decay_start)
+
+        return cls(
+            decay_start=decay_start if decay_start is not None else dt_util.utcnow(),
+            half_life=half_life if half_life is not None else DEFAULT_HALF_LIFE,
+            is_decaying=is_decaying if is_decaying is not None else False,
         )
