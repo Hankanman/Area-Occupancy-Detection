@@ -360,6 +360,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer = None
 
         try:
+            # Before importing new states, roll up old intervals to keep DB bounded
+            self.db.rollup_old_intervals(retention_days=2)
+
             # Import recent data from recorder
             await self.db.sync_states()
 

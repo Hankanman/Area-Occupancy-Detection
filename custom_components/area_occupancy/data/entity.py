@@ -363,9 +363,16 @@ class EntityManager:
             occupied_times = self.coordinator.prior.get_occupied_intervals()
             intervals_by_entity = self._get_intervals_by_entity(session, sensors)
 
+            # Start from aggregated historical rollups, then add recent raw intervals
+            rollup_totals = db.get_likelihood_rollup_totals()
+
             for entity in sensors:
                 self._update_entity_likelihoods(
-                    entity, intervals_by_entity, occupied_times, dt_util.utcnow()
+                    entity,
+                    intervals_by_entity,
+                    occupied_times,
+                    dt_util.utcnow(),
+                    rollup_totals,
                 )
 
             session.commit()
@@ -405,13 +412,19 @@ class EntityManager:
         intervals_by_entity: dict[str, list["DB.Intervals"]],
         occupied_times: list[tuple[datetime, datetime]],
         now: datetime,
+        rollup_totals: dict[str, tuple[float, float, float, float]] | None = None,
     ) -> None:
         """Update likelihoods for a single entity."""
         intervals = intervals_by_entity[entity.entity_id]
         entity_obj = self.get_entity(entity.entity_id)
 
-        # Count interval states
-        true_occ = false_occ = true_empty = false_empty = 0
+        # Initialize with rollup totals if present
+        if rollup_totals and entity.entity_id in rollup_totals:
+            true_occ, false_occ, true_empty, false_empty = rollup_totals[
+                entity.entity_id
+            ]
+        else:
+            true_occ = false_occ = true_empty = false_empty = 0.0
 
         for interval in intervals:
             occ = self._is_occupied(interval.start_time, occupied_times)

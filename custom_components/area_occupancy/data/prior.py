@@ -25,7 +25,12 @@ from homeassistant.util import dt as dt_util
 
 from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
 from ..data.entity_type import InputType
-from ..utils import apply_motion_timeout, clamp_probability, combine_priors
+from ..utils import (
+    apply_motion_timeout,
+    clamp_probability,
+    combine_priors,
+    ensure_timezone_aware,
+)
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -258,9 +263,11 @@ class Prior:
         db = self.db
 
         try:
+            # Combine rollups + last-30-days intervals
             with db.get_session() as session:
-                prior = (
-                    session.query(db.Priors)
+                # Get rollup totals for this slot
+                roll = (
+                    session.query(db.PriorRollups)
                     .filter_by(
                         entry_id=self.coordinator.entry_id,
                         day_of_week=self.day_of_week,
@@ -268,7 +275,74 @@ class Prior:
                     )
                     .first()
                 )
-                return prior.prior_value if prior else DEFAULT_PRIOR
+
+                occ_seconds = float(roll.occupied_seconds) if roll else 0.0
+                total_seconds = float(roll.total_slot_seconds) if roll else 0.0
+
+                # Add last-30-days from raw intervals
+                slot_minutes = DEFAULT_SLOT_MINUTES
+                slot_duration = slot_minutes * MINUTES_PER_HOUR
+
+                # Aggregate only for the current slot from raw intervals
+                end_time = dt_util.utcnow()
+                start_time = end_time - timedelta(
+                    days=10
+                )  # recent window aligns with recorder default
+
+                # Derive from Intervals table directly for current slot aggregation
+                rows = (
+                    session.query(
+                        db.Intervals.start_time,
+                        db.Intervals.end_time,
+                        db.Intervals.state,
+                    )
+                    .join(db.Entities, db.Intervals.entity_id == db.Entities.entity_id)
+                    .filter(
+                        db.Entities.entry_id == self.coordinator.entry_id,
+                        db.Entities.entity_type == InputType.MOTION,
+                        db.Intervals.state == "on",
+                        db.Intervals.start_time >= start_time,
+                        db.Intervals.end_time <= end_time,
+                    )
+                    .all()
+                )
+
+                # Extend motion using current timeout then sum only durations in this slot
+                raw_intervals = [(s, e) for s, e, _ in rows]
+                extended = apply_motion_timeout(
+                    raw_intervals, self.coordinator.config.sensors.motion_timeout
+                )
+
+                # Sum contributions belonging to current slot/day
+                # Determine current slot window
+                now = dt_util.utcnow()
+                slot_index = self.time_slot
+                slot_start_minute = (slot_index * slot_minutes) % MINUTES_PER_DAY
+                slot_start = now.replace(
+                    hour=slot_start_minute // MINUTES_PER_HOUR,
+                    minute=slot_start_minute % MINUTES_PER_HOUR,
+                    second=0,
+                    microsecond=0,
+                )
+                slot_end = slot_start + timedelta(minutes=slot_minutes)
+
+                for s, e in extended:
+                    s = ensure_timezone_aware(s)
+                    e = ensure_timezone_aware(e)
+
+                    overlap_start = max(s, slot_start)
+                    overlap_end = min(e, slot_end)
+                    if (
+                        overlap_end > overlap_start
+                        and overlap_start.date() == now.date()
+                    ):
+                        occ_seconds += (overlap_end - overlap_start).total_seconds()
+                        total_seconds += slot_duration
+
+                if total_seconds > 0:
+                    p = occ_seconds / total_seconds
+                    return clamp_probability(p)
+                return DEFAULT_PRIOR
         except OperationalError as e:
             _LOGGER.error("Database connection error getting time prior: %s", e)
             return DEFAULT_PRIOR

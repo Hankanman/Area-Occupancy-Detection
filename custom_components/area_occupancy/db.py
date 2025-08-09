@@ -74,7 +74,7 @@ DB_NAME = "area_occupancy.db"
 metadata = MetaData()
 
 # Database schema version for migrations
-DB_VERSION = 3
+DB_VERSION = 4
 
 
 class AreaOccupancyDB:
@@ -124,6 +124,8 @@ class AreaOccupancyDB:
             "Priors": self.Priors,
             "Intervals": self.Intervals,
             "Metadata": self.Metadata,
+            "PriorRollups": self.PriorRollups,
+            "LikelihoodRollups": self.LikelihoodRollups,
         }
 
     @contextmanager
@@ -172,6 +174,16 @@ class AreaOccupancyDB:
     def metadata(self):
         """Get the metadata table."""
         return self.Metadata.__table__
+
+    @property
+    def prior_rollups(self):
+        """Get the prior_rollups table."""
+        return self.PriorRollups.__table__
+
+    @property
+    def likelihood_rollups(self):
+        """Get the likelihood_rollups table."""
+        return self.LikelihoodRollups.__table__
 
     class Areas(Base):
         """A table to store the area occupancy information."""
@@ -340,6 +352,91 @@ class AreaOccupancyDB:
                 last_updated=data.get("last_updated", dt_util.utcnow()),
             )
 
+    class PriorRollups(Base):
+        """Aggregated historical occupied time by time-of-week slot."""
+
+        __tablename__ = "prior_rollups"
+        entry_id = Column(String, ForeignKey("areas.entry_id"), primary_key=True)
+        day_of_week = Column(Integer, primary_key=True)
+        time_slot = Column(Integer, primary_key=True)
+        occupied_seconds = Column(Float, nullable=False, default=0.0)
+        total_slot_seconds = Column(Float, nullable=False, default=0.0)
+        last_updated = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
+
+        __table_args__ = (
+            Index("idx_prior_rollups_entry", "entry_id"),
+            Index("idx_prior_rollups_day_slot", "day_of_week", "time_slot"),
+        )
+
+        def to_dict(self) -> dict[str, Any]:
+            """Serialize the rollup row to a dictionary."""
+            return {
+                "entry_id": self.entry_id,
+                "day_of_week": self.day_of_week,
+                "time_slot": self.time_slot,
+                "occupied_seconds": self.occupied_seconds,
+                "total_slot_seconds": self.total_slot_seconds,
+                "last_updated": self.last_updated,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]):
+            """Create a rollup row from a dictionary."""
+            return cls(
+                entry_id=data["entry_id"],
+                day_of_week=data["day_of_week"],
+                time_slot=data["time_slot"],
+                occupied_seconds=data.get("occupied_seconds", 0.0),
+                total_slot_seconds=data.get("total_slot_seconds", 0.0),
+                last_updated=data.get("last_updated", dt_util.utcnow()),
+            )
+
+    class LikelihoodRollups(Base):
+        """Aggregated historical label durations per entity for likelihoods."""
+
+        __tablename__ = "likelihood_rollups"
+        entry_id = Column(String, ForeignKey("areas.entry_id"), primary_key=True)
+        entity_id = Column(String, primary_key=True)
+        true_occ_seconds = Column(Float, nullable=False, default=0.0)
+        false_occ_seconds = Column(Float, nullable=False, default=0.0)
+        true_empty_seconds = Column(Float, nullable=False, default=0.0)
+        false_empty_seconds = Column(Float, nullable=False, default=0.0)
+        last_updated = Column(
+            DateTime(timezone=True), nullable=False, default=dt_util.utcnow
+        )
+
+        __table_args__ = (
+            Index("idx_likelihood_rollups_entry", "entry_id"),
+            Index("idx_likelihood_rollups_entity", "entity_id"),
+        )
+
+        def to_dict(self) -> dict[str, Any]:
+            """Serialize the likelihood rollup row to a dictionary."""
+            return {
+                "entry_id": self.entry_id,
+                "entity_id": self.entity_id,
+                "true_occ_seconds": self.true_occ_seconds,
+                "false_occ_seconds": self.false_occ_seconds,
+                "true_empty_seconds": self.true_empty_seconds,
+                "false_empty_seconds": self.false_empty_seconds,
+                "last_updated": self.last_updated,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]):
+            """Create a likelihood rollup row from a dictionary."""
+            return cls(
+                entry_id=data["entry_id"],
+                entity_id=data["entity_id"],
+                true_occ_seconds=data.get("true_occ_seconds", 0.0),
+                false_occ_seconds=data.get("false_occ_seconds", 0.0),
+                true_empty_seconds=data.get("true_empty_seconds", 0.0),
+                false_empty_seconds=data.get("false_empty_seconds", 0.0),
+                last_updated=data.get("last_updated", dt_util.utcnow()),
+            )
+
     class Intervals(Base):
         """A table to store the state intervals."""
 
@@ -411,11 +508,53 @@ class AreaOccupancyDB:
                     _LOGGER.debug("No tables found, initializing database")
                     self.init_db()
                     self.set_db_version()
+                else:
+                    # Database exists, check for missing tables and create them
+                    _LOGGER.debug("Database exists, checking for missing tables")
+                    self._ensure_all_tables_exist()
         except sa.exc.SQLAlchemyError:
             # Database doesn't exist or is not initialized, create it
             _LOGGER.debug("Database error during table check, initializing database")
             self.init_db()
             self.set_db_version()
+
+    def _ensure_all_tables_exist(self):
+        """Check for missing tables and create them if needed."""
+        try:
+            with self.engine.connect() as conn:
+                # Get list of existing tables
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table'")
+                )
+                existing_tables = {row[0] for row in result}
+
+                # Define expected tables
+                expected_tables = {
+                    "areas",
+                    "entities",
+                    "intervals",
+                    "priors",
+                    "metadata",
+                    "prior_rollups",
+                    "likelihood_rollups",
+                }
+
+                missing_tables = expected_tables - existing_tables
+
+                if missing_tables:
+                    _LOGGER.info(
+                        "Missing tables detected: %s. Creating them...", missing_tables
+                    )
+                    # Create missing tables using SQLAlchemy metadata
+                    Base.metadata.create_all(self.engine, checkfirst=True)
+                    _LOGGER.info("Missing tables created successfully")
+                else:
+                    _LOGGER.debug("All required tables exist")
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Error checking/creating tables: %s", e)
+            # Fallback to full initialization
+            _LOGGER.debug("Falling back to full database initialization")
+            self.init_db()
 
     def get_engine(self):
         """Get the engine for the database with optimized settings."""
@@ -748,6 +887,372 @@ class AreaOccupancyDB:
         """Save both area and entity data to the database."""
         await self.save_area_data()
         await self.save_entity_data()
+
+    # --- Aggregation / Rollups ---
+
+    def _get_motion_intervals(
+        self, end_before: datetime | None = None
+    ) -> list[tuple[datetime, datetime]]:
+        """Return motion 'on' intervals, optionally filtered by end time, extended with motion timeout."""
+        # Local import avoided by alias to top of file would cause circular; keep here.
+        from .data.entity_type import InputType  # noqa: PLC0415
+
+        try:
+            with self.get_session() as session:
+                query = (
+                    session.query(
+                        self.Intervals.start_time,
+                        self.Intervals.end_time,
+                    )
+                    .join(
+                        self.Entities,
+                        self.Intervals.entity_id == self.Entities.entity_id,
+                    )
+                    .filter(
+                        self.Entities.entry_id == self.coordinator.entry_id,
+                        self.Entities.entity_type == InputType.MOTION,
+                        self.Intervals.state == "on",
+                    )
+                    .order_by(self.Intervals.start_time)
+                )
+                if end_before is not None:
+                    query = query.filter(self.Intervals.end_time < end_before)
+                rows = query.all()
+                if not rows:
+                    return []
+                raw_intervals = [(start, end) for start, end in rows]
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Database error fetching motion intervals: %s", e)
+            return []
+
+        # Apply motion timeout using same logic as Prior
+        from .utils import apply_motion_timeout  # noqa: PLC0415
+
+        timeout_seconds = self.coordinator.config.sensors.motion_timeout
+        return apply_motion_timeout(raw_intervals, timeout_seconds)
+
+    def _get_first_last_times(
+        self, end_before: datetime | None = None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Get first start_time and last end_time for this entry's intervals, with optional cutoff."""
+        try:
+            with self.get_session() as session:
+                query = (
+                    session.query(
+                        sa.func.min(self.Intervals.start_time).label("first"),
+                        sa.func.max(self.Intervals.end_time).label("last"),
+                    )
+                    .join(
+                        self.Entities,
+                        self.Intervals.entity_id == self.Entities.entity_id,
+                    )
+                    .filter(self.Entities.entry_id == self.coordinator.entry_id)
+                )
+                if end_before is not None:
+                    query = query.filter(self.Intervals.end_time < end_before)
+                row = query.first()
+                return (row.first, row.last) if row else (None, None)
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Database error getting time bounds: %s", e)
+            return (None, None)
+
+    def get_prior_rollup_totals(self) -> dict[tuple[int, int], tuple[float, float]]:
+        """Return mapping of (day_of_week, time_slot) -> (occupied_seconds, total_slot_seconds)."""
+        try:
+            with self.get_session() as session:
+                rows = (
+                    session.query(
+                        self.PriorRollups.day_of_week,
+                        self.PriorRollups.time_slot,
+                        self.PriorRollups.occupied_seconds,
+                        self.PriorRollups.total_slot_seconds,
+                    )
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .all()
+                )
+                return {
+                    (day, slot): (float(occ or 0.0), float(total or 0.0))
+                    for day, slot, occ, total in rows
+                }
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Database error reading prior rollups: %s", e)
+            return {}
+
+    def get_likelihood_rollup_totals(
+        self,
+    ) -> dict[str, tuple[float, float, float, float]]:
+        """Return mapping entity_id -> (true_occ, false_occ, true_empty, false_empty)."""
+        try:
+            with self.get_session() as session:
+                rows = (
+                    session.query(
+                        self.LikelihoodRollups.entity_id,
+                        self.LikelihoodRollups.true_occ_seconds,
+                        self.LikelihoodRollups.false_occ_seconds,
+                        self.LikelihoodRollups.true_empty_seconds,
+                        self.LikelihoodRollups.false_empty_seconds,
+                    )
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .all()
+                )
+                return {
+                    entity_id: (
+                        float(t_occ or 0.0),
+                        float(f_occ or 0.0),
+                        float(t_emp or 0.0),
+                        float(f_emp or 0.0),
+                    )
+                    for entity_id, t_occ, f_occ, t_emp, f_emp in rows
+                }
+        except sa.exc.SQLAlchemyError as e:
+            _LOGGER.error("Database error reading likelihood rollups: %s", e)
+            return {}
+
+    def rollup_old_intervals(
+        self, retention_days: int = 30, slot_minutes: int = 60
+    ) -> None:
+        """Aggregate intervals older than retention_days into rollup tables and delete them.
+
+        Safe to run frequently; it only processes intervals strictly older than cutoff.
+        """
+        cutoff = dt_util.utcnow() - timedelta(days=retention_days)
+
+        # Build occupied extended intervals and old time bounds
+        extended_motion = self._get_motion_intervals(end_before=cutoff)
+        first_time, last_time = self._get_first_last_times(end_before=cutoff)
+
+        # Prepare slot aggregates for priors
+        prior_slot_occ: dict[tuple[int, int], float] = {}
+        if extended_motion:
+            try:
+                from .data.prior import (  # noqa: PLC0415
+                    MINUTES_PER_DAY,
+                    MINUTES_PER_HOUR,
+                )
+            except Exception:  # noqa: BLE001
+                MINUTES_PER_DAY = 24 * 60
+                MINUTES_PER_HOUR = 60
+
+            # Aggregate extended intervals by slots
+            for start_time, end_time in extended_motion:
+                current_time = start_time
+                while current_time < end_time:
+                    day_of_week = current_time.weekday()
+                    hour = current_time.hour
+                    minute = current_time.minute
+                    slot = (hour * MINUTES_PER_HOUR + minute) // slot_minutes
+
+                    slot_start_minute = (slot * slot_minutes) % MINUTES_PER_DAY
+                    slot_start = current_time.replace(
+                        hour=slot_start_minute // MINUTES_PER_HOUR,
+                        minute=slot_start_minute % MINUTES_PER_HOUR,
+                        second=0,
+                        microsecond=0,
+                    )
+                    slot_end = slot_start + timedelta(minutes=slot_minutes)
+
+                    overlap_start = max(current_time, slot_start)
+                    overlap_end = min(end_time, slot_end)
+                    overlap_seconds = max(
+                        0.0, (overlap_end - overlap_start).total_seconds()
+                    )
+
+                    if overlap_seconds > 0:
+                        prior_slot_occ[(day_of_week, slot)] = (
+                            prior_slot_occ.get((day_of_week, slot), 0.0)
+                            + overlap_seconds
+                        )
+
+                    current_time = slot_end
+
+        # Compute total slot seconds for the rolled window
+        slots_per_day = (24 * 60) // slot_minutes
+        slot_duration_seconds = slot_minutes * 60
+        days = 0
+        if first_time and last_time:
+            days = (last_time.date() - first_time.date()).days + 1
+
+        # Prepare likelihood rollups by scanning old intervals
+        likelihood_totals: dict[str, list[float]] = {}
+        try:
+            with self.get_session() as session:
+                # Fetch all entity configs for this area
+                sensors = (
+                    session.query(self.Entities)
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .all()
+                )
+                if sensors:
+                    # Map entity_id to Entity model for active state evaluation
+                    entity_models = {
+                        e.entity_id: self.coordinator.entities.get_entity(e.entity_id)
+                        for e in sensors
+                        if e.entity_id in self.coordinator.entities.entities
+                    }
+
+                    # Fetch old intervals for those entities
+                    sensor_entity_ids = [e.entity_id for e in sensors]
+                    old_intervals = (
+                        session.query(self.Intervals)
+                        .filter(
+                            self.Intervals.entity_id.in_(sensor_entity_ids),
+                            self.Intervals.end_time < cutoff,
+                        )
+                        .all()
+                    )
+
+                    # Classify using the same approach as EntityManager (based on start_time)
+                    occupied_ranges = extended_motion  # list of (start,end)
+
+                    def is_occupied(ts: datetime) -> bool:
+                        if not occupied_ranges:
+                            return False
+                        return any(start <= ts < end for start, end in occupied_ranges)
+
+                    for interval in old_intervals:
+                        entity_id = interval.entity_id
+                        entity_obj = entity_models.get(entity_id)
+                        if not entity_obj:
+                            continue
+                        # Determine active by entity type rules
+                        is_active = False
+                        if entity_obj.active_states:
+                            is_active = interval.state in entity_obj.active_states
+                        elif entity_obj.active_range:
+                            try:
+                                val = float(interval.state)
+                                min_val, max_val = entity_obj.active_range
+                                is_active = min_val <= val <= max_val
+                            except (TypeError, ValueError):
+                                is_active = False
+                        occ = is_occupied(interval.start_time)
+                        dur = float(interval.duration_seconds or 0.0)
+
+                        t_occ, f_occ, t_emp, f_emp = likelihood_totals.get(
+                            entity_id, [0.0, 0.0, 0.0, 0.0]
+                        )
+                        if is_active:
+                            if occ:
+                                t_occ += dur
+                            else:
+                                t_emp += dur
+                        elif occ:
+                            f_occ += dur
+                        else:
+                            f_emp += dur
+                        likelihood_totals[entity_id] = [t_occ, f_occ, t_emp, f_emp]
+
+                # Upsert rollups in a transaction and delete intervals
+                with self.engine.begin() as conn:
+                    now = dt_util.utcnow()
+                    # Prior rollups
+                    if days > 0 or prior_slot_occ:
+                        for slot in range(slots_per_day):
+                            for day in range(7):
+                                # Prepare totals per slot
+                                occ = prior_slot_occ.get((day, slot), 0.0)
+                                total = days * slot_duration_seconds
+                                # Proper upsert with accumulation using raw SQL
+                                # First, get existing values if they exist
+                                existing = conn.execute(
+                                    sa.text(
+                                        "SELECT occupied_seconds, total_slot_seconds FROM prior_rollups "
+                                        "WHERE entry_id = :eid AND day_of_week = :day AND time_slot = :slot"
+                                    ),
+                                    {
+                                        "eid": self.coordinator.entry_id,
+                                        "day": day,
+                                        "slot": slot,
+                                    },
+                                ).fetchone()
+
+                                if existing:
+                                    existing_occ, existing_total = existing
+                                    new_occ = float(existing_occ) + float(occ)
+                                    new_total = float(existing_total) + float(total)
+                                else:
+                                    new_occ = float(occ)
+                                    new_total = float(total)
+
+                                # Insert or replace with accumulated values
+                                insert_stmt = (
+                                    self.PriorRollups.__table__.insert().prefix_with(
+                                        "OR REPLACE"
+                                    )
+                                )
+                                conn.execute(
+                                    insert_stmt,
+                                    {
+                                        "entry_id": self.coordinator.entry_id,
+                                        "day_of_week": day,
+                                        "time_slot": slot,
+                                        "occupied_seconds": new_occ,
+                                        "total_slot_seconds": new_total,
+                                        "last_updated": now,
+                                    },
+                                )
+
+                    # Likelihood rollups
+                    for entity_id, (
+                        t_occ,
+                        f_occ,
+                        t_emp,
+                        f_emp,
+                    ) in likelihood_totals.items():
+                        # Proper upsert with accumulation for likelihood rollups
+                        # First, get existing values if they exist
+                        existing = conn.execute(
+                            sa.text(
+                                "SELECT true_occ_seconds, false_occ_seconds, true_empty_seconds, false_empty_seconds "
+                                "FROM likelihood_rollups WHERE entry_id = :eid AND entity_id = :entity"
+                            ),
+                            {"eid": self.coordinator.entry_id, "entity": entity_id},
+                        ).fetchone()
+
+                        if existing:
+                            (
+                                existing_t_occ,
+                                existing_f_occ,
+                                existing_t_emp,
+                                existing_f_emp,
+                            ) = existing
+                            new_t_occ = float(existing_t_occ) + float(t_occ)
+                            new_f_occ = float(existing_f_occ) + float(f_occ)
+                            new_t_emp = float(existing_t_emp) + float(t_emp)
+                            new_f_emp = float(existing_f_emp) + float(f_emp)
+                        else:
+                            new_t_occ = float(t_occ)
+                            new_f_occ = float(f_occ)
+                            new_t_emp = float(t_emp)
+                            new_f_emp = float(f_emp)
+
+                        # Insert or replace with accumulated values
+                        insert_stmt = (
+                            self.LikelihoodRollups.__table__.insert().prefix_with(
+                                "OR REPLACE"
+                            )
+                        )
+                        conn.execute(
+                            insert_stmt,
+                            {
+                                "entry_id": self.coordinator.entry_id,
+                                "entity_id": entity_id,
+                                "true_occ_seconds": new_t_occ,
+                                "false_occ_seconds": new_f_occ,
+                                "true_empty_seconds": new_t_emp,
+                                "false_empty_seconds": new_f_emp,
+                                "last_updated": now,
+                            },
+                        )
+
+                    # Delete old intervals after successful aggregation
+                    conn.execute(
+                        self.Intervals.__table__.delete().where(
+                            self.Intervals.end_time < cutoff
+                        )
+                    )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("Failed to roll up old intervals: %s", err)
 
     # --- Sync Data from Recorder ---
 

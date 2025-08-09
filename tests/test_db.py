@@ -278,9 +278,169 @@ class TestDatabaseOperations:
             )
             table_names = [row[0] for row in result]
 
-            expected_tables = ["areas", "entities", "intervals", "priors", "metadata"]
+            expected_tables = [
+                "areas",
+                "entities",
+                "intervals",
+                "priors",
+                "metadata",
+                "prior_rollups",
+                "likelihood_rollups",
+            ]
             for table in expected_tables:
                 assert table in table_names
+
+    def test_prior_rollups_table_access(self, mock_area_occupancy_db):
+        """Test that PriorRollups table can be accessed and used."""
+        db = mock_area_occupancy_db
+
+        # Verify PriorRollups is in model_classes
+        assert "PriorRollups" in db.model_classes
+        assert hasattr(db, "PriorRollups")
+
+        # Test that we can access the PriorRollups class
+        PriorRollups = db.PriorRollups
+        assert PriorRollups is not None
+
+        # Test table creation and basic operations
+        with db.get_session() as session:
+            # Test creating a rollup record
+            rollup = PriorRollups(
+                entry_id="test_entry_123",
+                day_of_week=1,  # Monday
+                time_slot=13,  # 13:00 hour slot
+                occupied_seconds=1800.0,  # 30 minutes
+                total_slot_seconds=3600.0,  # 60 minutes total
+            )
+            session.add(rollup)
+            session.commit()
+
+            # Test querying the record back
+            retrieved = (
+                session.query(PriorRollups)
+                .filter_by(entry_id="test_entry_123", day_of_week=1, time_slot=13)
+                .first()
+            )
+
+            assert retrieved is not None
+            assert retrieved.entry_id == "test_entry_123"
+            assert retrieved.day_of_week == 1
+            assert retrieved.time_slot == 13
+            assert retrieved.occupied_seconds == 1800.0
+            assert retrieved.total_slot_seconds == 3600.0
+
+    def test_likelihood_rollups_table_access(self, mock_area_occupancy_db):
+        """Test that LikelihoodRollups table can be accessed and used."""
+        db = mock_area_occupancy_db
+
+        # Verify LikelihoodRollups is in model_classes
+        assert "LikelihoodRollups" in db.model_classes
+        assert hasattr(db, "LikelihoodRollups")
+
+        # Test that we can access the LikelihoodRollups class
+        LikelihoodRollups = db.LikelihoodRollups
+        assert LikelihoodRollups is not None
+
+        # Test table creation and basic operations
+        with db.get_session() as session:
+            # Test creating a likelihood rollup record
+            rollup = LikelihoodRollups(
+                entry_id="test_entry_456",
+                entity_id="sensor.motion_sensor_1",
+                true_occ_seconds=2400.0,  # 40 minutes when sensor ON and room occupied
+                false_occ_seconds=600.0,  # 10 minutes when sensor OFF and room occupied
+                true_empty_seconds=1800.0,  # 30 minutes when sensor ON and room empty
+                false_empty_seconds=7200.0,  # 120 minutes when sensor OFF and room empty
+            )
+            session.add(rollup)
+            session.commit()
+
+            # Test querying the record back
+            retrieved = (
+                session.query(LikelihoodRollups)
+                .filter_by(
+                    entry_id="test_entry_456", entity_id="sensor.motion_sensor_1"
+                )
+                .first()
+            )
+
+            assert retrieved is not None
+            assert retrieved.entry_id == "test_entry_456"
+            assert retrieved.entity_id == "sensor.motion_sensor_1"
+            assert retrieved.true_occ_seconds == 2400.0
+            assert retrieved.false_occ_seconds == 600.0
+            assert retrieved.true_empty_seconds == 1800.0
+            assert retrieved.false_empty_seconds == 7200.0
+
+    def test_missing_tables_detection_and_creation(self, mock_area_occupancy_db):
+        """Test that missing tables are detected and created automatically."""
+        db = mock_area_occupancy_db
+
+        # Simulate a database with some missing tables by dropping them
+        with db.engine.connect() as conn:
+            # Drop the rollup tables to simulate an older database
+            conn.execute(text("DROP TABLE IF EXISTS prior_rollups"))
+            conn.execute(text("DROP TABLE IF EXISTS likelihood_rollups"))
+            conn.commit()
+
+            # Verify they're gone
+            result = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+            table_names = {row[0] for row in result}
+            assert "prior_rollups" not in table_names
+            assert "likelihood_rollups" not in table_names
+
+        # Now call the missing table detection method
+        db._ensure_all_tables_exist()
+
+        # Verify the tables were recreated
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+            table_names = {row[0] for row in result}
+            assert "prior_rollups" in table_names
+            assert "likelihood_rollups" in table_names
+
+        # Test that we can use the recreated tables
+        with db.get_session() as session:
+            # Test PriorRollups
+            prior_rollup = db.PriorRollups(
+                entry_id="test_migration",
+                day_of_week=0,
+                time_slot=12,
+                occupied_seconds=900.0,
+                total_slot_seconds=3600.0,
+            )
+            session.add(prior_rollup)
+
+            # Test LikelihoodRollups
+            likelihood_rollup = db.LikelihoodRollups(
+                entry_id="test_migration",
+                entity_id="sensor.migration_test",
+                true_occ_seconds=1200.0,
+                false_occ_seconds=300.0,
+                true_empty_seconds=600.0,
+                false_empty_seconds=1800.0,
+            )
+            session.add(likelihood_rollup)
+            session.commit()
+
+            # Verify both records were inserted successfully
+            prior_retrieved = (
+                session.query(db.PriorRollups)
+                .filter_by(entry_id="test_migration", day_of_week=0, time_slot=12)
+                .first()
+            )
+            likelihood_retrieved = (
+                session.query(db.LikelihoodRollups)
+                .filter_by(entry_id="test_migration", entity_id="sensor.migration_test")
+                .first()
+            )
+
+            assert prior_retrieved is not None
+            assert likelihood_retrieved is not None
 
     def test_seeded_database(self, db_session):
         """Test database with pre-seeded data."""
