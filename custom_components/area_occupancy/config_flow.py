@@ -50,6 +50,7 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
@@ -71,6 +72,7 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
@@ -245,6 +247,18 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     max=WEIGHT_MAX,
                     step=WEIGHT_STEP,
                     mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_MOTION_TIMEOUT,
+                default=defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=3600,
+                    step=5,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
                 )
             ),
         }
