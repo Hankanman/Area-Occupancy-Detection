@@ -85,7 +85,7 @@ def wasp_coordinator(mock_coordinator: Mock) -> Mock:
     mock_coordinator.config.wasp_in_box.max_duration = 3600
     mock_coordinator.config.wasp_in_box.weight = 0.85
     mock_coordinator.config.sensors = Mock()
-    mock_coordinator.config.sensors.doors = ["binary_sensor.door1"]
+    mock_coordinator.config.sensors.door = ["binary_sensor.door1"]
     mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
 
     # Add missing entities attribute with AsyncMock
