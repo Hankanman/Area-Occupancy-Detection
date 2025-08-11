@@ -149,7 +149,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._last_occupied_time: datetime | None = None
 
         # Initialize tracking resources
-        self._door_entities = self._config.sensors.doors or []
+        self._door_entities = self._config.sensors.door or []
         self._motion_entities = self._config.sensors.motion or []
         self._remove_state_listener: Callable[[], None] | None = None
         self._remove_timer: Callable[[], None] | None = None
