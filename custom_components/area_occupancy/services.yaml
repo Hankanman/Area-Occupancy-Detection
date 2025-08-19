@@ -57,3 +57,27 @@ get_problematic_entities:
       selector:
         config_entry:
           integration: area_occupancy
+
+get_database_status:
+  name: Get Database Status
+  description: "Get the status of the database for a specific entry."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to get database status for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy
+
+recover_database:
+  name: Recover Database
+  description: "Recover the database for a specific entry."
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Select the Area Occupancy instance to recover the database for."
+      required: true
+      selector:
+        config_entry:
+          integration: area_occupancy

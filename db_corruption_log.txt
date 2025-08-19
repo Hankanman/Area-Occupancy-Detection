@@ -1,0 +1,16 @@
+2025-08-19 15:21:41.266 DEBUG (MainThread) [custom_components.area_occupancy.coordinator] Starting coordinator setup for Study
+2025-08-19 15:21:41.274 ERROR (MainThread) [custom_components.area_occupancy.db] Database integrity check failed: ('*** in database main ***\nTree 15 page 1894: btreeInitPage() returns error code 11\nTree 15 page 1893: btreeInitPage() returns error code 11\nTree 20 ... (5503 characters truncated) ... eInitPage() returns error code 11\nTree 20 page 1508: btreeInitPage() returns error code 11\nTree 20 page 1502: btreeInitPage() returns error code 11',)
+2025-08-19 15:21:41.275 WARNING (MainThread) [custom_components.area_occupancy.db] Database integrity check failed before load data, attempting recovery
+2025-08-19 15:21:41.275 ERROR (MainThread) [custom_components.area_occupancy.db] Database corruption detected, attempting recovery
+2025-08-19 15:21:41.292 INFO (MainThread) [custom_components.area_occupancy.db] Database backup created at /config/.storage/area_occupancy.db.backup
+2025-08-19 15:21:41.293 WARNING (MainThread) [custom_components.area_occupancy.db] Attempting database recovery from corruption
+2025-08-19 15:21:41.295 INFO (MainThread) [custom_components.area_occupancy.db] Database recovery successful, database is readable
+2025-08-19 15:21:41.296 ERROR (MainThread) [custom_components.area_occupancy.db] Database integrity check failed: ('*** in database main ***\nTree 15 page 1894: btreeInitPage() returns error code 11\nTree 15 page 1893: btreeInitPage() returns error code 11\nTree 20 ... (5503 characters truncated) ... eInitPage() returns error code 11\nTree 20 page 1508: btreeInitPage() returns error code 11\nTree 20 page 1502: btreeInitPage() returns error code 11',)
+2025-08-19 15:21:41.309 INFO (MainThread) [custom_components.area_occupancy.db] Database restored from backup
+2025-08-19 15:21:41.316 ERROR (MainThread) [custom_components.area_occupancy.db] Database integrity check failed: ('*** in database main ***\nTree 15 page 1894: btreeInitPage() returns error code 11\nTree 15 page 1893: btreeInitPage() returns error code 11\nTree 20 ... (5503 characters truncated) ... eInitPage() returns error code 11\nTree 20 page 1508: btreeInitPage() returns error code 11\nTree 20 page 1502: btreeInitPage() returns error code 11',)
+2025-08-19 15:21:41.316 WARNING (MainThread) [custom_components.area_occupancy.db] All recovery attempts failed, recreating database
+2025-08-19 15:21:41.316 INFO (MainThread) [custom_components.area_occupancy.db] Deleted database at /config/.storage/area_occupancy.db
+2025-08-19 15:21:41.316 DEBUG (MainThread) [custom_components.area_occupancy.db] Starting database initialization
+2025-08-19 15:21:41.319 DEBUG (MainThread) [custom_components.area_occupancy.db] Creating database tables
+2025-08-19 15:21:41.324 DEBUG (MainThread) [custom_components.area_occupancy.db] Database tables created successfully
+2025-08-19 15:21:41.329 INFO (MainThread) [custom_components.area_occupancy.db] Database recreated successfully

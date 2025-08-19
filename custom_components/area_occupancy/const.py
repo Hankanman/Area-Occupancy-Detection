@@ -50,6 +50,7 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 
+
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
@@ -71,6 +72,12 @@ DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+
+# Database recovery defaults
+DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
+DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
+DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
+DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
 
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
