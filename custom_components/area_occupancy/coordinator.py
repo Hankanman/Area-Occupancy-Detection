@@ -73,6 +73,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._remove_state_listener: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
+        self._health_check_timer: CALLBACK_TYPE | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -190,12 +191,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.purpose.async_initialize()
 
             # Load stored data first to restore prior from DB
+            # This will now handle database corruption automatically
             await self.db.load_data()
 
             # Ensure area exists and persist current configuration/state
-            await self.db.save_area_data()
+            try:
+                await self.db.save_area_data()
+            except Exception as e:
+                _LOGGER.warning("Failed to save area data, continuing setup: %s", e)
 
-            is_empty = self.db.is_intervals_empty()
+            # Check if intervals table is empty, with automatic corruption handling
+            try:
+                is_empty = self.db.safe_is_intervals_empty()
+            except Exception as e:
+                _LOGGER.warning(
+                    "Failed to check intervals table, assuming empty: %s", e
+                )
+                is_empty = True
+
             if is_empty:
                 _LOGGER.info(
                     "State intervals table is empty for instance %s. Populating with initial data from recorder.",
@@ -203,7 +216,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 entity_ids = [eid for eid in set(self.config.entity_ids) if eid]
                 if entity_ids:
-                    await self.run_analysis()
+                    try:
+                        await self.run_analysis()
+                    except Exception as e:
+                        _LOGGER.warning(
+                            "Failed to run initial analysis, continuing setup: %s", e
+                        )
                 else:
                     _LOGGER.warning(
                         "No entity IDs found in configuration to populate state intervals table for instance %s.",
@@ -220,6 +238,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Start timers only after everything is ready
             self._start_decay_timer()
             self._start_analysis_timer()
+            self._start_health_check_timer()
             await self.async_refresh()
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
@@ -229,6 +248,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except HomeAssistantError as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
+        except Exception as err:
+            _LOGGER.error("Unexpected error during coordinator setup: %s", err)
+            # Try to continue with basic functionality even if some parts fail
+            _LOGGER.info(
+                "Continuing with basic coordinator functionality despite errors"
+            )
+            try:
+                # Start basic timers
+                self._start_decay_timer()
+                self._start_analysis_timer()
+                self._start_health_check_timer()
+                await self.async_refresh()
+            except Exception as timer_err:
+                _LOGGER.error("Failed to start basic timers: %s", timer_err)
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
@@ -261,6 +294,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._analysis_timer is not None:
             self._analysis_timer()
             self._analysis_timer = None
+
+        # Clean up health check timer
+        if self._health_check_timer is not None:
+            self._health_check_timer()
+            self._health_check_timer = None
 
         await self.db.save_data()
 
@@ -375,13 +413,46 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Save data to database
             await self.db.save_data()
 
-        except (ValueError, OSError) as err:
-            _LOGGER.error("Analysis failed: %s", err)
-            await self.async_refresh()
+            # Schedule next analysis (every hour)
+            next_update = _now + timedelta(seconds=ANALYSIS_INTERVAL)
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
 
-        # Schedule next run (1 hour)
-        next_update = dt_util.utcnow() + timedelta(seconds=ANALYSIS_INTERVAL)
+        except Exception as err:
+            _LOGGER.error("Failed to run historical analysis: %s", err)
+            # Reschedule analysis even if it failed
+            next_update = _now + timedelta(minutes=15)  # Retry sooner if failed
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
 
-        self._analysis_timer = async_track_point_in_time(
-            self.hass, self.run_analysis, next_update
+    # --- Health Check Timer Handling ---
+    def _start_health_check_timer(self) -> None:
+        """Start the database health check timer."""
+        if self._health_check_timer is not None or not self.hass:
+            return
+
+        # Run health check every 6 hours
+        next_update = dt_util.utcnow() + timedelta(hours=6)
+
+        self._health_check_timer = async_track_point_in_time(
+            self.hass, self._handle_health_check_timer, next_update
         )
+
+    async def _handle_health_check_timer(self, _now: datetime) -> None:
+        """Handle health check timer firing."""
+        self._health_check_timer = None
+
+        try:
+            # Perform database health check
+            if not self.db.periodic_health_check():
+                _LOGGER.warning("Database health check found issues")
+
+            # Reschedule the timer
+            self._start_health_check_timer()
+
+        except Exception as err:
+            _LOGGER.error("Health check timer failed: %s", err)
+            # Reschedule even if it failed
+            self._start_health_check_timer()
