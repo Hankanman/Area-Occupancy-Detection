@@ -197,13 +197,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Ensure area exists and persist current configuration/state
             try:
                 await self.db.save_area_data()
-            except Exception as e:
+            except (HomeAssistantError, OSError, RuntimeError) as e:
                 _LOGGER.warning("Failed to save area data, continuing setup: %s", e)
 
             # Check if intervals table is empty, with automatic corruption handling
             try:
                 is_empty = self.db.safe_is_intervals_empty()
-            except Exception as e:
+            except (HomeAssistantError, OSError, RuntimeError) as e:
                 _LOGGER.warning(
                     "Failed to check intervals table, assuming empty: %s", e
                 )
@@ -218,7 +218,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if entity_ids:
                     try:
                         await self.run_analysis()
-                    except Exception as e:
+                    except (HomeAssistantError, OSError, RuntimeError) as e:
                         _LOGGER.warning(
                             "Failed to run initial analysis, continuing setup: %s", e
                         )
@@ -248,7 +248,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except HomeAssistantError as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
-        except Exception as err:
+        except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Unexpected error during coordinator setup: %s", err)
             # Try to continue with basic functionality even if some parts fail
             _LOGGER.info(
@@ -260,7 +260,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_analysis_timer()
                 self._start_health_check_timer()
                 await self.async_refresh()
-            except Exception as timer_err:
+            except (HomeAssistantError, OSError, RuntimeError) as timer_err:
                 _LOGGER.error("Failed to start basic timers: %s", timer_err)
 
     async def update(self) -> dict[str, Any]:
@@ -419,7 +419,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.run_analysis, next_update
             )
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Failed to run historical analysis: %s", err)
             # Reschedule analysis even if it failed
             next_update = _now + timedelta(minutes=15)  # Retry sooner if failed
@@ -452,7 +452,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Reschedule the timer
             self._start_health_check_timer()
 
-        except Exception as err:
+        except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Health check timer failed: %s", err)
             # Reschedule even if it failed
             self._start_health_check_timer()

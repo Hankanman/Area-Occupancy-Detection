@@ -643,9 +643,6 @@ def create_schema(
     schema_dict[vol.Required("parameters")] = section(
         _create_parameters_section_schema(defaults), {"collapsed": True}
     )
-    schema_dict[vol.Required("database_recovery")] = section(
-        _create_database_recovery_section_schema(defaults), {"collapsed": True}
-    )
 
     # Pass the correctly structured dictionary to vol.Schema
     return schema_dict

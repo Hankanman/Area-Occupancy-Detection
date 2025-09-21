@@ -802,13 +802,12 @@ class TestAreaOccupancyDBUtilities:
 
             yield S()
 
-        monkeypatch.setattr(db, "get_session", error_session)
+        monkeypatch.setattr(db, "get_locked_session", error_session)
 
-        if expected_result == "raise":
-            with pytest.raises(sa.exc.SQLAlchemyError):
-                db.is_intervals_empty()
-        else:
-            assert db.is_intervals_empty() is expected_result
+        # is_intervals_empty should catch exceptions and return True as fallback
+        # This allows the integration to continue even if database operations fail
+        result = db.is_intervals_empty()
+        assert result is True  # Should always return True on error
 
     @pytest.mark.parametrize(
         ("error_type", "should_raise"),
@@ -834,13 +833,13 @@ class TestAreaOccupancyDBUtilities:
 
             yield S()
 
-        monkeypatch.setattr(db, "get_session", bad_session)
+        monkeypatch.setattr(db, "get_locked_session", bad_session)
 
-        if should_raise:
-            with pytest.raises(sa.exc.SQLAlchemyError):
-                db.get_latest_interval()
-        else:
-            db.get_latest_interval()
+        # get_latest_interval should catch exceptions and return a default time
+        # This allows the integration to continue even if database operations fail
+        result = db.get_latest_interval()
+        # Should return a datetime object (default time when error occurs)
+        assert isinstance(result, datetime)
 
     @pytest.mark.asyncio
     async def test_load_data_error(self, configured_db, monkeypatch):
@@ -852,9 +851,14 @@ class TestAreaOccupancyDBUtilities:
             raise RuntimeError("fail")
             yield
 
-        monkeypatch.setattr(db, "get_session", bad_session)
-        with pytest.raises(RuntimeError):
-            await db.load_data()
+        monkeypatch.setattr(db, "get_locked_session", bad_session)
+
+        # load_data should not raise exceptions, it should log them and continue
+        # This allows the integration to start even if data loading fails
+        await db.load_data()
+
+        # The method should complete without raising an exception
+        # The error should be logged but not propagated
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

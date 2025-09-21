@@ -328,10 +328,13 @@ class TestFileLock:
             assert lock_path.exists()
             # Lock file descriptor should be set
             assert lock._lock_fd is not None
-            # Should contain PID
+            # Should contain PID and timestamp
             with open(lock_path) as f:
                 content = f.read()
-                assert content.isdigit()
+                assert ":" in content
+                pid, timestamp = content.split(":")
+                assert pid.isdigit()
+                assert timestamp.replace(".", "").isdigit()
 
         # After context exit, lock file should be removed
         assert not lock_path.exists()
@@ -400,8 +403,9 @@ class TestFileLock:
         lock = FileLock(lock_path, timeout=5)
 
         with lock, open(lock_path) as f:
-            pid = int(f.read())
-            assert pid == os.getpid()
+            content = f.read()
+            pid, timestamp = content.split(":")
+            assert int(pid) == os.getpid()
 
 
 class TestBayesianProbability:
