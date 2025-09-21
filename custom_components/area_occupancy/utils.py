@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import datetime, timedelta
+import logging
 import math
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import TYPE_CHECKING
 from homeassistant.util import dt as dt_util
 
 from .const import MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .data.entity import Entity
@@ -50,12 +53,22 @@ def clamp_probability(value: float) -> float:
 
 # ─────────────────────────────────────── File Lock ───────────────────────────
 class FileLock:
-    """Simple file-based lock using context manager with atomic file creation."""
+    """Robust file-based lock using context manager with atomic file creation and stale lock detection."""
 
-    def __init__(self, lock_path: Path, timeout: int = 60):
-        """Initialize the lock."""
+    def __init__(
+        self, lock_path: Path, timeout: int = 60, stale_lock_timeout: int = 300
+    ):
+        """Initialize the lock.
+
+        Args:
+            lock_path: Path to the lock file
+            timeout: Maximum time to wait for lock acquisition in seconds
+            stale_lock_timeout: Time after which a lock is considered stale (5 minutes default)
+
+        """
         self.lock_path = lock_path
         self.timeout = timeout
+        self.stale_lock_timeout = stale_lock_timeout
         self._lock_fd = None
 
     def __enter__(self):
@@ -64,16 +77,33 @@ class FileLock:
 
         while True:
             try:
+                # Check if lock file exists and is stale
+                if self.lock_path.exists():
+                    if self._is_stale_lock():
+                        _LOGGER.warning("Removing stale lock file: %s", self.lock_path)
+                        self.lock_path.unlink()
+                    else:
+                        # Lock is still valid, wait
+                        if time.time() - start_time > self.timeout:
+                            raise TimeoutError(
+                                f"Timeout waiting for lock: {self.lock_path}"
+                            ) from None
+                        time.sleep(0.1)
+                        continue
+
                 # Atomic file creation with O_EXCL flag
                 # This ensures only one process can create the file
                 self._lock_fd = os.open(
                     self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode=0o644
                 )
-                # Write PID to lock file for debugging
-                os.write(self._lock_fd, str(os.getpid()).encode())
+                # Write PID and timestamp to lock file for debugging
+                lock_info = f"{os.getpid()}:{time.time()}"
+                os.write(self._lock_fd, lock_info.encode())
                 os.fsync(self._lock_fd)  # Ensure data is written to disk
+                _LOGGER.debug("Acquired database lock: %s", self.lock_path)
+
             except FileExistsError:
-                # Lock file already exists, check timeout
+                # Lock file was created by another process between our check and creation
                 if time.time() - start_time > self.timeout:
                     raise TimeoutError(
                         f"Timeout waiting for lock: {self.lock_path}"
@@ -90,6 +120,19 @@ class FileLock:
         # Remove lock file
         with suppress(FileNotFoundError):
             self.lock_path.unlink()
+            _LOGGER.debug("Released database lock: %s", self.lock_path)
+
+    def _is_stale_lock(self) -> bool:
+        """Check if the lock file is stale (older than stale_lock_timeout seconds)."""
+        try:
+            stat = self.lock_path.stat()
+            age = time.time() - stat.st_mtime
+
+        except (OSError, FileNotFoundError):
+            # If we can't stat the file, consider it stale
+            return True
+        else:
+            return age > self.stale_lock_timeout
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────

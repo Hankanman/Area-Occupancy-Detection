@@ -44,6 +44,7 @@ from .const import (
     MIN_PROBABILITY,
     MIN_WEIGHT,
 )
+from .utils import FileLock
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
@@ -139,6 +140,11 @@ class AreaOccupancyDB:
             "Metadata": self.Metadata,
         }
 
+        # Initialize database lock path
+        self._lock_path = (
+            self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
+        )
+
     @contextmanager
     def get_session(self):
         """Get a database session with automatic cleanup.
@@ -159,6 +165,39 @@ class AreaOccupancyDB:
             raise
         finally:
             session.close()
+
+    @contextmanager
+    def get_locked_session(self, timeout: int = 30):
+        """Get a database session with file locking to prevent concurrent access.
+
+        Args:
+            timeout: Maximum time to wait for lock acquisition in seconds
+
+        Yields:
+            Session: A SQLAlchemy session protected by file lock
+
+        Example:
+            with self.get_locked_session() as session:
+                result = session.query(self.Areas).first()
+
+        """
+        if not self._lock_path:
+            # Fallback to regular session if no lock path available
+            with self.get_session() as session:
+                yield session
+            return
+
+        try:
+            with (
+                FileLock(self._lock_path, timeout=timeout),
+                self.get_session() as session,
+            ):
+                yield session
+        except TimeoutError as e:
+            _LOGGER.error("Database lock timeout after %d seconds: %s", timeout, e)
+            raise HomeAssistantError(
+                f"Database is busy, please try again later: {e}"
+            ) from e
 
     # Table properties for cleaner access
     @property
@@ -474,7 +513,7 @@ class AreaOccupancyDB:
                     return True
                 _LOGGER.error("Database integrity check failed: %s", result)
                 return False
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
             _LOGGER.error("Failed to run database integrity check: %s", e)
             return False
 
@@ -496,7 +535,7 @@ class AreaOccupancyDB:
                 if not header.startswith(b"SQLite format 3"):
                     _LOGGER.error("Database file is not a valid SQLite database")
                     return False
-        except Exception as e:
+        except (OSError, PermissionError, FileNotFoundError) as e:
             _LOGGER.error("Database file is not accessible: %s", e)
             return False
         else:
@@ -571,7 +610,7 @@ class AreaOccupancyDB:
                 _LOGGER.error("Database recovery failed, no tables found")
                 return False
 
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
             _LOGGER.error("Database recovery failed: %s", e)
             return False
 
@@ -590,7 +629,7 @@ class AreaOccupancyDB:
 
             shutil.copy2(self.db_path, backup_path)
             _LOGGER.info("Database backup created at %s", backup_path)
-        except Exception as e:
+        except (OSError, PermissionError, shutil.Error) as e:
             _LOGGER.error("Failed to create database backup: %s", e)
             return False
         else:
@@ -631,7 +670,7 @@ class AreaOccupancyDB:
 
             _LOGGER.info("Database restored from backup")
 
-        except Exception as e:
+        except (OSError, PermissionError, shutil.Error, sa.exc.SQLAlchemyError) as e:
             _LOGGER.error("Failed to restore database from backup: %s", e)
             return False
         else:
@@ -673,7 +712,7 @@ class AreaOccupancyDB:
             self.init_db()
             self.set_db_version()
             _LOGGER.info("Database recreated successfully")
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
             _LOGGER.error("Failed to recreate database: %s", e)
             return False
         else:
@@ -782,7 +821,7 @@ class AreaOccupancyDB:
                 conn.execute(text("ANALYZE"))
                 _LOGGER.debug("Database maintenance completed")
 
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
             _LOGGER.error("Periodic health check failed: %s", e)
             return False
         else:
@@ -950,7 +989,7 @@ class AreaOccupancyDB:
         """Load the data from the database."""
 
         def _load_data_operation():
-            with self.get_session() as session:
+            with self.get_locked_session() as session:
                 area = (
                     session.query(self.Areas)
                     .filter_by(entry_id=self.coordinator.entry_id)
@@ -1014,7 +1053,13 @@ class AreaOccupancyDB:
                 _LOGGER.warning(
                     "Database operation failed, continuing without loaded data"
                 )
-        except Exception as err:
+        except (
+            sa.exc.SQLAlchemyError,
+            HomeAssistantError,
+            TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as err:
             _LOGGER.error("Failed to load area occupancy data: %s", err)
             # Don't raise the error, just log it and continue
             # This allows the integration to start even if data loading fails
@@ -1024,7 +1069,7 @@ class AreaOccupancyDB:
     async def save_area_data(self) -> None:
         """Save the area data to the database."""
         try:
-            with self.engine.begin() as conn:
+            with self.get_locked_session() as session:
                 cfg = self.coordinator.config
 
                 area_data = {
@@ -1069,19 +1114,15 @@ class AreaOccupancyDB:
                     area_data["area_id"] = area_data["entry_id"]
 
                 try:
-                    result = conn.execute(
-                        self.Areas.__table__.insert().prefix_with("OR REPLACE"),
-                        area_data,
-                    )
-                    _LOGGER.debug("Area insert/replace result: %s", result)
+                    # Use session.merge for upsert functionality
+                    area_obj = self.Areas.from_dict(area_data)
+                    session.merge(area_obj)
+                    session.commit()
 
-                    if result.rowcount > 0:
-                        _LOGGER.info(
-                            "Successfully saved area data for entry_id: %s",
-                            area_data["entry_id"],
-                        )
-                    else:
-                        _LOGGER.warning("Area insert/replace affected 0 rows")
+                    _LOGGER.info(
+                        "Successfully saved area data for entry_id: %s",
+                        area_data["entry_id"],
+                    )
 
                 except (
                     sa.exc.SQLAlchemyError,
@@ -1089,15 +1130,17 @@ class AreaOccupancyDB:
                     TimeoutError,
                     OSError,
                 ) as insert_err:
-                    _LOGGER.error("Failed to insert/replace area data: %s", insert_err)
+                    _LOGGER.error("Failed to save area data: %s", insert_err)
+                    session.rollback()
                     try:
-                        conn.execute(
-                            self.Areas.__table__.insert(),
-                            area_data,
-                        )
+                        # Fallback to direct insert
+                        area_obj = self.Areas.from_dict(area_data)
+                        session.add(area_obj)
+                        session.commit()
                         _LOGGER.info("Direct insert succeeded")
                     except Exception as direct_err:
                         _LOGGER.error("Direct insert also failed: %s", direct_err)
+                        session.rollback()
                         raise
             _LOGGER.debug("Saved area data")
         except Exception as err:
@@ -1107,7 +1150,7 @@ class AreaOccupancyDB:
     async def save_entity_data(self) -> None:
         """Save the entity data to the database."""
         try:
-            with self.engine.begin() as conn:
+            with self.get_locked_session() as session:
                 entities = self.coordinator.entities.entities.values()
                 for entity in entities:
                     # Skip entities with missing type information
@@ -1152,21 +1195,24 @@ class AreaOccupancyDB:
 
                     last_updated = entity.last_updated or dt_util.utcnow()
 
-                    conn.execute(
-                        self.Entities.__table__.insert().prefix_with("OR REPLACE"),
-                        {
-                            "entry_id": self.coordinator.entry_id,
-                            "entity_id": entity.entity_id,
-                            "entity_type": entity_type,
-                            "weight": weight,
-                            "prob_given_true": prob_true,
-                            "prob_given_false": prob_false,
-                            "last_updated": last_updated,
-                            "is_decaying": entity.decay.is_decaying,
-                            "decay_start": entity.decay.decay_start,
-                            "evidence": evidence_val,
-                        },
-                    )
+                    entity_data = {
+                        "entry_id": self.coordinator.entry_id,
+                        "entity_id": entity.entity_id,
+                        "entity_type": entity_type,
+                        "weight": weight,
+                        "prob_given_true": prob_true,
+                        "prob_given_false": prob_false,
+                        "last_updated": last_updated,
+                        "is_decaying": entity.decay.is_decaying,
+                        "decay_start": entity.decay.decay_start,
+                        "evidence": evidence_val,
+                    }
+
+                    # Use session.merge for upsert functionality
+                    entity_obj = self.Entities.from_dict(entity_data)
+                    session.merge(entity_obj)
+
+                session.commit()
             _LOGGER.debug("Saved entity data")
         except Exception as err:
             _LOGGER.error("Failed to save entity data: %s", err)
@@ -1187,7 +1233,7 @@ class AreaOccupancyDB:
         """Check if the intervals table is empty using ORM."""
 
         def _check_intervals_empty():
-            with self.get_session() as session:
+            with self.get_locked_session() as session:
                 count = session.query(self.Intervals).count()
                 return count == 0
 
@@ -1195,7 +1241,7 @@ class AreaOccupancyDB:
             return self.safe_database_operation(
                 "check intervals empty", _check_intervals_empty
             )
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist, it's considered empty
             if "no such table" in str(e).lower():
                 _LOGGER.debug("Intervals table doesn't exist yet, considering empty")
@@ -1227,7 +1273,7 @@ class AreaOccupancyDB:
             # Try the normal check
             return self.is_intervals_empty()
 
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             _LOGGER.error("Unexpected error checking intervals: %s", e)
             # If we can't determine the state, assume empty to trigger data population
             return True
@@ -1235,7 +1281,7 @@ class AreaOccupancyDB:
     def get_area_data(self, entry_id: str) -> dict[str, Any] | None:
         """Get area data for a specific entry_id."""
         try:
-            with self.get_session() as session:
+            with self.get_locked_session() as session:
                 area = session.query(self.Areas).filter_by(entry_id=entry_id).first()
                 if area:
                     return area.to_dict()
@@ -1278,7 +1324,7 @@ class AreaOccupancyDB:
         """Return the latest interval end time minus 1 hour, or default window if none."""
 
         def _get_latest_interval_operation():
-            with self.get_session() as session:
+            with self.get_locked_session() as session:
                 result = session.execute(
                     sa.select(sa.func.max(self.Intervals.end_time))
                 ).scalar()
@@ -1290,7 +1336,7 @@ class AreaOccupancyDB:
             return self.safe_database_operation(
                 "get latest interval", _get_latest_interval_operation
             )
-        except Exception as e:
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist or any other error, return a default time
             if "no such table" in str(e).lower():
                 _LOGGER.debug("Intervals table doesn't exist yet, using default time")
@@ -1350,6 +1396,7 @@ class AreaOccupancyDB:
                                 "start_time": state.last_changed,
                                 "end_time": interval_end,
                                 "duration_seconds": duration_seconds,
+                                "created_at": dt_util.utcnow(),
                             }
                         )
                 elif (
@@ -1363,6 +1410,7 @@ class AreaOccupancyDB:
                             "start_time": state.last_changed,
                             "end_time": interval_end,
                             "duration_seconds": duration_seconds,
+                            "created_at": dt_util.utcnow(),
                         }
                     )
 
@@ -1396,11 +1444,11 @@ class AreaOccupancyDB:
                 intervals = self._states_to_intervals(states, end_time)
                 _LOGGER.debug("Syncing %d intervals", len(intervals))
                 if intervals:
-                    with self.engine.begin() as conn:
-                        conn.execute(
-                            self.Intervals.__table__.insert().prefix_with("OR IGNORE"),
-                            intervals,
-                        )
+                    with self.get_locked_session() as session:
+                        for interval_data in intervals:
+                            interval_obj = self.Intervals.from_dict(interval_data)
+                            session.merge(interval_obj)
+                        session.commit()
                     _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")
