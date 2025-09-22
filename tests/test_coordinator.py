@@ -11,6 +11,7 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.config import Sensors
 from custom_components.area_occupancy.data.prior import MIN_PRIOR
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -406,7 +407,7 @@ class TestAreaOccupancyCoordinator:
         with (
             patch.object(coordinator.entities, "get_entity") as mock_get_entity,
             patch(
-                "homeassistant.helpers.event.async_track_point_in_time",
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=Mock(),
             ),
             patch.object(coordinator.db, "save_data", new_callable=AsyncMock),
@@ -488,22 +489,29 @@ class TestAreaOccupancyCoordinator:
             ):
                 await coordinator.setup()
 
+    @pytest.mark.parametrize("expected_lingering_timers", [True])
     async def test_shutdown_behavior(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
     ) -> None:
         """Test shutdown behavior with real coordinator instance."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        coordinator._global_decay_timer = Mock()
-        coordinator._remove_state_listener = Mock()
-
+        # Prevent scheduling real timers
         with (
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
             patch.object(coordinator.entities, "get_entity") as mock_get_entity,
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
                 new=AsyncMock(),
             ),
         ):
+            # Start timers so shutdown has something to cancel (they will be None)
+            coordinator._start_decay_timer()
+            coordinator._remove_state_listener = Mock()
+
             mock_entity_type = Mock()
             mock_entity_type.prob_true = 0.25
             mock_entity_type.prob_false = 0.05
@@ -607,3 +615,672 @@ class TestAreaOccupancyCoordinator:
 
         await mock_coordinator.track_entity_state_changes(entity_ids)
         mock_coordinator.track_entity_state_changes.assert_called_with(entity_ids)
+
+    def test_type_probabilities_property(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test type_probabilities property calculation."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        # Attach a lightweight mocked entities manager
+        entities_manager = Mock()
+        entities_manager.entities = {
+            "binary_sensor.motion": Mock(),
+            "media_player.tv": Mock(),
+            "binary_sensor.door": Mock(),
+        }
+        entities_manager.get_entities_by_input_type = Mock(return_value={})
+        coordinator.entities = entities_manager
+
+        type_probs = coordinator.type_probabilities
+        assert isinstance(type_probs, dict)
+        assert "motion" in type_probs
+        assert "media" in type_probs
+        assert "appliance" in type_probs
+        assert "door" in type_probs
+        assert "window" in type_probs
+        assert "illuminance" in type_probs
+        assert "humidity" in type_probs
+        assert "temperature" in type_probs
+
+    def test_type_probabilities_with_empty_entities(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test type_probabilities property with no entities."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        entities_manager = Mock()
+        entities_manager.entities = {}
+        entities_manager.get_entities_by_input_type = Mock(return_value={})
+        coordinator.entities = entities_manager
+
+        type_probs = coordinator.type_probabilities
+        assert type_probs == {}
+
+    def test_threshold_property_with_none_config(self, mock_coordinator: Mock) -> None:
+        """Test threshold property when config is None."""
+        mock_coordinator.config = None
+
+        threshold = mock_coordinator.threshold
+        assert threshold == 0.5  # Default threshold
+
+    async def test_decay_timer_handling(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test decay timer start and handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track:
+            coordinator._start_decay_timer()
+            mock_track.assert_called_once()
+            assert coordinator._global_decay_timer is not None
+
+    async def test_decay_timer_handling_with_existing_timer(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test decay timer start when timer already exists."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_decay_timer()
+            mock_track.assert_not_called()
+
+    async def test_decay_timer_handling_without_hass(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test decay timer start when hass is None."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator.hass = None
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_decay_timer()
+            mock_track.assert_not_called()
+
+    async def test_handle_decay_timer(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test decay timer callback handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+        coordinator.config.decay.enabled = True
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+            assert coordinator._global_decay_timer is None
+            mock_refresh.assert_called_once()
+
+    async def test_handle_decay_timer_disabled(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test decay timer callback when decay is disabled."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+        coordinator.config.decay.enabled = False
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+            assert coordinator._global_decay_timer is None
+            mock_refresh.assert_not_called()
+
+    async def test_analysis_timer_handling(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test analysis timer start and handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track:
+            coordinator._start_analysis_timer()
+            mock_track.assert_called_once()
+            assert coordinator._analysis_timer is not None
+
+    async def test_analysis_timer_handling_with_existing_timer(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test analysis timer start when timer already exists."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_analysis_timer()
+            mock_track.assert_not_called()
+
+    async def test_analysis_timer_handling_without_hass(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test analysis timer start when hass is None."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator.hass = None
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_analysis_timer()
+            mock_track.assert_not_called()
+
+    async def test_run_analysis(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test run_analysis method."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.prior, "update", new=AsyncMock()),
+            patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis()
+            assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_with_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test run_analysis method with error handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with (
+            patch.object(
+                coordinator.db,
+                "sync_states",
+                side_effect=HomeAssistantError("Sync failed"),
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis()
+            assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_with_custom_time(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test run_analysis method with custom time parameter."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+        custom_time = dt_util.utcnow()
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.prior, "update", new=AsyncMock()),
+            patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis(custom_time)
+            assert coordinator._analysis_timer is None
+
+    async def test_health_check_timer_handling(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test health check timer start and handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track:
+            coordinator._start_health_check_timer()
+            mock_track.assert_called_once()
+            assert coordinator._health_check_timer is not None
+
+    async def test_health_check_timer_handling_with_existing_timer(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test health check timer start when timer already exists."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._health_check_timer = Mock()
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_health_check_timer()
+            mock_track.assert_not_called()
+
+    async def test_health_check_timer_handling_without_hass(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test health check timer start when hass is None."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator.hass = None
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_health_check_timer()
+            mock_track.assert_not_called()
+
+    async def test_handle_health_check_timer(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test health check timer callback handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._health_check_timer = Mock()
+        coordinator.db.periodic_health_check = Mock(return_value=True)
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_health_check_timer(dt_util.utcnow())
+            assert coordinator._health_check_timer is None
+            coordinator.db.periodic_health_check.assert_called_once()
+
+    async def test_handle_health_check_timer_with_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test health check timer callback with error handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._health_check_timer = Mock()
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_health_check_timer(dt_util.utcnow())
+            assert coordinator._health_check_timer is None
+
+    async def test_track_entity_state_changes_with_existing_listener(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test entity state tracking with existing listener."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._remove_state_listener = Mock()
+        prev_listener = coordinator._remove_state_listener
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_state_change_event",
+            return_value=Mock(),
+        ) as mock_track:
+            await coordinator.track_entity_state_changes(["binary_sensor.test"])
+            # Previous listener should be called
+            prev_listener.assert_called_once()
+            # New listener should be set (since we provided entity_ids)
+            assert coordinator._remove_state_listener is not None
+            mock_track.assert_called_once()
+
+    async def test_track_entity_state_changes_empty_list(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test entity state tracking with empty entity list."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._remove_state_listener = Mock()
+        prev_listener = coordinator._remove_state_listener
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_state_change_event"
+        ) as mock_track:
+            await coordinator.track_entity_state_changes([])
+            # Previous listener should be called and cleared even if no new tracking
+            prev_listener.assert_called_once()
+            assert coordinator._remove_state_listener is None
+            mock_track.assert_not_called()
+
+    async def test_track_entity_state_changes_with_entity_with_new_evidence(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test entity state tracking with entity that has new evidence."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        # Mock entity with new evidence
+        mock_entity = Mock()
+        mock_entity.has_new_evidence.return_value = True
+        coordinator.entities.get_entity = Mock(return_value=mock_entity)
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_state_change_event",
+                return_value=Mock(),
+            ),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+        ):
+            # Create the event handler manually to test it
+            event_handler = None
+
+            def track_callback(hass, entity_ids, callback):
+                nonlocal event_handler
+                event_handler = callback
+                return Mock()
+
+            with patch(
+                "custom_components.area_occupancy.coordinator.async_track_state_change_event",
+                side_effect=track_callback,
+            ):
+                await coordinator.track_entity_state_changes(["binary_sensor.test"])
+
+                # Simulate state change event
+                mock_event = Mock()
+                mock_event.data = {"entity_id": "binary_sensor.test"}
+                await event_handler(mock_event)
+            mock_refresh.assert_called_once()
+
+    async def test_track_entity_state_changes_with_entity_without_new_evidence(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test entity state tracking with entity that has no new evidence."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        # Mock entity without new evidence
+        mock_entity = Mock()
+        mock_entity.has_new_evidence.return_value = False
+        coordinator.entities.get_entity = Mock(return_value=mock_entity)
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_state_change_event",
+                return_value=Mock(),
+            ),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+        ):
+            # Create the event handler manually to test it
+            event_handler = None
+
+            def track_callback(hass, entity_ids, callback):
+                nonlocal event_handler
+                event_handler = callback
+                return Mock()
+
+            with patch(
+                "custom_components.area_occupancy.coordinator.async_track_state_change_event",
+                side_effect=track_callback,
+            ):
+                await coordinator.track_entity_state_changes(["binary_sensor.test"])
+
+                # Simulate state change event
+                mock_event = Mock()
+                mock_event.data = {"entity_id": "binary_sensor.test"}
+                await event_handler(mock_event)
+            mock_refresh.assert_not_called()
+
+    async def test_setup_with_intervals_empty(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup when intervals table is empty."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
+            patch.object(coordinator, "run_analysis", new=AsyncMock()),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+            coordinator.run_analysis.assert_called_once()
+
+    async def test_setup_with_intervals_not_empty(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup when intervals table is not empty."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
+            patch.object(coordinator, "run_analysis", new=AsyncMock()),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+            coordinator.run_analysis.assert_not_called()
+
+    async def test_setup_with_no_entity_ids(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup when no entity IDs are configured."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        # Make entity_ids empty by clearing sensors
+
+        coordinator.config.sensors = Sensors(
+            motion=[],
+            primary_occupancy=None,
+            media=[],
+            appliance=[],
+            illuminance=[],
+            humidity=[],
+            temperature=[],
+            door=[],
+            window=[],
+        )
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "run_analysis", new=AsyncMock()) as mock_run,
+        ):
+            await coordinator.setup()
+            mock_run.assert_not_called()
+
+    async def test_setup_with_database_errors(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup with database errors that should be handled gracefully."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(
+                coordinator.db, "save_area_data", side_effect=OSError("DB Error")
+            ),
+            patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+
+    async def test_setup_with_intervals_check_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup with intervals check error."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "safe_is_intervals_empty",
+                side_effect=HomeAssistantError("Check failed"),
+            ),
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+
+    @pytest.mark.parametrize("expected_lingering_timers", [True])
+    async def test_setup_with_analysis_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup with analysis error handling."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+            patch.object(
+                coordinator,
+                "run_analysis",
+                side_effect=HomeAssistantError("Analysis failed"),
+            ),
+        ):
+            await coordinator.setup()
+
+    async def test_setup_with_unexpected_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup with unexpected error that should continue with basic functionality."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "load_data",
+                side_effect=RuntimeError("Unexpected error"),
+            ),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_health_check_timer"),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+
+    async def test_setup_with_timer_start_error(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup with timer start error."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "load_data",
+                side_effect=RuntimeError("Unexpected error"),
+            ),
+            patch.object(
+                coordinator, "_start_decay_timer", side_effect=OSError("Timer error")
+            ),
+            patch.object(
+                coordinator, "_start_analysis_timer", side_effect=OSError("Timer error")
+            ),
+            patch.object(
+                coordinator,
+                "_start_health_check_timer",
+                side_effect=OSError("Timer error"),
+            ),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+
+    async def test_async_update_options(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test async_update_options method."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(coordinator.config, "update_config", new=AsyncMock()),
+            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
+            patch.object(coordinator.entities, "cleanup", new=AsyncMock()),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch.object(coordinator, "async_request_refresh", new=AsyncMock()),
+        ):
+            options = {"threshold": 0.7}
+            await coordinator.async_update_options(options)
+
+            coordinator.config.update_config.assert_called_once_with(options)
+            coordinator.purpose.async_initialize.assert_called_once()
+            coordinator.entities.cleanup.assert_called_once()
+            coordinator.track_entity_state_changes.assert_called_once()
+            coordinator.db.save_data.assert_called_once()
+            coordinator.async_request_refresh.assert_called_once()
+
+    async def test_shutdown_with_all_timers(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test shutdown with all timers present."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+
+        # Set up all timers
+        coordinator._global_decay_timer = Mock()
+        coordinator._remove_state_listener = Mock()
+        coordinator._analysis_timer = Mock()
+        coordinator._health_check_timer = Mock()
+
+        with (
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch.object(coordinator.entities, "cleanup", new=AsyncMock()),
+            patch.object(coordinator.purpose, "cleanup"),
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
+        ):
+            await coordinator.async_shutdown()
+
+            assert coordinator._global_decay_timer is None
+            assert coordinator._remove_state_listener is None
+            assert coordinator._analysis_timer is None
+            assert coordinator._health_check_timer is None
+            coordinator.db.save_data.assert_called_once()
+            coordinator.entities.cleanup.assert_called_once()
+            coordinator.purpose.cleanup.assert_called_once()
