@@ -501,7 +501,6 @@ class TestAreaOccupancyCoordinator:
     ) -> None:
         """Test shutdown behavior with real coordinator instance."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        await coordinator.async_init_database()
 
         # Prevent scheduling real timers
         with (
@@ -537,7 +536,6 @@ class TestAreaOccupancyCoordinator:
     ) -> None:
         """Test shutdown when resources are already None."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        await coordinator.async_init_database()
 
         coordinator._global_decay_timer = None
         coordinator._remove_state_listener = None
@@ -567,7 +565,6 @@ class TestAreaOccupancyCoordinator:
     ) -> None:
         """Test complete coordinator lifecycle with realistic configuration."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        await coordinator.async_init_database()
 
         with (
             patch.object(coordinator.entities, "get_entity") as mock_get_entity,
@@ -1164,7 +1161,6 @@ class TestAreaOccupancyCoordinator:
     ) -> None:
         """Test setup with intervals check error."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        await coordinator.async_init_database()
 
         with (
             patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),

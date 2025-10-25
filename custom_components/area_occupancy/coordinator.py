@@ -82,10 +82,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         This method should be called after coordinator creation but before
         async_config_entry_first_refresh().
+
+        Note: In test environments with AREA_OCCUPANCY_AUTO_INIT_DB=1, the database
+        is already initialized in AreaOccupancyDB.__init__() and this method does nothing.
         """
-        # Skip async initialization if AUTO_INIT_DB is set (for testing)
+        # In test environments, database is already initialized in __init__
         if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
-            self.db.initialize_database()
             return
 
         try:
