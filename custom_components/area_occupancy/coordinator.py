@@ -258,7 +258,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except HomeAssistantError as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
-        except (HomeAssistantError, OSError, RuntimeError) as err:
+        except (OSError, RuntimeError) as err:
             _LOGGER.error("Unexpected error during coordinator setup: %s", err)
             # Try to continue with basic functionality even if some parts fail
             _LOGGER.info(
