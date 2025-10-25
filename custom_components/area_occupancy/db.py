@@ -134,9 +134,6 @@ class AreaOccupancyDB:
         if self.storage_path:
             self.storage_path.mkdir(exist_ok=True)
 
-        # Check if database exists and initialize if needed
-        self._ensure_db_exists()
-
         # Create session maker
         self._session_maker = sessionmaker(bind=self.engine)
 
@@ -153,6 +150,15 @@ class AreaOccupancyDB:
         self._lock_path = (
             self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
         )
+
+    def initialize_database(self) -> None:
+        """Initialize the database by checking if it exists and creating it if needed.
+
+        This method performs blocking I/O operations and should be called via
+        hass.async_add_executor_job() to avoid blocking the event loop.
+        """
+        # Check if database exists and initialize if needed
+        self._ensure_db_exists()
 
     @contextmanager
     def get_session(self) -> Any:
