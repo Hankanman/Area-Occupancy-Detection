@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 # Standard Library
 import logging
+import os
 from typing import Any
 
 from custom_components.area_occupancy.db import AreaOccupancyDB
@@ -82,6 +83,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This method should be called after coordinator creation but before
         async_config_entry_first_refresh().
         """
+        # Skip async initialization if AUTO_INIT_DB is set (for testing)
+        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
+            self.db.initialize_database()
+            return
+
         try:
             await self.hass.async_add_executor_job(self.db.initialize_database)
             _LOGGER.debug(
