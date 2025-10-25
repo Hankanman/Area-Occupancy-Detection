@@ -801,6 +801,9 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.db, "prune_old_intervals", return_value=5
+            ),  # Mock pruning
             patch.object(coordinator.prior, "update", new=AsyncMock()),
             patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
@@ -812,6 +815,8 @@ class TestAreaOccupancyCoordinator:
         ):
             await coordinator.run_analysis()
             assert coordinator._analysis_timer is None
+            # Verify pruning was called
+            coordinator.db.prune_old_intervals.assert_called_once()
 
     async def test_run_analysis_with_error(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -1312,3 +1317,100 @@ class TestAreaOccupancyCoordinator:
             coordinator.db.save_data.assert_called_once()
             coordinator.entities.cleanup.assert_called_once()
             coordinator.purpose.cleanup.assert_called_once()
+
+
+# New tests for performance optimization features
+
+
+class TestRunAnalysisWithPruning:
+    """Test run_analysis method with pruning functionality."""
+
+    async def test_run_analysis_with_pruning(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that prune_old_intervals is called during run_analysis."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.db, "prune_old_intervals", return_value=10
+            ) as mock_prune,
+            patch.object(coordinator.prior, "update", new=AsyncMock()),
+            patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis()
+
+            # Verify pruning was called
+            mock_prune.assert_called_once()
+            assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_pruning_failure(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that analysis continues if pruning fails."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.db, "prune_old_intervals", return_value=0
+            ),  # Pruning returns 0
+            patch.object(coordinator.prior, "update", new=AsyncMock()),
+            patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis()
+
+            # Verify pruning was called and analysis completed
+            coordinator.db.prune_old_intervals.assert_called_once()
+            coordinator.prior.update.assert_called_once()
+            assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_pruning_error_handling(
+        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that analysis continues if pruning raises an exception."""
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "prune_old_intervals",
+                side_effect=RuntimeError("Pruning failed"),
+            ),
+            patch.object(coordinator.prior, "update", new=AsyncMock()),
+            patch.object(coordinator.entities, "update_likelihoods", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            # Should not raise exception, but analysis should fail due to pruning error
+            await coordinator.run_analysis()
+
+            # Verify pruning was called
+            coordinator.db.prune_old_intervals.assert_called_once()
+            # Verify other steps were NOT called due to exception handling
+            coordinator.prior.update.assert_not_called()
+            coordinator.entities.update_likelihoods.assert_not_called()
+            coordinator.async_refresh.assert_not_called()
+            coordinator.db.save_data.assert_not_called()
+            assert coordinator._analysis_timer is None

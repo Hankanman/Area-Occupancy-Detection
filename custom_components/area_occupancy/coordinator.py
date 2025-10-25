@@ -414,6 +414,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Import recent data from recorder
             await self.db.sync_states()
 
+            # Prune old intervals to prevent database growth
+            pruned_count = self.db.prune_old_intervals()
+            if pruned_count > 0:
+                _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
+
             # Recalculate priors with new data
             await self.prior.update()
 
