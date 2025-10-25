@@ -358,7 +358,9 @@ class Config:
             self._load_config(data)
 
             # Request update since threshold affects occupied calculation
-            await self.coordinator.async_request_refresh()
+            # Only request refresh if setup is complete to avoid debouncer conflicts
+            if self.coordinator.setup_complete:
+                await self.coordinator.async_request_refresh()
 
         except Exception as err:
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
