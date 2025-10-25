@@ -84,7 +84,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         async_config_entry_first_refresh().
 
         Note: In test environments with AREA_OCCUPANCY_AUTO_INIT_DB=1, the database
-        is already initialized in AreaOccupancyDB.__init__() and this method does nothing.
+        is already initialized in AreaOccupancyDB.__init__(), and this method returns early without performing initialization.
         """
         # In test environments, database is already initialized in __init__
         if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":

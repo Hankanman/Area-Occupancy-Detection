@@ -159,8 +159,11 @@ class AreaOccupancyDB:
     def initialize_database(self) -> None:
         """Initialize the database by checking if it exists and creating it if needed.
 
-        This method performs blocking I/O operations and should be called via
+        This method performs blocking I/O operations.
+        In production environments, it should be called via
         hass.async_add_executor_job() to avoid blocking the event loop.
+        In test environments (when AREA_OCCUPANCY_AUTO_INIT_DB=1 is set),
+        this method may be called directly.
         """
         # Check if database exists and initialize if needed
         self._ensure_db_exists()
