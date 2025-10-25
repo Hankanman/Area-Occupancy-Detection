@@ -76,6 +76,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._health_check_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
 
+    async def async_init_database(self) -> None:
+        """Initialize the database asynchronously to avoid blocking the event loop.
+
+        This method should be called after coordinator creation but before
+        async_config_entry_first_refresh().
+        """
+        try:
+            await self.hass.async_add_executor_job(self.db.initialize_database)
+            _LOGGER.debug(
+                "Database initialization completed for entry %s", self.entry_id
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to initialize database for entry %s: %s", self.entry_id, err
+            )
+            raise
+
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""

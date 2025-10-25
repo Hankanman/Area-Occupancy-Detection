@@ -77,6 +77,7 @@ class TestAsyncSetupEntry:
         """Test successful setup flow."""
         coordinator = Mock()
         coordinator.async_config_entry_first_refresh = AsyncMock()
+        coordinator.async_init_database = AsyncMock()
 
         with (
             patch(
@@ -91,6 +92,7 @@ class TestAsyncSetupEntry:
 
         assert result is True
         mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
+        coordinator.async_init_database.assert_awaited_once()
         mock_services.assert_awaited_once()
         assert mock_config_entry.runtime_data == coordinator
 
