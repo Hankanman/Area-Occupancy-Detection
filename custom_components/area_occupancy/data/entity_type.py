@@ -89,8 +89,11 @@ class EntityType:
                         raise ValueError(
                             f"Invalid active states for {input_type}: {states_attr}"
                         )
-                    params["active_states"] = states_attr
-                    params["active_range"] = None  # Clear range when states are set
+                    # Only apply override if list is non-empty
+                    if len(states_attr) > 0:
+                        params["active_states"] = states_attr
+                        params["active_range"] = None  # Clear range when states are set
+                    # Empty list is treated as "use defaults" - no override applied
 
             # Apply active range override
             range_config_attr = f"{input_type.value}_active_range"
