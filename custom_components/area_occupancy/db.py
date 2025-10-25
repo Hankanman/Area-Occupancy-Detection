@@ -10,6 +10,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
+from filelock import FileLock, Timeout
 import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
@@ -44,7 +45,6 @@ from .const import (
     MIN_PROBABILITY,
     MIN_WEIGHT,
 )
-from .utils import FileLock
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeBase
@@ -193,7 +193,7 @@ class AreaOccupancyDB:
                 self.get_session() as session,
             ):
                 yield session
-        except TimeoutError as e:
+        except Timeout as e:
             _LOGGER.error("Database lock timeout after %d seconds: %s", timeout, e)
             raise HomeAssistantError(
                 f"Database is busy, please try again later: {e}"
@@ -1046,6 +1046,7 @@ class AreaOccupancyDB:
                             )
                             self.coordinator.entities.add_entity(new_entity)
                 _LOGGER.debug("Loaded area occupancy data")
+                return True  # Indicate successful completion
 
         try:
             result = self.safe_database_operation("load data", _load_data_operation)

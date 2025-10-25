@@ -14,23 +14,19 @@ The Area Occupancy Detection integration was experiencing database corruption du
 
 ## Solution Implementation
 
-### 1. Enhanced FileLock Class
+### 1. Standard FileLock Package
 
 **File**: `custom_components/area_occupancy/utils.py`
 
-Enhanced the `FileLock` class with:
+The component now uses the standard `filelock` package from pip instead of a custom implementation. This provides:
 
-- **Stale lock detection**: Automatically removes lock files older than 5 minutes
-- **Better logging**: Added debug logging for lock acquisition/release
-- **Improved error handling**: Better timeout and exception handling
-- **Atomic operations**: Uses `O_EXCL` flag for atomic file creation
+- **Atomic file locking**: Uses `O_EXCL` flag for atomic file creation
+- **Automatic cleanup**: Context manager ensures proper lock release
+- **Cross-platform support**: Handles Windows/Linux/macOS differences automatically
+- **Well-tested**: Battle-tested package used by many projects
 
 ```python
-class FileLock:
-    """Robust file-based lock using context manager with atomic file creation and stale lock detection."""
-
-    def __init__(self, lock_path: Path, timeout: int = 60, stale_lock_timeout: int = 300):
-        # ... implementation
+from filelock import FileLock, Timeout
 ```
 
 ### 2. Database Locking Context Manager
@@ -129,16 +125,18 @@ The locking is completely transparent to users. The integration will:
 The locking behavior can be configured through the FileLock constructor:
 
 - **`timeout`**: Maximum time to wait for lock acquisition (default: 30 seconds)
-- **`stale_lock_timeout`**: Time after which a lock is considered stale (default: 5 minutes)
+- **Standard package**: The `filelock` package handles stale lock detection automatically
 
 ## Benefits
 
 1. **Prevents Database Corruption**: Eliminates race conditions that cause corruption
 2. **Handles Multiple Instances**: Allows multiple coordinator instances to coexist safely
-3. **Automatic Recovery**: Handles stale locks from crashed processes
+3. **Automatic Recovery**: The standard `filelock` package handles stale locks from crashed processes
 4. **Minimal Performance Impact**: Locking overhead is negligible
 5. **Backward Compatible**: Existing functionality remains unchanged
 6. **Robust Error Handling**: Graceful degradation when locking fails
+7. **Maintained Package**: No need to maintain custom locking code
+8. **Cross-Platform**: Handles Windows/Linux/macOS differences automatically
 
 ## Monitoring
 
