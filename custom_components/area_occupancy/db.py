@@ -24,7 +24,14 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     create_engine,
+    func,
     text,
+)
+from sqlalchemy.exc import (
+    DataError,
+    OperationalError,
+    ProgrammingError,
+    SQLAlchemyError,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -44,6 +51,7 @@ from .const import (
     MAX_WEIGHT,
     MIN_PROBABILITY,
     MIN_WEIGHT,
+    RETENTION_DAYS,
 )
 
 if TYPE_CHECKING:
@@ -68,8 +76,6 @@ MIN_INTERVAL_SECONDS = 5
 MAX_INTERVAL_SECONDS = 13 * 3600
 # States to exclude from intervals
 INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
-
-RETENTION_DAYS = 365
 
 DEFAULT_AREA_PRIOR = 0.15
 DEFAULT_ENTITY_WEIGHT = 0.85
@@ -1452,13 +1458,186 @@ class AreaOccupancyDB:
                 if intervals:
                     with self.get_locked_session() as session:
                         for interval_data in intervals:
-                            interval_obj = self.Intervals.from_dict(interval_data)
-                            session.merge(interval_obj)
-                        session.commit()
-                    _LOGGER.debug("Synced %d intervals", len(intervals))
+                            # Check if interval already exists to avoid UNIQUE constraint violation
+                            existing = (
+                                session.query(self.Intervals)
+                                .filter(
+                                    self.Intervals.entity_id
+                                    == interval_data["entity_id"],
+                                    self.Intervals.start_time
+                                    == interval_data["start_time"],
+                                    self.Intervals.end_time
+                                    == interval_data["end_time"],
+                                )
+                                .first()
+                            )
+
+                            if not existing:
+                                # Only create if it doesn't exist
+                                interval_obj = self.Intervals.from_dict(interval_data)
+                                session.add(interval_obj)
+                    session.commit()
+                _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")
 
         except (HomeAssistantError, TimeoutError) as err:
             _LOGGER.error("Error getting states: %s", err)
             raise
+
+    def prune_old_intervals(self) -> int:
+        """Delete intervals older than RETENTION_DAYS to prevent database growth.
+
+        Returns:
+            Number of intervals deleted
+
+        """
+        cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+        _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
+
+        try:
+            with self.get_locked_session() as session:
+                # Count intervals to be deleted for logging
+                count_query = session.query(func.count(self.Intervals.id)).filter(
+                    self.Intervals.start_time < cutoff_date
+                )
+                intervals_to_delete = count_query.scalar() or 0
+
+                if intervals_to_delete == 0:
+                    _LOGGER.debug("No old intervals to prune")
+                    return 0
+
+                # Delete old intervals
+                delete_query = session.query(self.Intervals).filter(
+                    self.Intervals.start_time < cutoff_date
+                )
+                deleted_count = delete_query.delete(synchronize_session=False)
+
+                session.commit()
+
+                _LOGGER.info(
+                    "Pruned %d intervals older than %d days (cutoff: %s)",
+                    deleted_count,
+                    RETENTION_DAYS,
+                    cutoff_date,
+                )
+
+                return deleted_count
+
+        except OperationalError as e:
+            _LOGGER.error("Database connection error during interval pruning: %s", e)
+            return 0
+        except DataError as e:
+            _LOGGER.error("Database data error during interval pruning: %s", e)
+            return 0
+        except ProgrammingError as e:
+            _LOGGER.error("Database query error during interval pruning: %s", e)
+            return 0
+        except SQLAlchemyError as e:
+            _LOGGER.error("Database error during interval pruning: %s", e)
+            return 0
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error during interval pruning: %s", e)
+            return 0
+
+    def get_aggregated_intervals_by_slot(
+        self, entry_id: str, slot_minutes: int = 60
+    ) -> list[tuple[int, int, float]]:
+        """Get aggregated interval data using SQL GROUP BY for better performance.
+
+        Args:
+            entry_id: The area entry ID to filter by
+            slot_minutes: Time slot size in minutes
+
+        Returns:
+            List of (day_of_week, time_slot, total_occupied_seconds) tuples
+
+        """
+        _LOGGER.debug("Getting aggregated intervals by slot using SQL GROUP BY")
+
+        try:
+            with self.get_session() as session:
+                # Use SQLite datetime functions to group intervals by day and time slot
+                # This is much more efficient than Python loops
+                query = (
+                    session.query(
+                        func.strftime("%w", self.Intervals.start_time).label(
+                            "day_of_week"
+                        ),
+                        func.cast(
+                            (
+                                func.cast(
+                                    func.strftime("%H", self.Intervals.start_time),
+                                    sa.Integer,
+                                )
+                                * 60
+                                + func.cast(
+                                    func.strftime("%M", self.Intervals.start_time),
+                                    sa.Integer,
+                                )
+                            )
+                            // slot_minutes,
+                            sa.Integer,
+                        ).label("time_slot"),
+                        func.sum(self.Intervals.duration_seconds).label(
+                            "total_seconds"
+                        ),
+                    )
+                    .join(
+                        self.Entities,
+                        self.Intervals.entity_id == self.Entities.entity_id,
+                    )
+                    .filter(
+                        self.Entities.entry_id == entry_id,
+                        self.Entities.entity_type
+                        == "motion",  # Use string instead of InputType enum
+                        self.Intervals.state == "on",
+                    )
+                    .group_by("day_of_week", "time_slot")
+                    .order_by("day_of_week", "time_slot")
+                )
+
+                results = query.all()
+
+                # Convert SQLite day_of_week (0=Sunday) to Python weekday (0=Monday)
+                converted_results = []
+                for day_str, slot, total_seconds in results:
+                    try:
+                        sqlite_day = int(day_str)
+                        python_weekday = (
+                            sqlite_day + 6
+                        ) % 7  # Convert Sunday=0 to Monday=0
+                        converted_results.append(
+                            (python_weekday, int(slot), float(total_seconds or 0))
+                        )
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.warning(
+                            "Invalid day/slot data: day=%s, slot=%s, error=%s",
+                            day_str,
+                            slot,
+                            e,
+                        )
+                        continue
+
+                _LOGGER.debug(
+                    "SQL aggregation returned %d time slots", len(converted_results)
+                )
+                return converted_results
+
+        except OperationalError as e:
+            _LOGGER.error(
+                "Database connection error during interval aggregation: %s", e
+            )
+            return []
+        except DataError as e:
+            _LOGGER.error("Database data error during interval aggregation: %s", e)
+            return []
+        except ProgrammingError as e:
+            _LOGGER.error("Database query error during interval aggregation: %s", e)
+            return []
+        except SQLAlchemyError as e:
+            _LOGGER.error("Database error during interval aggregation: %s", e)
+            return []
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error during interval aggregation: %s", e)
+            return []

@@ -143,6 +143,11 @@ WASP_DEFAULT_PRIOR: Final[float] = 0.60
 # Helper constants
 ROUNDING_PRECISION: Final = 2
 
+# Performance optimization constants
+DEFAULT_LOOKBACK_DAYS: Final = 90  # Days of interval data to load for analysis
+DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
+RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
+
 ########################################################
 # Virtual sensor constants
 ########################################################
