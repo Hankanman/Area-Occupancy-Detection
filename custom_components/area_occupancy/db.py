@@ -1045,9 +1045,36 @@ class AreaOccupancyDB:
                                 entity_obj.entity_id,
                             )
                         except ValueError:
-                            # Entity not found in coordinator, create new one from database
+                            # Entity not found in coordinator - check if it's in current config
+                            # Handle cases where entities might be a SimpleNamespace or mock object
+                            if hasattr(self.coordinator.entities, "entity_ids"):
+                                current_entity_ids = set(
+                                    self.coordinator.entities.entity_ids
+                                )
+                                if entity_obj.entity_id not in current_entity_ids:
+                                    # Entity is not in current config - skip loading it
+                                    _LOGGER.debug(
+                                        "Skipping entity %s from database (not in current config)",
+                                        entity_obj.entity_id,
+                                    )
+                                    continue
+                            elif hasattr(self.coordinator.entities, "entities"):
+                                # Fallback for mock objects that have entities dict
+                                current_entity_ids = set(
+                                    self.coordinator.entities.entities.keys()
+                                )
+                                if entity_obj.entity_id not in current_entity_ids:
+                                    # Entity is not in current config - skip loading it
+                                    _LOGGER.debug(
+                                        "Skipping entity %s from database (not in current config)",
+                                        entity_obj.entity_id,
+                                    )
+                                    continue
+
+                            # Entity should exist but doesn't - create it from database
+                            # (This handles cases where we can't determine current config, like in tests)
                             _LOGGER.warning(
-                                "Entity %s not found in coordinator, creating from database",
+                                "Entity %s not found in coordinator but is in config, creating from database",
                                 entity_obj.entity_id,
                             )
                             new_entity = self.coordinator.factory.create_from_db(
@@ -1224,6 +1251,14 @@ class AreaOccupancyDB:
 
                 session.commit()
             _LOGGER.debug("Saved entity data")
+
+            # Clean up any orphaned entities after saving current ones
+            cleaned_count = await self.cleanup_orphaned_entities()
+            if cleaned_count > 0:
+                _LOGGER.info(
+                    "Cleaned up %d orphaned entities after saving", cleaned_count
+                )
+
         except Exception as err:
             _LOGGER.error("Failed to save entity data: %s", err)
             raise
@@ -1232,6 +1267,105 @@ class AreaOccupancyDB:
         """Save both area and entity data to the database."""
         await self.save_area_data()
         await self.save_entity_data()
+
+    async def cleanup_orphaned_entities(self) -> int:
+        """Clean up entities from database that are no longer in the current configuration.
+
+        This method removes entities and their associated intervals that exist in the database
+        but are no longer present in the coordinator's current entity configuration.
+
+        Returns:
+            int: Number of entities that were cleaned up
+        """
+        try:
+
+            def _cleanup_operation() -> int:
+                with self.get_locked_session() as session:
+                    # Get all entity IDs currently configured in the coordinator
+                    # Handle cases where entities might be a SimpleNamespace or mock object
+                    if hasattr(self.coordinator.entities, "entity_ids"):
+                        current_entity_ids = set(self.coordinator.entities.entity_ids)
+                    elif hasattr(self.coordinator.entities, "entities"):
+                        # Fallback for mock objects that have entities dict
+                        current_entity_ids = set(
+                            self.coordinator.entities.entities.keys()
+                        )
+                    else:
+                        # If we can't determine current entities, skip cleanup
+                        _LOGGER.debug(
+                            "Cannot determine current entity IDs, skipping cleanup"
+                        )
+                        return 0
+
+                    # Query all entities for this entry_id from database
+                    db_entities = (
+                        session.query(self.Entities)
+                        .filter_by(entry_id=self.coordinator.entry_id)
+                        .all()
+                    )
+
+                    # Find entities that exist in database but not in current config
+                    orphaned_entities = [
+                        entity
+                        for entity in db_entities
+                        if entity.entity_id not in current_entity_ids
+                    ]
+
+                    if not orphaned_entities:
+                        _LOGGER.debug(
+                            "No orphaned entities found for entry %s",
+                            self.coordinator.entry_id,
+                        )
+                        return 0
+
+                    # Delete orphaned entities and their intervals
+                    orphaned_count = 0
+                    for entity in orphaned_entities:
+                        _LOGGER.info(
+                            "Removing orphaned entity %s from database (no longer in config)",
+                            entity.entity_id,
+                        )
+
+                        # First delete all intervals for this entity
+                        intervals_deleted = (
+                            session.query(self.Intervals)
+                            .filter_by(entity_id=entity.entity_id)
+                            .delete()
+                        )
+
+                        if intervals_deleted > 0:
+                            _LOGGER.debug(
+                                "Deleted %d intervals for orphaned entity %s",
+                                intervals_deleted,
+                                entity.entity_id,
+                            )
+
+                        # Then delete the entity
+                        session.delete(entity)
+                        orphaned_count += 1
+
+                    session.commit()
+                    _LOGGER.info(
+                        "Cleaned up %d orphaned entities for entry %s",
+                        orphaned_count,
+                        self.coordinator.entry_id,
+                    )
+                    return orphaned_count
+
+            result = self.safe_database_operation(
+                "cleanup orphaned entities", _cleanup_operation
+            )
+
+        except (
+            sa.exc.SQLAlchemyError,
+            HomeAssistantError,
+            OSError,
+            RuntimeError,
+        ) as err:
+            _LOGGER.error("Failed to cleanup orphaned entities: %s", err)
+            return 0
+        else:
+            return result if result is not None else 0
 
     # --- Sync Data from Recorder ---
 
