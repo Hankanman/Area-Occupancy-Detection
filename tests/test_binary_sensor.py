@@ -85,7 +85,7 @@ def wasp_coordinator(mock_coordinator: Mock) -> Mock:
     mock_coordinator.config.wasp_in_box.max_duration = 3600
     mock_coordinator.config.wasp_in_box.weight = 0.85
     mock_coordinator.config.sensors = Mock()
-    mock_coordinator.config.sensors.doors = ["binary_sensor.door1"]
+    mock_coordinator.config.sensors.door = ["binary_sensor.door1"]
     mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
 
     # Add missing entities attribute with AsyncMock
@@ -254,7 +254,7 @@ class TestWaspInBoxSensor:
         entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
 
         # Mock hass.states.get to return valid states for configured entities
-        def mock_get_state(entity_id):
+        def mock_get_state(entity_id: str) -> Mock | None:
             if entity_id in ["binary_sensor.door1", "binary_sensor.motion1"]:
                 return Mock(state=STATE_OFF)
             return None
@@ -530,14 +530,14 @@ class TestWaspInBoxIntegration:
             entity._process_motion_state("binary_sensor.motion1", STATE_ON)
 
             # Should update motion state
-            assert entity._motion_state == STATE_ON  # type: ignore[attr-defined]
+            assert entity._motion_state == STATE_ON
 
             # Step 2: Door closes with recent motion -> should trigger occupancy
             with patch.object(entity, "_start_max_duration_timer") as mock_start_timer:
                 entity._process_door_state("binary_sensor.door1", STATE_OFF)
 
             assert entity._attr_is_on is True
-            assert entity._last_occupied_time is not None  # type: ignore[attr-defined]
+            assert entity._last_occupied_time is not None
             mock_start_timer.assert_called_once()
 
             # Step 3: Door opens while occupied -> should end occupancy
@@ -556,7 +556,7 @@ class TestWaspInBoxIntegration:
         with patch.object(entity, "async_write_ha_state"):
             # Test motion timeout - old motion shouldn't trigger occupancy
             old_motion_time = dt_util.utcnow() - timedelta(seconds=120)  # 2 minutes ago
-            entity._last_motion_time = old_motion_time  # type: ignore[attr-defined]
+            entity._last_motion_time = old_motion_time
             entity._motion_state = STATE_OFF  # Motion is not active
 
             entity._process_door_state("binary_sensor.door1", STATE_OFF)
@@ -567,7 +567,7 @@ class TestWaspInBoxIntegration:
         # Test max duration timeout
         entity._attr_is_on = True
         entity._state = STATE_ON
-        entity._last_occupied_time = dt_util.utcnow()  # type: ignore[attr-defined]
+        entity._last_occupied_time = dt_util.utcnow()
 
         # Mock the _set_state method since the actual implementation calls it
         with patch.object(entity, "_set_state") as mock_set_state:
@@ -583,9 +583,9 @@ class TestWaspInBoxIntegration:
 
         # Set up occupied state
         entity._attr_is_on = True
-        entity._last_occupied_time = dt_util.utcnow()  # type: ignore[attr-defined]
-        entity._door_state = STATE_OFF  # type: ignore[attr-defined]
-        entity._motion_state = STATE_ON  # type: ignore[attr-defined]
+        entity._last_occupied_time = dt_util.utcnow()
+        entity._door_state = STATE_OFF
+        entity._motion_state = STATE_ON
 
         # Get state attributes for persistence
         attributes = entity.extra_state_attributes

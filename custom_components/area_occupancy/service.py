@@ -22,7 +22,7 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     """Get coordinator from entry_id with error handling."""
     for entry in hass.config_entries.async_entries(DOMAIN):
         if entry.entry_id == entry_id:
-            return entry.runtime_data
+            return entry.runtime_data  # type: ignore[no-any-return]
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
@@ -292,7 +292,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                 confidence_level = "low"
                 confidence_description = "Low confidence in occupancy status"
         else:
-            confidence_level = "unknown"
+            confidence_level = "unknown"  # type: ignore[unreachable]
             confidence_description = "Unable to determine confidence level"
 
         status = {

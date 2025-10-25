@@ -148,7 +148,7 @@ class AreaOccupancyDB:
         )
 
     @contextmanager
-    def get_session(self):
+    def get_session(self) -> Any:
         """Get a database session with automatic cleanup.
 
         Yields:
@@ -169,7 +169,7 @@ class AreaOccupancyDB:
             session.close()
 
     @contextmanager
-    def get_locked_session(self, timeout: int = 30):
+    def get_locked_session(self, timeout: int = 30) -> Any:
         """Get a database session with file locking to prevent concurrent access.
 
         Args:
@@ -203,27 +203,27 @@ class AreaOccupancyDB:
 
     # Table properties for cleaner access
     @property
-    def areas(self):
+    def areas(self) -> Any:
         """Get the areas table."""
         return self.Areas.__table__
 
     @property
-    def entities(self):
+    def entities(self) -> Any:
         """Get the entities table."""
         return self.Entities.__table__
 
     @property
-    def intervals(self):
+    def intervals(self) -> Any:
         """Get the intervals table."""
         return self.Intervals.__table__
 
     @property
-    def priors(self):
+    def priors(self) -> Any:
         """Get the priors table."""
         return self.Priors.__table__
 
     @property
-    def metadata(self):
+    def metadata(self) -> Any:
         """Get the metadata table."""
         return self.Metadata.__table__
 
@@ -452,7 +452,7 @@ class AreaOccupancyDB:
         key = Column(String, primary_key=True)
         value = Column(String, nullable=False)
 
-    def _ensure_db_exists(self):
+    def _ensure_db_exists(self) -> None:
         """Check if the database exists and initialize it if needed, with corruption handling."""
         try:
             # First check if the database file is accessible
@@ -721,8 +721,8 @@ class AreaOccupancyDB:
             return True
 
     def safe_database_operation(
-        self, operation_name: str, operation_func, *args, **kwargs
-    ):
+        self, operation_name: str, operation_func: Any, *args: Any, **kwargs: Any
+    ) -> Any:
         """Safely execute a database operation with automatic corruption handling.
 
         Args:
@@ -877,11 +877,11 @@ class AreaOccupancyDB:
 
         return status
 
-    def get_engine(self):
+    def get_engine(self) -> Any:
         """Get the engine for the database with optimized settings."""
         return self.engine
 
-    def set_db_version(self):
+    def set_db_version(self) -> None:
         """Set the database version in the metadata table."""
         # Use direct engine connection during initialization
         with self.engine.begin() as conn:
@@ -920,7 +920,7 @@ class AreaOccupancyDB:
                 _LOGGER.error("Failed to get db_version from metadata table: %s", e)
                 raise
 
-    def delete_db(self):
+    def delete_db(self) -> None:
         """Delete the database file."""
         if self.db_path and self.db_path.exists():
             try:
@@ -929,7 +929,7 @@ class AreaOccupancyDB:
             except (OSError, PermissionError) as e:
                 _LOGGER.error("Failed to delete database file: %s", e)
 
-    def force_reinitialize(self):
+    def force_reinitialize(self) -> None:
         """Force reinitialization of the database tables."""
         _LOGGER.debug("Forcing database reinitialization")
         self.init_db()
@@ -990,7 +990,7 @@ class AreaOccupancyDB:
     async def load_data(self) -> None:
         """Load the data from the database."""
 
-        def _load_data_operation():
+        def _load_data_operation() -> bool:
             with self.get_locked_session() as session:
                 area = (
                     session.query(self.Areas)
@@ -1235,15 +1235,16 @@ class AreaOccupancyDB:
     def is_intervals_empty(self) -> bool:
         """Check if the intervals table is empty using ORM."""
 
-        def _check_intervals_empty():
+        def _check_intervals_empty() -> bool:
             with self.get_locked_session() as session:
                 count = session.query(self.Intervals).count()
-                return count == 0
+                return bool(count == 0)
 
         try:
-            return self.safe_database_operation(
+            result = self.safe_database_operation(
                 "check intervals empty", _check_intervals_empty
             )
+            return bool(result) if result is not None else True
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist, it's considered empty
             if "no such table" in str(e).lower():
@@ -1287,7 +1288,7 @@ class AreaOccupancyDB:
             with self.get_locked_session() as session:
                 area = session.query(self.Areas).filter_by(entry_id=entry_id).first()
                 if area:
-                    return area.to_dict()
+                    return dict(area.to_dict())
                 return None
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to get area data: %s", e)
@@ -1326,19 +1327,20 @@ class AreaOccupancyDB:
     def get_latest_interval(self) -> datetime:
         """Return the latest interval end time minus 1 hour, or default window if none."""
 
-        def _get_latest_interval_operation():
+        def _get_latest_interval_operation() -> datetime:
             with self.get_locked_session() as session:
                 result = session.execute(
                     sa.select(sa.func.max(self.Intervals.end_time))
                 ).scalar()
                 if result:
-                    return result - timedelta(hours=1)
+                    return datetime.fromisoformat(str(result)) - timedelta(hours=1)
                 return dt_util.now() - timedelta(days=10)
 
         try:
-            return self.safe_database_operation(
+            result = self.safe_database_operation(
                 "get latest interval", _get_latest_interval_operation
             )
+            return result if result is not None else dt_util.now() - timedelta(days=10)
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist or any other error, return a default time
             if "no such table" in str(e).lower():

@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
@@ -401,7 +401,7 @@ class EntityManager:
         self._entities.clear()
         self._entities = self._factory.create_all_from_config()
 
-    async def update_likelihoods(self):
+    async def update_likelihoods(self) -> None:
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
         Use motion-based labels for 'occupied'.
@@ -426,9 +426,9 @@ class EntityManager:
             session.commit()
             _LOGGER.debug("Likelihoods updated")
 
-    def _get_sensors(self, session, entry_id: str) -> list["DB.Entities"]:
+    def _get_sensors(self, session: Any, entry_id: str) -> list["DB.Entities"]:
         """Get all sensor configs for this area."""
-        return (
+        return list(
             session.query(self.coordinator.db.Entities)
             .filter_by(entry_id=entry_id)
             .all()
@@ -436,7 +436,7 @@ class EntityManager:
 
     def _get_intervals_by_entity(
         self,
-        session,
+        session: Any,
         sensors: list["DB.Entities"],
     ) -> dict[str, list["DB.Intervals"]]:
         """Get all intervals grouped by entity_id."""
