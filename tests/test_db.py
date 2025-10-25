@@ -11,15 +11,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from custom_components.area_occupancy.db import (
-    DB_VERSION,
-    RETENTION_DAYS,
-    AreaOccupancyDB,
-    Base,
-)
+from custom_components.area_occupancy.const import RETENTION_DAYS
+from custom_components.area_occupancy.db import DB_VERSION, AreaOccupancyDB, Base
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -1675,3 +1671,237 @@ class TestAreaOccupancyDBUtilities:
             pytest.raises(RuntimeError),
         ):
             db.get_db_version()
+
+
+# New tests for performance optimization features
+
+
+class TestPruneOldIntervals:
+    """Test the prune_old_intervals method."""
+
+    def test_prune_old_intervals_success(self, configured_db):
+        """Test successful pruning of old intervals."""
+        db = configured_db
+
+        # Create test intervals - some old, some recent
+        old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
+        recent_time = dt_util.utcnow() - timedelta(days=30)
+
+        with db.get_locked_session() as session:
+            # Add old intervals
+            old_interval1 = db.Intervals(
+                entity_id="binary_sensor.motion1",
+                start_time=old_time,
+                end_time=old_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+            old_interval2 = db.Intervals(
+                entity_id="binary_sensor.motion2",
+                start_time=old_time + timedelta(hours=2),
+                end_time=old_time + timedelta(hours=3),
+                state="on",
+                duration_seconds=3600,
+            )
+            # Add recent interval
+            recent_interval = db.Intervals(
+                entity_id="binary_sensor.motion1",
+                start_time=recent_time,
+                end_time=recent_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+
+            session.add_all([old_interval1, old_interval2, recent_interval])
+            session.commit()
+
+        # Prune old intervals
+        pruned_count = db.prune_old_intervals()
+
+        # Should have pruned 2 old intervals
+        assert pruned_count == 2
+
+        # Verify old intervals are gone, recent interval remains
+        with db.get_session() as session:
+            remaining_intervals = session.query(db.Intervals).all()
+            assert len(remaining_intervals) == 1
+            # Compare without timezone info since database stores naive datetime
+            assert remaining_intervals[0].start_time.replace(
+                tzinfo=None
+            ) == recent_time.replace(tzinfo=None)
+
+    def test_prune_old_intervals_no_old_data(self, configured_db):
+        """Test pruning when no intervals are older than RETENTION_DAYS."""
+        db = configured_db
+
+        # Create only recent intervals
+        recent_time = dt_util.utcnow() - timedelta(days=30)
+
+        with db.get_locked_session() as session:
+            recent_interval = db.Intervals(
+                entity_id="binary_sensor.motion1",
+                start_time=recent_time,
+                end_time=recent_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+            session.add(recent_interval)
+            session.commit()
+
+        # Prune old intervals
+        pruned_count = db.prune_old_intervals()
+
+        # Should prune nothing
+        assert pruned_count == 0
+
+        # Verify interval still exists
+        with db.get_session() as session:
+            remaining_intervals = session.query(db.Intervals).all()
+            assert len(remaining_intervals) == 1
+
+    def test_prune_old_intervals_database_errors(self, configured_db):
+        """Test pruning with database errors."""
+        db = configured_db
+
+        # Mock database error
+        with patch.object(
+            db,
+            "get_locked_session",
+            side_effect=OperationalError("DB Error", None, None),
+        ):
+            pruned_count = db.prune_old_intervals()
+
+            # Should return 0 on error
+            assert pruned_count == 0
+
+
+class TestGetAggregatedIntervalsBySlot:
+    """Test the get_aggregated_intervals_by_slot method."""
+
+    def test_get_aggregated_intervals_by_slot_success(self, configured_db):
+        """Test successful SQL aggregation."""
+        db = configured_db
+
+        # Create test intervals across multiple days/times
+        base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
+
+        with db.get_locked_session() as session:
+            # Add entity first
+            entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id="test_entry_id",
+                entity_type="motion",
+            )
+            session.add(entity)
+
+            # Add intervals for different days and times
+            # Calculate Monday and Tuesday dates properly
+            monday = base_time - timedelta(
+                days=base_time.weekday()
+            )  # Get Monday of current week
+            tuesday = monday + timedelta(days=1)
+
+            intervals = [
+                # Monday, 10:00-11:00 (slot 10 with 60min slots)
+                db.Intervals(
+                    entity_id="binary_sensor.motion1",
+                    start_time=monday,
+                    end_time=monday + timedelta(hours=1),
+                    state="on",
+                    duration_seconds=3600,
+                ),
+                # Tuesday, 14:00-15:00 (slot 14 with 60min slots)
+                db.Intervals(
+                    entity_id="binary_sensor.motion1",
+                    start_time=tuesday + timedelta(hours=4),
+                    end_time=tuesday + timedelta(hours=5),
+                    state="on",
+                    duration_seconds=3600,
+                ),
+                # Same Tuesday slot, different interval (should aggregate)
+                db.Intervals(
+                    entity_id="binary_sensor.motion1",
+                    start_time=tuesday + timedelta(hours=4, minutes=30),
+                    end_time=tuesday + timedelta(hours=5, minutes=30),
+                    state="on",
+                    duration_seconds=3600,
+                ),
+            ]
+            session.add_all(intervals)
+            session.commit()
+
+        # Test aggregation with 60-minute slots
+        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+
+        # Should have aggregated data
+        assert len(result) >= 2
+
+        # Check format: (day_of_week, time_slot, total_seconds)
+        for day_of_week, time_slot, total_seconds in result:
+            assert isinstance(day_of_week, int)
+            assert isinstance(time_slot, int)
+            assert isinstance(total_seconds, float)
+            assert 0 <= day_of_week <= 6  # Monday=0 to Sunday=6
+            assert total_seconds > 0
+
+    def test_get_aggregated_intervals_by_slot_empty(self, configured_db):
+        """Test aggregation with no intervals."""
+        db = configured_db
+
+        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+
+        # Should return empty list
+        assert result == []
+
+    def test_get_aggregated_intervals_by_slot_edge_cases(self, configured_db):
+        """Test aggregation with edge case data."""
+        db = configured_db
+
+        # Create interval with potentially problematic data
+        base_time = dt_util.utcnow()
+
+        with db.get_locked_session() as session:
+            # Add entity
+            entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id="test_entry_id",
+                entity_type="motion",
+            )
+            session.add(entity)
+
+            # Add interval
+            interval = db.Intervals(
+                entity_id="binary_sensor.motion1",
+                start_time=base_time,
+                end_time=base_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+            session.add(interval)
+            session.commit()
+
+        # Should handle edge cases gracefully
+        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+
+        # Should return valid data or empty list
+        assert isinstance(result, list)
+
+    def test_get_aggregated_intervals_by_slot_database_errors(self, configured_db):
+        """Test aggregation with database errors."""
+        db = configured_db
+
+        # Mock database error
+        with patch.object(
+            db, "get_session", side_effect=OperationalError("DB Error", None, None)
+        ):
+            result = db.get_aggregated_intervals_by_slot(
+                "test_entry_id", slot_minutes=60
+            )
+
+            # Should return empty list on error
+            assert result == []
+
+    def test_retention_days_constant(self):
+        """Test that RETENTION_DAYS constant is properly defined."""
+
+        assert RETENTION_DAYS == 365
