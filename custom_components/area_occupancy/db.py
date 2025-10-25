@@ -1083,6 +1083,9 @@ class AreaOccupancyDB:
                                 entity_obj
                             )
                             self.coordinator.entities.add_entity(new_entity)
+
+                # Commit any deletions or other changes made during entity processing
+                session.commit()
                 _LOGGER.debug("Loaded area occupancy data")
                 return True  # Indicate successful completion
 
