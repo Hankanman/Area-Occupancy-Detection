@@ -1905,3 +1905,307 @@ class TestGetAggregatedIntervalsBySlot:
         """Test that RETENTION_DAYS constant is properly defined."""
 
         assert RETENTION_DAYS == 365
+
+    # --- Entity Cleanup Tests ---
+
+    async def test_cleanup_orphaned_entities_no_orphans(self, configured_db):
+        """Test cleanup when no orphaned entities exist."""
+        db = configured_db
+
+        # Mock coordinator with current entities
+        db.coordinator.entities.entity_ids = [
+            "binary_sensor.motion1",
+            "binary_sensor.motion2",
+        ]
+
+        # Add entities to database that match current config
+        with db.get_locked_session() as session:
+            entity1 = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            entity2 = db.Entities(
+                entity_id="binary_sensor.motion2",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            session.add_all([entity1, entity2])
+            session.commit()
+
+        # Run cleanup
+        cleaned_count = await db.cleanup_orphaned_entities()
+
+        # Should clean up 0 entities
+        assert cleaned_count == 0
+
+        # Verify entities still exist
+        with db.get_locked_session() as session:
+            count = (
+                session.query(db.Entities)
+                .filter_by(entry_id=db.coordinator.entry_id)
+                .count()
+            )
+            assert count == 2
+
+    async def test_cleanup_orphaned_entities_with_orphans(self, configured_db):
+        """Test cleanup when orphaned entities exist."""
+        db = configured_db
+
+        # Mock coordinator with only one entity in current config
+        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+
+        # Add entities to database - one current, one orphaned
+        with db.get_locked_session() as session:
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            orphaned_entity = db.Entities(
+                entity_id="binary_sensor.motion_orphaned",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            session.add_all([current_entity, orphaned_entity])
+            session.commit()
+
+        # Run cleanup
+        cleaned_count = await db.cleanup_orphaned_entities()
+
+        # Should clean up 1 entity
+        assert cleaned_count == 1
+
+        # Verify only current entity remains
+        with db.get_locked_session() as session:
+            entities = (
+                session.query(db.Entities)
+                .filter_by(entry_id=db.coordinator.entry_id)
+                .all()
+            )
+            assert len(entities) == 1
+            assert entities[0].entity_id == "binary_sensor.motion1"
+
+    async def test_cleanup_orphaned_entities_with_intervals(self, configured_db):
+        """Test cleanup removes orphaned entities and their intervals."""
+        db = configured_db
+
+        # Mock coordinator with only one entity in current config
+        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+
+        # Add entities and intervals to database
+        with db.get_locked_session() as session:
+            # Current entity
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            session.add(current_entity)
+
+            # Orphaned entity with intervals
+            orphaned_entity = db.Entities(
+                entity_id="binary_sensor.motion_orphaned",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            session.add(orphaned_entity)
+
+            # Add intervals for orphaned entity
+            interval1 = db.Intervals(
+                entity_id="binary_sensor.motion_orphaned",
+                start_time=dt_util.utcnow(),
+                end_time=dt_util.utcnow() + timedelta(minutes=30),
+                state="on",
+                duration_seconds=1800,
+            )
+            interval2 = db.Intervals(
+                entity_id="binary_sensor.motion_orphaned",
+                start_time=dt_util.utcnow() + timedelta(hours=1),
+                end_time=dt_util.utcnow() + timedelta(hours=1, minutes=30),
+                state="off",
+                duration_seconds=1800,
+            )
+            session.add_all([interval1, interval2])
+            session.commit()
+
+        # Run cleanup
+        cleaned_count = await db.cleanup_orphaned_entities()
+
+        # Should clean up 1 entity
+        assert cleaned_count == 1
+
+        # Verify orphaned entity and its intervals are removed
+        with db.get_locked_session() as session:
+            # Entity should be gone
+            orphaned_entities = (
+                session.query(db.Entities)
+                .filter_by(entity_id="binary_sensor.motion_orphaned")
+                .count()
+            )
+            assert orphaned_entities == 0
+
+            # Intervals should be gone (CASCADE delete)
+            orphaned_intervals = (
+                session.query(db.Intervals)
+                .filter_by(entity_id="binary_sensor.motion_orphaned")
+                .count()
+            )
+            assert orphaned_intervals == 0
+
+            # Current entity should remain
+            current_entities = (
+                session.query(db.Entities)
+                .filter_by(entity_id="binary_sensor.motion1")
+                .count()
+            )
+            assert current_entities == 1
+
+    async def test_cleanup_orphaned_entities_multiple_orphans(self, configured_db):
+        """Test cleanup with multiple orphaned entities."""
+        db = configured_db
+
+        # Mock coordinator with only one entity in current config
+        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+
+        # Add multiple orphaned entities
+        with db.get_locked_session() as session:
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            orphaned1 = db.Entities(
+                entity_id="binary_sensor.motion_orphaned1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+            )
+            orphaned2 = db.Entities(
+                entity_id="binary_sensor.motion_orphaned2",
+                entry_id=db.coordinator.entry_id,
+                entity_type="door",
+            )
+            orphaned3 = db.Entities(
+                entity_id="binary_sensor.motion_orphaned3",
+                entry_id=db.coordinator.entry_id,
+                entity_type="window",
+            )
+            session.add_all([current_entity, orphaned1, orphaned2, orphaned3])
+            session.commit()
+
+        # Run cleanup
+        cleaned_count = await db.cleanup_orphaned_entities()
+
+        # Should clean up 3 entities
+        assert cleaned_count == 3
+
+        # Verify only current entity remains
+        with db.get_locked_session() as session:
+            entities = (
+                session.query(db.Entities)
+                .filter_by(entry_id=db.coordinator.entry_id)
+                .all()
+            )
+            assert len(entities) == 1
+            assert entities[0].entity_id == "binary_sensor.motion1"
+
+    async def test_cleanup_orphaned_entities_database_error(self, configured_db):
+        """Test cleanup handles database errors gracefully."""
+        db = configured_db
+
+        # Mock coordinator
+        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+
+        # Mock database error
+        with patch.object(
+            db,
+            "safe_database_operation",
+            side_effect=OperationalError("DB Error", None, None),
+        ):
+            cleaned_count = await db.cleanup_orphaned_entities()
+
+            # Should return 0 on error
+            assert cleaned_count == 0
+
+    async def test_save_entity_data_calls_cleanup(self, configured_db):
+        """Test that save_entity_data calls cleanup after saving."""
+        db = configured_db
+
+        # Mock coordinator with entities
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        mock_entity.type.input_type = "motion"
+        mock_entity.type.weight = 0.85
+        mock_entity.prob_given_true = 0.8
+        mock_entity.prob_given_false = 0.05
+        mock_entity.last_updated = dt_util.utcnow()
+        mock_entity.decay.is_decaying = False
+        mock_entity.decay.decay_start = None
+        mock_entity.evidence = False
+
+        db.coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
+
+        # Mock cleanup method
+        with patch.object(
+            db, "cleanup_orphaned_entities", return_value=2
+        ) as mock_cleanup:
+            await db.save_entity_data()
+
+            # Verify cleanup was called
+            mock_cleanup.assert_called_once()
+
+    async def test_load_data_skips_orphaned_entities(self, configured_db):
+        """Test that load_data skips entities not in current config."""
+        db = configured_db
+
+        # Mock coordinator with limited entities (only one entity in current config)
+        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+
+        # Mock entity manager to track what gets added
+        original_add_entity = db.coordinator.entities.add_entity
+        added_entities = []
+
+        def track_add_entity(entity):
+            added_entities.append(entity.entity_id)
+            return original_add_entity(entity)
+
+        db.coordinator.entities.add_entity = track_add_entity
+
+        # Add entities to database - one current, one orphaned
+        with db.get_locked_session() as session:
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+                prob_given_true=0.8,
+                prob_given_false=0.05,
+                evidence=False,
+            )
+            orphaned_entity = db.Entities(
+                entity_id="binary_sensor.motion_orphaned",
+                entry_id=db.coordinator.entry_id,
+                entity_type="motion",
+                prob_given_true=0.7,
+                prob_given_false=0.03,
+                evidence=True,
+            )
+            session.add_all([current_entity, orphaned_entity])
+            session.commit()
+
+        # Mock the get_entity method to raise ValueError for orphaned entity
+        def mock_get_entity(entity_id):
+            if entity_id == "binary_sensor.motion_orphaned":
+                raise ValueError("Entity not found")
+            # Return a mock entity for the current one
+            mock_entity = Mock()
+            mock_entity.entity_id = entity_id
+            return mock_entity
+
+        with patch.object(
+            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
+        ):
+            await db.load_data()
+
+        # Verify only current entity was processed, orphaned was skipped
+        # The current entity should be updated (not added), so no entities should be added
+        assert len(added_entities) == 0
