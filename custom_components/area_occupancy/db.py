@@ -98,6 +98,8 @@ class AreaOccupancyDB:
 
         """
         self.coordinator = coordinator
+        # config_entry is always present in a properly initialized coordinator
+        assert coordinator.config_entry is not None
         self.conf_version = coordinator.config_entry.data.get("version", CONF_VERSION)
         self.hass = coordinator.hass
         self.storage_path = (
@@ -263,7 +265,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Areas:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Areas instance from a dictionary."""
             # Handle area_id fallback - use entry_id if area_id is None or empty
             area_id = data.get("area_id")
@@ -329,7 +331,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Entities:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Entities instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
@@ -381,7 +383,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Priors:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create a Priors instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
@@ -432,7 +434,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Intervals:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Intervals instance from a dictionary."""
             return cls(
                 entity_id=data["entity_id"],
@@ -800,7 +802,7 @@ class AreaOccupancyDB:
                 return False
 
             # Create periodic backup if enabled
-            if self.enable_periodic_backups:
+            if self.enable_periodic_backups and self.db_path:
                 backup_path = self.db_path.with_suffix(".db.backup")
                 backup_interval_seconds = self.backup_interval_hours * 3600
                 if (
@@ -871,7 +873,7 @@ class AreaOccupancyDB:
             status["backup_exists"] = backup_path.exists()
             if backup_path.exists():
                 backup_age_hours = (time.time() - backup_path.stat().st_mtime) / 3600
-                status["backup_age_hours"] = round(backup_age_hours, 2)
+                status["backup_age_hours"] = round(backup_age_hours, 2)  # type: ignore[assignment]
 
         return status
 
@@ -1321,7 +1323,7 @@ class AreaOccupancyDB:
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             _LOGGER.error("Error ensuring area exists: %s", e)
 
-    def get_latest_interval(self) -> datetime | None:
+    def get_latest_interval(self) -> datetime:
         """Return the latest interval end time minus 1 hour, or default window if none."""
 
         def _get_latest_interval_operation():
@@ -1442,7 +1444,7 @@ class AreaOccupancyDB:
 
             if states:
                 # Convert states to proper intervals with correct duration calculation
-                intervals = self._states_to_intervals(states, end_time)
+                intervals = self._states_to_intervals(states, end_time)  # type: ignore[arg-type]
                 _LOGGER.debug("Syncing %d intervals", len(intervals))
                 if intervals:
                     with self.get_locked_session() as session:
