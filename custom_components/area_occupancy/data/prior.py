@@ -471,7 +471,7 @@ class Prior:
             return []
 
         # Aggregate extended intervals by time slots
-        slot_seconds = defaultdict(float)
+        slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
         for start_time, end_time in extended_intervals:
             # Calculate which slots this interval covers
             current_time = start_time

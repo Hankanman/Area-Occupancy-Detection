@@ -6,9 +6,7 @@ Compatibility shim for Home Assistant frame helper in tests.
 from __future__ import annotations
 
 try:
-    from homeassistant.helpers import (
-        frame as ha_frame,  # type: ignore[import-not-found]
-    )
+    from homeassistant.helpers import frame as ha_frame
 
     # Some test fixtures patch an internal attribute that may not exist
     # in the currently installed Home Assistant version. Ensure it exists

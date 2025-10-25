@@ -103,7 +103,9 @@ class Sensors:
             and coordinator.config.wasp_in_box.enabled
             and getattr(coordinator, "wasp_entity_id", None)
         ):
-            motion_sensors.append(coordinator.wasp_entity_id)
+            wasp_id = coordinator.wasp_entity_id
+            if wasp_id is not None:
+                motion_sensors.append(wasp_id)
             _LOGGER.debug(
                 "Adding wasp sensor %s to motion sensors list",
                 coordinator.wasp_entity_id,
@@ -167,6 +169,8 @@ class Config:
         self.db = coordinator.db
 
         # Load configuration from the merged entry data
+        if coordinator.config_entry is None:
+            raise ValueError("Coordinator config_entry cannot be None")
         self._load_config(self._merge_entry(coordinator.config_entry))
 
     def _load_config(self, data: dict[str, Any]) -> None:
@@ -329,8 +333,15 @@ class Config:
             HomeAssistantError: If updating the config entry fails
 
         """
+
+        def _validate_config_entry() -> None:
+            if self.config_entry is None:
+                raise ValueError("Config entry is None")
+
         try:
+            _validate_config_entry()
             # Create new options dict by merging existing with new options
+            assert self.config_entry is not None  # Type narrowing after validation
             new_options = dict(self.config_entry.options)
             new_options.update(options)
 
