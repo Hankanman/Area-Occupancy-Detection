@@ -608,6 +608,10 @@ class TestAreaOccupancyDBUtilities:
         db.coordinator.entities = SimpleNamespace(
             get_entity=mock_get_entity,
             add_entity=lambda entity: created_entities.append(entity.entity_id),
+            entity_ids=[
+                "binary_sensor.motion",
+                "binary_sensor.good",
+            ],  # Entities in current config
         )
 
         # Mock the factory to create new entities
@@ -2262,30 +2266,15 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.type.weight = 0.85
             return mock_entity
 
-        # Track if deletion was attempted
-        deletion_logged = False
-        db_logger = logging.getLogger("custom_components.area_occupancy.db")
-        original_log_info = db_logger.info
-
-        def track_deletion_log(message, *args, **kwargs):
-            nonlocal deletion_logged
-            if (
-                "Deleting stale entity binary_sensor.bed_status from database"
-                in message
-            ):
-                deletion_logged = True
-            return original_log_info(message, *args, **kwargs)
-
-        with (
-            patch.object(
-                db.coordinator.entities, "get_entity", side_effect=mock_get_entity
-            ),
-            patch.object(db_logger, "info", side_effect=track_deletion_log),
+        with patch.object(
+            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
         ):
             await db.load_data()
 
-        # Verify that deletion was attempted (the main fix)
-        assert deletion_logged, "Stale entity deletion should have been logged"
-
-        # Note: Due to session rollback behavior in tests, we can't verify the actual
-        # database state, but the important thing is that the deletion logic is triggered
+        # Verify stale entity was actually deleted from database
+        with db.get_locked_session() as session:
+            entities_after = session.query(db.Entities).all()
+            assert len(entities_after) == 1
+            entity_ids_after = {e.entity_id for e in entities_after}
+            assert "binary_sensor.motion1" in entity_ids_after
+            assert "binary_sensor.bed_status" not in entity_ids_after
