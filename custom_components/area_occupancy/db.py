@@ -1610,7 +1610,7 @@ class AreaOccupancyDB:
                                 # Only create if it doesn't exist
                                 interval_obj = self.Intervals.from_dict(interval_data)
                                 session.add(interval_obj)
-                    session.commit()
+                        session.commit()
                 _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")

@@ -106,10 +106,10 @@ class Sensors:
             wasp_id = coordinator.wasp_entity_id
             if wasp_id is not None:
                 motion_sensors.append(wasp_id)
-            _LOGGER.debug(
-                "Adding wasp sensor %s to motion sensors list",
-                coordinator.wasp_entity_id,
-            )
+                _LOGGER.debug(
+                    "Adding wasp sensor %s to motion sensors list",
+                    wasp_id,
+                )
 
         return motion_sensors
 
