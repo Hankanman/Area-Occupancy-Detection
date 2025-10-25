@@ -1,10 +1,12 @@
 """Tests for AreaOccupancy database models and utilities."""
 # ruff: noqa: SLF001
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import sqlalchemy as sa
@@ -212,7 +214,7 @@ class TestDatabaseModels:
     def test_relationships(self, db_session: Session):
         """Test ORM relationships between models."""
         # Create area, entity, and prior
-        area, entity = setup_test_area_and_entity(db_session)
+        _area, _entity = setup_test_area_and_entity(db_session)
 
         prior = AreaOccupancyDB.Priors.from_dict(create_test_prior_data())
         db_session.add(prior)
@@ -802,13 +804,12 @@ class TestAreaOccupancyDBUtilities:
 
             yield S()
 
-        monkeypatch.setattr(db, "get_session", error_session)
+        monkeypatch.setattr(db, "get_locked_session", error_session)
 
-        if expected_result == "raise":
-            with pytest.raises(sa.exc.SQLAlchemyError):
-                db.is_intervals_empty()
-        else:
-            assert db.is_intervals_empty() is expected_result
+        # is_intervals_empty should catch exceptions and return True as fallback
+        # This allows the integration to continue even if database operations fail
+        result = db.is_intervals_empty()
+        assert result is True  # Should always return True on error
 
     @pytest.mark.parametrize(
         ("error_type", "should_raise"),
@@ -834,13 +835,13 @@ class TestAreaOccupancyDBUtilities:
 
             yield S()
 
-        monkeypatch.setattr(db, "get_session", bad_session)
+        monkeypatch.setattr(db, "get_locked_session", bad_session)
 
-        if should_raise:
-            with pytest.raises(sa.exc.SQLAlchemyError):
-                db.get_latest_interval()
-        else:
-            db.get_latest_interval()
+        # get_latest_interval should catch exceptions and return a default time
+        # This allows the integration to continue even if database operations fail
+        result = db.get_latest_interval()
+        # Should return a datetime object (default time when error occurs)
+        assert isinstance(result, datetime)
 
     @pytest.mark.asyncio
     async def test_load_data_error(self, configured_db, monkeypatch):
@@ -852,9 +853,14 @@ class TestAreaOccupancyDBUtilities:
             raise RuntimeError("fail")
             yield
 
-        monkeypatch.setattr(db, "get_session", bad_session)
-        with pytest.raises(RuntimeError):
-            await db.load_data()
+        monkeypatch.setattr(db, "get_locked_session", bad_session)
+
+        # load_data should not raise exceptions, it should log them and continue
+        # This allows the integration to start even if data loading fails
+        await db.load_data()
+
+        # The method should complete without raising an exception
+        # The error should be logged but not propagated
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -901,3 +907,771 @@ class TestAreaOccupancyDBUtilities:
 
         data = db.get_area_data(db.coordinator.entry_id)
         assert data is not None and data["area_id"] == db.coordinator.entry_id
+
+    def test_get_area_data_with_error(self, configured_db):
+        """Test get_area_data with database error."""
+        db = configured_db
+
+        with patch.object(
+            db, "get_locked_session", side_effect=sa.exc.SQLAlchemyError("DB Error")
+        ):
+            result = db.get_area_data("test_entry_id")
+            assert result is None
+
+    def test_ensure_area_exists_area_already_exists(self, configured_db):
+        """Test ensure_area_exists when area already exists."""
+        db = configured_db
+
+        # Mock get_area_data to return existing area
+        with (
+            patch.object(db, "get_area_data", return_value={"entry_id": "test"}),
+            patch.object(db, "save_data", new=AsyncMock()) as mock_save,
+        ):
+            # This should not raise an exception and should not call save_data
+            asyncio.run(db.ensure_area_exists())
+            mock_save.assert_not_called()
+
+    def test_ensure_area_exists_creates_area(self, configured_db):
+        """Test ensure_area_exists when area doesn't exist."""
+        db = configured_db
+
+        # Mock get_area_data to return None (area doesn't exist)
+        with (
+            patch.object(db, "get_area_data", return_value=None),
+            patch.object(db, "save_data", new=AsyncMock()) as mock_save,
+        ):
+            asyncio.run(db.ensure_area_exists())
+            mock_save.assert_called_once()
+
+    def test_ensure_area_exists_with_error(self, configured_db):
+        """Test ensure_area_exists with error handling."""
+        db = configured_db
+
+        with patch.object(db, "get_area_data", side_effect=HomeAssistantError("Error")):
+            # Should not raise exception, just log error
+            asyncio.run(db.ensure_area_exists())
+
+    def test_safe_is_intervals_empty_with_integrity_check_failure(self, configured_db):
+        """Test safe_is_intervals_empty when integrity check fails."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=False),
+            patch.object(db, "handle_database_corruption", return_value=False),
+        ):
+            result = db.safe_is_intervals_empty()
+            assert result is True
+
+    def test_safe_is_intervals_empty_with_integrity_check_success(self, configured_db):
+        """Test safe_is_intervals_empty when integrity check passes."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            patch.object(db, "is_intervals_empty", return_value=False),
+        ):
+            result = db.safe_is_intervals_empty()
+            assert result is False
+
+    def test_safe_is_intervals_empty_with_error(self, configured_db):
+        """Test safe_is_intervals_empty with unexpected error."""
+        db = configured_db
+
+        with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
+            result = db.safe_is_intervals_empty()
+            assert result is True
+
+    def test_check_database_accessibility_file_not_exists(self, configured_db):
+        """Test check_database_accessibility when file doesn't exist."""
+        db = configured_db
+        db.db_path = Path("/nonexistent/path/db.db")
+
+        result = db.check_database_accessibility()
+        assert result is False
+
+    def test_check_database_accessibility_invalid_sqlite_header(
+        self, configured_db, tmp_path
+    ):
+        """Test check_database_accessibility with invalid SQLite header."""
+        db = configured_db
+        db.db_path = tmp_path / "invalid.db"
+
+        # Create file with invalid header
+        with open(db.db_path, "wb") as f:
+            f.write(b"invalid header")
+
+        result = db.check_database_accessibility()
+        assert result is False
+
+    def test_check_database_accessibility_permission_error(
+        self, configured_db, tmp_path
+    ):
+        """Test check_database_accessibility with permission error."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create file
+        db.db_path.touch()
+
+        # Mock open to raise PermissionError
+        with patch("builtins.open", side_effect=PermissionError("Permission denied")):
+            result = db.check_database_accessibility()
+            assert result is False
+
+    def test_is_database_corrupted_various_indicators(self, configured_db):
+        """Test is_database_corrupted with various corruption indicators."""
+        db = configured_db
+
+        corruption_messages = [
+            "database disk image is malformed",
+            "corrupted database",
+            "file is not a database",
+            "database or disk is full",
+            "database is locked",
+            "unable to open database file",
+        ]
+
+        for message in corruption_messages:
+            error = sa.exc.SQLAlchemyError(message)
+            assert db.is_database_corrupted(error) is True
+
+    def test_is_database_corrupted_non_corruption_error(self, configured_db):
+        """Test is_database_corrupted with non-corruption error."""
+        db = configured_db
+
+        error = sa.exc.SQLAlchemyError("table already exists")
+        assert db.is_database_corrupted(error) is False
+
+    def test_attempt_database_recovery_success(self, configured_db, tmp_path):
+        """Test attempt_database_recovery with successful recovery."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create a valid database file
+        db.db_path.touch()
+
+        with (
+            patch.object(db.engine, "dispose"),
+            patch(
+                "custom_components.area_occupancy.db.create_engine"
+            ) as mock_create_engine,
+        ):
+            mock_engine = Mock()
+            mock_conn = Mock()
+            mock_conn.execute.return_value.fetchone.return_value = ("test_table",)
+            # Make connect() usable as context manager
+            mock_connect_cm = Mock()
+            mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
+            mock_connect_cm.__exit__ = Mock(return_value=None)
+            mock_engine.connect.return_value = mock_connect_cm
+            mock_create_engine.return_value = mock_engine
+
+            result = db.attempt_database_recovery()
+            assert result is True
+
+    def test_attempt_database_recovery_failure(self, configured_db):
+        """Test attempt_database_recovery with failure."""
+        db = configured_db
+
+        with (
+            patch.object(db.engine, "dispose"),
+            patch(
+                "custom_components.area_occupancy.db.create_engine",
+                side_effect=sa.exc.SQLAlchemyError("Recovery failed"),
+            ),
+        ):
+            result = db.attempt_database_recovery()
+            assert result is False
+
+    def test_backup_database_success(self, configured_db, tmp_path):
+        """Test backup_database with successful backup."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create source file
+        with open(db.db_path, "w") as f:
+            f.write("test data")
+
+        result = db.backup_database()
+        assert result is True
+
+        # Check backup file exists
+        backup_path = db.db_path.with_suffix(".db.backup")
+        assert backup_path.exists()
+
+    def test_backup_database_file_not_exists(self, configured_db):
+        """Test backup_database when source file doesn't exist."""
+        db = configured_db
+        db.db_path = Path("/nonexistent/path/db.db")
+
+        result = db.backup_database()
+        assert result is False
+
+    def test_backup_database_error(self, configured_db, tmp_path):
+        """Test backup_database with error."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create source file
+        db.db_path.touch()
+
+        with patch("shutil.copy2", side_effect=OSError("Copy failed")):
+            result = db.backup_database()
+            assert result is False
+
+    def test_restore_database_from_backup_success(self, configured_db, tmp_path):
+        """Test restore_database_from_backup with successful restore."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+        backup_path = tmp_path / "test.db.backup"
+
+        # Create backup file
+        with open(backup_path, "w") as f:
+            f.write("backup data")
+
+        with patch("shutil.copy2"), patch("sqlalchemy.create_engine"):
+            result = db.restore_database_from_backup()
+            assert result is True
+
+    def test_restore_database_from_backup_no_backup(self, configured_db):
+        """Test restore_database_from_backup when no backup exists."""
+        db = configured_db
+        db.db_path = Path("/nonexistent/path/db.db")
+
+        result = db.restore_database_from_backup()
+        assert result is False
+
+    def test_restore_database_from_backup_error(self, configured_db, tmp_path):
+        """Test restore_database_from_backup with error."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+        backup_path = tmp_path / "test.db.backup"
+
+        # Create backup file
+        backup_path.touch()
+
+        with patch("shutil.copy2", side_effect=OSError("Restore failed")):
+            result = db.restore_database_from_backup()
+            assert result is False
+
+    def test_handle_database_corruption_auto_recovery_disabled(self, configured_db):
+        """Test handle_database_corruption with auto recovery disabled."""
+        db = configured_db
+        db.enable_auto_recovery = False
+
+        result = db.handle_database_corruption()
+        assert result is False
+
+    def test_handle_database_corruption_recovery_success(self, configured_db):
+        """Test handle_database_corruption with successful recovery."""
+        db = configured_db
+
+        with (
+            patch.object(db, "backup_database", return_value=True),
+            patch.object(db, "attempt_database_recovery", return_value=True),
+            patch.object(db, "check_database_integrity", return_value=True),
+        ):
+            result = db.handle_database_corruption()
+            assert result is True
+
+    def test_handle_database_corruption_restore_from_backup_success(
+        self, configured_db
+    ):
+        """Test handle_database_corruption with successful restore from backup."""
+        db = configured_db
+        db.enable_periodic_backups = True
+
+        with (
+            patch.object(db, "backup_database", return_value=True),
+            patch.object(db, "attempt_database_recovery", return_value=False),
+            patch.object(db, "restore_database_from_backup", return_value=True),
+            patch.object(db, "check_database_integrity", return_value=True),
+        ):
+            result = db.handle_database_corruption()
+            assert result is True
+
+    def test_handle_database_corruption_recreate_database(self, configured_db):
+        """Test handle_database_corruption with database recreation."""
+        db = configured_db
+
+        with (
+            patch.object(db, "backup_database", return_value=True),
+            patch.object(db, "attempt_database_recovery", return_value=False),
+            patch.object(db, "restore_database_from_backup", return_value=False),
+            patch.object(db, "delete_db"),
+            patch.object(db, "init_db"),
+            patch.object(db, "set_db_version"),
+        ):
+            result = db.handle_database_corruption()
+            assert result is True
+
+    def test_handle_database_corruption_recreation_failure(self, configured_db):
+        """Test handle_database_corruption with recreation failure."""
+        db = configured_db
+
+        with (
+            patch.object(db, "backup_database", return_value=True),
+            patch.object(db, "attempt_database_recovery", return_value=False),
+            patch.object(db, "restore_database_from_backup", return_value=False),
+            patch.object(db, "delete_db", side_effect=OSError("Delete failed")),
+        ):
+            result = db.handle_database_corruption()
+            assert result is False
+
+    def test_safe_database_operation_success(self, configured_db):
+        """Test safe_database_operation with successful operation."""
+        db = configured_db
+
+        def test_operation():
+            return "success"
+
+        with patch.object(db, "check_database_integrity", return_value=True):
+            result = db.safe_database_operation("test", test_operation)
+            assert result == "success"
+
+    def test_safe_database_operation_integrity_failure(self, configured_db):
+        """Test safe_database_operation with integrity failure."""
+        db = configured_db
+
+        def test_operation():
+            return "success"
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=False),
+            patch.object(db, "handle_database_corruption", return_value=False),
+        ):
+            result = db.safe_database_operation("test", test_operation)
+            assert result is None
+
+    def test_safe_database_operation_corruption_detected(self, configured_db):
+        """Test safe_database_operation with corruption detected."""
+        db = configured_db
+
+        def test_operation():
+            raise sa.exc.DatabaseError(
+                "stmt", {}, Exception("database disk image is malformed")
+            )
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            patch.object(db, "is_database_corrupted", return_value=True),
+            patch.object(db, "handle_database_corruption", return_value=True),
+        ):
+            result = db.safe_database_operation("test", test_operation)
+            assert result is None
+
+    def test_safe_database_operation_non_corruption_error(self, configured_db):
+        """Test safe_database_operation with non-corruption error."""
+        db = configured_db
+
+        def test_operation():
+            raise sa.exc.DatabaseError("stmt", {}, Exception("table already exists"))
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            patch.object(db, "is_database_corrupted", return_value=False),
+            pytest.raises(sa.exc.DatabaseError),
+        ):
+            db.safe_database_operation("test", test_operation)
+
+    def test_safe_database_operation_unexpected_error(self, configured_db):
+        """Test safe_database_operation with unexpected error."""
+        db = configured_db
+
+        def test_operation():
+            raise RuntimeError("Unexpected error")
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            pytest.raises(RuntimeError),
+        ):
+            db.safe_database_operation("test", test_operation)
+
+    def test_periodic_health_check_success(self, configured_db):
+        """Test periodic_health_check with successful check."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            patch.object(db, "backup_database", return_value=True),
+        ):
+            result = db.periodic_health_check()
+            assert result is True
+
+    def test_periodic_health_check_integrity_failure(self, configured_db):
+        """Test periodic_health_check with integrity failure."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=False),
+            patch.object(db, "handle_database_corruption", return_value=True),
+        ):
+            result = db.periodic_health_check()
+            assert result is True
+
+    def test_periodic_health_check_integrity_failure_recovery_failed(
+        self, configured_db
+    ):
+        """Test periodic_health_check with integrity failure and recovery failed."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=False),
+            patch.object(db, "handle_database_corruption", return_value=False),
+        ):
+            result = db.periodic_health_check()
+            assert result is False
+
+    def test_periodic_health_check_backup_creation(self, configured_db, tmp_path):
+        """Test periodic_health_check with backup creation."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+        db.enable_periodic_backups = True
+        db.backup_interval_hours = 1
+
+        # Create database file
+        db.db_path.touch()
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=True),
+            patch.object(db, "backup_database", return_value=True) as mock_backup,
+        ):
+            result = db.periodic_health_check()
+            assert result is True
+            mock_backup.assert_called_once()
+
+    def test_periodic_health_check_error(self, configured_db):
+        """Test periodic_health_check with error."""
+        db = configured_db
+
+        with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
+            result = db.periodic_health_check()
+            assert result is False
+
+    def test_manual_recovery_trigger_healthy_database(self, configured_db):
+        """Test manual_recovery_trigger with healthy database."""
+        db = configured_db
+
+        with patch.object(db, "check_database_integrity", return_value=True):
+            result = db.manual_recovery_trigger()
+            assert result is True
+
+    def test_manual_recovery_trigger_corrupted_database(self, configured_db):
+        """Test manual_recovery_trigger with corrupted database."""
+        db = configured_db
+
+        with (
+            patch.object(db, "check_database_integrity", return_value=False),
+            patch.object(db, "handle_database_corruption", return_value=True),
+        ):
+            result = db.manual_recovery_trigger()
+            assert result is True
+
+    def test_get_database_status(self, configured_db, tmp_path):
+        """Test get_database_status method."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create database file
+        db.db_path.touch()
+
+        with (
+            patch.object(db, "check_database_accessibility", return_value=True),
+            patch.object(db, "check_database_integrity", return_value=True),
+        ):
+            status = db.get_database_status()
+
+            assert "database_path" in status
+            assert "database_exists" in status
+            assert "database_accessible" in status
+            assert "database_integrity" in status
+            assert "auto_recovery_enabled" in status
+            assert "max_recovery_attempts" in status
+            assert "periodic_backups_enabled" in status
+            assert "backup_interval_hours" in status
+
+    def test_get_database_status_with_backup(self, configured_db, tmp_path):
+        """Test get_database_status with backup file."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create database file and backup
+        db.db_path.touch()
+        backup_path = tmp_path / "test.db.backup"
+        backup_path.touch()
+
+        with (
+            patch.object(db, "check_database_accessibility", return_value=True),
+            patch.object(db, "check_database_integrity", return_value=True),
+        ):
+            status = db.get_database_status()
+
+            assert status["backup_exists"] is True
+            assert "backup_age_hours" in status
+
+    def test_get_database_status_no_backup(self, configured_db, tmp_path):
+        """Test get_database_status without backup file."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create database file but no backup
+        db.db_path.touch()
+
+        with (
+            patch.object(db, "check_database_accessibility", return_value=True),
+            patch.object(db, "check_database_integrity", return_value=True),
+        ):
+            status = db.get_database_status()
+
+            assert status["backup_exists"] is False
+
+    def test_get_database_status_no_db_path(self, configured_db):
+        """Test get_database_status when db_path is None."""
+        db = configured_db
+        db.db_path = None
+
+        status = db.get_database_status()
+
+        assert status["database_path"] is None
+        assert status["database_exists"] is False
+        assert status["database_accessible"] is False
+        assert status["database_integrity"] is False
+
+    def test_get_engine(self, configured_db):
+        """Test get_engine method."""
+        db = configured_db
+
+        engine = db.get_engine()
+        assert engine is not None
+        assert engine == db.engine
+
+    def test_delete_db_success(self, configured_db, tmp_path):
+        """Test delete_db with successful deletion."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create file to delete
+        db.db_path.touch()
+
+        db.delete_db()
+
+        assert not db.db_path.exists()
+
+    def test_delete_db_file_not_exists(self, configured_db):
+        """Test delete_db when file doesn't exist."""
+        db = configured_db
+        db.db_path = Path("/nonexistent/path/db.db")
+
+        # Should not raise exception
+        db.delete_db()
+
+    def test_delete_db_error(self, configured_db, tmp_path):
+        """Test delete_db with error."""
+        db = configured_db
+        db.db_path = tmp_path / "test.db"
+
+        # Create file
+        db.db_path.touch()
+
+        with patch(
+            "pathlib.Path.unlink", side_effect=PermissionError("Permission denied")
+        ):
+            # Should not raise exception, just log error
+            db.delete_db()
+
+    def test_force_reinitialize(self, configured_db):
+        """Test force_reinitialize method."""
+        db = configured_db
+
+        with (
+            patch.object(db, "init_db") as mock_init,
+            patch.object(db, "set_db_version") as mock_set_version,
+        ):
+            db.force_reinitialize()
+
+            mock_init.assert_called_once()
+            mock_set_version.assert_called_once()
+
+    def test_init_db_success(self, configured_db):
+        """Test init_db with successful initialization."""
+        db = configured_db
+
+        with (
+            patch.object(db, "_enable_wal_mode"),
+            patch.object(db.engine, "connect"),
+        ):
+            db.init_db()
+
+    def test_init_db_operational_error_race_condition(self, configured_db):
+        """Test init_db with operational error (race condition)."""
+        db = configured_db
+
+        # Mock error with sqlite_errno = 1 (table already exists)
+        mock_error = sa.exc.OperationalError("table already exists", None, None)
+        mock_error.orig = Mock()
+        mock_error.orig.sqlite_errno = 1
+
+        with (
+            patch.object(db, "_enable_wal_mode"),
+            patch.object(db.engine, "connect", side_effect=mock_error),
+            patch.object(db, "_create_tables_individually"),
+        ):
+            db.init_db()
+
+    def test_init_db_operational_error_other(self, configured_db):
+        """Test init_db with other operational error."""
+        db = configured_db
+
+        # Mock error with different sqlite_errno
+        mock_error = sa.exc.OperationalError("other error", None, None)
+        mock_error.orig = Mock()
+        mock_error.orig.sqlite_errno = 2
+
+        with (
+            patch.object(db, "_enable_wal_mode"),
+            patch.object(db.engine, "connect", side_effect=mock_error),
+            pytest.raises(sa.exc.OperationalError),
+        ):
+            db.init_db()
+
+    def test_init_db_general_error(self, configured_db):
+        """Test init_db with general error."""
+        db = configured_db
+
+        with (
+            patch.object(db, "_enable_wal_mode"),
+            patch.object(
+                db.engine, "connect", side_effect=RuntimeError("General error")
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            db.init_db()
+
+    def test_enable_wal_mode_success(self, configured_db):
+        """Test _enable_wal_mode with success."""
+        db = configured_db
+
+        with patch.object(db.engine, "connect") as mock_connect:
+            mock_conn = Mock()
+            mock_connect.return_value.__enter__.return_value = mock_conn
+
+            db._enable_wal_mode()
+
+            mock_conn.execute.assert_called_once()
+
+    def test_enable_wal_mode_error(self, configured_db):
+        """Test _enable_wal_mode with error."""
+        db = configured_db
+
+        with patch.object(
+            db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("WAL error")
+        ):
+            # Should not raise exception, just log error
+            db._enable_wal_mode()
+
+    def test_create_tables_individually_success(self, configured_db):
+        """Test _create_tables_individually with success."""
+        db = configured_db
+
+        with patch.object(db.engine, "connect"):
+            db._create_tables_individually()
+
+    def test_create_tables_individually_race_condition(self, configured_db):
+        """Test _create_tables_individually with race condition."""
+        db = configured_db
+
+        # Mock error with sqlite_errno = 1 (table already exists)
+        mock_error = sa.exc.OperationalError("table already exists", None, None)
+        mock_error.orig = Mock()
+        mock_error.orig.sqlite_errno = 1
+
+        with patch.object(db.engine, "connect", side_effect=mock_error):
+            # Should not raise exception
+            db._create_tables_individually()
+
+    def test_create_tables_individually_other_error(self, configured_db):
+        """Test _create_tables_individually with other error."""
+        db = configured_db
+
+        # Mock error with different sqlite_errno
+        mock_error = sa.exc.OperationalError("other error", None, None)
+        mock_error.orig = Mock()
+        mock_error.orig.sqlite_errno = 2
+
+        with (
+            patch.object(db.engine, "connect", side_effect=mock_error),
+            pytest.raises(sa.exc.OperationalError),
+        ):
+            db._create_tables_individually()
+
+    def test_set_db_version_update_existing(self, configured_db):
+        """Test set_db_version when version already exists."""
+        db = configured_db
+
+        with patch.object(db.engine, "begin") as mock_begin:
+            mock_conn = Mock()
+            mock_result = Mock()
+            mock_result.fetchone.return_value = ("3",)
+            mock_conn.execute.return_value = mock_result
+            mock_begin.return_value.__enter__.return_value = mock_conn
+
+            db.set_db_version()
+
+    def test_set_db_version_insert_new(self, configured_db):
+        """Test set_db_version when version doesn't exist."""
+        db = configured_db
+
+        with patch.object(db.engine, "begin") as mock_begin:
+            mock_conn = Mock()
+            mock_result = Mock()
+            mock_result.fetchone.return_value = None
+            mock_conn.execute.return_value = mock_result
+            mock_begin.return_value.__enter__.return_value = mock_conn
+
+            db.set_db_version()
+
+    def test_set_db_version_error(self, configured_db):
+        """Test set_db_version with error."""
+        db = configured_db
+
+        with (
+            patch.object(db.engine, "begin", side_effect=RuntimeError("DB Error")),
+            pytest.raises(RuntimeError),
+        ):
+            db.set_db_version()
+
+    def test_get_db_version_success(self, configured_db):
+        """Test get_db_version with success."""
+        db = configured_db
+
+        with patch.object(db, "get_session") as mock_session:
+            mock_session_obj = Mock()
+            mock_metadata = Mock()
+            mock_metadata.value = "3"
+            mock_session_obj.query.return_value.filter_by.return_value.first.return_value = mock_metadata
+            mock_session.return_value.__enter__.return_value = mock_session_obj
+
+            version = db.get_db_version()
+            assert version == 3
+
+    def test_get_db_version_no_metadata(self, configured_db):
+        """Test get_db_version when no metadata exists."""
+        db = configured_db
+
+        with patch.object(db, "get_session") as mock_session:
+            mock_session_obj = Mock()
+            mock_session_obj.query.return_value.filter_by.return_value.first.return_value = None
+            mock_session.return_value.__enter__.return_value = mock_session_obj
+
+            version = db.get_db_version()
+            assert version == 0
+
+    def test_get_db_version_error(self, configured_db):
+        """Test get_db_version with error."""
+        db = configured_db
+
+        with (
+            patch.object(db, "get_session", side_effect=RuntimeError("DB Error")),
+            pytest.raises(RuntimeError),
+        ):
+            db.get_db_version()

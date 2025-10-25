@@ -75,15 +75,16 @@ class Prior:
         if self.global_prior is None:
             return MIN_PRIOR
 
+        # Use global_prior directly if time_prior is None, otherwise combine them
         if self.time_prior is None:
-            prior = self.global_prior
+            prior = self.global_prior  # type: ignore[unreachable]
         else:
             prior = combine_priors(self.global_prior, self.time_prior)
 
-        # Validate that global_prior is within reasonable bounds before applying factor
+        # Validate that prior is within reasonable bounds before applying factor
         if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
             _LOGGER.warning(
-                "Global prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
+                "Prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
                 prior,
                 MIN_PROBABILITY,
                 MAX_PROBABILITY,
@@ -268,7 +269,7 @@ class Prior:
                     )
                     .first()
                 )
-                return prior.prior_value if prior else DEFAULT_PRIOR
+                return float(prior.prior_value) if prior else DEFAULT_PRIOR
         except OperationalError as e:
             _LOGGER.error("Database connection error getting time prior: %s", e)
             return DEFAULT_PRIOR
@@ -285,7 +286,7 @@ class Prior:
             _LOGGER.error("Unexpected error getting time prior: %s", e)
             return DEFAULT_PRIOR
 
-    def compute_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES):
+    def compute_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES) -> None:
         """Estimate P(occupied) per day_of_week and time_slot from motion sensor intervals."""
         _LOGGER.debug("Computing time priors")
 
@@ -471,7 +472,7 @@ class Prior:
             return []
 
         # Aggregate extended intervals by time slots
-        slot_seconds = defaultdict(float)
+        slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
         for start_time, end_time in extended_intervals:
             # Calculate which slots this interval covers
             current_time = start_time

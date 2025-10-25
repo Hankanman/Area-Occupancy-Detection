@@ -22,7 +22,7 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordi
     """Get coordinator from entry_id with error handling."""
     for entry in hass.config_entries.async_entries(DOMAIN):
         if entry.entry_id == entry_id:
-            return entry.runtime_data
+            return entry.runtime_data  # type: ignore[no-any-return]
     raise HomeAssistantError(f"Config entry {entry_id} not found")
 
 
@@ -101,6 +101,74 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
 
     except Exception as err:
         error_msg = f"Failed to reset entities for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
+async def _recover_database(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Manually trigger database recovery for a specific entry."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        _LOGGER.info("Triggering database recovery for entry %s", entry_id)
+
+        # Get database status before recovery
+        status_before = coordinator.db.get_database_status()
+
+        # Trigger manual recovery
+        recovery_success = coordinator.db.manual_recovery_trigger()
+
+        # Get database status after recovery
+        status_after = coordinator.db.get_database_status()
+
+        response_data = {
+            "entry_id": entry_id,
+            "area_name": coordinator.config.name,
+            "recovery_success": recovery_success,
+            "status_before": status_before,
+            "status_after": status_after,
+            "recovery_timestamp": dt_util.utcnow().isoformat(),
+        }
+
+        if recovery_success:
+            _LOGGER.info(
+                "Database recovery completed successfully for entry %s", entry_id
+            )
+        else:
+            _LOGGER.error("Database recovery failed for entry %s", entry_id)
+
+    except Exception as err:
+        error_msg = f"Failed to recover database for {entry_id}: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return response_data
+
+
+async def _get_database_status(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Get database status information for a specific entry."""
+    entry_id = call.data["entry_id"]
+
+    try:
+        coordinator = _get_coordinator(hass, entry_id)
+
+        _LOGGER.debug("Getting database status for entry %s", entry_id)
+
+        status = coordinator.db.get_database_status()
+
+        return {
+            "entry_id": entry_id,
+            "area_name": coordinator.config.name,
+            "database_status": status,
+            "timestamp": dt_util.utcnow().isoformat(),
+        }
+
+    except Exception as err:
+        error_msg = f"Failed to get database status for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
 
@@ -224,7 +292,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                 confidence_level = "low"
                 confidence_description = "Low confidence in occupancy status"
         else:
-            confidence_level = "unknown"
+            confidence_level = "unknown"  # type: ignore[unreachable]
             confidence_description = "Unable to determine confidence level"
 
         status = {
@@ -270,6 +338,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_reset_entities(call: ServiceCall) -> None:
         return await _reset_entities(hass, call)
 
+    async def handle_recover_database(call: ServiceCall) -> dict[str, Any]:
+        return await _recover_database(hass, call)
+
+    async def handle_get_database_status(call: ServiceCall) -> dict[str, Any]:
+        return await _get_database_status(hass, call)
+
     async def handle_get_entity_metrics(call: ServiceCall) -> dict[str, Any]:
         return await _get_entity_metrics(hass, call)
 
@@ -289,6 +363,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, "reset_entities", handle_reset_entities, schema=entry_id_schema
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "recover_database",
+        handle_recover_database,
+        schema=entry_id_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_database_status",
+        handle_get_database_status,
+        schema=entry_id_schema,
+        supports_response=SupportsResponse.ONLY,
     )
 
     hass.services.async_register(

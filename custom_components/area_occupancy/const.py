@@ -50,6 +50,7 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 
+
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
@@ -72,6 +73,12 @@ DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 
+# Database recovery defaults
+DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
+DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
+DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
+DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
+
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
@@ -83,7 +90,7 @@ DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01
 MAX_PROBABILITY: Final = 0.99
-MIN_PRIOR: Final[float] = 0.1
+MIN_PRIOR: Final[float] = 0.01
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
