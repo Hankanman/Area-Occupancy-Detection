@@ -31,7 +31,7 @@ class Decay:
         # Ensure decay_start is timezone-aware to avoid subtraction errors
         decay_start_aware = ensure_timezone_aware(self.decay_start)
         age = (dt_util.utcnow() - decay_start_aware).total_seconds()
-        factor = 0.5 ** (age / self.half_life)
+        factor = float(0.5 ** (age / self.half_life))
         if factor < 0.05:  # practical zero
             self.is_decaying = False
             return 0.0

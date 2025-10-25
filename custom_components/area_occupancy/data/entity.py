@@ -5,13 +5,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
 from ..db import AreaOccupancyDB as DB
-from ..utils import clamp_probability
+from ..utils import clamp_probability, ensure_timezone_aware
 from .decay import Decay
 from .entity_type import EntityType, InputType
 
@@ -177,33 +177,88 @@ class EntityFactory:
         self.config = coordinator.config
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
-        """Create entity from storage data."""
+        """Create entity from storage data.
+
+        Args:
+            entity_obj: SQLAlchemy Entities object from database
+
+        Returns:
+            Entity: Properly constructed Entity object with Python types
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+            TypeError: If type conversion fails
+        """
+        # Convert SQLAlchemy objects to Python types using to_dict()
+        # This ensures we get proper Python types rather than SQLAlchemy Column objects
+        entity_data = entity_obj.to_dict()
+
+        # Extract and validate required string fields
+        entity_id = str(entity_data["entity_id"])
+        entity_type_str = str(entity_data["entity_type"])
+
+        if not entity_id:
+            raise ValueError("Entity ID cannot be empty")
+        if not entity_type_str:
+            raise ValueError("Entity type cannot be empty")
+
+        # Convert numeric fields with validation
+        try:
+            weight = float(entity_data["weight"])
+            prob_given_true = float(entity_data["prob_given_true"])
+            prob_given_false = float(entity_data["prob_given_false"])
+        except (TypeError, ValueError) as e:
+            raise TypeError(f"Failed to convert numeric fields: {e}") from e
+
+        # Convert boolean field
+        is_decaying = bool(entity_data["is_decaying"])
+
+        # Handle datetime fields - ensure they're proper Python datetime objects
+        decay_start = entity_data["decay_start"]
+        last_updated = entity_data["last_updated"]
+
+        # Validate datetime objects are timezone-aware
+        if decay_start is not None:
+            decay_start = ensure_timezone_aware(decay_start)
+
+        if last_updated is not None:
+            last_updated = ensure_timezone_aware(last_updated)
+
+        # Convert evidence field - handle None case
+        previous_evidence = entity_data["evidence"]
+        if previous_evidence is not None:
+            previous_evidence = bool(previous_evidence)
+
         # Create the entity type directly
         entity_type = EntityType.create(
-            InputType(entity_obj.entity_type),
+            InputType(entity_type_str),
             self.config,
         )
+
         # DB weight should take priority over configured default
         try:
-            if MIN_WEIGHT <= float(entity_obj.weight) <= MAX_WEIGHT:
-                entity_type.weight = float(entity_obj.weight)
+            if MIN_WEIGHT <= weight <= MAX_WEIGHT:
+                entity_type.weight = weight
         except (TypeError, ValueError):
+            # Weight is invalid, keep the default from EntityType.create
             pass
+
+        # Create decay object
         decay = Decay.create(
-            decay_start=entity_obj.decay_start,
+            decay_start=decay_start,
             half_life=self.config.decay.half_life,
-            is_decaying=entity_obj.is_decaying,
+            is_decaying=is_decaying,
         )
 
         return Entity(
-            entity_id=entity_obj.entity_id,
+            entity_id=entity_id,
             type=entity_type,
-            prob_given_true=entity_obj.prob_given_true,
-            prob_given_false=entity_obj.prob_given_false,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
             decay=decay,
             coordinator=self.coordinator,
-            last_updated=entity_obj.last_updated,
-            previous_evidence=entity_obj.evidence,
+            last_updated=last_updated,
+            previous_evidence=previous_evidence,
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -346,7 +401,7 @@ class EntityManager:
         self._entities.clear()
         self._entities = self._factory.create_all_from_config()
 
-    async def update_likelihoods(self):
+    async def update_likelihoods(self) -> None:
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
         Use motion-based labels for 'occupied'.
@@ -371,9 +426,9 @@ class EntityManager:
             session.commit()
             _LOGGER.debug("Likelihoods updated")
 
-    def _get_sensors(self, session, entry_id: str) -> list["DB.Entities"]:
+    def _get_sensors(self, session: Any, entry_id: str) -> list["DB.Entities"]:
         """Get all sensor configs for this area."""
-        return (
+        return list(
             session.query(self.coordinator.db.Entities)
             .filter_by(entry_id=entry_id)
             .all()
@@ -381,7 +436,7 @@ class EntityManager:
 
     def _get_intervals_by_entity(
         self,
-        session,
+        session: Any,
         sensors: list["DB.Entities"],
     ) -> dict[str, list["DB.Intervals"]]:
         """Get all intervals grouped by entity_id."""
@@ -407,25 +462,35 @@ class EntityManager:
         now: datetime,
     ) -> None:
         """Update likelihoods for a single entity."""
-        intervals = intervals_by_entity[entity.entity_id]
-        entity_obj = self.get_entity(entity.entity_id)
+        # Convert SQLAlchemy entity to Python types
+        entity_id = str(entity.entity_id)
+        intervals = intervals_by_entity[entity_id]
+        entity_obj = self.get_entity(entity_id)
 
         # Count interval states
-        true_occ = false_occ = true_empty = false_empty = 0
+        true_occ: float = 0.0
+        false_occ: float = 0.0
+        true_empty: float = 0.0
+        false_empty: float = 0.0
 
         for interval in intervals:
-            occ = self._is_occupied(interval.start_time, occupied_times)
+            # Convert SQLAlchemy interval to Python types
+            interval_data = interval.to_dict()
+            start_time = interval_data["start_time"]
+            duration_seconds = float(interval_data["duration_seconds"])
+
+            occ = self._is_occupied(start_time, occupied_times)
             is_active = self._is_interval_active(interval, entity_obj)
 
             if is_active:
                 if occ:
-                    true_occ += interval.duration_seconds
+                    true_occ += duration_seconds
                 else:
-                    true_empty += interval.duration_seconds
+                    true_empty += duration_seconds
             elif occ:
-                false_occ += interval.duration_seconds
+                false_occ += duration_seconds
             else:
-                false_empty += interval.duration_seconds
+                false_empty += duration_seconds
 
         # Calculate probabilities
         prob_given_true = (
@@ -444,7 +509,7 @@ class EntityManager:
             if total_occupied_time < 3600:  # Less than 1 hour of occupied time
                 _LOGGER.warning(
                     "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
-                    entity.entity_id,
+                    entity_id,
                     total_occupied_time,
                 )
                 prob_given_true = entity_obj.type.prob_given_true
@@ -454,7 +519,7 @@ class EntityManager:
                 if prob_given_true < 0.8:  # Higher threshold for motion sensors
                     _LOGGER.warning(
                         "Motion sensor %s has low prob_given_true (%.3f), using default (%.3f)",
-                        entity.entity_id,
+                        entity_id,
                         prob_given_true,
                         entity_obj.type.prob_given_true,
                     )
@@ -462,7 +527,7 @@ class EntityManager:
                 if prob_given_false > 0.1:  # Lower threshold for false positives
                     _LOGGER.warning(
                         "Motion sensor %s has high prob_given_false (%.3f), using default (%.3f)",
-                        entity.entity_id,
+                        entity_id,
                         prob_given_false,
                         entity_obj.type.prob_given_false,
                     )

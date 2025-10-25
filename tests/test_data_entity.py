@@ -482,6 +482,22 @@ class TestEntityPropertiesAndMethods:
             mock_db_entity.last_updated = dt_util.utcnow()
             mock_db_entity.evidence = True
 
+            # Add to_dict method to return proper dictionary
+            def mock_to_dict():
+                return {
+                    "entity_id": "binary_sensor.test",
+                    "entity_type": "motion",
+                    "prob_given_true": 0.8,
+                    "prob_given_false": 0.1,
+                    "decay_start": mock_db_entity.decay_start,
+                    "is_decaying": False,
+                    "last_updated": mock_db_entity.last_updated,
+                    "evidence": True,
+                    "weight": 0.5,  # Add default weight
+                }
+
+            mock_db_entity.to_dict = mock_to_dict
+
             # Mock config
             mock_coordinator.config.decay.half_life = 300.0
 
@@ -654,6 +670,16 @@ class TestEntityPropertiesAndMethods:
             mock_interval.start_time = dt_util.utcnow()
             mock_interval.duration_seconds = 3600.0
             mock_interval.state = "on"
+
+            # Add to_dict method to return proper dictionary
+            def mock_interval_to_dict():
+                return {
+                    "start_time": mock_interval.start_time,
+                    "duration_seconds": mock_interval.duration_seconds,
+                    "state": mock_interval.state,
+                }
+
+            mock_interval.to_dict = mock_interval_to_dict
 
             intervals_by_entity = {"test_sensor": [mock_interval]}
             occupied_times = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]

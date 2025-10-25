@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+import shutil
+import time
 from typing import TYPE_CHECKING, Any
 
+from filelock import FileLock, Timeout
 import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
@@ -33,6 +36,10 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_VERSION,
+    DEFAULT_BACKUP_INTERVAL_HOURS,
+    DEFAULT_ENABLE_AUTO_RECOVERY,
+    DEFAULT_ENABLE_PERIODIC_BACKUPS,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS,
     MAX_PROBABILITY,
     MAX_WEIGHT,
     MIN_PROBABILITY,
@@ -91,12 +98,22 @@ class AreaOccupancyDB:
 
         """
         self.coordinator = coordinator
+        # config_entry is always present in a properly initialized coordinator
+        if coordinator.config_entry is None:
+            raise ValueError("Coordinator config_entry cannot be None")
         self.conf_version = coordinator.config_entry.data.get("version", CONF_VERSION)
         self.hass = coordinator.hass
         self.storage_path = (
             Path(self.hass.config.config_dir) / ".storage" if self.hass else None
         )
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
+
+        # Database recovery configuration - use standard constants
+        self.enable_auto_recovery = DEFAULT_ENABLE_AUTO_RECOVERY
+        self.max_recovery_attempts = DEFAULT_MAX_RECOVERY_ATTEMPTS
+        self.enable_periodic_backups = DEFAULT_ENABLE_PERIODIC_BACKUPS
+        self.backup_interval_hours = DEFAULT_BACKUP_INTERVAL_HOURS
+
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
             echo=False,
@@ -126,8 +143,13 @@ class AreaOccupancyDB:
             "Metadata": self.Metadata,
         }
 
+        # Initialize database lock path
+        self._lock_path = (
+            self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
+        )
+
     @contextmanager
-    def get_session(self):
+    def get_session(self) -> Any:
         """Get a database session with automatic cleanup.
 
         Yields:
@@ -147,29 +169,62 @@ class AreaOccupancyDB:
         finally:
             session.close()
 
+    @contextmanager
+    def get_locked_session(self, timeout: int = 30) -> Any:
+        """Get a database session with file locking to prevent concurrent access.
+
+        Args:
+            timeout: Maximum time to wait for lock acquisition in seconds
+
+        Yields:
+            Session: A SQLAlchemy session protected by file lock
+
+        Example:
+            with self.get_locked_session() as session:
+                result = session.query(self.Areas).first()
+
+        """
+        if not self._lock_path:
+            # Fallback to regular session if no lock path available
+            with self.get_session() as session:
+                yield session
+            return
+
+        try:
+            with (
+                FileLock(self._lock_path, timeout=timeout),
+                self.get_session() as session,
+            ):
+                yield session
+        except Timeout as e:
+            _LOGGER.error("Database lock timeout after %d seconds: %s", timeout, e)
+            raise HomeAssistantError(
+                f"Database is busy, please try again later: {e}"
+            ) from e
+
     # Table properties for cleaner access
     @property
-    def areas(self):
+    def areas(self) -> Any:
         """Get the areas table."""
         return self.Areas.__table__
 
     @property
-    def entities(self):
+    def entities(self) -> Any:
         """Get the entities table."""
         return self.Entities.__table__
 
     @property
-    def intervals(self):
+    def intervals(self) -> Any:
         """Get the intervals table."""
         return self.Intervals.__table__
 
     @property
-    def priors(self):
+    def priors(self) -> Any:
         """Get the priors table."""
         return self.Priors.__table__
 
     @property
-    def metadata(self):
+    def metadata(self) -> Any:
         """Get the metadata table."""
         return self.Metadata.__table__
 
@@ -211,7 +266,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Areas:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Areas instance from a dictionary."""
             # Handle area_id fallback - use entry_id if area_id is None or empty
             area_id = data.get("area_id")
@@ -277,7 +332,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Entities:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Entities instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
@@ -329,7 +384,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Priors:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create a Priors instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
@@ -380,7 +435,7 @@ class AreaOccupancyDB:
             }
 
         @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> Intervals:
+        def from_dict(cls, data: dict[str, Any]) -> Any:
             """Create an Intervals instance from a dictionary."""
             return cls(
                 entity_id=data["entity_id"],
@@ -398,9 +453,24 @@ class AreaOccupancyDB:
         key = Column(String, primary_key=True)
         value = Column(String, nullable=False)
 
-    def _ensure_db_exists(self):
-        """Check if the database exists and initialize it if needed, with locking."""
+    def _ensure_db_exists(self) -> None:
+        """Check if the database exists and initialize it if needed, with corruption handling."""
         try:
+            # First check if the database file is accessible
+            if self.db_path and self.db_path.exists():
+                if not self.check_database_accessibility():
+                    _LOGGER.warning(
+                        "Database file is corrupted or inaccessible, attempting recovery"
+                    )
+                    if not self.handle_database_corruption():
+                        _LOGGER.error(
+                            "Failed to recover database, recreating from scratch"
+                        )
+                        self.delete_db()
+                        self.init_db()
+                        self.set_db_version()
+                        return
+
             # Use direct engine connection during initialization
             with self.engine.connect() as conn:
                 result = conn.execute(
@@ -411,17 +481,408 @@ class AreaOccupancyDB:
                     _LOGGER.debug("No tables found, initializing database")
                     self.init_db()
                     self.set_db_version()
-        except sa.exc.SQLAlchemyError:
-            # Database doesn't exist or is not initialized, create it
-            _LOGGER.debug("Database error during table check, initializing database")
+        except sa.exc.SQLAlchemyError as e:
+            # Check if this is a corruption error
+            if self.is_database_corrupted(e):
+                _LOGGER.error(
+                    "Database corruption detected during initialization: %s", e
+                )
+                if not self.handle_database_corruption():
+                    _LOGGER.error("Failed to recover database, recreating from scratch")
+                    self.delete_db()
+                    self.init_db()
+                    self.set_db_version()
+            else:
+                # Database doesn't exist or is not initialized, create it
+                _LOGGER.debug(
+                    "Database error during table check, initializing database: %s", e
+                )
+                self.init_db()
+                self.set_db_version()
+
+    def check_database_integrity(self) -> bool:
+        """Check if the database is healthy and not corrupted.
+
+        Returns:
+            bool: True if database is healthy, False if corrupted
+
+        """
+        try:
+            with self.engine.connect() as conn:
+                # Run SQLite integrity check
+                result = conn.execute(text("PRAGMA integrity_check")).fetchone()
+                if result and result[0] == "ok":
+                    _LOGGER.debug("Database integrity check passed")
+                    return True
+                _LOGGER.error("Database integrity check failed: %s", result)
+                return False
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
+            _LOGGER.error("Failed to run database integrity check: %s", e)
+            return False
+
+    def check_database_accessibility(self) -> bool:
+        """Check if the database file is accessible and readable.
+
+        Returns:
+            bool: True if database is accessible, False otherwise
+
+        """
+        if not self.db_path or not self.db_path.exists():
+            return False
+
+        try:
+            # Try to open the file to check if it's readable
+            with open(self.db_path, "rb") as f:
+                # Read first few bytes to check if file is accessible
+                header = f.read(16)
+                if not header.startswith(b"SQLite format 3"):
+                    _LOGGER.error("Database file is not a valid SQLite database")
+                    return False
+        except (OSError, PermissionError, FileNotFoundError) as e:
+            _LOGGER.error("Database file is not accessible: %s", e)
+            return False
+        else:
+            return True
+
+    def is_database_corrupted(self, error: Exception) -> bool:
+        """Check if an error indicates database corruption.
+
+        Args:
+            error: The exception that occurred
+
+        Returns:
+            bool: True if the error indicates corruption, False otherwise
+
+        """
+        error_str = str(error).lower()
+        corruption_indicators = [
+            "database disk image is malformed",
+            "corrupted",
+            "file is not a database",
+            "database or disk is full",
+            "database is locked",
+            "unable to open database file",
+        ]
+
+        return any(indicator in error_str for indicator in corruption_indicators)
+
+    def attempt_database_recovery(self) -> bool:
+        """Attempt to recover from database corruption.
+
+        Returns:
+            bool: True if recovery was successful, False otherwise
+
+        """
+        _LOGGER.warning("Attempting database recovery from corruption")
+
+        try:
+            # First, try to close all connections and recreate engine
+            self.engine.dispose()
+
+            # Try to enable WAL mode and run recovery
+            temp_engine = create_engine(
+                f"sqlite:///{self.db_path}",
+                echo=False,
+                pool_pre_ping=True,
+                connect_args={
+                    "check_same_thread": False,
+                    "timeout": 60,  # Longer timeout for recovery
+                },
+            )
+
+            with temp_engine.connect() as conn:
+                # Try to enable WAL mode
+                with suppress(Exception):
+                    conn.execute(text("PRAGMA journal_mode=WAL"))
+
+                # Try to run recovery
+                with suppress(Exception):
+                    conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+
+                # Test if we can read from the database
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
+                ).fetchone()
+
+                if result:
+                    _LOGGER.info("Database recovery successful, database is readable")
+                    # Replace the engine with the recovered one
+                    self.engine = temp_engine
+                    self._session_maker = sessionmaker(bind=self.engine)
+                    return True
+                _LOGGER.error("Database recovery failed, no tables found")
+                return False
+
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
+            _LOGGER.error("Database recovery failed: %s", e)
+            return False
+
+    def backup_database(self) -> bool:
+        """Create a backup of the current database.
+
+        Returns:
+            bool: True if backup was successful, False otherwise
+
+        """
+        if not self.db_path or not self.db_path.exists():
+            return False
+
+        try:
+            backup_path = self.db_path.with_suffix(".db.backup")
+
+            shutil.copy2(self.db_path, backup_path)
+            _LOGGER.info("Database backup created at %s", backup_path)
+        except (OSError, PermissionError, shutil.Error) as e:
+            _LOGGER.error("Failed to create database backup: %s", e)
+            return False
+        else:
+            return True
+
+    def restore_database_from_backup(self) -> bool:
+        """Restore database from backup if available.
+
+        Returns:
+            bool: True if restore was successful, False otherwise
+
+        """
+        if not self.db_path:
+            return False
+
+        backup_path = self.db_path.with_suffix(".db.backup")
+        if not backup_path.exists():
+            _LOGGER.warning("No backup found at %s", backup_path)
+            return False
+
+        try:
+            # Close current engine
+            self.engine.dispose()
+
+            shutil.copy2(backup_path, self.db_path)
+
+            # Recreate engine
+            self.engine = create_engine(
+                f"sqlite:///{self.db_path}",
+                echo=False,
+                pool_pre_ping=True,
+                connect_args={
+                    "check_same_thread": False,
+                    "timeout": 30,
+                },
+            )
+            self._session_maker = sessionmaker(bind=self.engine)
+
+            _LOGGER.info("Database restored from backup")
+
+        except (OSError, PermissionError, shutil.Error, sa.exc.SQLAlchemyError) as e:
+            _LOGGER.error("Failed to restore database from backup: %s", e)
+            return False
+        else:
+            return True
+
+    def handle_database_corruption(self) -> bool:
+        """Handle database corruption with automatic recovery attempts.
+
+        Returns:
+            bool: True if database is now healthy, False if all recovery attempts failed
+
+        """
+        if not self.enable_auto_recovery:
+            _LOGGER.error("Database corruption detected but auto-recovery is disabled")
+            return False
+
+        _LOGGER.error("Database corruption detected, attempting recovery")
+
+        # First, try to create a backup if possible
+        if self.enable_periodic_backups:
+            self.backup_database()
+
+        # Try database recovery first
+        if self.attempt_database_recovery():
+            if self.check_database_integrity():
+                _LOGGER.info("Database recovery successful")
+                return True
+
+        # If recovery failed, try to restore from backup
+        if self.enable_periodic_backups and self.restore_database_from_backup():
+            if self.check_database_integrity():
+                _LOGGER.info("Database restore from backup successful")
+                return True
+
+        # If all else fails, delete and recreate the database
+        _LOGGER.warning("All recovery attempts failed, recreating database")
+        try:
+            self.delete_db()
             self.init_db()
             self.set_db_version()
+            _LOGGER.info("Database recreated successfully")
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
+            _LOGGER.error("Failed to recreate database: %s", e)
+            return False
+        else:
+            return True
 
-    def get_engine(self):
+    def safe_database_operation(
+        self, operation_name: str, operation_func: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Safely execute a database operation with automatic corruption handling.
+
+        Args:
+            operation_name: Name of the operation for execution
+            operation_func: Function to execute
+            *args: Positional arguments to pass to the operation function
+            **kwargs: Keyword arguments to pass to the operation function
+
+        Returns:
+            Result of the operation function, or None if all recovery attempts failed
+
+        """
+        max_attempts = self.max_recovery_attempts
+        for attempt in range(max_attempts):
+            try:
+                # Check database integrity before operation
+                if not self.check_database_integrity():
+                    _LOGGER.warning(
+                        "Database integrity check failed before %s, attempting recovery",
+                        operation_name,
+                    )
+                    if not self.handle_database_corruption():
+                        _LOGGER.error(
+                            "Failed to recover database after %d attempts", max_attempts
+                        )
+                        return None
+
+                # Execute the operation
+                return operation_func(*args, **kwargs)
+
+            except sa.exc.DatabaseError as e:
+                if self.is_database_corrupted(e):
+                    _LOGGER.error(
+                        "Database corruption detected during %s (attempt %d/%d): %s",
+                        operation_name,
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                    )
+
+                    if attempt < max_attempts - 1:
+                        if not self.handle_database_corruption():
+                            _LOGGER.error(
+                                "Database recovery failed, retrying operation"
+                            )
+                            continue
+                    else:
+                        _LOGGER.error(
+                            "All recovery attempts failed for %s", operation_name
+                        )
+                        return None
+                else:
+                    # Re-raise non-corruption database errors
+                    raise
+            except Exception as e:
+                _LOGGER.error("Unexpected error during %s: %s", operation_name, e)
+                raise
+
+        # If we get here, all recovery attempts failed
+        return None
+
+    def periodic_health_check(self) -> bool:
+        """Perform periodic database health check and maintenance.
+
+        Returns:
+            bool: True if database is healthy, False if issues were found
+
+        """
+        try:
+            # Check database integrity
+            if not self.check_database_integrity():
+                _LOGGER.warning("Periodic health check found database corruption")
+                if self.handle_database_corruption():
+                    _LOGGER.info("Database recovered during periodic health check")
+                    return True
+                _LOGGER.error("Failed to recover database during periodic health check")
+                return False
+
+            # Create periodic backup if enabled
+            if self.enable_periodic_backups and self.db_path:
+                backup_path = self.db_path.with_suffix(".db.backup")
+                backup_interval_seconds = self.backup_interval_hours * 3600
+                if (
+                    not backup_path.exists()
+                    or (time.time() - backup_path.stat().st_mtime)
+                    > backup_interval_seconds
+                ):
+                    if self.backup_database():
+                        _LOGGER.debug("Periodic database backup created")
+                    else:
+                        _LOGGER.warning("Failed to create periodic database backup")
+
+            # Run database maintenance
+            with suppress(Exception), self.engine.connect() as conn:
+                # Optimize database
+                conn.execute(text("PRAGMA optimize"))
+                # Update statistics
+                conn.execute(text("ANALYZE"))
+                _LOGGER.debug("Database maintenance completed")
+
+        except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
+            _LOGGER.error("Periodic health check failed: %s", e)
+            return False
+        else:
+            return True
+
+    def manual_recovery_trigger(self) -> bool:
+        """Manually trigger database recovery for testing or manual intervention.
+
+        Returns:
+            bool: True if recovery was successful, False otherwise
+
+        """
+        _LOGGER.info("Manual database recovery triggered")
+
+        # Force a health check and recovery
+        if not self.check_database_integrity():
+            _LOGGER.info("Database corruption detected during manual recovery")
+            return self.handle_database_corruption()
+        _LOGGER.info("Database is healthy, no recovery needed")
+        return True
+
+    def get_database_status(self) -> dict[str, Any]:
+        """Get comprehensive database status information.
+
+        Returns:
+            dict: Database status information
+
+        """
+        status = {
+            "database_path": str(self.db_path) if self.db_path else None,
+            "database_exists": self.db_path.exists() if self.db_path else False,
+            "database_accessible": self.check_database_accessibility()
+            if self.db_path and self.db_path.exists()
+            else False,
+            "database_integrity": self.check_database_integrity()
+            if self.db_path and self.db_path.exists()
+            else False,
+            "auto_recovery_enabled": self.enable_auto_recovery,
+            "max_recovery_attempts": self.max_recovery_attempts,
+            "periodic_backups_enabled": self.enable_periodic_backups,
+            "backup_interval_hours": self.backup_interval_hours,
+        }
+
+        # Check for backup file
+        if self.db_path:
+            backup_path = self.db_path.with_suffix(".db.backup")
+            status["backup_exists"] = backup_path.exists()
+            if backup_path.exists():
+                backup_age_hours = (time.time() - backup_path.stat().st_mtime) / 3600
+                status["backup_age_hours"] = round(backup_age_hours, 2)  # type: ignore[assignment]
+
+        return status
+
+    def get_engine(self) -> Any:
         """Get the engine for the database with optimized settings."""
         return self.engine
 
-    def set_db_version(self):
+    def set_db_version(self) -> None:
         """Set the database version in the metadata table."""
         # Use direct engine connection during initialization
         with self.engine.begin() as conn:
@@ -460,7 +921,7 @@ class AreaOccupancyDB:
                 _LOGGER.error("Failed to get db_version from metadata table: %s", e)
                 raise
 
-    def delete_db(self):
+    def delete_db(self) -> None:
         """Delete the database file."""
         if self.db_path and self.db_path.exists():
             try:
@@ -469,7 +930,7 @@ class AreaOccupancyDB:
             except (OSError, PermissionError) as e:
                 _LOGGER.error("Failed to delete database file: %s", e)
 
-    def force_reinitialize(self):
+    def force_reinitialize(self) -> None:
         """Force reinitialization of the database tables."""
         _LOGGER.debug("Forcing database reinitialization")
         self.init_db()
@@ -529,8 +990,9 @@ class AreaOccupancyDB:
 
     async def load_data(self) -> None:
         """Load the data from the database."""
-        try:
-            with self.get_session() as session:
+
+        def _load_data_operation() -> bool:
+            with self.get_locked_session() as session:
                 area = (
                     session.query(self.Areas)
                     .filter_by(entry_id=self.coordinator.entry_id)
@@ -587,16 +1049,31 @@ class AreaOccupancyDB:
                             )
                             self.coordinator.entities.add_entity(new_entity)
                 _LOGGER.debug("Loaded area occupancy data")
-        except Exception as err:
+                return True  # Indicate successful completion
+
+        try:
+            result = self.safe_database_operation("load data", _load_data_operation)
+            if result is None:
+                _LOGGER.warning(
+                    "Database operation failed, continuing without loaded data"
+                )
+        except (
+            sa.exc.SQLAlchemyError,
+            HomeAssistantError,
+            TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as err:
             _LOGGER.error("Failed to load area occupancy data: %s", err)
-            raise
+            # Don't raise the error, just log it and continue
+            # This allows the integration to start even if data loading fails
 
     # --- Save Data ---
 
     async def save_area_data(self) -> None:
         """Save the area data to the database."""
         try:
-            with self.engine.begin() as conn:
+            with self.get_locked_session() as session:
                 cfg = self.coordinator.config
 
                 area_data = {
@@ -641,19 +1118,15 @@ class AreaOccupancyDB:
                     area_data["area_id"] = area_data["entry_id"]
 
                 try:
-                    result = conn.execute(
-                        self.Areas.__table__.insert().prefix_with("OR REPLACE"),
-                        area_data,
-                    )
-                    _LOGGER.debug("Area insert/replace result: %s", result)
+                    # Use session.merge for upsert functionality
+                    area_obj = self.Areas.from_dict(area_data)
+                    session.merge(area_obj)
+                    session.commit()
 
-                    if result.rowcount > 0:
-                        _LOGGER.info(
-                            "Successfully saved area data for entry_id: %s",
-                            area_data["entry_id"],
-                        )
-                    else:
-                        _LOGGER.warning("Area insert/replace affected 0 rows")
+                    _LOGGER.info(
+                        "Successfully saved area data for entry_id: %s",
+                        area_data["entry_id"],
+                    )
 
                 except (
                     sa.exc.SQLAlchemyError,
@@ -661,15 +1134,17 @@ class AreaOccupancyDB:
                     TimeoutError,
                     OSError,
                 ) as insert_err:
-                    _LOGGER.error("Failed to insert/replace area data: %s", insert_err)
+                    _LOGGER.error("Failed to save area data: %s", insert_err)
+                    session.rollback()
                     try:
-                        conn.execute(
-                            self.Areas.__table__.insert(),
-                            area_data,
-                        )
+                        # Fallback to direct insert
+                        area_obj = self.Areas.from_dict(area_data)
+                        session.add(area_obj)
+                        session.commit()
                         _LOGGER.info("Direct insert succeeded")
                     except Exception as direct_err:
                         _LOGGER.error("Direct insert also failed: %s", direct_err)
+                        session.rollback()
                         raise
             _LOGGER.debug("Saved area data")
         except Exception as err:
@@ -679,7 +1154,7 @@ class AreaOccupancyDB:
     async def save_entity_data(self) -> None:
         """Save the entity data to the database."""
         try:
-            with self.engine.begin() as conn:
+            with self.get_locked_session() as session:
                 entities = self.coordinator.entities.entities.values()
                 for entity in entities:
                     # Skip entities with missing type information
@@ -724,21 +1199,24 @@ class AreaOccupancyDB:
 
                     last_updated = entity.last_updated or dt_util.utcnow()
 
-                    conn.execute(
-                        self.Entities.__table__.insert().prefix_with("OR REPLACE"),
-                        {
-                            "entry_id": self.coordinator.entry_id,
-                            "entity_id": entity.entity_id,
-                            "entity_type": entity_type,
-                            "weight": weight,
-                            "prob_given_true": prob_true,
-                            "prob_given_false": prob_false,
-                            "last_updated": last_updated,
-                            "is_decaying": entity.decay.is_decaying,
-                            "decay_start": entity.decay.decay_start,
-                            "evidence": evidence_val,
-                        },
-                    )
+                    entity_data = {
+                        "entry_id": self.coordinator.entry_id,
+                        "entity_id": entity.entity_id,
+                        "entity_type": entity_type,
+                        "weight": weight,
+                        "prob_given_true": prob_true,
+                        "prob_given_false": prob_false,
+                        "last_updated": last_updated,
+                        "is_decaying": entity.decay.is_decaying,
+                        "decay_start": entity.decay.decay_start,
+                        "evidence": evidence_val,
+                    }
+
+                    # Use session.merge for upsert functionality
+                    entity_obj = self.Entities.from_dict(entity_data)
+                    session.merge(entity_obj)
+
+                session.commit()
             _LOGGER.debug("Saved entity data")
         except Exception as err:
             _LOGGER.error("Failed to save entity data: %s", err)
@@ -757,25 +1235,61 @@ class AreaOccupancyDB:
 
     def is_intervals_empty(self) -> bool:
         """Check if the intervals table is empty using ORM."""
-        try:
-            with self.get_session() as session:
+
+        def _check_intervals_empty() -> bool:
+            with self.get_locked_session() as session:
                 count = session.query(self.Intervals).count()
-                return count == 0
-        except sa.exc.SQLAlchemyError as e:
+                return bool(count == 0)
+
+        try:
+            result = self.safe_database_operation(
+                "check intervals empty", _check_intervals_empty
+            )
+            return bool(result) if result is not None else True
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist, it's considered empty
             if "no such table" in str(e).lower():
                 _LOGGER.debug("Intervals table doesn't exist yet, considering empty")
                 return True
             _LOGGER.error("Failed to check if intervals empty: %s", e)
-            raise
+            # Return True as fallback to trigger data population
+            return True
+
+    def safe_is_intervals_empty(self) -> bool:
+        """Safely check if intervals table is empty with comprehensive error handling.
+
+        This method is specifically designed to handle the database corruption error
+        that was occurring in production.
+
+        Returns:
+            bool: True if intervals are empty or if database is corrupted, False if intervals exist
+
+        """
+        try:
+            # First check database integrity
+            if not self.check_database_integrity():
+                _LOGGER.warning("Database integrity check failed, attempting recovery")
+                if not self.handle_database_corruption():
+                    _LOGGER.error(
+                        "Failed to recover database, assuming intervals are empty"
+                    )
+                    return True
+
+            # Try the normal check
+            return self.is_intervals_empty()
+
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+            _LOGGER.error("Unexpected error checking intervals: %s", e)
+            # If we can't determine the state, assume empty to trigger data population
+            return True
 
     def get_area_data(self, entry_id: str) -> dict[str, Any] | None:
         """Get area data for a specific entry_id."""
         try:
-            with self.get_session() as session:
+            with self.get_locked_session() as session:
                 area = session.query(self.Areas).filter_by(entry_id=entry_id).first()
                 if area:
-                    return area.to_dict()
+                    return dict(area.to_dict())
                 return None
         except sa.exc.SQLAlchemyError as e:
             _LOGGER.error("Failed to get area data: %s", e)
@@ -811,22 +1325,32 @@ class AreaOccupancyDB:
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             _LOGGER.error("Error ensuring area exists: %s", e)
 
-    def get_latest_interval(self) -> datetime | None:
+    def get_latest_interval(self) -> datetime:
         """Return the latest interval end time minus 1 hour, or default window if none."""
-        try:
-            with self.get_session() as session:
+
+        def _get_latest_interval_operation() -> datetime:
+            with self.get_locked_session() as session:
                 result = session.execute(
                     sa.select(sa.func.max(self.Intervals.end_time))
                 ).scalar()
                 if result:
                     return result - timedelta(hours=1)
                 return dt_util.now() - timedelta(days=10)
-        except sa.exc.SQLAlchemyError as e:
-            # If table doesn't exist, return a default time
+
+        try:
+            result = self.safe_database_operation(
+                "get latest interval", _get_latest_interval_operation
+            )
+            return result if result is not None else dt_util.now() - timedelta(days=10)
+        except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+            # If table doesn't exist or any other error, return a default time
             if "no such table" in str(e).lower():
                 _LOGGER.debug("Intervals table doesn't exist yet, using default time")
-                return dt_util.now() - timedelta(days=10)
-            raise
+            else:
+                _LOGGER.warning(
+                    "Failed to get latest interval, using default time: %s", e
+                )
+            return dt_util.now() - timedelta(days=10)
 
     def _states_to_intervals(
         self, states: dict[str, list[State]], end_time: datetime
@@ -878,6 +1402,7 @@ class AreaOccupancyDB:
                                 "start_time": state.last_changed,
                                 "end_time": interval_end,
                                 "duration_seconds": duration_seconds,
+                                "created_at": dt_util.utcnow(),
                             }
                         )
                 elif (
@@ -891,6 +1416,7 @@ class AreaOccupancyDB:
                             "start_time": state.last_changed,
                             "end_time": interval_end,
                             "duration_seconds": duration_seconds,
+                            "created_at": dt_util.utcnow(),
                         }
                     )
 
@@ -921,14 +1447,14 @@ class AreaOccupancyDB:
 
             if states:
                 # Convert states to proper intervals with correct duration calculation
-                intervals = self._states_to_intervals(states, end_time)
+                intervals = self._states_to_intervals(states, end_time)  # type: ignore[arg-type]
                 _LOGGER.debug("Syncing %d intervals", len(intervals))
                 if intervals:
-                    with self.engine.begin() as conn:
-                        conn.execute(
-                            self.Intervals.__table__.insert().prefix_with("OR IGNORE"),
-                            intervals,
-                        )
+                    with self.get_locked_session() as session:
+                        for interval_data in intervals:
+                            interval_obj = self.Intervals.from_dict(interval_data)
+                            session.merge(interval_obj)
+                        session.commit()
                     _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")

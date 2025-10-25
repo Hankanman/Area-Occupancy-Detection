@@ -325,7 +325,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
                 self._process_motion_state(entity_id, state.state)
 
     @callback
-    def _handle_state_change(self, event) -> None:
+    def _handle_state_change(self, event: Any) -> None:
         """Handle state changes for tracked entities."""
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
