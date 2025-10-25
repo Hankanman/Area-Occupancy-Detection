@@ -1047,30 +1047,32 @@ class AreaOccupancyDB:
                         except ValueError:
                             # Entity not found in coordinator - check if it's in current config
                             # Handle cases where entities might be a SimpleNamespace or mock object
+                            should_delete = False
                             if hasattr(self.coordinator.entities, "entity_ids"):
                                 current_entity_ids = set(
                                     self.coordinator.entities.entity_ids
                                 )
                                 if entity_obj.entity_id not in current_entity_ids:
-                                    # Entity is not in current config - skip loading it
-                                    _LOGGER.debug(
-                                        "Skipping entity %s from database (not in current config)",
-                                        entity_obj.entity_id,
-                                    )
-                                    continue
+                                    should_delete = True
                             elif hasattr(self.coordinator.entities, "entities"):
                                 # Fallback for mock objects that have entities dict
                                 current_entity_ids = set(
                                     self.coordinator.entities.entities.keys()
                                 )
                                 if entity_obj.entity_id not in current_entity_ids:
-                                    # Entity is not in current config - skip loading it
-                                    _LOGGER.debug(
-                                        "Skipping entity %s from database (not in current config)",
-                                        entity_obj.entity_id,
-                                    )
-                                    continue
+                                    should_delete = True
+                            else:
+                                # Can't determine current config - assume entity is stale
+                                should_delete = True
 
+                            if should_delete:
+                                # Entity is not in current config - delete it from database
+                                _LOGGER.info(
+                                    "Deleting stale entity %s from database (not in current config)",
+                                    entity_obj.entity_id,
+                                )
+                                session.delete(entity_obj)
+                                continue
                             # Entity should exist but doesn't - create it from database
                             # (This handles cases where we can't determine current config, like in tests)
                             _LOGGER.warning(
