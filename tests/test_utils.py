@@ -2,13 +2,9 @@
 
 from datetime import datetime, timedelta
 import math
-import os
 from unittest.mock import Mock
 
-import pytest
-
 from custom_components.area_occupancy.utils import (
-    FileLock,
     apply_motion_timeout,
     bayesian_probability,
     clamp_probability,
@@ -18,7 +14,7 @@ from custom_components.area_occupancy.utils import (
 )
 
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: PLC0415
 class TestUtils:
     """Test utility functions."""
 
@@ -304,108 +300,6 @@ class TestApplyMotionTimeout:
         start, end = result[0]
         assert start == base_time
         assert end == base_time + timedelta(minutes=5)
-
-
-class TestFileLock:
-    """Test FileLock class."""
-
-    def test_file_lock_creation(self, tmp_path):
-        """Test FileLock creation and basic functionality."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path, timeout=5)
-
-        assert lock.lock_path == lock_path
-        assert lock.timeout == 5
-        assert lock._lock_fd is None
-
-    def test_file_lock_context_manager(self, tmp_path):
-        """Test FileLock as context manager."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path, timeout=5)
-
-        with lock:
-            # Lock file should exist
-            assert lock_path.exists()
-            # Lock file descriptor should be set
-            assert lock._lock_fd is not None
-            # Should contain PID and timestamp
-            with open(lock_path) as f:
-                content = f.read()
-                assert ":" in content
-                pid, timestamp = content.split(":")
-                assert pid.isdigit()
-                assert timestamp.replace(".", "").isdigit()
-
-        # After context exit, lock file should be removed
-        assert not lock_path.exists()
-        assert lock._lock_fd is None
-
-    def test_file_lock_timeout(self, tmp_path):
-        """Test FileLock timeout behavior."""
-        lock_path = tmp_path / "test.lock"
-
-        # Create a lock file manually to simulate existing lock
-        with open(lock_path, "w") as f:
-            f.write("12345")
-
-        lock = FileLock(lock_path, timeout=0.1)  # Very short timeout
-
-        with pytest.raises(TimeoutError), lock:
-            pass
-
-    def test_file_lock_exception_handling(self, tmp_path):
-        """Test FileLock exception handling in context manager."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path, timeout=5)
-
-        # Test that lock is properly cleaned up even when exception occurs
-        with pytest.raises(ValueError), lock:
-            raise ValueError("Test exception")
-
-        # Lock file should be removed even after exception
-        assert not lock_path.exists()
-        assert lock._lock_fd is None
-
-    def test_file_lock_file_permission_error(self, tmp_path):
-        """Test FileLock with file permission errors."""
-        lock_path = tmp_path / "test.lock"
-
-        # Create a directory with the same name to cause permission error
-        lock_path.mkdir()
-
-        lock = FileLock(lock_path, timeout=0.1)
-
-        with pytest.raises((OSError, PermissionError)), lock:
-            pass
-
-    def test_file_lock_cleanup_on_file_not_found(self, tmp_path):
-        """Test FileLock cleanup when lock file doesn't exist during cleanup."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path, timeout=5)
-
-        with lock:
-            # Manually remove the lock file to simulate race condition
-            lock_path.unlink()
-            # Context exit should not raise an exception
-
-        assert lock._lock_fd is None
-
-    def test_file_lock_default_timeout(self, tmp_path):
-        """Test FileLock with default timeout."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path)  # Use default timeout
-
-        assert lock.timeout == 60  # Default timeout
-
-    def test_file_lock_pid_writing(self, tmp_path):
-        """Test that FileLock writes the correct PID to the lock file."""
-        lock_path = tmp_path / "test.lock"
-        lock = FileLock(lock_path, timeout=5)
-
-        with lock, open(lock_path) as f:
-            content = f.read()
-            pid, timestamp = content.split(":")
-            assert int(pid) == os.getpid()
 
 
 class TestBayesianProbability:
