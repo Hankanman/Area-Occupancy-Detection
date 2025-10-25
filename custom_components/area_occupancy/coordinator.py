@@ -74,6 +74,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._remove_state_listener: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._health_check_timer: CALLBACK_TYPE | None = None
+        self._setup_complete: bool = False
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -177,6 +178,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self.probability >= self.config.threshold
 
     @property
+    def setup_complete(self) -> bool:
+        """Return whether setup is complete."""
+        return self._setup_complete
+
+    @property
     def threshold(self) -> float:
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
@@ -239,7 +245,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_decay_timer()
             self._start_analysis_timer()
             self._start_health_check_timer()
-            await self.async_refresh()
+
+            # Mark setup as complete before initial refresh to prevent debouncer conflicts
+            self._setup_complete = True
+            # Note: async_refresh() is called by async_config_entry_first_refresh() in __init__.py
+            # so we don't need to call it here to avoid debouncer conflicts
             _LOGGER.debug(
                 "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
                 self.config.name,
@@ -259,7 +269,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_decay_timer()
                 self._start_analysis_timer()
                 self._start_health_check_timer()
-                await self.async_refresh()
+                # Mark setup as complete - async_refresh() will be called by async_config_entry_first_refresh()
+                self._setup_complete = True
             except (HomeAssistantError, OSError, RuntimeError) as timer_err:
                 _LOGGER.error("Failed to start basic timers: %s", timer_err)
 
@@ -332,7 +343,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Force immediate save after configuration changes
         await self.db.save_data()
 
-        await self.async_request_refresh()
+        # Only request refresh if setup is complete to avoid debouncer conflicts
+        if self.setup_complete:
+            await self.async_request_refresh()
 
     # --- Entity State Tracking ---
     async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
@@ -348,7 +361,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             async def _refresh_on_state_change(event):
                 entity_id = event.data.get("entity_id")
                 entity = self.entities.get_entity(entity_id)
-                if entity and entity.has_new_evidence():
+                if entity and entity.has_new_evidence() and self.setup_complete:
                     await self.async_refresh()
 
             self._remove_state_listener = async_track_state_change_event(
