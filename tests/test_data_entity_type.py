@@ -192,3 +192,43 @@ class TestEntityType:
 
         with pytest.raises(ValueError, match=expected_error):
             EntityType.create(input_type, mock_config)
+
+    def test_create_classmethod_with_empty_states_list(self) -> None:
+        """Test that empty active_states list uses defaults instead of crashing."""
+        mock_config = Mock()
+        mock_config.weights = Mock()
+        mock_config.weights.motion = 0.9  # Override weight
+        mock_config.sensor_states = Mock()
+        mock_config.sensor_states.motion = []  # Empty list - should use defaults
+        mock_config.motion_active_range = None
+
+        entity_type = EntityType.create(InputType.MOTION, mock_config)
+
+        # Should use default active_states from DEFAULT_TYPES, not empty list
+        assert entity_type.input_type == InputType.MOTION
+        assert entity_type.weight == 0.9  # Weight override should still work
+        assert (
+            entity_type.active_states
+            == DEFAULT_TYPES[InputType.MOTION]["active_states"]
+        )  # Default states
+        assert entity_type.active_range is None
+
+    def test_create_classmethod_with_empty_states_list_for_range_type(self) -> None:
+        """Test that empty active_states list uses defaults for range-based types."""
+        mock_config = Mock()
+        mock_config.weights = Mock()
+        mock_config.weights.temperature = 0.2  # Override weight
+        mock_config.sensor_states = Mock()
+        mock_config.sensor_states.temperature = []  # Empty list - should use defaults
+        mock_config.temperature_active_range = None
+
+        entity_type = EntityType.create(InputType.TEMPERATURE, mock_config)
+
+        # Should use default active_range from DEFAULT_TYPES, not empty list
+        assert entity_type.input_type == InputType.TEMPERATURE
+        assert entity_type.weight == 0.2  # Weight override should still work
+        assert entity_type.active_states is None  # Default for temperature
+        assert (
+            entity_type.active_range
+            == DEFAULT_TYPES[InputType.TEMPERATURE]["active_range"]
+        )  # Default range
