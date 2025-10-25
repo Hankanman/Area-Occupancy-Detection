@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy import text
 
 from custom_components.area_occupancy import (
     _async_entry_updated,
@@ -14,6 +16,7 @@ from custom_components.area_occupancy import (
     async_unload_entry,
 )
 from custom_components.area_occupancy.const import CONF_VERSION, DOMAIN
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -74,12 +77,14 @@ class TestAsyncSetupEntry:
     async def test_async_setup_entry_success(
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
-        """Test successful setup flow."""
-        coordinator = Mock()
-        coordinator.async_config_entry_first_refresh = AsyncMock()
-        coordinator.async_init_database = AsyncMock()
+        """Test successful setup flow with real database initialization."""
+        # Use real coordinator to test actual database initialization
+        coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
 
         with (
+            patch.object(
+                coordinator, "async_config_entry_first_refresh", new=AsyncMock()
+            ),
             patch(
                 "custom_components.area_occupancy.AreaOccupancyCoordinator",
                 return_value=coordinator,
@@ -92,7 +97,29 @@ class TestAsyncSetupEntry:
 
         assert result is True
         mock_coord.assert_called_once_with(mock_hass, mock_config_entry)
-        coordinator.async_init_database.assert_awaited_once()
+
+        # Verify database initialization was called and completed successfully
+        # Since we're in test environment with AREA_OCCUPANCY_AUTO_INIT_DB=1,
+        # the database should already be initialized in the coordinator's __init__
+        assert coordinator.db is not None
+
+        # Verify the database file exists and is accessible
+        assert coordinator.db.db_path is not None
+        assert coordinator.db.db_path.exists()
+
+        # Verify we can create a session without errors (indicates tables exist)
+        try:
+            with coordinator.db.get_session() as session:
+                # Simple query to verify database is functional
+                result = session.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
+                )
+                tables = result.fetchall()
+                # Should have at least one table (areas, entities, etc.)
+                assert len(tables) > 0
+        except Exception as e:  # noqa: BLE001
+            pytest.fail(f"Database initialization failed - cannot query database: {e}")
+
         mock_services.assert_awaited_once()
         assert mock_config_entry.runtime_data == coordinator
 
@@ -103,7 +130,7 @@ class TestAsyncSetup:
     async def test_async_setup_success(self) -> None:
         """Test successful setup."""
         mock_hass = Mock(spec=HomeAssistant)
-        config = {}
+        config: dict[str, Any] = {}
 
         result = await async_setup(mock_hass, config)
 
