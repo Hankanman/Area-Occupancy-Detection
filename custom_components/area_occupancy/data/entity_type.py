@@ -59,7 +59,7 @@ class EntityType:
         # Default data for each input type
         data = DEFAULT_TYPES
 
-        params = data[input_type].copy()
+        params = dict(data[input_type])
 
         # Apply configuration overrides if available
         if config:
@@ -106,7 +106,7 @@ class EntityType:
         return cls(input_type=input_type, **params)
 
 
-DEFAULT_TYPES = {
+DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
         "weight": 1,
         "prob_given_true": 0.95,  # Much higher for ground truth

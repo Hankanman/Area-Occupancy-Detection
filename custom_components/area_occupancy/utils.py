@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 from datetime import datetime, timedelta
 import logging
 import math
@@ -108,9 +107,6 @@ def bayesian_probability(
         decay_factor = entity.decay.decay_factor
         if decay_factor < 0.0 or decay_factor > 1.0:
             decay_factor = max(0.0, min(1.0, decay_factor))
-            # Attempt to write back clamped value for test visibility; ignore if read-only
-            with suppress(Exception):
-                entity.decay.decay_factor = decay_factor  # type: ignore[attr-defined]
         is_decaying = entity.decay.is_decaying
 
         # Determine effective evidence: True if evidence is True OR if decaying
