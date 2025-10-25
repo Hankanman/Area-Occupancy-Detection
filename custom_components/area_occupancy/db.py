@@ -1458,10 +1458,26 @@ class AreaOccupancyDB:
                 if intervals:
                     with self.get_locked_session() as session:
                         for interval_data in intervals:
-                            interval_obj = self.Intervals.from_dict(interval_data)
-                            session.merge(interval_obj)
-                        session.commit()
-                    _LOGGER.debug("Synced %d intervals", len(intervals))
+                            # Check if interval already exists to avoid UNIQUE constraint violation
+                            existing = (
+                                session.query(self.Intervals)
+                                .filter(
+                                    self.Intervals.entity_id
+                                    == interval_data["entity_id"],
+                                    self.Intervals.start_time
+                                    == interval_data["start_time"],
+                                    self.Intervals.end_time
+                                    == interval_data["end_time"],
+                                )
+                                .first()
+                            )
+
+                            if not existing:
+                                # Only create if it doesn't exist
+                                interval_obj = self.Intervals.from_dict(interval_data)
+                                session.add(interval_obj)
+                    session.commit()
+                _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
                 _LOGGER.debug("No states found in recorder query result")
 
