@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
+import os
 from pathlib import Path
 import shutil
 import time
@@ -150,6 +151,10 @@ class AreaOccupancyDB:
         self._lock_path = (
             self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
         )
+
+        # Auto-initialize database in test environments
+        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
+            self.initialize_database()
 
     def initialize_database(self) -> None:
         """Initialize the database by checking if it exists and creating it if needed.
