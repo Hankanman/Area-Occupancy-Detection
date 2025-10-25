@@ -39,7 +39,7 @@ class EntityType:
     active_states: list[str] | None = None
     active_range: tuple[float, float] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Post init."""
 
         # Validate that we have exactly one of active_states or active_range

@@ -159,7 +159,7 @@ def mock_hass() -> Mock:
     hass.async_create_task = Mock(side_effect=lambda coro: asyncio.create_task(coro))
 
     # Make async_add_executor_job actually execute the function
-    async def async_add_executor_job(func, *args, **kwargs):
+    async def async_add_executor_job(func: Any, *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
     hass.async_add_executor_job = async_add_executor_job
@@ -168,7 +168,7 @@ def mock_hass() -> Mock:
     hass.async_run_job = AsyncMock()
 
     # Create cancellable mocks for timer functions
-    def create_cancellable_timer():
+    def create_cancellable_timer() -> Mock:
         mock_timer = Mock()
         mock_timer.cancel = Mock()
         mock_timer.cancelled = Mock(return_value=True)
@@ -321,14 +321,14 @@ def mock_entity_registry() -> Mock:
 
     # Add entities property that can be iterated
     class EntitiesContainer:
-        def __init__(self):
-            self._entities = {}
+        def __init__(self) -> None:
+            self._entities: dict[str, Mock] = {}
 
-        def values(self):
+        def values(self) -> list[Mock]:
             return []
 
-        def items(self):
-            return self._entities.items()
+        def items(self) -> list[tuple[str, Mock]]:
+            return list(self._entities.items())
 
     registry.entities = EntitiesContainer()
     return registry
@@ -386,9 +386,7 @@ def mock_coordinator(
     coordinator.config = mock_config
 
     # Mock the get_motion_sensors method to avoid the wasp_entity_id issue
-    coordinator.config.sensors.get_motion_sensors = Mock(
-        return_value=coordinator.config.sensors.motion
-    )
+    # Note: This is handled by the mock_config fixture
     coordinator.entities = mock_entity_manager
     coordinator.entity_types = mock_entity_type_manager
     coordinator.prior = mock_area_prior
@@ -400,8 +398,7 @@ def mock_coordinator(
     # Legacy store for backward compatibility
     coordinator.store = coordinator.db
 
-    # Config manager
-    coordinator.config.update_config = AsyncMock()
+    # Config manager - handled by mock_config fixture
 
     # Only mock real public methods
     coordinator.async_shutdown = AsyncMock()
@@ -539,7 +536,7 @@ def mock_db() -> Generator[Mock]:
 
 
 @pytest.fixture
-def mock_area_occupancy_db_patches():
+def mock_area_occupancy_db_patches() -> list[Any]:
     """Provide common patches for AreaOccupancyDB tests."""
     return [
         patch(
@@ -621,7 +618,7 @@ def freeze_time() -> Generator[datetime]:
 
 
 @pytest.fixture(autouse=True)
-def mock_frame_helper():
+def mock_frame_helper() -> Generator[Mock]:
     """Mock the Home Assistant frame helper for all tests."""
     with (
         patch("homeassistant.helpers.frame._hass") as mock_hass,
@@ -649,12 +646,12 @@ def mock_frame_helper():
 
 
 # Utility functions for common test patterns
-def create_mock_entity_registry_with_entities(entities: list[dict]) -> Mock:
+def create_mock_entity_registry_with_entities(entities: list[dict[str, Any]]) -> Mock:
     """Create a mock entity registry with specific entities."""
     registry = Mock(spec=EntityRegistry)
 
     class EntitiesContainer:
-        def values(self):
+        def values(self) -> list[Mock]:
             return [
                 Mock(
                     entity_id=entity["entity_id"],
@@ -759,7 +756,9 @@ def _create_mock_db() -> Mock:
 
 
 @pytest.fixture
-def mock_active_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock:
+def mock_active_entity(
+    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+) -> Mock:
     """Create a mock entity in active state (evidence=True, available=True)."""
     return _create_mock_entity(
         entity_id="binary_sensor.active_entity",
@@ -779,7 +778,9 @@ def mock_active_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock:
 
 
 @pytest.fixture
-def mock_inactive_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock:
+def mock_inactive_entity(
+    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+) -> Mock:
     """Create a mock entity in inactive state (evidence=False, available=True)."""
     return _create_mock_entity(
         entity_id="binary_sensor.inactive_entity",
@@ -799,7 +800,9 @@ def mock_inactive_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock
 
 
 @pytest.fixture
-def mock_unavailable_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock:
+def mock_unavailable_entity(
+    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+) -> Mock:
     """Create a mock entity in unavailable state (available=False)."""
     return _create_mock_entity(
         entity_id="binary_sensor.unavailable_entity",
@@ -820,7 +823,9 @@ def mock_unavailable_entity(mock_coordinator, mock_entity_type, mock_decay) -> M
 
 
 @pytest.fixture
-def mock_stale_entity(mock_coordinator, mock_entity_type, mock_decay) -> Mock:
+def mock_stale_entity(
+    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+) -> Mock:
     """Create a mock entity with stale update (> 1 hour ago)."""
     return _create_mock_entity(
         entity_id="binary_sensor.stale_entity",
@@ -1067,7 +1072,7 @@ def mock_decay() -> Mock:
     type(decay).decay_factor = PropertyMock(return_value=1.0)
 
     # Add side effect for start_decay to properly simulate behavior
-    def start_decay_side_effect():
+    def start_decay_side_effect() -> None:
         if not decay.is_decaying:
             decay.is_decaying = True
             decay.last_trigger_ts = time.time()
@@ -1178,7 +1183,7 @@ def mock_device_info() -> dict[str, Any]:
 
 # Global patches for common issues
 @pytest.fixture(autouse=True)
-def mock_recorder_globally():
+def mock_recorder_globally() -> Generator[Mock]:
     """Automatically mock recorder for all tests."""
     with patch("homeassistant.helpers.recorder.get_instance") as mock_get_instance_ha:
         mock_instance = Mock()
@@ -1188,7 +1193,7 @@ def mock_recorder_globally():
 
 
 @pytest.fixture(autouse=True)
-def mock_significant_states_globally():
+def mock_significant_states_globally() -> Generator[Mock]:
     """Automatically mock significant states for all tests."""
     with patch(
         "homeassistant.components.recorder.history.get_significant_states"
@@ -1198,27 +1203,27 @@ def mock_significant_states_globally():
 
 
 @pytest.fixture(autouse=True)
-def mock_track_point_in_time_globally():
+def mock_track_point_in_time_globally() -> Generator[None]:
     """Automatically mock timer-related functions for all tests."""
 
     class CancellableTimerMock:
         """Mock timer that properly handles cleanup verification."""
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             self._cancelled = True
             self._args = args
             self._callback = args[1] if len(args) > 1 else None
 
-        def cancel(self):
+        def cancel(self) -> None:
             self._cancelled = True
 
-        def cancelled(self):
+        def cancelled(self) -> bool:
             return True
 
-        def __repr__(self):
+        def __repr__(self) -> str:
             return f"<MockTimerHandle cancelled={self._cancelled}>"
 
-    def create_timer_mock(*args, **kwargs):
+    def create_timer_mock(*args: Any, **kwargs: Any) -> CancellableTimerMock:
         return CancellableTimerMock(*args, **kwargs)
 
     # Mock both high-level helpers and low-level event loop methods
@@ -1238,7 +1243,7 @@ def mock_track_point_in_time_globally():
 
 @pytest.fixture
 def mock_entity_for_likelihood_tests(
-    mock_coordinator, mock_entity_type, mock_decay
+    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity specifically for likelihood calculation tests."""
     from custom_components.area_occupancy.data.entity import Entity
@@ -1273,7 +1278,7 @@ def mock_entity_for_likelihood_tests(
 
 
 @pytest.fixture(autouse=True)
-def mock_area_occupancy_db_globally(request):
+def mock_area_occupancy_db_globally(request: Any) -> Generator[Mock | None]:
     """Automatically mock AreaOccupancyDB for all tests except database tests."""
     # Skip mocking for database tests. Checking request.cls is more reliable
     # than matching the node string only.
@@ -1289,11 +1294,11 @@ def mock_area_occupancy_db_globally(request):
 
 
 @pytest.fixture(autouse=True)
-def mock_data_update_coordinator_debouncer():
+def mock_data_update_coordinator_debouncer() -> Generator[None]:
     """Automatically mock DataUpdateCoordinator's debouncer for all tests."""
     original_init = DataUpdateCoordinator.__init__
 
-    def patched_init(self, *args, **kwargs):
+    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
         original_init(self, *args, **kwargs)
         self._debounced_refresh = AsyncMock()
 
@@ -1305,7 +1310,7 @@ def mock_data_update_coordinator_debouncer():
 
 
 @pytest.fixture
-def mock_area_occupancy_db_data():
+def mock_area_occupancy_db_data() -> dict[str, Any]:
     """Return a representative AreaOccupancyDB data dict for testing."""
     return {
         "name": "Testing",
@@ -1502,7 +1507,7 @@ def mock_area_occupancy_db_data():
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> Mock:
     """Return a representative Config instance for testing."""
     # Create a mock config that works with the new Config class structure
     config = Mock()
@@ -1577,7 +1582,7 @@ def mock_config():
 
 
 @pytest.fixture
-def mock_realistic_config_entry():
+def mock_realistic_config_entry() -> Mock:
     """Return a realistic ConfigEntry for Area Occupancy Detection."""
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
@@ -1692,19 +1697,21 @@ def mock_realistic_config_entry():
 
 
 @pytest.fixture(autouse=True)
-def auto_cancel_timers(monkeypatch):
+def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
     """Automatically track and cancel all timers created during a test."""
     loop = asyncio.get_event_loop()
     original_call_later = loop.call_later
     original_call_at = loop.call_at
-    timer_handles = []
+    timer_handles: list[Any] = []
 
-    def tracking_call_later(delay, callback, *args, **kwargs):
+    def tracking_call_later(
+        delay: float, callback: Any, *args: Any, **kwargs: Any
+    ) -> Any:
         handle = original_call_later(delay, callback, *args, **kwargs)
         timer_handles.append(handle)
         return handle
 
-    def tracking_call_at(when, callback, *args, **kwargs):
+    def tracking_call_at(when: float, callback: Any, *args: Any, **kwargs: Any) -> Any:
         handle = original_call_at(when, callback, *args, **kwargs)
         timer_handles.append(handle)
         return handle
@@ -1718,10 +1725,11 @@ def auto_cancel_timers(monkeypatch):
 
         orig_async_track_point_in_time = async_track_point_in_time
 
-        def tracking_async_track_point_in_time(hass, action, point_in_time):
-            handle = orig_async_track_point_in_time(hass, action, point_in_time)
-            timer_handles.append(handle)
-            return handle
+        def tracking_async_track_point_in_time(
+            hass: Any, action: Any, point_in_time: Any
+        ) -> Any:
+            # Don't append to timer_handles as it's not a TimerHandle
+            return orig_async_track_point_in_time(hass, action, point_in_time)
 
         monkeypatch.setattr(
             "homeassistant.helpers.event.async_track_point_in_time",
@@ -1742,7 +1750,7 @@ def auto_cancel_timers(monkeypatch):
 
 
 @pytest.fixture
-def db_engine():
+def db_engine() -> Generator[Any]:
     """Create an in-memory SQLite engine for testing."""
     from sqlalchemy import create_engine
 
@@ -1766,7 +1774,7 @@ def db_engine():
 
 
 @pytest.fixture
-def db_session(db_engine):
+def db_session(db_engine: Any) -> Generator[Any]:
     """Create a database session for testing with automatic rollback."""
     from sqlalchemy.orm import sessionmaker
 
@@ -1783,7 +1791,7 @@ def db_session(db_engine):
 
 
 @pytest.fixture
-def transactional_db_session(db_engine):
+def transactional_db_session(db_engine: Any) -> Generator[Any]:
     """Create a database session with nested transaction for maximum isolation."""
     from sqlalchemy.orm import sessionmaker
 
@@ -1808,7 +1816,7 @@ def transactional_db_session(db_engine):
 
 
 @pytest.fixture
-def mock_area_occupancy_db(db_engine, db_session, tmp_path):
+def mock_area_occupancy_db(db_engine: Any, db_session: Any, tmp_path: Any) -> Any:
     """Create a mock AreaOccupancyDB instance using in-memory database."""
     from unittest.mock import Mock
 
@@ -1831,7 +1839,7 @@ def mock_area_occupancy_db(db_engine, db_session, tmp_path):
 
     # Replace the engine with our test engine
     db.engine = db_engine
-    db.session = db_session
+    setattr(db, "session", db_session)
 
     return db
 
@@ -1840,7 +1848,7 @@ def mock_area_occupancy_db(db_engine, db_session, tmp_path):
 
 
 @pytest.fixture
-def mock_db_with_engine(mock_hass, db_engine, tmp_path):
+def mock_db_with_engine(mock_hass: Mock, db_engine: Any, tmp_path: Any) -> Any:
     """Create AreaOccupancyDB instance with in-memory database."""
     from unittest.mock import Mock
 
@@ -1875,8 +1883,8 @@ def mock_db_with_engine(mock_hass, db_engine, tmp_path):
     except (ValueError, OSError):
         session.rollback()
 
-    db.session = session
-    db._session_maker = SessionLocal
+    setattr(db, "session", session)
+    setattr(db, "_session_maker", SessionLocal)
 
     return db
 
@@ -1933,24 +1941,28 @@ def _create_sample_data() -> dict[str, Any]:
 
 
 @pytest.fixture
-def sample_area_data():
+def sample_area_data() -> dict[str, Any]:
     """Provide sample area data for testing."""
-    return _create_sample_data()["area"]
+    data = _create_sample_data()["area"]
+    return dict(data) if isinstance(data, dict) else {}
 
 
 @pytest.fixture
-def sample_entity_data():
+def sample_entity_data() -> dict[str, Any]:
     """Provide sample entity data for testing."""
-    return _create_sample_data()["entity"]
+    data = _create_sample_data()["entity"]
+    return dict(data) if isinstance(data, dict) else {}
 
 
 @pytest.fixture
-def sample_interval_data():
+def sample_interval_data() -> dict[str, Any]:
     """Provide sample interval data for testing."""
-    return _create_sample_data()["interval"]
+    data = _create_sample_data()["interval"]
+    return dict(data) if isinstance(data, dict) else {}
 
 
 @pytest.fixture
-def sample_prior_data():
+def sample_prior_data() -> dict[str, Any]:
     """Provide sample prior data for testing."""
-    return _create_sample_data()["prior"]
+    data = _create_sample_data()["prior"]
+    return dict(data) if isinstance(data, dict) else {}

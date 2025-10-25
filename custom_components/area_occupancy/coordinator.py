@@ -358,7 +358,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Only create new listener if we have entities to track
         if entity_ids:
 
-            async def _refresh_on_state_change(event):
+            async def _refresh_on_state_change(event: Any) -> None:
                 entity_id = event.data.get("entity_id")
                 entity = self.entities.get_entity(entity_id)
                 if entity and entity.has_new_evidence() and self.setup_complete:

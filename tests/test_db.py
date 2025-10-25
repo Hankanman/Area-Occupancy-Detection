@@ -214,7 +214,7 @@ class TestDatabaseModels:
     def test_relationships(self, db_session: Session):
         """Test ORM relationships between models."""
         # Create area, entity, and prior
-        area, entity = setup_test_area_and_entity(db_session)
+        _area, _entity = setup_test_area_and_entity(db_session)
 
         prior = AreaOccupancyDB.Priors.from_dict(create_test_prior_data())
         db_session.add(prior)

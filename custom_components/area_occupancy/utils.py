@@ -50,7 +50,7 @@ def clamp_probability(value: float) -> float:
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def bayesian_probability(
     entities: dict[str, Entity], area_prior: float = 0.5, time_prior: float = 0.5
-):
+) -> float:
     """Compute posterior probability of occupancy given current features, area prior, and time prior.
 
     Args:
@@ -200,10 +200,10 @@ def combine_priors(
     area_weight = 1.0 - time_weight
 
     # Convert to logit space for better interpolation
-    def prob_to_logit(p):
+    def prob_to_logit(p: float) -> float:
         return math.log(p / (1 - p))
 
-    def logit_to_prob(logit):
+    def logit_to_prob(logit: float) -> float:
         return 1 / (1 + math.exp(-logit))
 
     # Interpolate in logit space for more principled combination
