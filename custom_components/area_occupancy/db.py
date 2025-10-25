@@ -99,7 +99,8 @@ class AreaOccupancyDB:
         """
         self.coordinator = coordinator
         # config_entry is always present in a properly initialized coordinator
-        assert coordinator.config_entry is not None
+        if coordinator.config_entry is None:
+            raise ValueError("Coordinator config_entry cannot be None")
         self.conf_version = coordinator.config_entry.data.get("version", CONF_VERSION)
         self.hass = coordinator.hass
         self.storage_path = (
@@ -1333,7 +1334,7 @@ class AreaOccupancyDB:
                     sa.select(sa.func.max(self.Intervals.end_time))
                 ).scalar()
                 if result:
-                    return datetime.fromisoformat(str(result)) - timedelta(hours=1)
+                    return result - timedelta(hours=1)
                 return dt_util.now() - timedelta(days=10)
 
         try:

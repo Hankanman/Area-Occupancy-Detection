@@ -341,17 +341,17 @@ class Config:
         try:
             _validate_config_entry()
             # Create new options dict by merging existing with new options
-            assert self.config_entry is not None  # Type narrowing after validation
-            new_options = dict(self.config_entry.options)
+            new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
             new_options.update(options)
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
-                self.config_entry, options=new_options
+                self.config_entry,  # type: ignore[arg-type]
+                options=new_options,  # type: ignore[arg-type]
             )
 
             # Merge existing config entry with new options for internal state
-            data = self._merge_entry(self.config_entry)
+            data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
             data.update(options)
 
             # Reload configuration with updated data
