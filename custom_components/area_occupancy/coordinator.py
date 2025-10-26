@@ -214,26 +214,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- Public Methods ---
     async def setup(self) -> None:
-        """Initialize the coordinator and its components."""
+        """Initialize the coordinator and its components (fast startup mode)."""
         try:
-            _LOGGER.debug("Starting coordinator setup for %s", self.config.name)
+            _LOGGER.info(
+                "Initializing Area Occupancy for %s (quick startup mode)",
+                self.config.name,
+            )
 
             # Initialize purpose manager
+            _LOGGER.debug("Initializing purpose manager for %s", self.config.name)
             await self.purpose.async_initialize()
 
+            # Note: Old interval pruning is handled by hourly analysis cycle, not during startup
+            # This prevents lock contention when multiple instances start in parallel
+
             # Load stored data first to restore prior from DB
-            # This will now handle database corruption automatically
+            # Database integrity checks are deferred to background (60s after startup)
+            _LOGGER.debug(
+                "Loading entity data from database (deferring heavy operations)"
+            )
             await self.db.load_data()
+            _LOGGER.info("Loaded entity data for %s", self.config.name)
 
             # Ensure area exists and persist current configuration/state
             try:
-                await self.db.save_area_data()
+                await self.hass.async_add_executor_job(self.db.save_area_data)
             except (HomeAssistantError, OSError, RuntimeError) as e:
                 _LOGGER.warning("Failed to save area data, continuing setup: %s", e)
 
-            # Check if intervals table is empty, with automatic corruption handling
+            # Check if intervals table is empty (fast check)
             try:
-                is_empty = self.db.safe_is_intervals_empty()
+                is_empty = await self.hass.async_add_executor_job(
+                    self.db.safe_is_intervals_empty
+                )
             except (HomeAssistantError, OSError, RuntimeError) as e:
                 _LOGGER.warning(
                     "Failed to check intervals table, assuming empty: %s", e
@@ -242,30 +255,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if is_empty:
                 _LOGGER.info(
-                    "State intervals table is empty for instance %s. Populating with initial data from recorder.",
+                    "Database has no historical data for %s. Initial analysis scheduled for background after startup completes.",
                     self.entry_id,
                 )
-                entity_ids = [eid for eid in set(self.config.entity_ids) if eid]
-                if entity_ids:
-                    try:
-                        await self.run_analysis()
-                    except (HomeAssistantError, OSError, RuntimeError) as e:
-                        _LOGGER.warning(
-                            "Failed to run initial analysis, continuing setup: %s", e
-                        )
-                else:
-                    _LOGGER.warning(
-                        "No entity IDs found in configuration to populate state intervals table for instance %s.",
-                        self.entry_id,
-                    )
+                # DON'T run analysis here - defer to background task (already scheduled by _start_analysis_timer)
+                _LOGGER.info(
+                    "Heavy historical analysis deferred to background task (will run in ~5 minutes)"
+                )
             else:
                 _LOGGER.info(
-                    "State intervals table is not empty for instance %s. Data already loaded from database.",
+                    "Database has existing historical data for %s. Background health check scheduled for 60 seconds after startup.",
                     self.entry_id,
+                )
+                _LOGGER.debug(
+                    "If database corruption is detected, automatic recovery will run in background "
+                    "without blocking integration functionality."
                 )
 
             # Track entity state changes
             await self.track_entity_state_changes(self.entities.entity_ids)
+
             # Start timers only after everything is ready
             self._start_decay_timer()
             self._start_analysis_timer()
@@ -273,12 +282,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
-            # Note: async_refresh() is called by async_config_entry_first_refresh() in __init__.py
-            # so we don't need to call it here to avoid debouncer conflicts
-            _LOGGER.debug(
-                "Successfully set up AreaOccupancyCoordinator for %s with %d entities",
+
+            # Log instance information for multi-instance awareness
+            all_instances = list(self.hass.config_entries.async_entries(DOMAIN))
+            _LOGGER.info(
+                "Successfully initialized %s with %d entities (instance %d of %d, all sharing database)",
                 self.config.name,
                 len(self.entities.entities),
+                1,  # Could calculate position if needed
+                len(all_instances),
             )
         except HomeAssistantError as err:
             _LOGGER.error("Failed to set up coordinator: %s", err)
@@ -302,7 +314,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data."""
         # Save current state to database
-        await self.db.save_data()
+        await self.hass.async_add_executor_job(self.db.save_data)
 
         # Return current state data
         return {
@@ -336,7 +348,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._health_check_timer()
             self._health_check_timer = None
 
-        await self.db.save_data()
+        await self.hass.async_add_executor_job(self.db.save_data)
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -366,7 +378,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.track_entity_state_changes(self.entities.entity_ids)
 
         # Force immediate save after configuration changes
-        await self.db.save_data()
+        await self.hass.async_add_executor_job(self.db.save_data)
 
         # Only request refresh if setup is complete to avoid debouncer conflicts
         if self.setup_complete:
@@ -440,7 +452,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.db.sync_states()
 
             # Prune old intervals to prevent database growth
-            pruned_count = self.db.prune_old_intervals()
+            pruned_count = await self.hass.async_add_executor_job(
+                self.db.prune_old_intervals
+            )
             if pruned_count > 0:
                 _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
 
@@ -454,7 +468,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_refresh()
 
             # Save data to database
-            await self.db.save_data()
+            await self.hass.async_add_executor_job(self.db.save_data)
 
             # Schedule next analysis (every hour)
             next_update = _now + timedelta(seconds=ANALYSIS_INTERVAL)
@@ -472,30 +486,72 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- Health Check Timer Handling ---
     def _start_health_check_timer(self) -> None:
-        """Start the database health check timer."""
+        """Start the database health check timer (staggered across instances).
+
+        First check runs 60 seconds after startup. Subsequent checks run every
+        6 hours, with each instance offset by its entry_id hash to prevent
+        simultaneous checks from multiple instances.
+        """
         if self._health_check_timer is not None or not self.hass:
             return
 
-        # Run health check every 6 hours
-        next_update = dt_util.utcnow() + timedelta(hours=6)
+        # First check after startup
+        first_check_delay = 60
+
+        # Stagger subsequent checks based on entry_id hash
+        # Spreads instances across 6-hour window (0-359 minutes apart)
+        entry_hash = hash(self.entry_id) % 360  # 0-359 minutes
+        stagger_minutes = entry_hash
+
+        next_update = dt_util.utcnow() + timedelta(seconds=first_check_delay)
+
+        _LOGGER.debug(
+            "Health check scheduled for %s, with %d minute stagger for subsequent checks",
+            next_update,
+            stagger_minutes,
+        )
 
         self._health_check_timer = async_track_point_in_time(
             self.hass, self._handle_health_check_timer, next_update
         )
+
+        # Store stagger for next schedule
+        self._health_check_stagger = stagger_minutes
 
     async def _handle_health_check_timer(self, _now: datetime) -> None:
         """Handle health check timer firing."""
         self._health_check_timer = None
 
         try:
-            # Perform database health check
-            if not self.db.periodic_health_check():
-                _LOGGER.warning("Database health check found issues")
+            _LOGGER.info(
+                "Running background database health check for %s", self.config.name
+            )
 
-            # Reschedule the timer
-            self._start_health_check_timer()
+            # Perform database health check in executor to avoid blocking
+            health_ok = await self.hass.async_add_executor_job(
+                self.db.periodic_health_check
+            )
+
+            if health_ok:
+                _LOGGER.info("Database health check passed for %s", self.config.name)
+            else:
+                _LOGGER.warning(
+                    "Database health check found issues for %s", self.config.name
+                )
+
+            # Schedule next check (6 hours + stagger to prevent simultaneous checks)
+            base_interval = timedelta(hours=6)
+            stagger = timedelta(minutes=getattr(self, "_health_check_stagger", 0))
+            next_update = dt_util.utcnow() + base_interval + stagger
+
+            self._health_check_timer = async_track_point_in_time(
+                self.hass, self._handle_health_check_timer, next_update
+            )
 
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Health check timer failed: %s", err)
-            # Reschedule even if it failed
-            self._start_health_check_timer()
+            # Reschedule with backoff (retry in 1 hour if failed)
+            next_update = dt_util.utcnow() + timedelta(hours=1)
+            self._health_check_timer = async_track_point_in_time(
+                self.hass, self._handle_health_check_timer, next_update
+            )
