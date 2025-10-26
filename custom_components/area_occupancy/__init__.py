@@ -18,12 +18,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Area Occupancy Detection from a config entry."""
+    """Set up Area Occupancy Detection from a config entry (fast startup mode).
+
+    NOTE: Heavy database operations (integrity checks, historical analysis) are
+    deferred to background tasks to ensure HA startup completes quickly.
+    """
 
     # Migration check
     if entry.version != CONF_VERSION or not entry.version:
-        _LOGGER.debug(
-            "Migrating entry from version %s to %s", entry.version, CONF_VERSION
+        _LOGGER.info(
+            "Migrating Area Occupancy entry from version %s to %s",
+            entry.version,
+            CONF_VERSION,
         )
         try:
             migration_result = await async_migrate_entry(hass, entry)
@@ -40,17 +46,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"Migration failed with exception: {err}"
             ) from err
 
-    # Create and setup coordinator
-    _LOGGER.debug("Creating coordinator for entry %s", entry.entry_id)
+    # Create and setup coordinator (fast path - no blocking operations)
+    _LOGGER.info("Initializing Area Occupancy coordinator for entry %s", entry.entry_id)
     try:
         coordinator = AreaOccupancyCoordinator(hass, entry)
     except Exception as err:
         _LOGGER.error("Failed to create coordinator: %s", err)
         raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
 
-    # Initialize database asynchronously to avoid blocking I/O
+    # Initialize database asynchronously (fast validation only, no integrity checks)
     try:
+        _LOGGER.debug("Initializing database (quick validation mode)")
         await coordinator.async_init_database()
+        _LOGGER.info("Database initialization completed")
     except Exception as err:
         _LOGGER.error("Failed to initialize database: %s", err)
         raise ConfigEntryNotReady(f"Failed to initialize database: {err}") from err
@@ -74,7 +82,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Add update listener
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
-    _LOGGER.debug("Setup complete for entry %s", entry.entry_id)
+    _LOGGER.info("Area Occupancy setup complete for entry %s", entry.entry_id)
+    _LOGGER.info("Background tasks scheduled: health check (60s), analysis (5min)")
     return True
 
 
