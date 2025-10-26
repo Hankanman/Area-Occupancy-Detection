@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Generator
 import contextlib
 from datetime import datetime, timedelta
+import os
 import tempfile
 import time
 import types
@@ -13,6 +14,9 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
+
+# Set environment variable for auto database initialization in tests
+os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"
 
 # ruff: noqa: SLF001, PLC0415
 from custom_components.area_occupancy.const import (

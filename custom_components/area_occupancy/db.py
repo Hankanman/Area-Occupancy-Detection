@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
+import os
 from pathlib import Path
 import shutil
 import time
@@ -134,9 +135,6 @@ class AreaOccupancyDB:
         if self.storage_path:
             self.storage_path.mkdir(exist_ok=True)
 
-        # Check if database exists and initialize if needed
-        self._ensure_db_exists()
-
         # Create session maker
         self._session_maker = sessionmaker(bind=self.engine)
 
@@ -153,6 +151,22 @@ class AreaOccupancyDB:
         self._lock_path = (
             self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
         )
+
+        # Auto-initialize database in test environments
+        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
+            self.initialize_database()
+
+    def initialize_database(self) -> None:
+        """Initialize the database by checking if it exists and creating it if needed.
+
+        This method performs blocking I/O operations.
+        In production environments, it should be called via
+        hass.async_add_executor_job() to avoid blocking the event loop.
+        In test environments (when AREA_OCCUPANCY_AUTO_INIT_DB=1 is set),
+        this method may be called directly.
+        """
+        # Check if database exists and initialize if needed
+        self._ensure_db_exists()
 
     @contextmanager
     def get_session(self) -> Any:

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 # Standard Library
 import logging
+import os
 from typing import Any
 
 from custom_components.area_occupancy.db import AreaOccupancyDB
@@ -75,6 +76,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._health_check_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
+
+    async def async_init_database(self) -> None:
+        """Initialize the database asynchronously to avoid blocking the event loop.
+
+        This method should be called after coordinator creation but before
+        async_config_entry_first_refresh().
+
+        Note: In test environments with AREA_OCCUPANCY_AUTO_INIT_DB=1, the database
+        is already initialized in AreaOccupancyDB.__init__(), and this method returns early without performing initialization.
+        """
+        # In test environments, database is already initialized in __init__
+        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
+            return
+
+        try:
+            await self.hass.async_add_executor_job(self.db.initialize_database)
+            _LOGGER.debug(
+                "Database initialization completed for entry %s", self.entry_id
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to initialize database for entry %s: %s", self.entry_id, err
+            )
+            raise
 
     @property
     def device_info(self) -> DeviceInfo:
