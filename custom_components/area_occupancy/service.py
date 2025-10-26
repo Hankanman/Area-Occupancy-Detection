@@ -120,13 +120,19 @@ async def _recover_database(hass: HomeAssistant, call: ServiceCall) -> dict[str,
         _LOGGER.info("Triggering database recovery for entry %s", entry_id)
 
         # Get database status before recovery
-        status_before = coordinator.db.get_database_status()
+        status_before = await hass.async_add_executor_job(
+            coordinator.db.get_database_status
+        )
 
         # Trigger manual recovery
-        recovery_success = coordinator.db.manual_recovery_trigger()
+        recovery_success = await hass.async_add_executor_job(
+            coordinator.db.manual_recovery_trigger
+        )
 
         # Get database status after recovery
-        status_after = coordinator.db.get_database_status()
+        status_after = await hass.async_add_executor_job(
+            coordinator.db.get_database_status
+        )
 
         if not recovery_success:
             _raise_recovery_error(entry_id)
@@ -161,7 +167,7 @@ async def _get_database_status(
 
         _LOGGER.debug("Getting database status for entry %s", entry_id)
 
-        status = coordinator.db.get_database_status()
+        status = await hass.async_add_executor_job(coordinator.db.get_database_status)
 
         return {
             "entry_id": entry_id,

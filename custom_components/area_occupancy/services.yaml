@@ -60,7 +60,7 @@ get_problematic_entities:
 
 get_database_status:
   name: Get Database Status
-  description: "Get the status of the database for a specific entry."
+  description: "Get the comprehensive status of the database including integrity, backups, and recovery options. Database health checks run automatically in the background 60 seconds after startup to avoid blocking HA initialization."
   fields:
     entry_id:
       name: Entry ID
@@ -72,7 +72,7 @@ get_database_status:
 
 recover_database:
   name: Recover Database
-  description: "Recover the database for a specific entry."
+  description: "Manually trigger database recovery if corruption is detected. Background health checks run automatically every 6 hours. Use this service if startup is slow or database errors appear in logs."
   fields:
     entry_id:
       name: Entry ID
