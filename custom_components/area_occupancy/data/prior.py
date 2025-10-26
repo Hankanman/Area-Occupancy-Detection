@@ -87,9 +87,12 @@ class Prior:
 
         # Use global_prior directly if time_prior is None, otherwise combine them
         if self.time_prior is None:
-            prior = self.global_prior  # type: ignore[unreachable]
+            prior = self.global_prior
         else:
             prior = combine_priors(self.global_prior, self.time_prior)
+
+        # Track if we needed to clamp the prior
+        was_clamped = False
 
         # Validate that prior is within reasonable bounds before applying factor
         if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
@@ -100,10 +103,18 @@ class Prior:
                 MAX_PROBABILITY,
             )
             prior = clamp_probability(prior)
+            was_clamped = True
 
         # Apply factor and clamp to bounds
         adjusted_prior = prior * PRIOR_FACTOR
-        result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+
+        # If the prior was clamped to bounds, return the clamped prior value
+        if was_clamped and prior == MIN_PROBABILITY:
+            result = MIN_PRIOR
+        elif was_clamped and prior == MAX_PROBABILITY:
+            result = MAX_PRIOR
+        else:
+            result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
         # Log if the factor caused a significant change
         if abs(result - prior) > SIGNIFICANT_CHANGE_THRESHOLD:

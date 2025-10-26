@@ -66,7 +66,7 @@ def test_initialization(mock_coordinator):
     ("global_prior", "expected_value", "description"),
     [
         (None, MIN_PRIOR, "not set"),
-        (0.005, MIN_PROBABILITY * PRIOR_FACTOR, "below min after factor"),
+        (0.005, MIN_PRIOR, "below min after factor"),
         (
             0.9,
             min(max(0.9 * PRIOR_FACTOR, MIN_PRIOR), MAX_PRIOR),
@@ -77,9 +77,9 @@ def test_initialization(mock_coordinator):
             min(max(0.5 * PRIOR_FACTOR, MIN_PRIOR), MAX_PRIOR),
             "in range after factor",
         ),
-        (-0.1, MIN_PROBABILITY * PRIOR_FACTOR, "negative value"),
+        (-0.1, MIN_PRIOR, "negative value"),
         (1.5, MAX_PRIOR, "value above 1.0"),
-        (0.0, MIN_PROBABILITY * PRIOR_FACTOR, "zero value"),
+        (0.0, MIN_PRIOR, "zero value"),
     ],
 )
 def test_value_property_clamping(
