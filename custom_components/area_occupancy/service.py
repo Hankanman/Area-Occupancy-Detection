@@ -109,6 +109,11 @@ async def _recover_database(hass: HomeAssistant, call: ServiceCall) -> dict[str,
     """Manually trigger database recovery for a specific entry."""
     entry_id = call.data["entry_id"]
 
+    def _raise_recovery_error(entry_id: str) -> None:
+        """Raise an error when database recovery fails."""
+        _LOGGER.error("Database recovery failed for entry %s", entry_id)
+        raise HomeAssistantError(f"Database recovery failed for entry {entry_id}")
+
     try:
         coordinator = _get_coordinator(hass, entry_id)
 
@@ -123,7 +128,11 @@ async def _recover_database(hass: HomeAssistant, call: ServiceCall) -> dict[str,
         # Get database status after recovery
         status_after = coordinator.db.get_database_status()
 
-        response_data = {
+        if not recovery_success:
+            _raise_recovery_error(entry_id)
+
+        _LOGGER.info("Database recovery completed successfully for entry %s", entry_id)
+        return {
             "entry_id": entry_id,
             "area_name": coordinator.config.name,
             "recovery_success": recovery_success,
@@ -132,19 +141,13 @@ async def _recover_database(hass: HomeAssistant, call: ServiceCall) -> dict[str,
             "recovery_timestamp": dt_util.utcnow().isoformat(),
         }
 
-        if recovery_success:
-            _LOGGER.info(
-                "Database recovery completed successfully for entry %s", entry_id
-            )
-        else:
-            _LOGGER.error("Database recovery failed for entry %s", entry_id)
-
+    except HomeAssistantError:
+        # Re-raise our own errors
+        raise
     except Exception as err:
         error_msg = f"Failed to recover database for {entry_id}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
-    else:
-        return response_data
 
 
 async def _get_database_status(
