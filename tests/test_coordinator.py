@@ -1064,19 +1064,17 @@ class TestAreaOccupancyCoordinator:
         with (
             patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_area_data"),  # Now sync, no AsyncMock
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
-            patch.object(
-                coordinator, "run_analysis", new=AsyncMock()
-            ) as mock_run_analysis,
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(coordinator, "_start_analysis_timer") as mock_start_timer,
             patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
         ):
             await coordinator.setup()
-            mock_run_analysis.assert_called_once()
+            # run_analysis is now deferred to background, so _start_analysis_timer should be called
+            mock_start_timer.assert_called_once()
 
     async def test_setup_with_intervals_not_empty(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock

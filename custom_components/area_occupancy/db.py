@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# Standard library imports
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
@@ -11,6 +12,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
+# Third-party imports
 from filelock import FileLock, Timeout
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -36,20 +38,24 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
+# Home Assistant imports
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
+# Local imports
 from .const import (
     CONF_VERSION,
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    MAX_INTERVAL_SECONDS,
     MAX_PROBABILITY,
     MAX_WEIGHT,
+    MIN_INTERVAL_SECONDS,
     MIN_PROBABILITY,
     MIN_WEIGHT,
     RETENTION_DAYS,
@@ -70,11 +76,6 @@ else:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Interval filtering thresholds to exclude anomalous data
-# Exclude intervals shorter than 5 seconds (false triggers)
-MIN_INTERVAL_SECONDS = 5
-# Exclude intervals longer than 13 hours (stuck sensors)
-MAX_INTERVAL_SECONDS = 13 * 3600
 # States to exclude from intervals
 INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
 
@@ -474,22 +475,33 @@ class AreaOccupancyDB:
         value = Column(String, nullable=False)
 
     def _ensure_db_exists(self) -> None:
-        """Check if the database exists and initialize it if needed, with corruption handling."""
+        """Check if the database exists and initialize it if needed.
+
+        NOTE: This method only performs FAST validation (file existence and SQLite header).
+        Heavy integrity checks are deferred to background tasks to avoid blocking startup.
+        """
         try:
-            # First check if the database file is accessible
+            # Fast validation: only check if file exists and has valid SQLite header
             if self.db_path and self.db_path.exists():
-                if not self.check_database_accessibility():
-                    _LOGGER.warning(
-                        "Database file is corrupted or inaccessible, attempting recovery"
-                    )
-                    if not self.handle_database_corruption():
-                        _LOGGER.error(
-                            "Failed to recover database, recreating from scratch"
-                        )
-                        self.delete_db()
-                        self.init_db()
-                        self.set_db_version()
-                        return
+                # Quick check: read first 16 bytes to validate SQLite format
+                try:
+                    with open(self.db_path, "rb") as f:
+                        header = f.read(16)
+                        if not header.startswith(b"SQLite format 3"):
+                            _LOGGER.warning(
+                                "Database file is not a valid SQLite database, will be recreated"
+                            )
+                            self.delete_db()
+                        else:
+                            # File exists and is valid SQLite - use it as-is
+                            # Corruption checks will be handled by background health check
+                            _LOGGER.debug(
+                                "Database file found, deferring integrity check to background"
+                            )
+                            return
+                except (OSError, PermissionError) as e:
+                    _LOGGER.warning("Cannot read database file: %s, will recreate", e)
+                    # Will create new database below
 
             # Use direct engine connection during initialization
             with self.engine.connect() as conn:
@@ -504,14 +516,12 @@ class AreaOccupancyDB:
         except sa.exc.SQLAlchemyError as e:
             # Check if this is a corruption error
             if self.is_database_corrupted(e):
-                _LOGGER.error(
-                    "Database corruption detected during initialization: %s", e
+                _LOGGER.warning(
+                    "Database may be corrupted (error: %s), will attempt recovery in background",
+                    e,
                 )
-                if not self.handle_database_corruption():
-                    _LOGGER.error("Failed to recover database, recreating from scratch")
-                    self.delete_db()
-                    self.init_db()
-                    self.set_db_version()
+                # Don't block startup - let background health check handle it
+                # Just log and continue
             else:
                 # Database doesn't exist or is not initialized, create it
                 _LOGGER.debug(
@@ -956,6 +966,69 @@ class AreaOccupancyDB:
         self.init_db()
         self.set_db_version()
 
+    def _get_last_prune_time(self) -> datetime | None:
+        """Get timestamp of last successful prune operation.
+
+        Returns:
+            datetime of last prune, or None if not recorded
+        """
+        try:
+            with self.get_session() as session:
+                result = (
+                    session.query(self.Metadata)
+                    .filter_by(key="last_prune_time")
+                    .first()
+                )
+                if result:
+                    return datetime.fromisoformat(result.value)
+        except (ValueError, AttributeError, SQLAlchemyError, OSError) as e:
+            _LOGGER.debug("Failed to get last prune time: %s", e)
+        return None
+
+    def _set_last_prune_time(self, timestamp: datetime, session: Any = None) -> None:
+        """Record timestamp of successful prune operation.
+
+        Args:
+            timestamp: When the prune occurred
+            session: Optional existing session to use (avoids nested locks)
+        """
+        try:
+            if session is not None:
+                # Use existing session to avoid nested lock acquisition
+                existing = (
+                    session.query(self.Metadata)
+                    .filter_by(key="last_prune_time")
+                    .first()
+                )
+                if existing:
+                    existing.value = timestamp.isoformat()
+                else:
+                    session.add(
+                        self.Metadata(
+                            key="last_prune_time", value=timestamp.isoformat()
+                        )
+                    )
+                session.commit()
+            else:
+                # Fallback to new locked session if not provided
+                with self.get_locked_session() as new_session:
+                    existing = (
+                        new_session.query(self.Metadata)
+                        .filter_by(key="last_prune_time")
+                        .first()
+                    )
+                    if existing:
+                        existing.value = timestamp.isoformat()
+                    else:
+                        new_session.add(
+                            self.Metadata(
+                                key="last_prune_time", value=timestamp.isoformat()
+                            )
+                        )
+                    new_session.commit()
+        except (SQLAlchemyError, OSError, ValueError) as e:
+            _LOGGER.warning("Failed to record prune timestamp: %s", e)
+
     def init_db(self) -> None:
         """Initialize the database with WAL mode and race condition handling."""
         _LOGGER.debug("Starting database initialization")
@@ -1009,17 +1082,23 @@ class AreaOccupancyDB:
     # --- Load Data ---
 
     async def load_data(self) -> None:
-        """Load the data from the database."""
+        """Load the data from the database (optimized for parallel reads).
 
-        def _load_data_operation() -> bool:
-            with self.get_locked_session() as session:
+        This method uses a two-phase approach to allow multiple integration
+        instances to load in parallel during startup:
+        1. Phase 1: Read data without lock (parallel-safe)
+        2. Phase 2: Only acquire lock if stale entities need deletion (rare)
+        """
+
+        def _read_data_operation() -> tuple[Any, list[Any], list[str]]:
+            """Read data WITHOUT lock (parallel-safe)."""
+            stale_entity_ids = []
+            with self.get_session() as session:
                 area = (
                     session.query(self.Areas)
                     .filter_by(entry_id=self.coordinator.entry_id)
                     .first()
                 )
-                if area:
-                    self.coordinator.prior.set_global_prior(area.area_prior)
                 entities = (
                     session.query(self.Entities)
                     .filter_by(entry_id=self.coordinator.entry_id)
@@ -1028,39 +1107,11 @@ class AreaOccupancyDB:
                 )
                 if entities:
                     for entity_obj in entities:
-                        # Try to get existing entity from coordinator
+                        # Check if entity exists in current coordinator config
                         try:
-                            existing_entity = self.coordinator.entities.get_entity(
-                                entity_obj.entity_id
-                            )
-                            # Update existing entity with database values (preserve database timestamp)
-                            existing_entity.update_decay(
-                                entity_obj.decay_start,
-                                entity_obj.is_decaying,
-                            )
-                            existing_entity.update_likelihood(
-                                entity_obj.prob_given_true,
-                                entity_obj.prob_given_false,
-                            )
-                            # DB weight takes priority over configured defaults when valid
-                            if hasattr(existing_entity, "type") and hasattr(
-                                existing_entity.type, "weight"
-                            ):
-                                try:
-                                    weight_val = float(entity_obj.weight)
-                                    if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
-                                        existing_entity.type.weight = weight_val
-                                except (TypeError, ValueError):
-                                    pass
-                            existing_entity.last_updated = entity_obj.last_updated
-                            existing_entity.previous_evidence = entity_obj.evidence
-                            _LOGGER.debug(
-                                "Updated existing entity %s with database values",
-                                entity_obj.entity_id,
-                            )
+                            self.coordinator.entities.get_entity(entity_obj.entity_id)
                         except ValueError:
-                            # Entity not found in coordinator - check if it's in current config
-                            # Handle cases where entities might be a SimpleNamespace or mock object
+                            # Entity not found in coordinator - identify if stale
                             should_delete = False
                             if hasattr(self.coordinator.entities, "entity_ids"):
                                 current_entity_ids = set(
@@ -1080,35 +1131,87 @@ class AreaOccupancyDB:
                                 should_delete = True
 
                             if should_delete:
-                                # Entity is not in current config - delete it from database
-                                _LOGGER.info(
-                                    "Deleting stale entity %s from database (not in current config)",
-                                    entity_obj.entity_id,
-                                )
-                                session.delete(entity_obj)
-                                continue
-                            # Entity should exist but doesn't - create it from database
-                            # (This handles cases where we can't determine current config, like in tests)
-                            _LOGGER.warning(
-                                "Entity %s not found in coordinator but is in config, creating from database",
-                                entity_obj.entity_id,
-                            )
-                            new_entity = self.coordinator.factory.create_from_db(
-                                entity_obj
-                            )
-                            self.coordinator.entities.add_entity(new_entity)
+                                stale_entity_ids.append(entity_obj.entity_id)
+            return area, entities, stale_entity_ids
 
-                # Commit any deletions or other changes made during entity processing
+        def _delete_stale_operation(stale_ids: list[str]) -> None:
+            """Delete stale entities WITH lock (only if needed)."""
+            with self.get_locked_session() as session:
+                for entity_id in stale_ids:
+                    _LOGGER.info(
+                        "Deleting stale entity %s from database (not in current config)",
+                        entity_id,
+                    )
+                    session.query(self.Entities).filter_by(
+                        entry_id=self.coordinator.entry_id, entity_id=entity_id
+                    ).delete()
                 session.commit()
-                _LOGGER.debug("Loaded area occupancy data")
-                return True  # Indicate successful completion
 
         try:
-            result = self.safe_database_operation("load data", _load_data_operation)
-            if result is None:
-                _LOGGER.warning(
-                    "Database operation failed, continuing without loaded data"
+            # Phase 1: Read without lock (all instances in parallel)
+            area, entities, stale_ids = await self.hass.async_add_executor_job(
+                _read_data_operation
+            )
+
+            # Update prior from area data
+            if area:
+                self.coordinator.prior.set_global_prior(area.area_prior)
+
+            # Process entities
+            if entities:
+                for entity_obj in entities:
+                    if entity_obj.entity_id in stale_ids:
+                        # Skip stale entities, will be deleted in phase 2
+                        continue
+
+                    # Try to get existing entity from coordinator
+                    try:
+                        existing_entity = self.coordinator.entities.get_entity(
+                            entity_obj.entity_id
+                        )
+                        # Update existing entity with database values (preserve database timestamp)
+                        existing_entity.update_decay(
+                            entity_obj.decay_start,
+                            entity_obj.is_decaying,
+                        )
+                        existing_entity.update_likelihood(
+                            entity_obj.prob_given_true,
+                            entity_obj.prob_given_false,
+                        )
+                        # DB weight takes priority over configured defaults when valid
+                        if hasattr(existing_entity, "type") and hasattr(
+                            existing_entity.type, "weight"
+                        ):
+                            try:
+                                weight_val = float(entity_obj.weight)
+                                if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
+                                    existing_entity.type.weight = weight_val
+                            except (TypeError, ValueError):
+                                pass
+                        existing_entity.last_updated = entity_obj.last_updated
+                        existing_entity.previous_evidence = entity_obj.evidence
+                        _LOGGER.debug(
+                            "Updated existing entity %s with database values",
+                            entity_obj.entity_id,
+                        )
+                    except ValueError:
+                        # Entity should exist but doesn't - create it from database
+                        # (This handles cases where we can't determine current config, like in tests)
+                        _LOGGER.warning(
+                            "Entity %s not found in coordinator but is in config, creating from database",
+                            entity_obj.entity_id,
+                        )
+                        new_entity = self.coordinator.factory.create_from_db(entity_obj)
+                        self.coordinator.entities.add_entity(new_entity)
+
+            # Phase 2: Only lock if cleanup needed (rare)
+            if stale_ids:
+                await self.hass.async_add_executor_job(
+                    _delete_stale_operation, stale_ids
                 )
+
+            _LOGGER.debug("Loaded area occupancy data")
+
         except (
             sa.exc.SQLAlchemyError,
             HomeAssistantError,
@@ -1122,7 +1225,7 @@ class AreaOccupancyDB:
 
     # --- Save Data ---
 
-    async def save_area_data(self) -> None:
+    def save_area_data(self) -> None:
         """Save the area data to the database."""
         try:
             with self.get_locked_session() as session:
@@ -1203,7 +1306,7 @@ class AreaOccupancyDB:
             _LOGGER.error("Failed to save area data: %s", err)
             raise
 
-    async def save_entity_data(self) -> None:
+    def save_entity_data(self) -> None:
         """Save the entity data to the database."""
         try:
             with self.get_locked_session() as session:
@@ -1272,7 +1375,7 @@ class AreaOccupancyDB:
             _LOGGER.debug("Saved entity data")
 
             # Clean up any orphaned entities after saving current ones
-            cleaned_count = await self.cleanup_orphaned_entities()
+            cleaned_count = self.cleanup_orphaned_entities()
             if cleaned_count > 0:
                 _LOGGER.info(
                     "Cleaned up %d orphaned entities after saving", cleaned_count
@@ -1282,12 +1385,12 @@ class AreaOccupancyDB:
             _LOGGER.error("Failed to save entity data: %s", err)
             raise
 
-    async def save_data(self) -> None:
+    def save_data(self) -> None:
         """Save both area and entity data to the database."""
-        await self.save_area_data()
-        await self.save_entity_data()
+        self.save_area_data()
+        self.save_entity_data()
 
-    async def cleanup_orphaned_entities(self) -> int:
+    def cleanup_orphaned_entities(self) -> int:
         """Clean up entities from database that are no longer in the current configuration.
 
         This method removes entities and their associated intervals that exist in the database
@@ -1393,10 +1496,10 @@ class AreaOccupancyDB:
         return state not in INVALID_STATES
 
     def is_intervals_empty(self) -> bool:
-        """Check if the intervals table is empty using ORM."""
+        """Check if the intervals table is empty using ORM (read-only, no lock)."""
 
         def _check_intervals_empty() -> bool:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 count = session.query(self.Intervals).count()
                 return bool(count == 0)
 
@@ -1415,37 +1518,36 @@ class AreaOccupancyDB:
             return True
 
     def safe_is_intervals_empty(self) -> bool:
-        """Safely check if intervals table is empty with comprehensive error handling.
+        """Safely check if intervals table is empty (fast, no integrity checks).
 
-        This method is specifically designed to handle the database corruption error
-        that was occurring in production.
+        Note: Database integrity checks are deferred to background health check
+        task that runs 60 seconds after startup to avoid blocking integration loading.
 
         Returns:
-            bool: True if intervals are empty or if database is corrupted, False if intervals exist
-
+            bool: True if intervals are empty, False if intervals exist
         """
         try:
-            # First check database integrity
-            if not self.check_database_integrity():
-                _LOGGER.warning("Database integrity check failed, attempting recovery")
-                if not self.handle_database_corruption():
-                    _LOGGER.error(
-                        "Failed to recover database, assuming intervals are empty"
-                    )
-                    return True
-
-            # Try the normal check
+            # Quick check - assume database is healthy during startup
+            # Integrity checks will be performed by background health check task
             return self.is_intervals_empty()
-
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
-            _LOGGER.error("Unexpected error checking intervals: %s", e)
-            # If we can't determine the state, assume empty to trigger data population
+            # If we hit a corruption error, log it but don't block startup
+            if self.is_database_corrupted(e):
+                _LOGGER.warning(
+                    "Database may be corrupted (error: %s). "
+                    "Background health check will attempt recovery in 60 seconds.",
+                    e,
+                )
+            else:
+                _LOGGER.error("Unexpected error checking intervals: %s", e)
+
+            # Assume empty to trigger data population, but don't block startup
             return True
 
     def get_area_data(self, entry_id: str) -> dict[str, Any] | None:
-        """Get area data for a specific entry_id."""
+        """Get area data for a specific entry_id (read-only, no lock)."""
         try:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 area = session.query(self.Areas).filter_by(entry_id=entry_id).first()
                 if area:
                     return dict(area.to_dict())
@@ -1470,7 +1572,7 @@ class AreaOccupancyDB:
                 "Area not found, forcing creation for entry_id: %s",
                 self.coordinator.entry_id,
             )
-            await self.save_data()
+            self.save_data()
 
             # Verify it was created
             new_area = self.get_area_data(self.coordinator.entry_id)
@@ -1485,10 +1587,10 @@ class AreaOccupancyDB:
             _LOGGER.error("Error ensuring area exists: %s", e)
 
     def get_latest_interval(self) -> datetime:
-        """Return the latest interval end time minus 1 hour, or default window if none."""
+        """Return the latest interval end time minus 1 hour, or default window if none (read-only, no lock)."""
 
         def _get_latest_interval_operation() -> datetime:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 result = session.execute(
                     sa.select(sa.func.max(self.Intervals.end_time))
                 ).scalar()
@@ -1638,13 +1740,27 @@ class AreaOccupancyDB:
             _LOGGER.error("Error getting states: %s", err)
             raise
 
-    def prune_old_intervals(self) -> int:
-        """Delete intervals older than RETENTION_DAYS to prevent database growth.
+    def prune_old_intervals(self, force: bool = False) -> int:
+        """Delete intervals older than RETENTION_DAYS (coordinated across instances).
+
+        Args:
+            force: If True, skip the recent-prune check
 
         Returns:
             Number of intervals deleted
-
         """
+        # Skip if pruned recently (within last hour) unless forced
+        if not force:
+            last_prune = self._get_last_prune_time()
+            if last_prune:
+                time_since_prune = (dt_util.utcnow() - last_prune).total_seconds()
+                if time_since_prune < 3600:  # 1 hour
+                    _LOGGER.debug(
+                        "Skipping prune - last run was %d minutes ago",
+                        int(time_since_prune / 60),
+                    )
+                    return 0
+
         cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
         _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
 
@@ -1658,6 +1774,8 @@ class AreaOccupancyDB:
 
                 if intervals_to_delete == 0:
                     _LOGGER.debug("No old intervals to prune")
+                    # Still record the prune attempt to prevent other instances from trying
+                    self._set_last_prune_time(dt_util.utcnow(), session)
                     return 0
 
                 # Delete old intervals
@@ -1674,6 +1792,9 @@ class AreaOccupancyDB:
                     RETENTION_DAYS,
                     cutoff_date,
                 )
+
+                # Record successful prune
+                self._set_last_prune_time(dt_util.utcnow(), session)
 
                 return deleted_count
 

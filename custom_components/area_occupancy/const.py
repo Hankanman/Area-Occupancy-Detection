@@ -148,6 +148,16 @@ DEFAULT_LOOKBACK_DAYS: Final = 90  # Days of interval data to load for analysis
 DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
 RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
 
+# Database interval filtering
+MIN_INTERVAL_SECONDS: Final = 5  # Exclude intervals shorter than 5 seconds
+MAX_INTERVAL_SECONDS: Final = (
+    46800  # Exclude intervals longer than 13 hours (13 * 3600)
+)
+
+# Coordinator timer intervals
+DECAY_INTERVAL: Final = 10  # seconds
+ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
+
 ########################################################
 # Virtual sensor constants
 ########################################################

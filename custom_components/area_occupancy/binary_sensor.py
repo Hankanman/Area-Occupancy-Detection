@@ -111,7 +111,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
     def __init__(
         self,
-        hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
@@ -122,7 +121,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         super().__init__()
 
         # Store references and configuration
-        self.hass = hass
+        # Note: self.hass is automatically set by Home Assistant when entity is added
         self._coordinator = coordinator
         self._config = coordinator.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
@@ -481,9 +480,9 @@ async def async_setup_entry(
     if coordinator.config.wasp_in_box.enabled:
         _LOGGER.debug("Wasp in Box sensor enabled, creating sensor")
         wasp_sensor = WaspInBoxSensor(
-            hass=hass, coordinator=coordinator, config_entry=config_entry
+            coordinator=coordinator, config_entry=config_entry
         )
         entities.append(wasp_sensor)
         _LOGGER.debug("Created Wasp in Box sensor: %s", wasp_sensor.unique_id)
 
-    async_add_entities(entities, update_before_add=True)
+    async_add_entities(entities, update_before_add=False)

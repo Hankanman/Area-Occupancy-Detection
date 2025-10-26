@@ -227,4 +227,4 @@ async def async_setup_entry(
         EvidenceSensor(coordinator, entry.entry_id),
     ]
 
-    async_add_entities(entities, update_before_add=True)
+    async_add_entities(entities, update_before_add=False)
