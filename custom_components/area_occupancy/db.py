@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# Standard library imports
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
@@ -11,6 +12,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
+# Third-party imports
 from filelock import FileLock, Timeout
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -36,20 +38,24 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
+# Home Assistant imports
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
+# Local imports
 from .const import (
     CONF_VERSION,
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    MAX_INTERVAL_SECONDS,
     MAX_PROBABILITY,
     MAX_WEIGHT,
+    MIN_INTERVAL_SECONDS,
     MIN_PROBABILITY,
     MIN_WEIGHT,
     RETENTION_DAYS,
@@ -70,11 +76,6 @@ else:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Interval filtering thresholds to exclude anomalous data
-# Exclude intervals shorter than 5 seconds (false triggers)
-MIN_INTERVAL_SECONDS = 5
-# Exclude intervals longer than 13 hours (stuck sensors)
-MAX_INTERVAL_SECONDS = 13 * 3600
 # States to exclude from intervals
 INVALID_STATES = {"unknown", "unavailable", None, "", "NaN"}
 
