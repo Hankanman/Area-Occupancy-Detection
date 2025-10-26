@@ -424,7 +424,7 @@ class TestAreaOccupancyDBUtilities:
 
         saved = []
 
-        async def fake_save():
+        def fake_save():  # Now sync, not async
             saved.append(True)
 
         data_returns = [None, {"entry_id": db.coordinator.entry_id}]
@@ -497,7 +497,7 @@ class TestAreaOccupancyDBUtilities:
                 "binary_sensor.noinput": no_input,
             }
         )
-        await db.save_entity_data()
+        db.save_entity_data()
         with db.engine.connect() as conn:
             rows = conn.execute(sa.text("SELECT entity_id FROM entities")).fetchall()
         assert {r[0] for r in rows} == {"binary_sensor.good"}
@@ -539,7 +539,7 @@ class TestAreaOccupancyDBUtilities:
     async def test_load_data(self, configured_db, monkeypatch):
         """Test loading data from database."""
         db = configured_db
-        await db.save_area_data()
+        db.save_area_data()
         await self.test_save_entity_data(configured_db)  # populate entities table
 
         called = []
@@ -581,7 +581,7 @@ class TestAreaOccupancyDBUtilities:
     async def test_load_data_entity_handling(self, configured_db, monkeypatch):
         """Test the entity handling logic in load_data method."""
         db = configured_db
-        await db.save_area_data()
+        db.save_area_data()
         await self.test_save_entity_data(configured_db)  # populate entities table
 
         created_entities = []
@@ -628,7 +628,7 @@ class TestAreaOccupancyDBUtilities:
     async def test_load_data_error_handling(self, configured_db, monkeypatch):
         """Test error handling in load_data method."""
         db = configured_db
-        await db.save_area_data()
+        db.save_area_data()
         await self.test_save_entity_data(configured_db)  # populate entities table
 
         # Mock the prior setter
@@ -890,7 +890,7 @@ class TestAreaOccupancyDBUtilities:
         elif field == "area_prior":
             db.coordinator.area_prior = value
 
-        await db.save_area_data()
+        db.save_area_data()
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0
@@ -900,7 +900,7 @@ class TestAreaOccupancyDBUtilities:
         """Test successful save_area_data operation."""
         db = configured_db
         db.coordinator.config.area_id = None
-        await db.save_area_data()
+        db.save_area_data()
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text("SELECT area_id FROM areas WHERE entry_id=:e"),
@@ -1694,7 +1694,7 @@ class TestPruneOldIntervals:
         old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:  # Use unlocked session for test setup
             # Add old intervals
             old_interval1 = db.Intervals(
                 entity_id="binary_sensor.motion1",
@@ -1744,7 +1744,7 @@ class TestPruneOldIntervals:
         # Create only recent intervals
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:  # Use unlocked session for test setup
             recent_interval = db.Intervals(
                 entity_id="binary_sensor.motion1",
                 start_time=recent_time,
@@ -1941,7 +1941,7 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Run cleanup
-        cleaned_count = await db.cleanup_orphaned_entities()
+        cleaned_count = db.cleanup_orphaned_entities()
 
         # Should clean up 0 entities
         assert cleaned_count == 0
@@ -1978,7 +1978,7 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Run cleanup
-        cleaned_count = await db.cleanup_orphaned_entities()
+        cleaned_count = db.cleanup_orphaned_entities()
 
         # Should clean up 1 entity
         assert cleaned_count == 1
@@ -2037,7 +2037,7 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Run cleanup
-        cleaned_count = await db.cleanup_orphaned_entities()
+        cleaned_count = db.cleanup_orphaned_entities()
 
         # Should clean up 1 entity
         assert cleaned_count == 1
@@ -2101,7 +2101,7 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Run cleanup
-        cleaned_count = await db.cleanup_orphaned_entities()
+        cleaned_count = db.cleanup_orphaned_entities()
 
         # Should clean up 3 entities
         assert cleaned_count == 3
@@ -2129,7 +2129,7 @@ class TestGetAggregatedIntervalsBySlot:
             "safe_database_operation",
             side_effect=OperationalError("DB Error", None, None),
         ):
-            cleaned_count = await db.cleanup_orphaned_entities()
+            cleaned_count = db.cleanup_orphaned_entities()
 
             # Should return 0 on error
             assert cleaned_count == 0
@@ -2156,7 +2156,7 @@ class TestGetAggregatedIntervalsBySlot:
         with patch.object(
             db, "cleanup_orphaned_entities", return_value=2
         ) as mock_cleanup:
-            await db.save_entity_data()
+            db.save_entity_data()
 
             # Verify cleanup was called
             mock_cleanup.assert_called_once()
