@@ -48,6 +48,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to create coordinator: %s", err)
         raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
 
+    # Initialize database asynchronously to avoid blocking I/O
+    try:
+        await coordinator.async_init_database()
+    except Exception as err:
+        _LOGGER.error("Failed to initialize database: %s", err)
+        raise ConfigEntryNotReady(f"Failed to initialize database: {err}") from err
+
     # Use modern coordinator setup pattern
     try:
         await coordinator.async_config_entry_first_refresh()
