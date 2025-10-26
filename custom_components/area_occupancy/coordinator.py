@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
+# Standard library imports
 from datetime import datetime, timedelta
-
-# Standard Library
 import logging
 import os
 from typing import Any
 
-from custom_components.area_occupancy.db import AreaOccupancyDB
-
-# Third Party
+# Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -24,8 +21,10 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-# Local
+# Local imports
 from .const import (
+    ANALYSIS_INTERVAL,
+    DECAY_INTERVAL,
     DEFAULT_NAME,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -38,13 +37,10 @@ from .data.entity import EntityFactory, EntityManager
 from .data.entity_type import InputType
 from .data.prior import Prior
 from .data.purpose import PurposeManager
+from .db import AreaOccupancyDB
 from .utils import bayesian_probability
 
 _LOGGER = logging.getLogger(__name__)
-
-# Global timer intervals in seconds
-DECAY_INTERVAL = 10
-ANALYSIS_INTERVAL = 3600  # 1 hour in seconds
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -60,7 +56,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             setup_method=self.setup,
             update_method=self.update,
         )
-        self.hass = hass
         self.config_entry = config_entry
         self.entry_id = config_entry.entry_id
         self.db = AreaOccupancyDB(self)
