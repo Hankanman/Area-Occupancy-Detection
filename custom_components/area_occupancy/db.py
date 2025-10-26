@@ -985,15 +985,16 @@ class AreaOccupancyDB:
             _LOGGER.debug("Failed to get last prune time: %s", e)
         return None
 
-    def _set_last_prune_time(self, timestamp: datetime) -> None:
+    def _set_last_prune_time(self, timestamp: datetime, session: Any = None) -> None:
         """Record timestamp of successful prune operation.
 
         Args:
             timestamp: When the prune occurred
+            session: Optional existing session to use (avoids nested locks)
         """
         try:
-            with self.get_locked_session() as session:
-                # Upsert metadata
+            if session is not None:
+                # Use existing session to avoid nested lock acquisition
                 existing = (
                     session.query(self.Metadata)
                     .filter_by(key="last_prune_time")
@@ -1008,6 +1009,23 @@ class AreaOccupancyDB:
                         )
                     )
                 session.commit()
+            else:
+                # Fallback to new locked session if not provided
+                with self.get_locked_session() as new_session:
+                    existing = (
+                        new_session.query(self.Metadata)
+                        .filter_by(key="last_prune_time")
+                        .first()
+                    )
+                    if existing:
+                        existing.value = timestamp.isoformat()
+                    else:
+                        new_session.add(
+                            self.Metadata(
+                                key="last_prune_time", value=timestamp.isoformat()
+                            )
+                        )
+                    new_session.commit()
         except (SQLAlchemyError, OSError, ValueError) as e:
             _LOGGER.warning("Failed to record prune timestamp: %s", e)
 
@@ -1757,7 +1775,7 @@ class AreaOccupancyDB:
                 if intervals_to_delete == 0:
                     _LOGGER.debug("No old intervals to prune")
                     # Still record the prune attempt to prevent other instances from trying
-                    self._set_last_prune_time(dt_util.utcnow())
+                    self._set_last_prune_time(dt_util.utcnow(), session)
                     return 0
 
                 # Delete old intervals
@@ -1776,7 +1794,7 @@ class AreaOccupancyDB:
                 )
 
                 # Record successful prune
-                self._set_last_prune_time(dt_util.utcnow())
+                self._set_last_prune_time(dt_util.utcnow(), session)
 
                 return deleted_count
 

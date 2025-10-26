@@ -108,10 +108,10 @@ def wasp_config_entry(mock_config_entry: Mock) -> Mock:
 
 
 def create_wasp_entity(
-    mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
+    wasp_coordinator: Mock, wasp_config_entry: Mock
 ) -> WaspInBoxSensor:
     """Create a WaspInBoxSensor with common setup."""
-    entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+    entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
     entity.entity_id = "binary_sensor.test_wasp_in_box"
     return entity
 
@@ -123,7 +123,10 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test WaspInBoxSensor initialization."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
+
+        # Set hass (normally done by HA when entity is added)
+        entity.hass = mock_hass
 
         assert entity.hass == mock_hass
         assert entity._coordinator == wasp_coordinator
@@ -135,7 +138,7 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test entity added to Home Assistant."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Mock state restoration and setup methods
         with (
@@ -166,7 +169,7 @@ class TestWaspInBoxSensor:
         expected_is_on: bool,
     ) -> None:
         """Test restoring previous state with and without stored data."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         if has_previous_state:
             # Mock previous state
@@ -200,7 +203,7 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test entity removal from Home Assistant."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Set up some state to clean up
         entity._remove_timer = Mock()
@@ -219,7 +222,7 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test extra state attributes."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Set up some state
         entity._last_occupied_time = dt_util.utcnow()
@@ -244,14 +247,15 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test weight property."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
         assert entity.weight == 0.85
 
     def test_get_valid_entities(
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test _get_valid_entities method."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
+        entity.hass = mock_hass
 
         # Mock hass.states.get to return valid states for configured entities
         def mock_get_state(entity_id: str) -> Mock | None:
@@ -273,7 +277,8 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test _initialize_from_current_states method."""
-        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = mock_hass
 
         valid_entities = {
             "doors": ["binary_sensor.door1"],
@@ -308,7 +313,7 @@ class TestWaspInBoxSensor:
         expected_method: str,
     ) -> None:
         """Test handling state changes for different entity types."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Set up initial state - occupied for door test
         if entity_type == "binary_sensor.door1":
@@ -343,7 +348,7 @@ class TestWaspInBoxSensor:
         expected_state: str,
     ) -> None:
         """Test processing door state changes in different scenarios."""
-        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
 
         # Set up initial state
         entity._attr_is_on = initial_occupied
@@ -367,7 +372,8 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test processing motion detection."""
-        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = mock_hass
 
         # Mock async_write_ha_state to avoid entity registration issues
         with patch.object(entity, "async_write_ha_state"):
@@ -393,7 +399,7 @@ class TestWaspInBoxSensor:
         expected_actions: list[str],
     ) -> None:
         """Test setting state to occupied and unoccupied."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Set up initial state for unoccupied test
         if new_state == STATE_OFF:
@@ -424,7 +430,7 @@ class TestWaspInBoxSensor:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> None:
         """Test timer start, cancel, and timeout handling."""
-        entity = WaspInBoxSensor(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = WaspInBoxSensor(wasp_coordinator, wasp_config_entry)
 
         # Test starting timer
         entity._max_duration = 3600
@@ -509,7 +515,8 @@ class TestWaspInBoxIntegration:
         self, mock_hass: Mock, wasp_coordinator: Mock, wasp_config_entry: Mock
     ) -> WaspInBoxSensor:
         """Create a comprehensive wasp sensor for testing."""
-        entity = create_wasp_entity(mock_hass, wasp_coordinator, wasp_config_entry)
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = mock_hass
 
         # Initialize with known state
         entity._door_state = STATE_OFF

@@ -11,8 +11,8 @@
     "binary_sensor",
     "number"
   ],
-  "integration_type": "device",
   "documentation": "https://github.com/Hankanman/Area-Occupancy-Detection",
+  "integration_type": "device",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Hankanman/Area-Occupancy-Detection/issues",
   "quality_scale": "silver",
