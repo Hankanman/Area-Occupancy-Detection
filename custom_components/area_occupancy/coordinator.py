@@ -218,14 +218,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Reconfigure coordinator to become master."""
         _LOGGER.info("Instance %s is becoming master", self.entry_id)
 
+        # Clean up old listeners (from when this was a non-master)
+        for listener in self._event_listeners:
+            listener()
+        self._event_listeners.clear()
+
+        # Cancel old health monitoring timer if it exists
+        if self._master_health_timer is not None:
+            self._master_health_timer()
+            self._master_health_timer = None
+
         # Start heartbeat broadcasting
         self._start_master_heartbeat_timer()
 
-        # Subscribe to save requests
-        listener = async_dispatcher_connect(
-            self.hass, SIGNAL_STATE_SAVE_REQUEST, self._handle_state_change_request
-        )
-        self._event_listeners.append(listener)
+        # Setup event listeners (including save request listener for master)
+        self._setup_event_listeners()
 
     def _setup_event_listeners(self) -> None:
         """Setup dispatcher listeners based on role."""
