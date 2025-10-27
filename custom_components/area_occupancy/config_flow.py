@@ -58,6 +58,7 @@ from .const import (
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
@@ -77,6 +78,7 @@ from .const import (
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
@@ -569,6 +571,20 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     unit_of_measurement="seconds",
                 )
             ),
+            vol.Optional(
+                CONF_WASP_VERIFICATION_DELAY,
+                default=defaults.get(
+                    CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=120,  # 2 minutes max
+                    step=5,  # 5-second increments
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
+                )
+            ),
         }
     )
 
@@ -833,6 +849,10 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                             flattened_input[CONF_WASP_MAX_DURATION] = value.get(
                                 CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
                             )
+                            flattened_input[CONF_WASP_VERIFICATION_DELAY] = value.get(
+                                CONF_WASP_VERIFICATION_DELAY,
+                                DEFAULT_WASP_VERIFICATION_DELAY,
+                            )
                         elif key == "purpose":
                             # Flatten purpose settings
                             flattened_input[CONF_PURPOSE] = value.get(
@@ -952,6 +972,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                             )
                             flattened_input[CONF_WASP_MAX_DURATION] = value.get(
                                 CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
+                            )
+                            flattened_input[CONF_WASP_VERIFICATION_DELAY] = value.get(
+                                CONF_WASP_VERIFICATION_DELAY,
+                                DEFAULT_WASP_VERIFICATION_DELAY,
                             )
                         elif key == "purpose":
                             # Flatten purpose settings
