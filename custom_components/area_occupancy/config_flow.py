@@ -139,8 +139,13 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         BinarySensorDeviceClass.OPENING,
     ]
 
-    # Check binary_sensor, switch, fan for potential appliances
-    domains_to_check = [Platform.BINARY_SENSOR, Platform.SWITCH, Platform.FAN]
+    # Check binary_sensor, switch, fan, light for potential appliances
+    domains_to_check = [
+        Platform.BINARY_SENSOR,
+        Platform.SWITCH,
+        Platform.FAN,
+        Platform.LIGHT,
+    ]
     entity_ids = []
     for domain in domains_to_check:
         entity_ids.extend(hass.states.async_entity_ids(domain))
