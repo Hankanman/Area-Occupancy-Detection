@@ -226,6 +226,7 @@ class TestDatabaseModels:
             .first()
         )
 
+        assert retrieved_area is not None
         assert len(retrieved_area.entities) == 1
         assert retrieved_area.entities[0].entity_id == "binary_sensor.motion_1"
         assert len(retrieved_area.priors) == 1
@@ -260,7 +261,11 @@ class TestDatabaseModels:
 
 
 class TestDatabaseOperations:
-    """Test database operations using the AreaOccupancyDB class."""
+    """Test database operations using the AreaOccupancyDB class.
+
+    Note: Tests master-only recovery functionality.
+    In multi-instance setup, only the master performs these operations.
+    """
 
     def test_area_occupancy_db_initialization(self, mock_area_occupancy_db):
         """Test AreaOccupancyDB initialization with in-memory database."""
@@ -1046,7 +1051,7 @@ class TestAreaOccupancyDBUtilities:
         assert db.is_database_corrupted(error) is False
 
     def test_attempt_database_recovery_success(self, configured_db, tmp_path):
-        """Test attempt_database_recovery with successful recovery."""
+        """Test attempt_database_recovery with successful recovery (master-only)."""
         db = configured_db
         db.db_path = tmp_path / "test.db"
 
@@ -1221,75 +1226,6 @@ class TestAreaOccupancyDBUtilities:
             result = db.handle_database_corruption()
             assert result is False
 
-    def test_safe_database_operation_success(self, configured_db):
-        """Test safe_database_operation with successful operation."""
-        db = configured_db
-
-        def test_operation():
-            return "success"
-
-        with patch.object(db, "check_database_integrity", return_value=True):
-            result = db.safe_database_operation("test", test_operation)
-            assert result == "success"
-
-    def test_safe_database_operation_integrity_failure(self, configured_db):
-        """Test safe_database_operation with integrity failure."""
-        db = configured_db
-
-        def test_operation():
-            return "success"
-
-        with (
-            patch.object(db, "check_database_integrity", return_value=False),
-            patch.object(db, "handle_database_corruption", return_value=False),
-        ):
-            result = db.safe_database_operation("test", test_operation)
-            assert result is None
-
-    def test_safe_database_operation_corruption_detected(self, configured_db):
-        """Test safe_database_operation with corruption detected."""
-        db = configured_db
-
-        def test_operation():
-            raise sa.exc.DatabaseError(
-                "stmt", {}, Exception("database disk image is malformed")
-            )
-
-        with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            patch.object(db, "is_database_corrupted", return_value=True),
-            patch.object(db, "handle_database_corruption", return_value=True),
-        ):
-            result = db.safe_database_operation("test", test_operation)
-            assert result is None
-
-    def test_safe_database_operation_non_corruption_error(self, configured_db):
-        """Test safe_database_operation with non-corruption error."""
-        db = configured_db
-
-        def test_operation():
-            raise sa.exc.DatabaseError("stmt", {}, Exception("table already exists"))
-
-        with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            patch.object(db, "is_database_corrupted", return_value=False),
-            pytest.raises(sa.exc.DatabaseError),
-        ):
-            db.safe_database_operation("test", test_operation)
-
-    def test_safe_database_operation_unexpected_error(self, configured_db):
-        """Test safe_database_operation with unexpected error."""
-        db = configured_db
-
-        def test_operation():
-            raise RuntimeError("Unexpected error")
-
-        with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            pytest.raises(RuntimeError),
-        ):
-            db.safe_database_operation("test", test_operation)
-
     def test_periodic_health_check_success(self, configured_db):
         """Test periodic_health_check with successful check."""
         db = configured_db
@@ -1350,95 +1286,6 @@ class TestAreaOccupancyDBUtilities:
         with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
             result = db.periodic_health_check()
             assert result is False
-
-    def test_manual_recovery_trigger_healthy_database(self, configured_db):
-        """Test manual_recovery_trigger with healthy database."""
-        db = configured_db
-
-        with patch.object(db, "check_database_integrity", return_value=True):
-            result = db.manual_recovery_trigger()
-            assert result is True
-
-    def test_manual_recovery_trigger_corrupted_database(self, configured_db):
-        """Test manual_recovery_trigger with corrupted database."""
-        db = configured_db
-
-        with (
-            patch.object(db, "check_database_integrity", return_value=False),
-            patch.object(db, "handle_database_corruption", return_value=True),
-        ):
-            result = db.manual_recovery_trigger()
-            assert result is True
-
-    def test_get_database_status(self, configured_db, tmp_path):
-        """Test get_database_status method."""
-        db = configured_db
-        db.db_path = tmp_path / "test.db"
-
-        # Create database file
-        db.db_path.touch()
-
-        with (
-            patch.object(db, "check_database_accessibility", return_value=True),
-            patch.object(db, "check_database_integrity", return_value=True),
-        ):
-            status = db.get_database_status()
-
-            assert "database_path" in status
-            assert "database_exists" in status
-            assert "database_accessible" in status
-            assert "database_integrity" in status
-            assert "auto_recovery_enabled" in status
-            assert "max_recovery_attempts" in status
-            assert "periodic_backups_enabled" in status
-            assert "backup_interval_hours" in status
-
-    def test_get_database_status_with_backup(self, configured_db, tmp_path):
-        """Test get_database_status with backup file."""
-        db = configured_db
-        db.db_path = tmp_path / "test.db"
-
-        # Create database file and backup
-        db.db_path.touch()
-        backup_path = tmp_path / "test.db.backup"
-        backup_path.touch()
-
-        with (
-            patch.object(db, "check_database_accessibility", return_value=True),
-            patch.object(db, "check_database_integrity", return_value=True),
-        ):
-            status = db.get_database_status()
-
-            assert status["backup_exists"] is True
-            assert "backup_age_hours" in status
-
-    def test_get_database_status_no_backup(self, configured_db, tmp_path):
-        """Test get_database_status without backup file."""
-        db = configured_db
-        db.db_path = tmp_path / "test.db"
-
-        # Create database file but no backup
-        db.db_path.touch()
-
-        with (
-            patch.object(db, "check_database_accessibility", return_value=True),
-            patch.object(db, "check_database_integrity", return_value=True),
-        ):
-            status = db.get_database_status()
-
-            assert status["backup_exists"] is False
-
-    def test_get_database_status_no_db_path(self, configured_db):
-        """Test get_database_status when db_path is None."""
-        db = configured_db
-        db.db_path = None
-
-        status = db.get_database_status()
-
-        assert status["database_path"] is None
-        assert status["database_exists"] is False
-        assert status["database_accessible"] is False
-        assert status["database_integrity"] is False
 
     def test_get_engine(self, configured_db):
         """Test get_engine method."""
@@ -2123,10 +1970,10 @@ class TestGetAggregatedIntervalsBySlot:
         # Mock coordinator
         db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
 
-        # Mock database error
+        # Mock database error on get_session
         with patch.object(
             db,
-            "safe_database_operation",
+            "get_session",
             side_effect=OperationalError("DB Error", None, None),
         ):
             cleaned_count = db.cleanup_orphaned_entities()
