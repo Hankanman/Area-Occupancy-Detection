@@ -57,13 +57,15 @@
                             "wasp_enabled": "Enable Wasp in Box",
                             "wasp_motion_timeout": "Motion Timeout (seconds)",
                             "wasp_weight": "Sensor Weight",
-                            "wasp_max_duration": "Max Duration (seconds)"
+                            "wasp_max_duration": "Max Duration (seconds)",
+                            "wasp_verification_delay": "Verification Delay (seconds)"
                         },
                         "data_description": {
                             "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
                             "wasp_motion_timeout": "How long motion remains valid after detection",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation",
-                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior"
+                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
+                            "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
                         }
                     },
                     "windows": {
@@ -188,13 +190,15 @@
                             "wasp_enabled": "Enable Wasp in Box",
                             "wasp_motion_timeout": "Motion Timeout (seconds)",
                             "wasp_weight": "Sensor Weight",
-                            "wasp_max_duration": "Max Duration (seconds)"
+                            "wasp_max_duration": "Max Duration (seconds)",
+                            "wasp_verification_delay": "Verification Delay (seconds)"
                         },
                         "data_description": {
                             "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
                             "wasp_motion_timeout": "How long motion remains valid after detection",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation",
-                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior"
+                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
+                            "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
                         }
                     },
                     "windows": {

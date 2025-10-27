@@ -183,11 +183,13 @@ CONF_WASP_ENABLED: Final = "wasp_enabled"
 CONF_WASP_MOTION_TIMEOUT: Final = "wasp_motion_timeout"
 CONF_WASP_WEIGHT: Final = "wasp_weight"
 CONF_WASP_MAX_DURATION: Final = "wasp_max_duration"
+CONF_WASP_VERIFICATION_DELAY: Final = "wasp_verification_delay"
 
 # Default values
 DEFAULT_WASP_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_WASP_WEIGHT: Final = 0.8
 DEFAULT_WASP_MAX_DURATION: Final = 3600  # 1 hour in seconds
+DEFAULT_WASP_VERIFICATION_DELAY: Final = 0  # Disabled by default (0 = no verification)
 
 # Attributes
 ATTR_DOOR_STATE: Final = "door_state"
@@ -198,3 +200,5 @@ ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
 ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
+ATTR_VERIFICATION_DELAY: Final = "verification_delay"
+ATTR_VERIFICATION_PENDING: Final = "verification_pending"
