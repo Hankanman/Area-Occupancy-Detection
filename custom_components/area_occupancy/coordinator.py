@@ -120,6 +120,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _elect_master(self) -> None:
         """Attempt to become master or identify existing master."""
         master_id = await self.hass.async_add_executor_job(self.db.elect_master)
+
+        # If election failed (None), treat as non-master to avoid multiple masters
+        if master_id is None:
+            _LOGGER.warning(
+                "Master election failed for %s, treating as non-master to avoid conflicts",
+                self.config.name,
+            )
+            self._is_master = False
+            self._master_entry_id = None
+            return
+
         self._is_master = master_id == self.entry_id
         self._master_entry_id = master_id
         _LOGGER.info(
