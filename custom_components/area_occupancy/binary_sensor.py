@@ -31,6 +31,8 @@ from .const import (
     ATTR_MAX_DURATION,
     ATTR_MOTION_STATE,
     ATTR_MOTION_TIMEOUT,
+    ATTR_VERIFICATION_DELAY,
+    ATTR_VERIFICATION_PENDING,
     NAME_WASP_IN_BOX,
 )
 from .coordinator import AreaOccupancyCoordinator
@@ -127,6 +129,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
         self._weight = self._config.wasp_in_box.weight
         self._max_duration = self._config.wasp_in_box.max_duration
+        self._verification_delay = self._config.wasp_in_box.verification_delay
 
         # Configure entity properties
         self._attr_has_entity_name = True
@@ -152,6 +155,8 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._motion_entities = self._config.sensors.motion or []
         self._remove_state_listener: Callable[[], None] | None = None
         self._remove_timer: Callable[[], None] | None = None
+        self._remove_verification_timer: Callable[[], None] | None = None
+        self._verification_pending: bool = False
 
         # Check if we have required entities configured
         if not self._door_entities or not self._motion_entities:
@@ -223,9 +228,10 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             self._remove_state_listener = None
 
         self._cancel_max_duration_timer()
+        self._cancel_verification_timer()
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | int | None]:
+    def extra_state_attributes(self) -> dict[str, str | int | None | bool]:
         """Return the state attributes."""
         return {
             ATTR_DOOR_STATE: self._door_state,
@@ -243,6 +249,8 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
                 if self._last_occupied_time
                 else None
             ),
+            ATTR_VERIFICATION_DELAY: self._verification_delay,
+            ATTR_VERIFICATION_PENDING: self._verification_pending,
         }
 
     @property
@@ -361,11 +369,34 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if door_is_open and door_was_closed and self._state == STATE_ON:
             # Door opened while room was occupied - set to unoccupied
             _LOGGER.debug("Door opened while occupied - marking room as unoccupied")
+            self._cancel_verification_timer()
             self._set_state(STATE_OFF)
-        elif not door_is_open and self._motion_state == STATE_ON:
-            # Door closed with active motion - set to occupied
-            _LOGGER.debug("Door closed with motion detected - marking room as occupied")
-            self._set_state(STATE_ON)
+        elif not door_is_open:  # Door closed (or closing)
+            # Pattern A: Door closes with active motion
+            if self._motion_state == STATE_ON:
+                _LOGGER.debug(
+                    "Door closed with motion detected - marking room as occupied"
+                )
+                self._set_state(STATE_ON)
+            # Pattern B: Door closes with recent motion (within motion_timeout)
+            elif self._last_motion_time:
+                now = dt_util.utcnow()
+                motion_age = (now - self._last_motion_time).total_seconds()
+                if motion_age <= self._motion_timeout:
+                    _LOGGER.debug(
+                        "Door closed with recent motion (%.1fs ago) - marking room as occupied",
+                        motion_age,
+                    )
+                    self._set_state(STATE_ON)
+                else:
+                    _LOGGER.debug(
+                        "Door closed but motion is too old (%.1fs) - not marking as occupied",
+                        motion_age,
+                    )
+                    self.async_write_ha_state()
+            else:
+                # No state change, just update attributes
+                self.async_write_ha_state()
         else:
             # No state change, just update attributes
             self.async_write_ha_state()
@@ -403,9 +434,12 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             # Record occupied time and start max duration timer
             self._last_occupied_time = dt_util.utcnow()
             self._start_max_duration_timer()
+            # Start verification timer if enabled
+            self._start_verification_timer()
         else:
             # Cancel duration timer when becoming unoccupied
             self._cancel_max_duration_timer()
+            self._cancel_verification_timer()
 
         # Update Home Assistant state
         self.async_write_ha_state()
@@ -461,6 +495,71 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             _LOGGER.debug(
                 "Max duration (%s seconds) exceeded, changing to unoccupied",
                 self._max_duration,
+            )
+            self._set_state(STATE_OFF)
+
+    def _start_verification_timer(self) -> None:
+        """Start a timer to verify occupancy after a delay."""
+        self._cancel_verification_timer()
+
+        # Skip if verification is disabled (0 or None)
+        # Also check if it's a valid integer to handle test mocks
+        try:
+            delay = int(self._verification_delay) if self._verification_delay else 0
+        except (TypeError, ValueError):
+            delay = 0
+
+        if not delay:
+            return
+
+        # Schedule callback for verification time
+        verification_time = dt_util.utcnow() + timedelta(seconds=delay)
+        self._remove_verification_timer = async_track_point_in_time(
+            self.hass, self._handle_verification_check, verification_time
+        )
+        self._verification_pending = True
+        _LOGGER.debug(
+            "Verification timer scheduled for %s seconds from now",
+            delay,
+        )
+
+    def _cancel_verification_timer(self) -> None:
+        """Cancel any scheduled verification timer."""
+        if self._remove_verification_timer:
+            self._remove_verification_timer()
+            self._remove_verification_timer = None
+        self._verification_pending = False
+
+    @callback
+    def _handle_verification_check(self, _now: datetime) -> None:
+        """Handle verification timer expiration - check if motion is still present."""
+        self._remove_verification_timer = None
+        self._verification_pending = False
+
+        # Only proceed if we're still in occupied state
+        if self._state != STATE_ON:
+            _LOGGER.debug("Verification check: already unoccupied, skipping")
+            return
+
+        # Check if any motion sensor is currently active
+        has_active_motion = False
+        for motion_entity in self._motion_entities:
+            state = self.hass.states.get(motion_entity)
+            if state and state.state == STATE_ON:
+                has_active_motion = True
+                break
+
+        if has_active_motion:
+            _LOGGER.debug(
+                "Verification check: motion still detected, maintaining occupancy"
+            )
+            # Motion is confirmed - just update state
+            self.async_write_ha_state()
+        else:
+            # No motion detected - this was likely a false positive
+            _LOGGER.info(
+                "Verification check: no motion detected after %s seconds, clearing occupancy",
+                self._verification_delay,
             )
             self._set_state(STATE_OFF)
 
