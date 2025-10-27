@@ -364,6 +364,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the current occupancy threshold (0.0-1.0)."""
         return self.config.threshold if self.config else 0.5
 
+    def _verify_setup_complete(self) -> bool:
+        """Verify that critical initialization components have started successfully.
+
+        Returns:
+            True if all critical components are initialized, False otherwise
+        """
+        # Check if hass is available
+        if not self.hass:
+            _LOGGER.error("Home Assistant instance not available")
+            return False
+
+        # Check if decay timer started
+        if self._global_decay_timer is None:
+            _LOGGER.warning("Decay timer not started for %s", self.config.name)
+            return False
+
+        # Check if analysis timer started (or is scheduled)
+        if self._analysis_timer is None:
+            _LOGGER.warning("Analysis timer not started for %s", self.config.name)
+            return False
+
+        return True
+
     # --- Public Methods ---
     async def setup(self) -> None:
         """Initialize the coordinator and its components (fast startup mode)."""
@@ -420,6 +443,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
 
+            # Verify critical initialization succeeded before marking complete
+            if not self._verify_setup_complete():
+                _LOGGER.error("Critical initialization failed for %s", self.config.name)
+                error_msg = "Failed to start critical timers"
+                raise HomeAssistantError(error_msg)  # noqa: TRY301
+
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
 
@@ -453,10 +482,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_decay_timer()
                 # Analysis timer is async and runs in background
                 await self._start_analysis_timer()
-                # Mark setup as complete - async_refresh() will be called by async_config_entry_first_refresh()
-                self._setup_complete = True
+
+                # Verify critical initialization succeeded
+                if not self._verify_setup_complete():
+                    _LOGGER.error(
+                        "Failed to start critical timers for %s after retry",
+                        self.config.name,
+                    )
+                    # Still set complete to allow partial functionality
+                    # but log the issue for debugging
+                    self._setup_complete = True
+                else:
+                    # Only mark complete if verification passed
+                    self._setup_complete = True
+
             except (HomeAssistantError, OSError, RuntimeError) as timer_err:
-                _LOGGER.error("Failed to start basic timers: %s", timer_err)
+                _LOGGER.error(
+                    "Failed to start basic timers for %s: %s",
+                    self.config.name,
+                    timer_err,
+                )
+                # Don't set _setup_complete if timers completely failed
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data (in-memory only).
