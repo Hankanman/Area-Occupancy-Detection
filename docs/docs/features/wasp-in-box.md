@@ -14,9 +14,11 @@ The feature is named after the concept of a wasp trapped in a box - once inside,
 
 When both door and motion sensors are available:
 
-1. **Entry Detection**:
-   - Door closes AND motion is detected → Room becomes OCCUPIED
+1. **Entry Detection** (Bidirectional):
+   - Pattern A: Door closes → Motion detected → Room becomes OCCUPIED
+   - Pattern B: Motion detected → Door closes (within timeout window) → Room becomes OCCUPIED
    - The state persists even if motion stops
+   - Works regardless of door opening direction
 
 2. **Exit Detection**:
    - Door opens → Room becomes UNOCCUPIED
@@ -52,6 +54,7 @@ The Wasp in Box feature can be enabled in the integration configuration UI:
 | Enable Wasp in Box | Activates the feature                                                  | Disabled        |
 | Motion Timeout     | Duration in seconds that motion remains valid after detection          | 300 (5 minutes) |
 | Sensor Weight      | How heavily this sensor influences the overall probability calculation | 0.8             |
+| Verification Delay | Delay before re-checking motion to verify occupancy (0 = disabled)    | 0 (disabled)    |
 
 ## Integration
 
@@ -65,8 +68,22 @@ The feature creates a binary sensor that becomes part of your Area Occupancy Det
   - `motion_state`: Current motion state (if using motion sensors)
   - `last_motion_time`: Timestamp of last motion detection (if using motion sensors)
   - `motion_timeout`: Configured timeout value
+  - `verification_delay`: Configured verification delay (seconds)
+  - `verification_pending`: Whether a verification check is scheduled
 
 The sensor's state is considered alongside other sensors in the Bayesian probability calculation, with its influence determined by the configured weight.
+
+## Motion Re-verification
+
+The sensor includes an optional motion re-verification feature to prevent false positives caused by motion sensor cooldown periods:
+
+- When enabled, the sensor marks the room as occupied immediately when triggered
+- After the configured delay (in seconds), it re-checks motion sensors to verify occupancy
+- If motion is still detected: occupancy is maintained
+- If no motion is detected: occupancy is automatically cleared (false positive detected)
+- Set to 0 to disable this feature
+
+This is particularly useful in scenarios where someone might quickly enter and exit a room before motion sensors clear their cooldown period.
 
 ## Use Cases
 
@@ -75,6 +92,7 @@ The sensor's state is considered alongside other sensors in the Bayesian probabi
 - **Small Offices**: Maintain occupancy state when people are sitting still at a desk
 - **Storage Rooms**: Track when people are retrieving items from storage
 - **Laundry Rooms**: Detect presence during laundry activities with minimal motion
+- **Rooms with inward-opening doors**: Bidirectional detection works regardless of door direction
 
 ## Technical Details
 
@@ -92,12 +110,18 @@ The "Wasp in Box" sensor is a virtual binary sensor that helps determine if a sp
 
 ## How It Works
 
-The sensor monitors one or more door sensors and optional motion sensors:
+The sensor monitors one or more door sensors and optional motion sensors, supporting **bidirectional entry detection**:
 
 1. When a door closes and recent motion was detected, the room is marked as occupied.
 2. When a door closes and there are no motion sensors, the room is assumed to be occupied.
 3. When a door opens while the room is occupied, the room is marked as unoccupied.
 4. When motion is detected while all doors are closed, the room is marked as occupied.
+
+**Bidirectional Entry Patterns:**
+- Pattern A: Door closes → Motion detected → Occupied
+- Pattern B: Motion detected (within timeout) → Door closes → Occupied
+
+This ensures reliable detection regardless of whether the door opens inward or outward.
 
 The sensor retains its state between Home Assistant restarts, making it reliable for long-term occupancy tracking.
 
@@ -117,6 +141,16 @@ The Wasp in Box sensor can be configured in the integration settings:
 - **Motion Timeout**: How long motion events are considered recent (in seconds)
 - **Wasp Weight**: The weight factor for this sensor in probability calculations (0.1-1.0)
 - **Maximum Occupied Duration**: Maximum time (in seconds) a space can be marked as occupied before automatically resetting (0 = no limit)
+- **Verification Delay**: Delay before re-checking motion to verify occupancy, in seconds (0-120, 0 = disabled)
+
+### Motion Re-verification
+
+The verification delay feature helps prevent false positives when people enter and exit quickly:
+
+- **How it works**: When the room is marked as occupied, wait the specified delay, then re-check motion sensors
+- **If motion present**: Keep the room occupied (genuine occupancy)
+- **If no motion**: Clear occupancy (false positive from sensor cooldown)
+- **Recommendation**: Start with 15-30 seconds for most setups; adjust based on your motion sensor cooldown periods
 
 ## Example Use Cases
 
@@ -134,4 +168,6 @@ The sensor provides these attributes:
 - `last_motion_time`: Timestamp of the last motion detection (if applicable)
 - `motion_timeout`: Current motion timeout setting
 - `max_duration`: Maximum time in seconds the space can be marked as occupied (0 = no limit)
-- `last_occupied_time`: Timestamp when the space was last marked as occupied 
+- `last_occupied_time`: Timestamp when the space was last marked as occupied
+- `verification_delay`: Configured verification delay in seconds (0 = disabled)
+- `verification_pending`: Whether a verification check is currently scheduled (boolean) 

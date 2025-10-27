@@ -32,6 +32,7 @@ from ..const import (
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
@@ -51,6 +52,7 @@ from ..const import (
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
@@ -156,6 +158,7 @@ class WaspInBox:
     motion_timeout: int = DEFAULT_WASP_MOTION_TIMEOUT
     weight: float = DEFAULT_WASP_WEIGHT
     max_duration: int = DEFAULT_WASP_MAX_DURATION
+    verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
 class Config:
@@ -235,6 +238,9 @@ class Config:
             weight=float(data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT)),
             max_duration=int(
                 data.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
+            ),
+            verification_delay=int(
+                data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
         )
 
