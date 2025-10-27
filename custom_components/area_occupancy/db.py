@@ -52,6 +52,7 @@ from .const import (
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    MASTER_HEALTH_TIMEOUT,
     MAX_INTERVAL_SECONDS,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -970,8 +971,10 @@ class AreaOccupancyDB:
                         last_heartbeat = datetime.fromisoformat(
                             master_heartbeat_entry.value
                         )
-                        # Master is alive if heartbeat within 30 seconds
-                        if (now - last_heartbeat).total_seconds() < 30:
+                        # Master is alive if heartbeat within timeout period
+                        if (
+                            now - last_heartbeat
+                        ).total_seconds() < MASTER_HEALTH_TIMEOUT:
                             is_master_alive = True
                     except (ValueError, TypeError):
                         _LOGGER.warning("Invalid master heartbeat timestamp")
@@ -1066,7 +1069,7 @@ class AreaOccupancyDB:
             _LOGGER.warning("Failed to update master heartbeat: %s", e)
 
     def check_master_health(self) -> bool:
-        """Check if master heartbeat is recent (< 30s old).
+        """Check if master heartbeat is recent (within MASTER_HEALTH_TIMEOUT).
 
         Returns:
             bool: True if master appears healthy
@@ -1089,7 +1092,7 @@ class AreaOccupancyDB:
                 except (ValueError, TypeError):
                     return False
                 else:
-                    return time_since_heartbeat < 30
+                    return time_since_heartbeat < MASTER_HEALTH_TIMEOUT
         except (SQLAlchemyError, OSError) as e:
             _LOGGER.debug("Failed to check master health: %s", e)
             return False
