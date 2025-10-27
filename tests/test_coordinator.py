@@ -468,8 +468,18 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "is_intervals_empty", return_value=False),
             patch.object(coordinator, "run_analysis", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
         ):
             await coordinator.setup()
@@ -485,8 +495,18 @@ class TestAreaOccupancyCoordinator:
                 new=AsyncMock(side_effect=HomeAssistantError("Storage failed")),
             ),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "run_analysis", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(coordinator.entities, "get_entity") as mock_get_entity,
@@ -569,6 +589,7 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._global_decay_timer is None
             assert coordinator._remove_state_listener is None
 
+    @pytest.mark.expected_lingering_timers(True)
     async def test_full_coordinator_lifecycle(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
     ) -> None:
@@ -581,7 +602,18 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "load_data", new=AsyncMock(return_value=None)),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "run_analysis", new=AsyncMock()),
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
@@ -1015,8 +1047,18 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "save_area_data"),  # Now sync, no AsyncMock
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer") as mock_start_timer,
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ) as mock_start_timer,
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "_start_master_heartbeat_timer"),
             patch.object(coordinator, "_start_master_health_timer"),
@@ -1040,8 +1082,18 @@ class TestAreaOccupancyCoordinator:
                 coordinator, "run_analysis", new=AsyncMock()
             ) as mock_run_analysis,
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "_start_master_heartbeat_timer"),
             patch.object(coordinator, "_start_master_health_timer"),
@@ -1081,8 +1133,18 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "run_analysis", new=AsyncMock()) as mock_run,
             patch.object(coordinator, "_start_master_heartbeat_timer"),
@@ -1105,8 +1167,18 @@ class TestAreaOccupancyCoordinator:
             ),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "_start_master_heartbeat_timer"),
             patch.object(coordinator, "_start_master_health_timer"),
@@ -1130,8 +1202,18 @@ class TestAreaOccupancyCoordinator:
             ),
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "_start_master_heartbeat_timer"),
             patch.object(coordinator, "_start_master_health_timer"),
@@ -1152,8 +1234,18 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
@@ -1179,8 +1271,18 @@ class TestAreaOccupancyCoordinator:
                 "load_data",
                 side_effect=RuntimeError("Unexpected error"),
             ),
-            patch.object(coordinator, "_start_decay_timer"),
-            patch.object(coordinator, "_start_analysis_timer"),
+            patch.object(
+                coordinator,
+                "_start_decay_timer",
+                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
+            ),
+            patch.object(
+                coordinator,
+                "_start_analysis_timer",
+                new=AsyncMock(
+                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
+                ),
+            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "_start_master_heartbeat_timer"),
             patch.object(coordinator, "_start_master_health_timer"),
