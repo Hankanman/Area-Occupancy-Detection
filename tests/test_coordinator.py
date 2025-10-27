@@ -776,7 +776,7 @@ class TestAreaOccupancyCoordinator:
             "custom_components.area_occupancy.coordinator.async_track_point_in_time",
             return_value=Mock(),
         ) as mock_track:
-            coordinator._start_analysis_timer()
+            await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_called_once()
             assert coordinator._analysis_timer is not None
 
@@ -790,7 +790,7 @@ class TestAreaOccupancyCoordinator:
         with patch(
             "custom_components.area_occupancy.coordinator.async_track_point_in_time"
         ) as mock_track:
-            coordinator._start_analysis_timer()
+            await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_not_called()
 
     async def test_analysis_timer_handling_without_hass(
@@ -805,7 +805,7 @@ class TestAreaOccupancyCoordinator:
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time"
             ) as mock_track,
         ):
-            coordinator._start_analysis_timer()
+            await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_not_called()
 
     async def test_run_analysis(
@@ -814,6 +814,7 @@ class TestAreaOccupancyCoordinator:
         """Test run_analysis method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
+        coordinator._is_master = True  # Enable pruning (master-only)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -831,7 +832,7 @@ class TestAreaOccupancyCoordinator:
         ):
             await coordinator.run_analysis()
             assert coordinator._analysis_timer is None
-            # Verify pruning was called
+            # Verify pruning was called (master-only)
             coordinator.db.prune_old_intervals.assert_called_once()
 
     async def test_run_analysis_with_error(
@@ -876,82 +877,6 @@ class TestAreaOccupancyCoordinator:
         ):
             await coordinator.run_analysis(custom_time)
             assert coordinator._analysis_timer is None
-
-    async def test_health_check_timer_handling(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test health check timer start and handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-            return_value=Mock(),
-        ) as mock_track:
-            coordinator._start_health_check_timer()
-            mock_track.assert_called_once()
-            assert coordinator._health_check_timer is not None
-
-    async def test_health_check_timer_handling_with_existing_timer(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test health check timer start when timer already exists."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        coordinator._health_check_timer = Mock()
-
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
-        ) as mock_track:
-            coordinator._start_health_check_timer()
-            mock_track.assert_not_called()
-
-    async def test_health_check_timer_handling_without_hass(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test health check timer start when hass is None."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-
-        with (
-            patch.object(coordinator, "hass", None),
-            patch(
-                "custom_components.area_occupancy.coordinator.async_track_point_in_time"
-            ) as mock_track,
-        ):
-            coordinator._start_health_check_timer()
-            mock_track.assert_not_called()
-
-    async def test_handle_health_check_timer(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test health check timer callback handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        coordinator._health_check_timer = Mock()
-
-        with (
-            patch.object(coordinator.db, "periodic_health_check", return_value=True),
-            patch(
-                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-                return_value=None,
-            ),
-        ):
-            await coordinator._handle_health_check_timer(dt_util.utcnow())
-            assert coordinator._health_check_timer is None
-            coordinator.db.periodic_health_check.assert_called_once()
-
-    async def test_handle_health_check_timer_with_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test health check timer callback with error handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
-        coordinator._health_check_timer = Mock()
-
-        with (
-            patch(
-                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-                return_value=None,
-            ),
-        ):
-            await coordinator._handle_health_check_timer(dt_util.utcnow())
-            assert coordinator._health_check_timer is None
 
     async def test_track_entity_state_changes_with_existing_listener(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -1092,8 +1017,9 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer") as mock_start_timer,
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
             # run_analysis is now deferred to background, so _start_analysis_timer should be called
@@ -1116,11 +1042,19 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
         ):
             await coordinator.setup()
             mock_run_analysis.assert_not_called()
+
+            # Clean up timers
+            await coordinator.async_shutdown()
 
     async def test_setup_with_no_entity_ids(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -1149,9 +1083,10 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator, "run_analysis", new=AsyncMock()) as mock_run,
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
             mock_run.assert_not_called()
@@ -1172,8 +1107,9 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
 
@@ -1196,8 +1132,9 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
 
@@ -1217,7 +1154,6 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
@@ -1245,8 +1181,9 @@ class TestAreaOccupancyCoordinator:
             ),
             patch.object(coordinator, "_start_decay_timer"),
             patch.object(coordinator, "_start_analysis_timer"),
-            patch.object(coordinator, "_start_health_check_timer"),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
 
@@ -1269,12 +1206,9 @@ class TestAreaOccupancyCoordinator:
             patch.object(
                 coordinator, "_start_analysis_timer", side_effect=OSError("Timer error")
             ),
-            patch.object(
-                coordinator,
-                "_start_health_check_timer",
-                side_effect=OSError("Timer error"),
-            ),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "_start_master_heartbeat_timer"),
+            patch.object(coordinator, "_start_master_health_timer"),
         ):
             await coordinator.setup()
 
@@ -1283,6 +1217,7 @@ class TestAreaOccupancyCoordinator:
     ) -> None:
         """Test async_update_options method."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._is_master = True  # Enable master-only save
 
         with (
             patch.object(
@@ -1298,6 +1233,10 @@ class TestAreaOccupancyCoordinator:
                 coordinator, "track_entity_state_changes", new=AsyncMock()
             ) as mock_track,
             patch.object(coordinator.db, "save_data", new=AsyncMock()) as mock_save,
+            patch(
+                "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
+                new=AsyncMock(),
+            ),
         ):
             options = {"threshold": 0.7}
             await coordinator.async_update_options(options)
@@ -1308,17 +1247,22 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_called_once()
             mock_save.assert_called_once()
 
+            # Clean up timers
+            await coordinator.async_shutdown()
+
     async def test_shutdown_with_all_timers(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
     ) -> None:
         """Test shutdown with all timers present."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator._is_master = True  # Enable master-specific cleanup
 
-        # Set up all timers (including save timer)
+        # Set up all timers
         coordinator._global_decay_timer = Mock()
         coordinator._remove_state_listener = Mock()
         coordinator._analysis_timer = Mock()
-        coordinator._health_check_timer = Mock()
+        coordinator._master_health_timer = Mock()
+        coordinator._master_heartbeat_timer = Mock()
         coordinator._save_timer = Mock()  # Set save timer to trigger final save
 
         with (
@@ -1335,7 +1279,8 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._global_decay_timer is None
             assert coordinator._remove_state_listener is None
             assert coordinator._analysis_timer is None
-            assert coordinator._health_check_timer is None
+            assert coordinator._master_health_timer is None
+            assert coordinator._master_heartbeat_timer is None
             coordinator.db.save_data.assert_called_once()
             coordinator.entities.cleanup.assert_called_once()
             coordinator.purpose.cleanup.assert_called_once()
@@ -1353,6 +1298,7 @@ class TestRunAnalysisWithPruning:
         """Test that prune_old_intervals is called during run_analysis."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
+        coordinator._is_master = True  # Enable pruning (master-only)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1380,6 +1326,7 @@ class TestRunAnalysisWithPruning:
         """Test that analysis continues if pruning fails."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
+        coordinator._is_master = True  # Enable pruning (master-only)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1408,6 +1355,7 @@ class TestRunAnalysisWithPruning:
         """Test that analysis continues if pruning raises an exception."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
+        coordinator._is_master = True  # Enable pruning (master-only)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
