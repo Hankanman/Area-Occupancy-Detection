@@ -5,7 +5,6 @@ from __future__ import annotations
 # Standard library imports
 from datetime import datetime, timedelta
 import logging
-import os
 from typing import Any
 
 # Home Assistant imports
@@ -97,13 +96,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This method should be called after coordinator creation but before
         async_config_entry_first_refresh().
 
-        Note: In test environments with AREA_OCCUPANCY_AUTO_INIT_DB=1, the database
-        is already initialized in AreaOccupancyDB.__init__(), and this method returns early without performing initialization.
+        This ensures database tables exist and basic integrity before setup() loads data.
+        The initialization is idempotent - calling it multiple times is safe even if the
+        database was pre-initialized.
         """
-        # In test environments, database is already initialized in __init__
-        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
-            return
-
         try:
             await self.hass.async_add_executor_job(self.db.initialize_database)
             _LOGGER.debug(
