@@ -938,7 +938,7 @@ class AreaOccupancyDB:
 
     # --- Master Election Methods ---
 
-    def elect_master(self) -> str:
+    def elect_master(self) -> str | None:
         """Elect or return current master instance.
 
         Uses file lock to prevent race conditions when multiple instances
@@ -946,6 +946,7 @@ class AreaOccupancyDB:
 
         Returns:
             str: The entry_id of the current master instance
+            None: If master election failed and state is unknown
         """
         try:
             with self.get_locked_session(timeout=5) as session:
@@ -1010,8 +1011,8 @@ class AreaOccupancyDB:
 
         except (SQLAlchemyError, OSError, RuntimeError) as e:
             _LOGGER.error("Failed to elect master: %s", e)
-            # Return current entry_id as fallback
-            return self.coordinator.entry_id
+            # Return None to indicate election failure and unknown state
+            return None
 
     def get_master_entry_id(self) -> str | None:
         """Get the current master instance entry_id.
