@@ -541,6 +541,16 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             _LOGGER.debug("Verification check: already unoccupied, skipping")
             return
 
+        # If no motion sensors are configured, skip verification and maintain occupancy
+        # This supports "wasp in box" door-only setups
+        if not self._motion_entities:
+            _LOGGER.debug(
+                "Verification check: no motion sensors configured, skipping verification"
+            )
+            # Motion-based verification doesn't apply, just update state
+            self.async_write_ha_state()
+            return
+
         # Check if any motion sensor is currently active
         has_active_motion = False
         for motion_entity in self._motion_entities:
