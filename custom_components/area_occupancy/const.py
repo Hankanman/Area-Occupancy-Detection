@@ -158,6 +158,9 @@ MAX_INTERVAL_SECONDS: Final = (
 DECAY_INTERVAL: Final = 10  # seconds
 ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
 
+# Database save debounce
+SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
+
 ########################################################
 # Virtual sensor constants
 ########################################################
