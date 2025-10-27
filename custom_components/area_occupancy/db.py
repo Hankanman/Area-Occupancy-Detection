@@ -1263,8 +1263,8 @@ class AreaOccupancyDB:
             return area, entities, stale_entity_ids
 
         def _delete_stale_operation(stale_ids: list[str]) -> None:
-            """Delete stale entities (master-only, no lock needed)."""
-            with self.get_session() as session:
+            """Delete stale entities (requires lock to prevent race conditions)."""
+            with self.get_locked_session() as session:
                 for entity_id in stale_ids:
                     _LOGGER.info(
                         "Deleting stale entity %s from database (not in current config)",
