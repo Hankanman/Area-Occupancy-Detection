@@ -34,6 +34,15 @@ pytestmark = pytest.mark.usefixtures("mock_frame_helper")
 class TestAreaOccupancyCoordinator:
     """Test AreaOccupancyCoordinator class."""
 
+    @pytest.fixture(autouse=True)
+    def mock_async_call_later(self):
+        """Mock async_call_later to prevent lingering timers across all tests."""
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_call_later",
+            return_value=Mock(),
+        ):
+            yield
+
     def test_initialization(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
     ) -> None:
@@ -741,6 +750,13 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch.object(
+                coordinator, "_schedule_save"
+            ),  # Mock _schedule_save to avoid timer
+            patch(
+                "custom_components.area_occupancy.coordinator.async_call_later",
+                return_value=Mock(),  # Return a Mock that can be canceled
+            ),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
@@ -1028,6 +1044,13 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.entities, "get_entity", return_value=mock_entity),
+            patch.object(
+                coordinator, "_schedule_save"
+            ),  # Mock _schedule_save to avoid timer
+            patch(
+                "custom_components.area_occupancy.coordinator.async_call_later",
+                return_value=Mock(),  # Return a Mock that can be canceled
+            ),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_state_change_event",
                 return_value=Mock(),
@@ -1291,11 +1314,12 @@ class TestAreaOccupancyCoordinator:
         """Test shutdown with all timers present."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        # Set up all timers
+        # Set up all timers (including save timer)
         coordinator._global_decay_timer = Mock()
         coordinator._remove_state_listener = Mock()
         coordinator._analysis_timer = Mock()
         coordinator._health_check_timer = Mock()
+        coordinator._save_timer = Mock()  # Set save timer to trigger final save
 
         with (
             patch.object(coordinator.db, "save_data", new=AsyncMock()),

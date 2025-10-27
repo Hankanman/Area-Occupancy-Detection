@@ -15,6 +15,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_point_in_time,
     async_track_state_change_event,
 )
@@ -31,6 +32,7 @@ from .const import (
     DEVICE_SW_VERSION,
     DOMAIN,
     MIN_PROBABILITY,
+    SAVE_DEBOUNCE_SECONDS,
 )
 from .data.config import Config
 from .data.entity import EntityFactory, EntityManager
@@ -70,6 +72,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._remove_state_listener: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._health_check_timer: CALLBACK_TYPE | None = None
+        self._save_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
 
     async def async_init_database(self) -> None:
@@ -307,11 +310,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.error("Failed to start basic timers: %s", timer_err)
 
     async def update(self) -> dict[str, Any]:
-        """Update and return the current coordinator data."""
-        # Save current state to database
-        await self.hass.async_add_executor_job(self.db.save_data)
+        """Update and return the current coordinator data (in-memory only).
 
-        # Return current state data
+        Database saves are debounced to avoid blocking on every state change.
+        See _schedule_save() for the actual save logic.
+        """
+        # Return current state data (all calculations are in-memory)
         return {
             "probability": self.probability,
             "occupied": self.occupied,
@@ -321,8 +325,50 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_updated": dt_util.utcnow(),
         }
 
+    def _schedule_save(self) -> None:
+        """Schedule a debounced database save.
+
+        Cancels any pending save and schedules a new one. This ensures that
+        rapid state changes result in a single database write after the
+        activity settles.
+        """
+        # Cancel existing timer if any
+        if self._save_timer is not None:
+            self._save_timer()
+            self._save_timer = None
+
+        # Schedule new save after debounce period
+        async def _do_save(_now: datetime) -> None:
+            """Perform the actual save operation."""
+            self._save_timer = None
+            try:
+                await self.hass.async_add_executor_job(self.db.save_data)
+                _LOGGER.debug(
+                    "Debounced database save completed for %s", self.config.name
+                )
+            except (HomeAssistantError, OSError, RuntimeError) as err:
+                _LOGGER.error("Failed to save data for %s: %s", self.config.name, err)
+
+        self._save_timer = async_call_later(self.hass, SAVE_DEBOUNCE_SECONDS, _do_save)
+        _LOGGER.debug(
+            "Database save scheduled in %d seconds for %s",
+            SAVE_DEBOUNCE_SECONDS,
+            self.config.name,
+        )
+
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
+        # Cancel pending save timer before cleanup
+        if self._save_timer is not None:
+            self._save_timer()
+            self._save_timer = None
+            # Perform final save to ensure no data loss
+            try:
+                await self.hass.async_add_executor_job(self.db.save_data)
+                _LOGGER.info("Final database save completed for %s", self.config.name)
+            except (HomeAssistantError, OSError, RuntimeError) as err:
+                _LOGGER.error("Failed final save for %s: %s", self.config.name, err)
+
         # Cancel prior update tracker
         if self._global_decay_timer is not None:
             self._global_decay_timer()
@@ -343,7 +389,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._health_check_timer()
             self._health_check_timer = None
 
-        await self.hass.async_add_executor_job(self.db.save_data)
+        # Clean up save timer (in case it wasn't handled in earlier logic)
+        if self._save_timer is not None:
+            self._save_timer()
+            self._save_timer = None
 
         # Clean up entity manager
         await self.entities.cleanup()
@@ -395,6 +444,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entity = self.entities.get_entity(entity_id)
                 if entity and entity.has_new_evidence() and self.setup_complete:
                     await self.async_refresh()
+                    self._schedule_save()  # Debounced save after state change
 
             self._remove_state_listener = async_track_state_change_event(
                 self.hass, entity_ids, _refresh_on_state_change
@@ -419,6 +469,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Refresh the coordinator if decay is enabled
         if self.config.decay.enabled:
             await self.async_refresh()
+            self._schedule_save()  # Schedule save after decay update
 
         # Reschedule the timer
         self._start_decay_timer()
