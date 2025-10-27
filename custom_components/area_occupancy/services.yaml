@@ -57,27 +57,3 @@ get_problematic_entities:
       selector:
         config_entry:
           integration: area_occupancy
-
-get_database_status:
-  name: Get Database Status
-  description: "Get the comprehensive status of the database including integrity, backups, and recovery options. Database health checks run automatically in the background 60 seconds after startup to avoid blocking HA initialization."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to get database status for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
-
-recover_database:
-  name: Recover Database
-  description: "Manually trigger database recovery if corruption is detected. Background health checks run automatically every 6 hours. Use this service if startup is slow or database errors appear in logs."
-  fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to recover the database for."
-      required: true
-      selector:
-        config_entry:
-          integration: area_occupancy
