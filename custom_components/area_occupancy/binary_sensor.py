@@ -406,7 +406,10 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Update motion state
         old_motion = self._motion_state
         self._motion_state = new_state
-        self._last_motion_time = dt_util.utcnow()
+
+        # Only update timestamp when motion starts, not when it stops
+        if new_state == STATE_ON:
+            self._last_motion_time = dt_util.utcnow()
 
         _LOGGER.debug(
             "Motion state change: %s changed from %s to %s",
