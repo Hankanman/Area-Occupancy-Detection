@@ -724,15 +724,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._send_state_change_request()
 
             # Schedule next run (1 hour interval, maintaining stagger)
-            position = await self.hass.async_add_executor_job(
-                self.db.get_instance_position, self.entry_id
-            )
-            stagger_seconds = position * (ANALYSIS_STAGGER_MINUTES * 60)
-            next_update = (
-                _now
-                + timedelta(seconds=ANALYSIS_INTERVAL)
-                + timedelta(seconds=stagger_seconds)
-            )
+            # Note: stagger is maintained naturally since _now already includes the initial offset
+            next_update = _now + timedelta(seconds=ANALYSIS_INTERVAL)
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
