@@ -22,7 +22,7 @@ DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.10.1-pre5"
 CONF_VERSION: Final = 12
-CONF_VERSION_MINOR: Final = 0
+CONF_VERSION_MINOR: Final = 1
 HA_RECORDER_DAYS: Final = 10  # days
 
 # Configuration constants
