@@ -161,6 +161,16 @@ ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
 # Database save debounce
 SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
 
+# Master coordination constants
+ANALYSIS_STAGGER_MINUTES: Final = 2  # minutes between instance analysis runs
+MASTER_HEARTBEAT_INTERVAL: Final = 15  # seconds between master heartbeats
+MASTER_HEALTH_TIMEOUT: Final = 30  # seconds before master considered dead
+MASTER_HEALTH_CHECK_INTERVAL: Final = 10  # seconds between health checks
+
+# Dispatcher signal names (replace event bus)
+SIGNAL_STATE_SAVE_REQUEST: Final = f"{DOMAIN}_save_request"
+SIGNAL_MASTER_HEARTBEAT: Final = f"{DOMAIN}_heartbeat"
+
 ########################################################
 # Virtual sensor constants
 ########################################################
