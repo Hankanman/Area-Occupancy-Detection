@@ -520,15 +520,22 @@ class AreaOccupancyDB:
                     "Database may be corrupted (error: %s), will attempt recovery in background",
                     e,
                 )
-                # Don't block startup - let background health check handle it
+                # Don't block startup - let master's periodic health check handle it
                 # Just log and continue
             else:
                 # Database doesn't exist or is not initialized, create it
                 _LOGGER.debug(
                     "Database error during table check, initializing database: %s", e
                 )
-                self.init_db()
-                self.set_db_version()
+                try:
+                    self.init_db()
+                    self.set_db_version()
+                except (sa.exc.SQLAlchemyError, OSError, RuntimeError):
+                    # If initialization fails, log and continue
+                    # Master's health check will handle recovery
+                    _LOGGER.debug(
+                        "Database initialization failed, master will handle recovery"
+                    )
 
     def check_database_integrity(self) -> bool:
         """Check if the database is healthy and not corrupted.
@@ -599,6 +606,8 @@ class AreaOccupancyDB:
     def attempt_database_recovery(self) -> bool:
         """Attempt to recover from database corruption.
 
+        **Master-only method**: Only the master instance should call this.
+
         Returns:
             bool: True if recovery was successful, False otherwise
 
@@ -650,6 +659,8 @@ class AreaOccupancyDB:
     def backup_database(self) -> bool:
         """Create a backup of the current database.
 
+        **Master-only method**: Only the master instance should call this.
+
         Returns:
             bool: True if backup was successful, False otherwise
 
@@ -670,6 +681,8 @@ class AreaOccupancyDB:
 
     def restore_database_from_backup(self) -> bool:
         """Restore database from backup if available.
+
+        **Master-only method**: Only the master instance should call this.
 
         Returns:
             bool: True if restore was successful, False otherwise
@@ -712,6 +725,9 @@ class AreaOccupancyDB:
     def handle_database_corruption(self) -> bool:
         """Handle database corruption with automatic recovery attempts.
 
+        **Master-only method**: Only the master instance should call this.
+        Non-master instances should rely on the master's periodic health checks.
+
         Returns:
             bool: True if database is now healthy, False if all recovery attempts failed
 
@@ -751,72 +767,11 @@ class AreaOccupancyDB:
         else:
             return True
 
-    def safe_database_operation(
-        self, operation_name: str, operation_func: Any, *args: Any, **kwargs: Any
-    ) -> Any:
-        """Safely execute a database operation with automatic corruption handling.
-
-        Args:
-            operation_name: Name of the operation for execution
-            operation_func: Function to execute
-            *args: Positional arguments to pass to the operation function
-            **kwargs: Keyword arguments to pass to the operation function
-
-        Returns:
-            Result of the operation function, or None if all recovery attempts failed
-
-        """
-        max_attempts = self.max_recovery_attempts
-        for attempt in range(max_attempts):
-            try:
-                # Check database integrity before operation
-                if not self.check_database_integrity():
-                    _LOGGER.warning(
-                        "Database integrity check failed before %s, attempting recovery",
-                        operation_name,
-                    )
-                    if not self.handle_database_corruption():
-                        _LOGGER.error(
-                            "Failed to recover database after %d attempts", max_attempts
-                        )
-                        return None
-
-                # Execute the operation
-                return operation_func(*args, **kwargs)
-
-            except sa.exc.DatabaseError as e:
-                if self.is_database_corrupted(e):
-                    _LOGGER.error(
-                        "Database corruption detected during %s (attempt %d/%d): %s",
-                        operation_name,
-                        attempt + 1,
-                        max_attempts,
-                        e,
-                    )
-
-                    if attempt < max_attempts - 1:
-                        if not self.handle_database_corruption():
-                            _LOGGER.error(
-                                "Database recovery failed, retrying operation"
-                            )
-                            continue
-                    else:
-                        _LOGGER.error(
-                            "All recovery attempts failed for %s", operation_name
-                        )
-                        return None
-                else:
-                    # Re-raise non-corruption database errors
-                    raise
-            except Exception as e:
-                _LOGGER.error("Unexpected error during %s: %s", operation_name, e)
-                raise
-
-        # If we get here, all recovery attempts failed
-        return None
-
     def periodic_health_check(self) -> bool:
         """Perform periodic database health check and maintenance.
+
+        **Master-only method**: Only the master instance should call this.
+        The master performs health checks during analysis cycles.
 
         Returns:
             bool: True if database is healthy, False if issues were found
@@ -859,54 +814,6 @@ class AreaOccupancyDB:
             return False
         else:
             return True
-
-    def manual_recovery_trigger(self) -> bool:
-        """Manually trigger database recovery for testing or manual intervention.
-
-        Returns:
-            bool: True if recovery was successful, False otherwise
-
-        """
-        _LOGGER.info("Manual database recovery triggered")
-
-        # Force a health check and recovery
-        if not self.check_database_integrity():
-            _LOGGER.info("Database corruption detected during manual recovery")
-            return self.handle_database_corruption()
-        _LOGGER.info("Database is healthy, no recovery needed")
-        return True
-
-    def get_database_status(self) -> dict[str, Any]:
-        """Get comprehensive database status information.
-
-        Returns:
-            dict: Database status information
-
-        """
-        status = {
-            "database_path": str(self.db_path) if self.db_path else None,
-            "database_exists": self.db_path.exists() if self.db_path else False,
-            "database_accessible": self.check_database_accessibility()
-            if self.db_path and self.db_path.exists()
-            else False,
-            "database_integrity": self.check_database_integrity()
-            if self.db_path and self.db_path.exists()
-            else False,
-            "auto_recovery_enabled": self.enable_auto_recovery,
-            "max_recovery_attempts": self.max_recovery_attempts,
-            "periodic_backups_enabled": self.enable_periodic_backups,
-            "backup_interval_hours": self.backup_interval_hours,
-        }
-
-        # Check for backup file
-        if self.db_path:
-            backup_path = self.db_path.with_suffix(".db.backup")
-            status["backup_exists"] = backup_path.exists()
-            if backup_path.exists():
-                backup_age_hours = (time.time() - backup_path.stat().st_mtime) / 3600
-                status["backup_age_hours"] = round(backup_age_hours, 2)  # type: ignore[assignment]
-
-        return status
 
     def get_engine(self) -> Any:
         """Get the engine for the database with optimized settings."""
@@ -1029,6 +936,226 @@ class AreaOccupancyDB:
         except (SQLAlchemyError, OSError, ValueError) as e:
             _LOGGER.warning("Failed to record prune timestamp: %s", e)
 
+    # --- Master Election Methods ---
+
+    def elect_master(self) -> str:
+        """Elect or return current master instance.
+
+        Uses file lock to prevent race conditions when multiple instances
+        start simultaneously and compete to become master.
+
+        Returns:
+            str: The entry_id of the current master instance
+        """
+        try:
+            with self.get_locked_session(timeout=5) as session:
+                # Get current master info
+                master_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_entry_id")
+                    .first()
+                )
+                master_heartbeat_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_heartbeat")
+                    .first()
+                )
+
+                now = dt_util.utcnow()
+                is_master_alive = False
+
+                if master_heartbeat_entry:
+                    try:
+                        last_heartbeat = datetime.fromisoformat(
+                            master_heartbeat_entry.value
+                        )
+                        # Master is alive if heartbeat within 30 seconds
+                        if (now - last_heartbeat).total_seconds() < 30:
+                            is_master_alive = True
+                    except (ValueError, TypeError):
+                        _LOGGER.warning("Invalid master heartbeat timestamp")
+
+                # If no master or master is dead, try to become master
+                if not master_entry or not is_master_alive:
+                    old_master = master_entry.value if master_entry else None
+                    _LOGGER.info(
+                        "Electing new master. Old master: %s, Current entry: %s",
+                        old_master,
+                        self.coordinator.entry_id,
+                    )
+
+                    # Update master entry
+                    if master_entry:
+                        master_entry.value = self.coordinator.entry_id
+                    else:
+                        session.add(
+                            self.Metadata(
+                                key="master_entry_id", value=self.coordinator.entry_id
+                            )
+                        )
+
+                    # Set heartbeat
+                    if master_heartbeat_entry:
+                        master_heartbeat_entry.value = now.isoformat()
+                    else:
+                        session.add(
+                            self.Metadata(key="master_heartbeat", value=now.isoformat())
+                        )
+
+                    session.commit()
+                    return self.coordinator.entry_id
+
+                # Master is alive, return it
+                return master_entry.value
+
+        except (SQLAlchemyError, OSError, RuntimeError) as e:
+            _LOGGER.error("Failed to elect master: %s", e)
+            # Return current entry_id as fallback
+            return self.coordinator.entry_id
+
+    def get_master_entry_id(self) -> str | None:
+        """Get the current master instance entry_id.
+
+        Returns:
+            str: Master entry_id or None if not set
+        """
+        try:
+            with self.get_session() as session:
+                master_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_entry_id")
+                    .first()
+                )
+                return master_entry.value if master_entry else None
+        except (SQLAlchemyError, OSError) as e:
+            _LOGGER.debug("Failed to get master entry ID: %s", e)
+            return None
+
+    def is_master(self) -> bool:
+        """Check if current instance is the master.
+
+        Returns:
+            bool: True if current instance is master
+        """
+        master_id = self.get_master_entry_id()
+        return master_id == self.coordinator.entry_id
+
+    def update_master_heartbeat(self) -> None:
+        """Update master heartbeat timestamp (master-only, no lock needed).
+
+        Note: Only the master calls this method, so no file lock is required.
+        """
+        try:
+            with self.get_session() as session:
+                heartbeat_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_heartbeat")
+                    .first()
+                )
+                if heartbeat_entry:
+                    heartbeat_entry.value = dt_util.utcnow().isoformat()
+                else:
+                    session.add(
+                        self.Metadata(
+                            key="master_heartbeat", value=dt_util.utcnow().isoformat()
+                        )
+                    )
+                session.commit()
+        except (SQLAlchemyError, OSError, RuntimeError) as e:
+            _LOGGER.warning("Failed to update master heartbeat: %s", e)
+
+    def check_master_health(self) -> bool:
+        """Check if master heartbeat is recent (< 30s old).
+
+        Returns:
+            bool: True if master appears healthy
+        """
+        try:
+            with self.get_session() as session:
+                heartbeat_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_heartbeat")
+                    .first()
+                )
+                if not heartbeat_entry:
+                    return False
+
+                try:
+                    last_heartbeat = datetime.fromisoformat(heartbeat_entry.value)
+                    time_since_heartbeat = (
+                        dt_util.utcnow() - last_heartbeat
+                    ).total_seconds()
+                except (ValueError, TypeError):
+                    return False
+                else:
+                    return time_since_heartbeat < 30
+        except (SQLAlchemyError, OSError) as e:
+            _LOGGER.debug("Failed to check master health: %s", e)
+            return False
+
+    def release_master(self) -> None:
+        """Release master role (called on shutdown).
+
+        Uses file lock to ensure clean state transition during instance shutdown
+        or master role handoff to another instance.
+
+        """
+        try:
+            with self.get_locked_session(timeout=2) as session:
+                master_entry = (
+                    session.query(self.Metadata)
+                    .filter_by(key="master_entry_id")
+                    .first()
+                )
+                if master_entry and master_entry.value == self.coordinator.entry_id:
+                    # Clear the master entry
+                    master_entry.value = ""
+                    session.commit()
+                    _LOGGER.info(
+                        "Released master role for entry %s", self.coordinator.entry_id
+                    )
+        except (SQLAlchemyError, OSError, RuntimeError) as e:
+            _LOGGER.warning("Failed to release master role: %s", e)
+
+    def get_instance_position(self, entry_id: str) -> int:
+        """Get round-robin position for instance (for analysis staggering).
+
+        Uses file lock to ensure unique position assignment when multiple instances
+        start simultaneously and register their positions.
+
+        Args:
+            entry_id: Instance entry ID
+
+        Returns:
+            int: Position (0, 1, 2, ...) for staggering
+        """
+        try:
+            with self.get_locked_session(timeout=5) as session:
+                position_key = f"instance_{entry_id}_position"
+                position_entry = (
+                    session.query(self.Metadata).filter_by(key=position_key).first()
+                )
+
+                if position_entry:
+                    return int(position_entry.value)
+
+                # Need to assign a position - count existing instances
+                existing_positions = (
+                    session.query(self.Metadata)
+                    .filter(self.Metadata.key.like("instance_%_position"))
+                    .all()
+                )
+
+                # Assign next position
+                position = len(existing_positions)
+                session.add(self.Metadata(key=position_key, value=str(position)))
+                session.commit()
+
+                return position
+        except (SQLAlchemyError, OSError, ValueError) as e:
+            _LOGGER.warning("Failed to get instance position: %s", e)
+            return 0  # Default to position 0 if error
+
     def init_db(self) -> None:
         """Initialize the database with WAL mode and race condition handling."""
         _LOGGER.debug("Starting database initialization")
@@ -1135,8 +1262,8 @@ class AreaOccupancyDB:
             return area, entities, stale_entity_ids
 
         def _delete_stale_operation(stale_ids: list[str]) -> None:
-            """Delete stale entities WITH lock (only if needed)."""
-            with self.get_locked_session() as session:
+            """Delete stale entities (master-only, no lock needed)."""
+            with self.get_session() as session:
                 for entity_id in stale_ids:
                     _LOGGER.info(
                         "Deleting stale entity %s from database (not in current config)",
@@ -1226,9 +1353,12 @@ class AreaOccupancyDB:
     # --- Save Data ---
 
     def save_area_data(self) -> None:
-        """Save the area data to the database."""
+        """Save the area data to the database (master-only, no lock needed).
+
+        Note: Only the master performs saves, so no file lock is required.
+        """
         try:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 cfg = self.coordinator.config
 
                 area_data = {
@@ -1307,9 +1437,12 @@ class AreaOccupancyDB:
             raise
 
     def save_entity_data(self) -> None:
-        """Save the entity data to the database."""
+        """Save the entity data to the database (master-only, no lock needed).
+
+        Note: Only the master performs saves, so no file lock is required.
+        """
         try:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 entities = self.coordinator.entities.entities.values()
                 for entity in entities:
                     # Skip entities with missing type information
@@ -1402,7 +1535,7 @@ class AreaOccupancyDB:
         try:
 
             def _cleanup_operation() -> int:
-                with self.get_locked_session() as session:
+                with self.get_session() as session:
                     # Get all entity IDs currently configured in the coordinator
                     # Handle cases where entities might be a SimpleNamespace or mock object
                     if hasattr(self.coordinator.entities, "entity_ids"):
@@ -1474,9 +1607,7 @@ class AreaOccupancyDB:
                     )
                     return orphaned_count
 
-            result = self.safe_database_operation(
-                "cleanup orphaned entities", _cleanup_operation
-            )
+            result = _cleanup_operation()
 
         except (
             sa.exc.SQLAlchemyError,
@@ -1497,17 +1628,10 @@ class AreaOccupancyDB:
 
     def is_intervals_empty(self) -> bool:
         """Check if the intervals table is empty using ORM (read-only, no lock)."""
-
-        def _check_intervals_empty() -> bool:
+        try:
             with self.get_session() as session:
                 count = session.query(self.Intervals).count()
                 return bool(count == 0)
-
-        try:
-            result = self.safe_database_operation(
-                "check intervals empty", _check_intervals_empty
-            )
-            return bool(result) if result is not None else True
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist, it's considered empty
             if "no such table" in str(e).lower():
@@ -1588,8 +1712,7 @@ class AreaOccupancyDB:
 
     def get_latest_interval(self) -> datetime:
         """Return the latest interval end time minus 1 hour, or default window if none (read-only, no lock)."""
-
-        def _get_latest_interval_operation() -> datetime:
+        try:
             with self.get_session() as session:
                 result = session.execute(
                     sa.select(sa.func.max(self.Intervals.end_time))
@@ -1597,12 +1720,6 @@ class AreaOccupancyDB:
                 if result:
                     return result - timedelta(hours=1)
                 return dt_util.now() - timedelta(days=10)
-
-        try:
-            result = self.safe_database_operation(
-                "get latest interval", _get_latest_interval_operation
-            )
-            return result if result is not None else dt_util.now() - timedelta(days=10)
         except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
             # If table doesn't exist or any other error, return a default time
             if "no such table" in str(e).lower():
@@ -1765,7 +1882,7 @@ class AreaOccupancyDB:
         _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
 
         try:
-            with self.get_locked_session() as session:
+            with self.get_session() as session:
                 # Count intervals to be deleted for logging
                 count_query = session.query(func.count(self.Intervals.id)).filter(
                     self.Intervals.start_time < cutoff_date

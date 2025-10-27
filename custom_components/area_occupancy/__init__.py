@@ -85,8 +85,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Add update listener
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
-    _LOGGER.info("Area Occupancy setup complete for entry %s", entry.entry_id)
-    _LOGGER.info("Background tasks scheduled: health check (60s), analysis (5min)")
+    # Log role-specific info
+    role = "MASTER" if coordinator.is_master else "non-master"
+    position = await hass.async_add_executor_job(
+        coordinator.db.get_instance_position, entry.entry_id
+    )
+    _LOGGER.info(
+        "Area Occupancy setup complete for entry %s as %s (position %d)",
+        entry.entry_id,
+        role,
+        position,
+    )
+    _LOGGER.info("Analysis runs staggered with %d minute intervals", 2)
     return True
 
 
