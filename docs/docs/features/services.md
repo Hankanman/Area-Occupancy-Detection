@@ -58,14 +58,15 @@ data:
 ```
 
 **Returns:**
-- `total_entities`: Total number of entities
-- `active_entities`: Number of entities currently providing evidence
-- `available_entities`: Number of available entities
-- `unavailable_entities`: Number of unavailable entities
-- `decaying_entities`: Number of entities currently in decay state
-- `availability_percentage`: Percentage of entities available
-- `activity_percentage`: Percentage of entities active
-- `summary`: Human readable summary of metrics
+- `metrics`: Object containing:
+  - `total_entities`: Total number of entities
+  - `active_entities`: Number of entities currently providing evidence
+  - `available_entities`: Number of available entities
+  - `unavailable_entities`: Number of unavailable entities
+  - `decaying_entities`: Number of entities currently in decay state
+  - `availability_percentage`: Percentage of entities available
+  - `activity_percentage`: Percentage of entities active
+  - `summary`: Human readable summary of metrics
 
 ## `area_occupancy.get_problematic_entities`
 
@@ -83,10 +84,11 @@ data:
 ```
 
 **Returns:**
-- `unavailable`: List of entity IDs that are currently unavailable
-- `stale_updates`: List of entity IDs that haven't been updated in over an hour
-- `total_problems`: Count of unavailable and stale entities
-- `summary`: Human readable summary of issues
+- `problems`: Object containing:
+  - `unavailable`: List of entity IDs that are currently unavailable
+  - `stale_updates`: List of entity IDs that haven't been updated in over an hour
+  - `total_problems`: Count of unavailable and stale entities
+  - `summary`: Human readable summary of issues
 
 ## `area_occupancy.get_area_status`
 
@@ -104,16 +106,18 @@ data:
 ```
 
 **Returns:**
-- `area_name`: Name of the area
-- `occupied`: Boolean indicating if area is currently occupied
-- `occupancy_probability`: Current probability of occupancy (0.0-1.0)
-- `area_baseline_prior`: The baseline prior probability
-- `confidence_level`: Text description of confidence
-- `confidence_description`: Detailed description of confidence level
-- `entity_summary`: Counts of total, active, available, unavailable and decaying entities
-- `status_summary`: Human readable summary of the area state
+- `area_status`: Object containing:
+  - `area_name`: Name of the area
+  - `occupied`: Boolean indicating if area is currently occupied
+  - `occupancy_probability`: Current probability of occupancy (0.0-1.0)
+  - `area_baseline_prior`: The baseline prior probability
+  - `confidence_level`: Text description of confidence
+  - `confidence_description`: Detailed description of confidence level
+  - `entity_summary`: Counts of total, active, available, unavailable and decaying entities
+  - `status_summary`: Human readable summary of the area state
 
 **Notes:**
-- All services except `reset_entities` return response data that can be used in automations or scripts.
+- Services that return response data: `run_analysis`, `get_entity_metrics`, `get_problematic_entities`, and `get_area_status` all return nested objects (see Returns sections above for structure).
+- The `reset_entities` service does not return response data.
 - Services that query historical data (`run_analysis`) can be resource-intensive.
 - The `entry_id` can be found in Home Assistant under Settings → Devices & Services → Area Occupancy Detection → (click on an instance).

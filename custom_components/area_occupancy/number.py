@@ -61,4 +61,4 @@ async def async_setup_entry(
     # Create a new number entity for the threshold
     entities = [Threshold(coordinator=coordinator, entry_id=entry.entry_id)]
 
-    async_add_entities(entities, update_before_add=True)
+    async_add_entities(entities, update_before_add=False)

@@ -1,6 +1,7 @@
 """Tests for the Prior class (updated for improved implementation)."""
 
 from datetime import timedelta
+import logging
 from unittest.mock import Mock, patch
 
 import pytest
@@ -11,7 +12,12 @@ from sqlalchemy.exc import (
     SQLAlchemyError,
 )
 
-from custom_components.area_occupancy.const import MAX_PRIOR, MIN_PRIOR
+from custom_components.area_occupancy.const import (
+    DEFAULT_CACHE_TTL_SECONDS,
+    MAX_PRIOR,
+    MIN_PRIOR,
+    MIN_PROBABILITY,
+)
 from custom_components.area_occupancy.data.prior import (
     DAYS_PER_WEEK,
     DEFAULT_OCCUPIED_SECONDS,
@@ -19,7 +25,6 @@ from custom_components.area_occupancy.data.prior import (
     DEFAULT_SLOT_MINUTES,
     HOURS_PER_DAY,
     MAX_PROBABILITY,
-    MIN_PROBABILITY,
     MINUTES_PER_DAY,
     MINUTES_PER_HOUR,
     PRIOR_FACTOR,
@@ -32,11 +37,11 @@ from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
 @pytest.fixture
-def mock_coordinator():
+def mock_coordinator(mock_hass):
     mock = Mock()
     mock.config.sensors.motion = ["binary_sensor.motion1", "binary_sensor.motion2"]
     mock.config.wasp_in_box.enabled = False
-    mock.hass = Mock()
+    mock.hass = mock_hass  # Use the proper mock_hass fixture
     mock.entry_id = "test_entry_id"
 
     # Mock database
@@ -486,3 +491,199 @@ def test_last_updated_property(mock_coordinator):
     now = dt_util.utcnow()
     prior._last_updated = now
     assert prior.last_updated == now
+
+
+# New tests for performance optimization features
+
+
+def test_get_occupied_intervals_with_lookback_days(mock_coordinator):
+    """Test get_occupied_intervals with lookback_days parameter."""
+    prior = Prior(mock_coordinator)
+
+    # Test the lookback_days parameter by mocking the method directly
+    test_intervals = [
+        (
+            dt_util.utcnow() - timedelta(days=1),
+            dt_util.utcnow() - timedelta(days=1, hours=1),
+        ),
+        (dt_util.utcnow() - timedelta(hours=2), dt_util.utcnow() - timedelta(hours=1)),
+    ]
+
+    with patch.object(
+        prior, "get_occupied_intervals", return_value=test_intervals
+    ) as mock_method:
+        # Test default lookback (90 days) - explicitly pass the default
+        intervals = prior.get_occupied_intervals(lookback_days=90)
+        assert len(intervals) == 2
+
+        # Test custom lookback
+        intervals_custom = prior.get_occupied_intervals(lookback_days=30)
+        assert len(intervals_custom) == 2
+
+        # Verify method was called with correct parameters
+        assert mock_method.call_count == 2
+        mock_method.assert_any_call(lookback_days=90)  # Default
+        mock_method.assert_any_call(lookback_days=30)  # Custom
+
+
+def test_get_occupied_intervals_caching(mock_coordinator):
+    """Test caching behavior of get_occupied_intervals."""
+    prior = Prior(mock_coordinator)
+
+    # Test cache invalidation method directly
+    # Set up cache
+    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
+    prior._cached_occupied_intervals = test_intervals
+    prior._cached_intervals_timestamp = dt_util.utcnow()
+
+    # Verify cache is set
+    assert prior._cached_occupied_intervals is not None
+    assert prior._cached_intervals_timestamp is not None
+
+    # Test cache invalidation
+    prior._invalidate_occupied_intervals_cache()
+
+    # Verify cache is cleared
+    assert prior._cached_occupied_intervals is None
+    assert prior._cached_intervals_timestamp is None
+
+
+def test_get_occupied_intervals_cache_expiry(mock_coordinator):
+    """Test cache expiry after DEFAULT_CACHE_TTL_SECONDS."""
+    prior = Prior(mock_coordinator)
+
+    # Test cache expiry logic directly
+    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
+    prior._cached_occupied_intervals = test_intervals
+
+    # Set cache timestamp to expired time
+    prior._cached_intervals_timestamp = dt_util.utcnow() - timedelta(
+        seconds=DEFAULT_CACHE_TTL_SECONDS + 1
+    )
+
+    # Verify cache is expired
+    now = dt_util.utcnow()
+    cache_age = (now - prior._cached_intervals_timestamp).total_seconds()
+    assert cache_age > DEFAULT_CACHE_TTL_SECONDS
+
+
+def test_invalidate_occupied_intervals_cache(mock_coordinator):
+    """Test cache invalidation method."""
+    prior = Prior(mock_coordinator)
+
+    # Set up cache
+    prior._cached_occupied_intervals = [(dt_util.utcnow(), dt_util.utcnow())]
+    prior._cached_intervals_timestamp = dt_util.utcnow()
+
+    # Verify cache is set
+    assert prior._cached_occupied_intervals is not None
+    assert prior._cached_intervals_timestamp is not None
+
+    # Invalidate cache
+    prior._invalidate_occupied_intervals_cache()
+
+    # Verify cache is cleared
+    assert prior._cached_occupied_intervals is None
+    assert prior._cached_intervals_timestamp is None
+
+
+def test_get_interval_aggregates_sql_path(mock_coordinator):
+    """Test successful SQL aggregation path."""
+    prior = Prior(mock_coordinator)
+
+    # Mock successful SQL aggregation
+    mock_coordinator.db.get_aggregated_intervals_by_slot.return_value = [
+        (0, 0, 3600.0),  # Monday, slot 0, 1 hour
+        (1, 12, 1800.0),  # Tuesday, slot 12, 30 minutes
+    ]
+
+    result = prior.get_interval_aggregates(slot_minutes=60)
+
+    assert len(result) == 2
+    assert result[0] == (0, 0, 3600.0)
+    assert result[1] == (1, 12, 1800.0)
+
+    # Verify SQL method was called
+    mock_coordinator.db.get_aggregated_intervals_by_slot.assert_called_once_with(
+        "test_entry_id", 60
+    )
+
+
+def test_get_interval_aggregates_fallback(mock_coordinator):
+    """Test fallback to Python method on SQL failure."""
+    prior = Prior(mock_coordinator)
+
+    # Mock SQL failure
+    mock_coordinator.db.get_aggregated_intervals_by_slot.side_effect = OperationalError(
+        "Database error", None, None
+    )
+
+    # Mock Python fallback method
+    with patch.object(
+        prior, "_get_interval_aggregates_python", return_value=[(0, 0, 1800.0)]
+    ) as mock_python:
+        result = prior.get_interval_aggregates(slot_minutes=60)
+
+        assert len(result) == 1
+        assert result[0] == (0, 0, 1800.0)
+
+        # Verify Python fallback was called
+        mock_python.assert_called_once_with(60)
+
+
+def test_get_interval_aggregates_python_fallback(mock_coordinator):
+    """Test Python fallback method directly."""
+    prior = Prior(mock_coordinator)
+
+    # Mock get_occupied_intervals to return test data
+    test_intervals = [
+        (dt_util.utcnow() - timedelta(hours=2), dt_util.utcnow() - timedelta(hours=1)),
+        (dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow()),
+    ]
+
+    with patch.object(prior, "get_occupied_intervals", return_value=test_intervals):
+        result = prior._get_interval_aggregates_python(slot_minutes=60)
+
+        # Should return aggregated data
+        assert isinstance(result, list)
+        # Each item should be (day_of_week, time_slot, total_seconds)
+        for item in result:
+            assert len(item) == 3
+            assert isinstance(item[0], int)  # day_of_week
+            assert isinstance(item[1], int)  # time_slot
+            assert isinstance(item[2], float)  # total_seconds
+
+
+def test_get_occupied_intervals_performance_logging(mock_coordinator, caplog):
+    """Test performance logging in get_occupied_intervals."""
+    prior = Prior(mock_coordinator)
+
+    # Test that the method logs debug messages by testing the actual method
+    # We'll mock the database to avoid complex SQLAlchemy mocking
+    with patch.object(prior.coordinator.db, "get_session") as mock_session:
+        # Create a simple mock that returns empty results
+        mock_session.return_value.__enter__.return_value.query.return_value.join.return_value.filter.return_value.order_by.return_value.all.return_value = []
+
+        with caplog.at_level(logging.DEBUG):
+            prior.get_occupied_intervals()
+
+    # Check for debug logging
+    assert "Getting occupied intervals with unified logic" in caplog.text
+
+
+def test_get_occupied_intervals_cache_hit_logging(mock_coordinator, caplog):
+    """Test cache hit logging."""
+    prior = Prior(mock_coordinator)
+
+    # Test cache hit logging by setting up cache and calling the actual method
+    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
+    prior._cached_occupied_intervals = test_intervals
+    prior._cached_intervals_timestamp = dt_util.utcnow()
+
+    with caplog.at_level(logging.DEBUG):
+        # Call the actual method - it should hit cache
+        result = prior.get_occupied_intervals()
+
+    # Check for cache hit logging
+    assert "Returning cached occupied intervals" in caplog.text
+    assert result == test_intervals

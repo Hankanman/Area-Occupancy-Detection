@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -43,7 +44,6 @@ from .const import (
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
-from .utils import FileLock
 
 _LOGGER = logging.getLogger(__name__)
 

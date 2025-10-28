@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 from datetime import datetime, timedelta
+import logging
 import math
-import os
-from pathlib import Path
-import time
 from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
 from .const import MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .data.entity import Entity
@@ -48,54 +47,10 @@ def clamp_probability(value: float) -> float:
     return max(MIN_PROBABILITY, min(MAX_PROBABILITY, value))
 
 
-# ─────────────────────────────────────── File Lock ───────────────────────────
-class FileLock:
-    """Simple file-based lock using context manager with atomic file creation."""
-
-    def __init__(self, lock_path: Path, timeout: int = 60):
-        """Initialize the lock."""
-        self.lock_path = lock_path
-        self.timeout = timeout
-        self._lock_fd = None
-
-    def __enter__(self):
-        """Enter the context manager."""
-        start_time = time.time()
-
-        while True:
-            try:
-                # Atomic file creation with O_EXCL flag
-                # This ensures only one process can create the file
-                self._lock_fd = os.open(
-                    self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode=0o644
-                )
-                # Write PID to lock file for debugging
-                os.write(self._lock_fd, str(os.getpid()).encode())
-                os.fsync(self._lock_fd)  # Ensure data is written to disk
-            except FileExistsError:
-                # Lock file already exists, check timeout
-                if time.time() - start_time > self.timeout:
-                    raise TimeoutError(
-                        f"Timeout waiting for lock: {self.lock_path}"
-                    ) from None
-                time.sleep(0.1)
-            else:
-                return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit the context manager."""
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
-        # Remove lock file
-        with suppress(FileNotFoundError):
-            self.lock_path.unlink()
-
-
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def bayesian_probability(
     entities: dict[str, Entity], area_prior: float = 0.5, time_prior: float = 0.5
-):
+) -> float:
     """Compute posterior probability of occupancy given current features, area prior, and time prior.
 
     Args:
@@ -152,9 +107,6 @@ def bayesian_probability(
         decay_factor = entity.decay.decay_factor
         if decay_factor < 0.0 or decay_factor > 1.0:
             decay_factor = max(0.0, min(1.0, decay_factor))
-            # Attempt to write back clamped value for test visibility; ignore if read-only
-            with suppress(Exception):
-                entity.decay.decay_factor = decay_factor  # type: ignore[attr-defined]
         is_decaying = entity.decay.is_decaying
 
         # Determine effective evidence: True if evidence is True OR if decaying
@@ -248,10 +200,10 @@ def combine_priors(
     area_weight = 1.0 - time_weight
 
     # Convert to logit space for better interpolation
-    def prob_to_logit(p):
+    def prob_to_logit(p: float) -> float:
         return math.log(p / (1 - p))
 
-    def logit_to_prob(logit):
+    def logit_to_prob(logit: float) -> float:
         return 1 / (1 + math.exp(-logit))
 
     # Interpolate in logit space for more principled combination

@@ -20,9 +20,9 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.8.2"
+DEVICE_SW_VERSION: Final = "2025.10.1"
 CONF_VERSION: Final = 12
-CONF_VERSION_MINOR: Final = 0
+CONF_VERSION_MINOR: Final = 1
 HA_RECORDER_DAYS: Final = 10  # days
 
 # Configuration constants
@@ -50,6 +50,7 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 
+
 # Configured Weights
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
@@ -72,6 +73,12 @@ DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 
+# Database recovery defaults
+DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
+DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
+DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
+DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
+
 # Default weights
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
@@ -83,7 +90,7 @@ DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01
 MAX_PROBABILITY: Final = 0.99
-MIN_PRIOR: Final[float] = 0.1
+MIN_PRIOR: Final[float] = 0.01
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
@@ -136,6 +143,34 @@ WASP_DEFAULT_PRIOR: Final[float] = 0.60
 # Helper constants
 ROUNDING_PRECISION: Final = 2
 
+# Performance optimization constants
+DEFAULT_LOOKBACK_DAYS: Final = 90  # Days of interval data to load for analysis
+DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
+RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
+
+# Database interval filtering
+MIN_INTERVAL_SECONDS: Final = 5  # Exclude intervals shorter than 5 seconds
+MAX_INTERVAL_SECONDS: Final = (
+    46800  # Exclude intervals longer than 13 hours (13 * 3600)
+)
+
+# Coordinator timer intervals
+DECAY_INTERVAL: Final = 10  # seconds
+ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
+
+# Database save debounce
+SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
+
+# Master coordination constants
+ANALYSIS_STAGGER_MINUTES: Final = 2  # minutes between instance analysis runs
+MASTER_HEARTBEAT_INTERVAL: Final = 15  # seconds between master heartbeats
+MASTER_HEALTH_TIMEOUT: Final = 30  # seconds before master considered dead
+MASTER_HEALTH_CHECK_INTERVAL: Final = 10  # seconds between health checks
+
+# Dispatcher signal names (replace event bus)
+SIGNAL_STATE_SAVE_REQUEST: Final = f"{DOMAIN}_save_request"
+SIGNAL_MASTER_HEARTBEAT: Final = f"{DOMAIN}_heartbeat"
+
 ########################################################
 # Virtual sensor constants
 ########################################################
@@ -148,11 +183,13 @@ CONF_WASP_ENABLED: Final = "wasp_enabled"
 CONF_WASP_MOTION_TIMEOUT: Final = "wasp_motion_timeout"
 CONF_WASP_WEIGHT: Final = "wasp_weight"
 CONF_WASP_MAX_DURATION: Final = "wasp_max_duration"
+CONF_WASP_VERIFICATION_DELAY: Final = "wasp_verification_delay"
 
 # Default values
 DEFAULT_WASP_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_WASP_WEIGHT: Final = 0.8
 DEFAULT_WASP_MAX_DURATION: Final = 3600  # 1 hour in seconds
+DEFAULT_WASP_VERIFICATION_DELAY: Final = 0  # Disabled by default (0 = no verification)
 
 # Attributes
 ATTR_DOOR_STATE: Final = "door_state"
@@ -163,3 +200,5 @@ ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
 ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
+ATTR_VERIFICATION_DELAY: Final = "verification_delay"
+ATTR_VERIFICATION_PENDING: Final = "verification_pending"

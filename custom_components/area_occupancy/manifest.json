@@ -12,9 +12,12 @@
     "number"
   ],
   "documentation": "https://github.com/Hankanman/Area-Occupancy-Detection",
+  "integration_type": "device",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Hankanman/Area-Occupancy-Detection/issues",
-  "quality_scale": "internal",
-  "requirements": [],
-  "version": "2025.8.2"
+  "quality_scale": "silver",
+  "requirements": [
+    "filelock==3.20.0"
+  ],
+  "version": "2025.10.1"
 }

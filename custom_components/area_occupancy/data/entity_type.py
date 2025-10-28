@@ -39,7 +39,7 @@ class EntityType:
     active_states: list[str] | None = None
     active_range: tuple[float, float] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Post init."""
 
         # Validate that we have exactly one of active_states or active_range
@@ -59,7 +59,7 @@ class EntityType:
         # Default data for each input type
         data = DEFAULT_TYPES
 
-        params = data[input_type].copy()
+        params = dict(data[input_type])
 
         # Apply configuration overrides if available
         if config:
@@ -89,8 +89,11 @@ class EntityType:
                         raise ValueError(
                             f"Invalid active states for {input_type}: {states_attr}"
                         )
-                    params["active_states"] = states_attr
-                    params["active_range"] = None  # Clear range when states are set
+                    # Only apply override if list is non-empty
+                    if len(states_attr) > 0:
+                        params["active_states"] = states_attr
+                        params["active_range"] = None  # Clear range when states are set
+                    # Empty list is treated as "use defaults" - no override applied
 
             # Apply active range override
             range_config_attr = f"{input_type.value}_active_range"
@@ -106,7 +109,7 @@ class EntityType:
         return cls(input_type=input_type, **params)
 
 
-DEFAULT_TYPES = {
+DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
         "weight": 1,
         "prob_given_true": 0.95,  # Much higher for ground truth
