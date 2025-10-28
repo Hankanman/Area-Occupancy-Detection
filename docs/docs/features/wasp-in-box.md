@@ -18,6 +18,55 @@ The sensor implements three fundamental rules:
 2. **ALL doors must be closed for occupancy** - The "box" must be sealed to trap the "wasp"
 3. **ANY motion indicates presence** - Even a single motion sensor detecting movement confirms the "wasp" is present
 
+## Logic Flow Chart
+
+The following diagram shows how the sensor processes events and makes occupancy decisions:
+
+```mermaid
+flowchart TD
+    Start(["Event Received"]) --> EventType{"Event Type?"}
+    EventType -- Door Event --> DoorChange["Door State Changed"]
+    EventType -- Motion Event --> MotionChange["Motion State Changed"]
+    DoorChange --> UpdateDoorAgg["Calculate Aggregate Door State<br>ANY door open = OPEN<br>ALL doors closed = CLOSED"]
+    UpdateDoorAgg --> CheckDoorOpen{"Aggregate Door<br>State = OPEN?"}
+    CheckDoorOpen -- Yes --> CheckCurrentlyOccupied{"Currently<br>Occupied?"}
+    CheckCurrentlyOccupied -- Yes --> ReleaseOccupancy["Set UNOCCUPIED<br>Cancel Timers"]
+    CheckCurrentlyOccupied -- No --> NoChange1["No State Change"]
+    CheckDoorOpen -- No: All Closed --> CheckMotionActive{"Any Motion<br>Active?"}
+    CheckMotionActive -- Yes --> SetOccupied["Set OCCUPIED<br>Start Timers"]
+    CheckMotionActive -- No --> CheckRecentMotion{"Recent Motion<br>Within Timeout?"}
+    CheckRecentMotion -- Yes --> SetOccupied
+    CheckRecentMotion -- No --> NoChange2["No State Change"]
+    MotionChange --> UpdateMotionAgg["Calculate Aggregate Motion State<br>ANY motion active = ON<br>ALL motion off = OFF"]
+    UpdateMotionAgg --> CheckMotionOn{"Motion<br>Turned ON?"}
+    CheckMotionOn -- Yes --> RecordTime["Record Motion Time"]
+    CheckMotionOn -- No --> MotionOff["Motion Cleared"]
+    RecordTime --> CheckDoorsClosedMotion{"All Doors<br>Closed?"}
+    CheckDoorsClosedMotion -- Yes --> SetOccupied
+    CheckDoorsClosedMotion -- No --> NoChange3["No State Change"]
+    MotionOff --> CheckOccupiedMotion{"Currently<br>Occupied?"}
+    CheckOccupiedMotion -- Yes --> MaintainState["Maintain OCCUPIED<br>Wasp in Box Logic"]
+    CheckOccupiedMotion -- No --> NoChange4["No State Change"]
+    ReleaseOccupancy --> End(["Update HA State"])
+    SetOccupied --> End
+    NoChange1 --> End
+    NoChange2 --> End
+    NoChange3 --> End
+    NoChange4 --> End
+    MaintainState --> End
+
+    style ReleaseOccupancy fill:#D50000,color:#FFFFFF
+    style SetOccupied fill:#006127,color:#FFFFFF
+    style MaintainState fill:#2962FF,color:#FFFFFF
+```
+
+**Key Decision Points:**
+
+- **Door Opens**: If ANY door opens while occupied → immediate release
+- **All Doors Close**: Check for active or recent motion to trigger occupancy
+- **Motion Detected**: If all doors are closed → trigger occupancy
+- **Motion Clears**: If occupied → maintain state (wasp in box principle)
+
 ## Complete Scenario Reference
 
 This section documents every possible combination of door and motion events and the expected sensor behavior.
