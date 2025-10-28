@@ -32,6 +32,7 @@ from ..const import (
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
@@ -51,6 +52,7 @@ from ..const import (
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
+    DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
@@ -103,11 +105,13 @@ class Sensors:
             and coordinator.config.wasp_in_box.enabled
             and getattr(coordinator, "wasp_entity_id", None)
         ):
-            motion_sensors.append(coordinator.wasp_entity_id)
-            _LOGGER.debug(
-                "Adding wasp sensor %s to motion sensors list",
-                coordinator.wasp_entity_id,
-            )
+            wasp_id = coordinator.wasp_entity_id
+            if wasp_id is not None:
+                motion_sensors.append(wasp_id)
+                _LOGGER.debug(
+                    "Adding wasp sensor %s to motion sensors list",
+                    wasp_id,
+                )
 
         return motion_sensors
 
@@ -154,6 +158,7 @@ class WaspInBox:
     motion_timeout: int = DEFAULT_WASP_MOTION_TIMEOUT
     weight: float = DEFAULT_WASP_WEIGHT
     max_duration: int = DEFAULT_WASP_MAX_DURATION
+    verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
 class Config:
@@ -167,6 +172,8 @@ class Config:
         self.db = coordinator.db
 
         # Load configuration from the merged entry data
+        if coordinator.config_entry is None:
+            raise ValueError("Coordinator config_entry cannot be None")
         self._load_config(self._merge_entry(coordinator.config_entry))
 
     def _load_config(self, data: dict[str, Any]) -> None:
@@ -231,6 +238,9 @@ class Config:
             weight=float(data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT)),
             max_duration=int(
                 data.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
+            ),
+            verification_delay=int(
+                data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
         )
 
@@ -329,25 +339,34 @@ class Config:
             HomeAssistantError: If updating the config entry fails
 
         """
+
+        def _validate_config_entry() -> None:
+            if self.config_entry is None:
+                raise ValueError("Config entry is None")
+
         try:
+            _validate_config_entry()
             # Create new options dict by merging existing with new options
-            new_options = dict(self.config_entry.options)
+            new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
             new_options.update(options)
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
-                self.config_entry, options=new_options
+                self.config_entry,  # type: ignore[arg-type]
+                options=new_options,  # type: ignore[arg-type]
             )
 
             # Merge existing config entry with new options for internal state
-            data = self._merge_entry(self.config_entry)
+            data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
             data.update(options)
 
             # Reload configuration with updated data
             self._load_config(data)
 
             # Request update since threshold affects occupied calculation
-            await self.coordinator.async_request_refresh()
+            # Only request refresh if setup is complete to avoid debouncer conflicts
+            if self.coordinator.setup_complete:
+                await self.coordinator.async_request_refresh()
 
         except Exception as err:
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err

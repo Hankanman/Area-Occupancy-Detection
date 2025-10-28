@@ -23,7 +23,14 @@ from sqlalchemy.exc import (
 
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_PRIOR, MAX_PROBABILITY, MIN_PRIOR, MIN_PROBABILITY
+from ..const import (
+    DEFAULT_CACHE_TTL_SECONDS,
+    DEFAULT_LOOKBACK_DAYS,
+    MAX_PRIOR,
+    MAX_PROBABILITY,
+    MIN_PRIOR,
+    MIN_PROBABILITY,
+)
 from ..data.entity_type import InputType
 from ..utils import apply_motion_timeout, clamp_probability, combine_priors
 
@@ -68,6 +75,9 @@ class Prior:
         self._cached_time_prior: float | None = None
         self._cached_time_prior_day: int | None = None
         self._cached_time_prior_slot: int | None = None
+        # Cache for occupied intervals
+        self._cached_occupied_intervals: list[tuple[datetime, datetime]] | None = None
+        self._cached_intervals_timestamp: datetime | None = None
 
     @property
     def value(self) -> float:
@@ -75,24 +85,36 @@ class Prior:
         if self.global_prior is None:
             return MIN_PRIOR
 
+        # Use global_prior directly if time_prior is None, otherwise combine them
         if self.time_prior is None:
             prior = self.global_prior
         else:
             prior = combine_priors(self.global_prior, self.time_prior)
 
-        # Validate that global_prior is within reasonable bounds before applying factor
+        # Track if we needed to clamp the prior
+        was_clamped = False
+
+        # Validate that prior is within reasonable bounds before applying factor
         if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
             _LOGGER.warning(
-                "Global prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
+                "Prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
                 prior,
                 MIN_PROBABILITY,
                 MAX_PROBABILITY,
             )
             prior = clamp_probability(prior)
+            was_clamped = True
 
         # Apply factor and clamp to bounds
         adjusted_prior = prior * PRIOR_FACTOR
-        result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+
+        # If the prior was clamped to bounds, return the clamped prior value
+        if was_clamped and prior == MIN_PROBABILITY:
+            result = MIN_PRIOR
+        elif was_clamped and prior == MAX_PROBABILITY:
+            result = MAX_PRIOR
+        else:
+            result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
         # Log if the factor caused a significant change
         if abs(result - prior) > SIGNIFICANT_CHANGE_THRESHOLD:
@@ -155,10 +177,18 @@ class Prior:
         self._cached_time_prior_day = None
         self._cached_time_prior_slot = None
 
+    def _invalidate_occupied_intervals_cache(self) -> None:
+        """Invalidate the occupied intervals cache."""
+        self._cached_occupied_intervals = None
+        self._cached_intervals_timestamp = None
+
     async def update(self) -> None:
         """Calculate and update the prior value."""
+        # Run heavy calculations in executor to avoid blocking the event loop
         try:
-            self.global_prior = self.calculate_area_prior(self.sensor_ids)
+            self.global_prior = await self.hass.async_add_executor_job(
+                self.calculate_area_prior, self.sensor_ids
+            )
             _LOGGER.debug("Area prior calculated: %.2f", self.global_prior)
         except (ValueError, TypeError, ZeroDivisionError):
             _LOGGER.exception("Prior calculation failed due to data error")
@@ -171,7 +201,7 @@ class Prior:
             self.global_prior = MIN_PRIOR
 
         try:
-            self.compute_time_priors()
+            await self.hass.async_add_executor_job(self.compute_time_priors)
             _LOGGER.debug("Time priors calculated")
             # Invalidate time_prior cache since we updated the time priors
             self._invalidate_time_prior_cache()
@@ -182,6 +212,8 @@ class Prior:
         except Exception:
             _LOGGER.exception("Time prior calculation failed due to unexpected error")
 
+        # Invalidate occupied intervals cache since we updated the data
+        self._invalidate_occupied_intervals_cache()
         self._last_updated = dt_util.utcnow()
 
     def calculate_area_prior(self, entity_ids: list[str]) -> float:
@@ -268,7 +300,7 @@ class Prior:
                     )
                     .first()
                 )
-                return prior.prior_value if prior else DEFAULT_PRIOR
+                return float(prior.prior_value) if prior else DEFAULT_PRIOR
         except OperationalError as e:
             _LOGGER.error("Database connection error getting time prior: %s", e)
             return DEFAULT_PRIOR
@@ -285,7 +317,7 @@ class Prior:
             _LOGGER.error("Unexpected error getting time prior: %s", e)
             return DEFAULT_PRIOR
 
-    def compute_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES):
+    def compute_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES) -> None:
         """Estimate P(occupied) per day_of_week and time_slot from motion sensor intervals."""
         _LOGGER.debug("Computing time priors")
 
@@ -453,7 +485,7 @@ class Prior:
     def get_interval_aggregates(
         self, slot_minutes: int = DEFAULT_SLOT_MINUTES
     ) -> list[tuple[int, int, float]]:
-        """Get aggregated interval data for time prior computation using unified logic.
+        """Get aggregated interval data for time prior computation using SQL optimization.
 
         Args:
             slot_minutes: Time slot size in minutes
@@ -462,7 +494,51 @@ class Prior:
             List of (day_of_week, time_slot, total_occupied_seconds) tuples
 
         """
-        _LOGGER.debug("Getting interval aggregates using unified logic")
+        _LOGGER.debug("Getting interval aggregates using SQL GROUP BY optimization")
+
+        # Use the new SQL-based aggregation method for much better performance
+        try:
+            start_time = dt_util.utcnow()
+            result = self.db.get_aggregated_intervals_by_slot(
+                self.coordinator.entry_id, slot_minutes
+            )
+            query_time = (dt_util.utcnow() - start_time).total_seconds()
+            _LOGGER.debug(
+                "SQL aggregation completed in %.3f seconds, returned %d slots",
+                query_time,
+                len(result),
+            )
+        except (
+            SQLAlchemyError,
+            OperationalError,
+            DataError,
+            ProgrammingError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error(
+                "SQL aggregation failed, falling back to Python method: %s", e
+            )
+            # Fallback to the original Python method if SQL fails
+            result = self._get_interval_aggregates_python(slot_minutes)
+
+        return result
+
+    def _get_interval_aggregates_python(
+        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
+    ) -> list[tuple[int, int, float]]:
+        """Fallback Python implementation for interval aggregation.
+
+        Args:
+            slot_minutes: Time slot size in minutes
+
+        Returns:
+            List of (day_of_week, time_slot, total_occupied_seconds) tuples
+
+        """
+        _LOGGER.debug("Using Python fallback for interval aggregation")
 
         # Use the unified method to get occupied intervals
         extended_intervals = self.get_occupied_intervals()
@@ -471,7 +547,7 @@ class Prior:
             return []
 
         # Aggregate extended intervals by time slots
-        slot_seconds = defaultdict(float)
+        slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
         for start_time, end_time in extended_intervals:
             # Calculate which slots this interval covers
             current_time = start_time
@@ -581,23 +657,49 @@ class Prior:
         _LOGGER.debug("Total occupied seconds: %.1f", total_seconds)
         return total_seconds
 
-    def get_occupied_intervals(self) -> list[tuple[datetime, datetime]]:
+    def get_occupied_intervals(
+        self, lookback_days: int = DEFAULT_LOOKBACK_DAYS
+    ) -> list[tuple[datetime, datetime]]:
         """Get occupied time intervals from motion sensors using unified logic.
 
         This method provides a single source of truth for determining occupancy
         intervals that can be used by both prior and likelihood calculations.
 
+        Args:
+            lookback_days: Number of days to look back for interval data (default: 90)
+
         Returns:
             List of (start_time, end_time) tuples representing occupied periods
 
         """
-        _LOGGER.debug("Getting occupied intervals with unified logic")
+        # Check cache first
+        now = dt_util.utcnow()
+        if (
+            self._cached_occupied_intervals is not None
+            and self._cached_intervals_timestamp is not None
+            and (now - self._cached_intervals_timestamp).total_seconds()
+            < DEFAULT_CACHE_TTL_SECONDS
+        ):
+            _LOGGER.debug(
+                "Returning cached occupied intervals (%d intervals)",
+                len(self._cached_occupied_intervals),
+            )
+            return self._cached_occupied_intervals
+
+        _LOGGER.debug(
+            "Getting occupied intervals with unified logic (lookback: %d days)",
+            lookback_days,
+        )
         entry_id = self.coordinator.entry_id
         db = self.db
 
+        # Calculate lookback date
+        lookback_date = now - timedelta(days=lookback_days)
+
         try:
+            start_time = dt_util.utcnow()
             with db.get_session() as session:
-                # Get motion sensor intervals with state='on'
+                # Get motion sensor intervals with state='on' within lookback period
                 intervals = (
                     session.query(
                         db.Intervals.start_time,
@@ -611,13 +713,23 @@ class Prior:
                         db.Entities.entry_id == entry_id,
                         db.Entities.entity_type == InputType.MOTION,
                         db.Intervals.state == "on",
+                        db.Intervals.start_time >= lookback_date,
                     )
                     .order_by(db.Intervals.start_time)
                     .all()
                 )
 
+                query_time = (dt_util.utcnow() - start_time).total_seconds()
+                _LOGGER.debug(
+                    "Query executed in %.3f seconds, found %d intervals",
+                    query_time,
+                    len(intervals),
+                )
+
                 if not intervals:
                     _LOGGER.debug("No motion intervals found for occupancy calculation")
+                    self._cached_occupied_intervals = []
+                    self._cached_intervals_timestamp = now
                     return []
 
                 # Convert to tuples and apply motion timeout
@@ -630,15 +742,22 @@ class Prior:
                     len(raw_intervals),
                 )
 
+                processing_start = dt_util.utcnow()
                 extended_intervals = apply_motion_timeout(
                     raw_intervals, timeout_seconds
                 )
+                processing_time = (dt_util.utcnow() - processing_start).total_seconds()
 
                 _LOGGER.debug(
-                    "Unified occupancy calculation: %d raw intervals -> %d extended intervals",
+                    "Unified occupancy calculation: %d raw intervals -> %d extended intervals (processing: %.3fs)",
                     len(raw_intervals),
                     len(extended_intervals),
+                    processing_time,
                 )
+
+                # Cache the result
+                self._cached_occupied_intervals = extended_intervals
+                self._cached_intervals_timestamp = now
 
                 return extended_intervals
 
