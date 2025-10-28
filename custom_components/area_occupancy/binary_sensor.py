@@ -315,6 +315,54 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             "all": valid_door_entities + valid_motion_entities,
         }
 
+    def _get_aggregate_door_state(self) -> str:
+        """Calculate aggregate door state from all door sensors.
+
+        Returns DOOR_OPEN if ANY door is open, DOOR_CLOSED if all are closed.
+        For the "wasp in box" concept, any open door allows the wasp to escape.
+
+        Returns:
+            str: DOOR_OPEN if any door is open, DOOR_CLOSED if all are closed.
+                 Returns DOOR_CLOSED if no door entities are configured.
+        """
+        if not self._door_entities:
+            return DOOR_CLOSED
+
+        # Check all door sensors
+        for entity_id in self._door_entities:
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in ["unknown", "unavailable"]:
+                # If ANY door is open, return DOOR_OPEN
+                if state.state == DOOR_OPEN:
+                    return DOOR_OPEN
+
+        # All doors are closed (or unavailable/unknown)
+        return DOOR_CLOSED
+
+    def _get_aggregate_motion_state(self) -> str:
+        """Calculate aggregate motion state from all motion sensors.
+
+        Returns STATE_ON if ANY motion sensor is active, STATE_OFF if all are off.
+        For the "wasp in box" concept, any motion indicates presence.
+
+        Returns:
+            str: STATE_ON if any motion sensor is active, STATE_OFF if all are off.
+                 Returns STATE_OFF if no motion entities are configured.
+        """
+        if not self._motion_entities:
+            return STATE_OFF
+
+        # Check all motion sensors
+        for entity_id in self._motion_entities:
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in ["unknown", "unavailable"]:
+                # If ANY motion sensor is active, return STATE_ON
+                if state.state == STATE_ON:
+                    return STATE_ON
+
+        # All motion sensors are off (or unavailable/unknown)
+        return STATE_OFF
+
     def _initialize_from_current_states(
         self, valid_entities: dict[str, list[str]]
     ) -> None:
@@ -325,11 +373,17 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             if state and state.state not in ["unknown", "unavailable"]:
                 self._process_door_state(entity_id, state.state)
 
+        # Set aggregate door state after processing all door sensors
+        self._door_state = self._get_aggregate_door_state()
+
         # Check current motion states
         for entity_id in valid_entities["motion"]:
             state = self.hass.states.get(entity_id)
             if state and state.state not in ["unknown", "unavailable"]:
                 self._process_motion_state(entity_id, state.state)
+
+        # Set aggregate motion state after processing all motion sensors
+        self._motion_state = self._get_aggregate_motion_state()
 
     @callback
     def _handle_state_change(self, event: Any) -> None:
@@ -348,49 +402,52 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
     def _process_door_state(self, entity_id: str, new_state: str) -> None:
         """Process a door state change event."""
-        # Store previous door state for comparison
+        # Store previous aggregate door state for comparison
         previous_door_state = self._door_state
 
-        # Update current door state
-        self._door_state = new_state
+        # Update timestamp for this door event
         self._last_door_time = dt_util.utcnow()
 
+        # Recalculate aggregate door state from all door sensors
+        self._door_state = self._get_aggregate_door_state()
+
         _LOGGER.debug(
-            "Door state change: %s changed from %s to %s",
+            "Door state change: %s changed to %s, aggregate door state: %s (was %s)",
             entity_id,
-            previous_door_state,
             new_state,
+            self._door_state,
+            previous_door_state,
         )
 
-        # Check if door has opened while room was occupied
-        door_is_open = new_state == DOOR_OPEN
+        # Check if ANY door has opened while room was occupied
+        door_is_open = self._door_state == DOOR_OPEN
         door_was_closed = previous_door_state == DOOR_CLOSED
 
         if door_is_open and door_was_closed and self._state == STATE_ON:
-            # Door opened while room was occupied - set to unoccupied
+            # Any door opened while room was occupied - set to unoccupied
             _LOGGER.debug("Door opened while occupied - marking room as unoccupied")
             self._cancel_verification_timer()
             self._set_state(STATE_OFF)
-        elif not door_is_open:  # Door closed (or closing)
-            # Pattern A: Door closes with active motion
+        elif not door_is_open:  # All doors closed
+            # Pattern A: All doors closed with active motion
             if self._motion_state == STATE_ON:
                 _LOGGER.debug(
-                    "Door closed with motion detected - marking room as occupied"
+                    "All doors closed with motion detected - marking room as occupied"
                 )
                 self._set_state(STATE_ON)
-            # Pattern B: Door closes with recent motion (within motion_timeout)
+            # Pattern B: All doors closed with recent motion (within motion_timeout)
             elif self._last_motion_time:
                 now = dt_util.utcnow()
                 motion_age = (now - self._last_motion_time).total_seconds()
                 if motion_age <= self._motion_timeout:
                     _LOGGER.debug(
-                        "Door closed with recent motion (%.1fs ago) - marking room as occupied",
+                        "All doors closed with recent motion (%.1fs ago) - marking room as occupied",
                         motion_age,
                     )
                     self._set_state(STATE_ON)
                 else:
                     _LOGGER.debug(
-                        "Door closed but motion is too old (%.1fs) - not marking as occupied",
+                        "All doors closed but motion is too old (%.1fs) - not marking as occupied",
                         motion_age,
                     )
                     self.async_write_ha_state()
@@ -403,28 +460,35 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
     def _process_motion_state(self, entity_id: str, new_state: str) -> None:
         """Process a motion state change event."""
-        # Update motion state
+        # Store previous aggregate motion state
         old_motion = self._motion_state
-        self._motion_state = new_state
 
-        # Only update timestamp when motion starts, not when it stops
+        # Only update timestamp when any motion starts, not when it stops
         if new_state == STATE_ON:
             self._last_motion_time = dt_util.utcnow()
 
+        # Recalculate aggregate motion state from all motion sensors
+        self._motion_state = self._get_aggregate_motion_state()
+
         _LOGGER.debug(
-            "Motion state change: %s changed from %s to %s",
+            "Motion state change: %s changed to %s, aggregate motion state: %s (was %s)",
             entity_id,
-            old_motion,
             new_state,
+            self._motion_state,
+            old_motion,
         )
 
-        # Door closed + motion = occupied
-        if new_state == STATE_ON and self._door_state == DOOR_CLOSED:
-            _LOGGER.debug("Motion detected with door closed - marking room as occupied")
+        # All doors closed + any motion = occupied
+        if self._motion_state == STATE_ON and self._door_state == DOOR_CLOSED:
+            _LOGGER.debug(
+                "Motion detected with all doors closed - marking room as occupied"
+            )
             self._set_state(STATE_ON)
-        elif new_state == STATE_OFF:
-            # Motion stopped - maintain current state until door opens
-            _LOGGER.debug("Motion stopped - maintaining current state until door opens")
+        elif self._motion_state == STATE_OFF:
+            # All motion stopped - maintain current state until door opens
+            _LOGGER.debug(
+                "All motion stopped - maintaining current state until door opens"
+            )
             self.async_write_ha_state()
 
     def _set_state(self, new_state: str) -> None:

@@ -1,6 +1,7 @@
 site_name: Area Occupancy Detection
 site_description: Documentation for the Home Assistant Area Occupancy Detection integration
 site_author: Hankanman
+site_url: https://hankanman.github.io/Area-Occupancy-Detection/
 repo_url: https://github.com/Hankanman/Area-Occupancy-Detection
 repo_name: Hankanman/Area-Occupancy-Detection
 edit_uri: edit/main/docs/docs/
@@ -10,9 +11,22 @@ theme:
   favicon: https://brands.home-assistant.io/area_occupancy/dark_icon.png
   logo: https://brands.home-assistant.io/area_occupancy/dark_icon.png
   palette:
-    scheme: slate
-    primary: black
-    accent: cyan
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   features:
     - navigation.tabs
     - navigation.sections
@@ -28,6 +42,8 @@ theme:
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
+    - content.action.edit
+    - content.action.view
     - toc.follow
     - toc.integrate
 
@@ -55,7 +71,7 @@ markdown_extensions:
       custom_checkbox: true
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:materialx.emoji.to_svg
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.arithmatex:
       generic: true
   - tables
