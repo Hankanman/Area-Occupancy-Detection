@@ -790,22 +790,21 @@ class TestEntityPropertiesAndMethods:
                 )
 
                 # With sufficient data (>= 3600s), calculated values should be preserved
-                # even if outside typical ranges (prob_given_true < 0.8 or prob_given_false > 0.1)
+                # even if outside typical ranges (prob_given_true < 0.8)
                 calculated_prob_true = test_entity_sufficient.prob_given_true
                 calculated_prob_false = test_entity_sufficient.prob_given_false
                 # First interval: active=True, occupied=True -> true_occ = 3600
                 # Second interval: active=False, occupied=True -> false_occ = 3600
                 # prob_given_true = 3600 / (3600 + 3600) = 0.5
-                # prob_given_false = 0 / (0 + 0) = 0.5 (fallback when no data)
-                # These should be calculated values, not the defaults (0.95, 0.02)
-                # This proves threshold overrides are not applied
+                # Both intervals are during occupied time, so true_empty=0, false_empty=0
+                # total_unoccupied_time = 0 < 3600, so prob_given_false uses default (0.02)
+                # This proves threshold overrides are not applied for prob_given_true
                 assert abs(calculated_prob_true - 0.5) < 0.01  # Calculated value ~0.5
                 assert (
-                    abs(calculated_prob_false - 0.5) < 0.01
-                )  # Fallback when no false_empty data
-                # Verify they are not the defaults
+                    calculated_prob_false == 0.02
+                )  # Default when insufficient unoccupied data
+                # Verify prob_given_true is not the default
                 assert abs(calculated_prob_true - 0.95) > 0.01
-                assert abs(calculated_prob_false - 0.02) > 0.01
 
             # Test non-motion sensor logic - create a fresh entity to avoid interference
             fresh_entity = create_test_entity(
