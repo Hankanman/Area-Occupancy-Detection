@@ -515,23 +515,24 @@ class EntityManager:
                 prob_given_true = entity_obj.type.prob_given_true
                 prob_given_false = entity_obj.type.prob_given_false
             else:
-                # Motion sensors should have high prob_given_true for ground truth
-                if prob_given_true < 0.8:  # Higher threshold for motion sensors
-                    _LOGGER.warning(
-                        "Motion sensor %s has low prob_given_true (%.3f), using default (%.3f)",
+                # Trust calculated values when sufficient data exists
+                # Log info if values are outside typical ranges (for debugging)
+                if prob_given_true < 0.8:
+                    _LOGGER.info(
+                        "Motion sensor %s has calculated prob_given_true (%.3f) below typical range (0.8), "
+                        "but using calculated value due to sufficient data (%.1fs)",
                         entity_id,
                         prob_given_true,
-                        entity_obj.type.prob_given_true,
+                        total_occupied_time,
                     )
-                    prob_given_true = entity_obj.type.prob_given_true
-                if prob_given_false > 0.1:  # Lower threshold for false positives
-                    _LOGGER.warning(
-                        "Motion sensor %s has high prob_given_false (%.3f), using default (%.3f)",
+                if prob_given_false > 0.1:
+                    _LOGGER.info(
+                        "Motion sensor %s has calculated prob_given_false (%.3f) above typical range (0.1), "
+                        "but using calculated value due to sufficient data (%.1fs)",
                         entity_id,
                         prob_given_false,
-                        entity_obj.type.prob_given_false,
+                        total_occupied_time,
                     )
-                    prob_given_false = entity_obj.type.prob_given_false
         else:
             # Fallback to defaults if too low for other sensors
             if prob_given_true < MIN_PROBABILITY:
