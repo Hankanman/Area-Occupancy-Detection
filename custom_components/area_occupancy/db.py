@@ -494,26 +494,18 @@ class AreaOccupancyDB:
                             )
                             self.delete_db()
                         else:
-                            # File exists and is valid SQLite - use it as-is
-                            # Corruption checks will be handled by background health check
-                            _LOGGER.debug(
-                                "Database file found, deferring integrity check to background"
-                            )
-                            return
+                            # File exists and is valid SQLite - verify tables exist
+                            _LOGGER.debug("Database file found, verifying tables exist")
                 except (OSError, PermissionError) as e:
                     _LOGGER.warning("Cannot read database file: %s, will recreate", e)
                     # Will create new database below
 
-            # Use direct engine connection during initialization
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
-                ).fetchone()
-                if not result:
-                    # No tables exist, initialize the database
-                    _LOGGER.debug("No tables found, initializing database")
-                    self.init_db()
-                    self.set_db_version()
+            # Always verify that all required tables exist
+            # This prevents race conditions when multiple instances start simultaneously
+            if not self._verify_all_tables_exist():
+                _LOGGER.debug("Not all tables exist, initializing database")
+                self.init_db()
+                self.set_db_version()
         except sa.exc.SQLAlchemyError as e:
             # Check if this is a corruption error
             if self.is_database_corrupted(e):
@@ -581,6 +573,23 @@ class AreaOccupancyDB:
             return False
         else:
             return True
+
+    def _verify_all_tables_exist(self) -> bool:
+        """Verify all required tables exist in the database.
+
+        Returns:
+            bool: True if all required tables exist, False otherwise
+        """
+        required_tables = {"areas", "entities", "intervals", "priors", "metadata"}
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table'")
+                )
+                existing_tables = {row[0] for row in result}
+                return required_tables.issubset(existing_tables)
+        except sa.exc.SQLAlchemyError:
+            return False
 
     def is_database_corrupted(self, error: Exception) -> bool:
         """Check if an error indicates database corruption.
