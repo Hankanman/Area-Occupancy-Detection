@@ -665,23 +665,25 @@ class TestEntityPropertiesAndMethods:
             mock_db_entity = Mock()
             mock_db_entity.entity_id = "test_sensor"
 
-            # Mock intervals
-            mock_interval = Mock()
-            mock_interval.start_time = dt_util.utcnow()
-            mock_interval.duration_seconds = 3600.0
-            mock_interval.state = "on"
+            # Mock intervals for insufficient data test
+            mock_interval_insufficient = Mock()
+            mock_interval_insufficient.start_time = dt_util.utcnow()
+            mock_interval_insufficient.duration_seconds = 1800.0  # Less than 3600s
+            mock_interval_insufficient.state = "on"
 
             # Add to_dict method to return proper dictionary
             def mock_interval_to_dict():
                 return {
-                    "start_time": mock_interval.start_time,
-                    "duration_seconds": mock_interval.duration_seconds,
-                    "state": mock_interval.state,
+                    "start_time": mock_interval_insufficient.start_time,
+                    "duration_seconds": mock_interval_insufficient.duration_seconds,
+                    "state": mock_interval_insufficient.state,
                 }
 
-            mock_interval.to_dict = mock_interval_to_dict
+            mock_interval_insufficient.to_dict = mock_interval_to_dict
 
-            intervals_by_entity = {"test_sensor": [mock_interval]}
+            intervals_by_entity_insufficient = {
+                "test_sensor": [mock_interval_insufficient]
+            }
             occupied_times = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
             now = dt_util.utcnow()
 
@@ -695,17 +697,115 @@ class TestEntityPropertiesAndMethods:
                 patch.object(manager, "_is_interval_active", return_value=True),
             ):
                 manager._update_entity_likelihoods(
-                    mock_db_entity, intervals_by_entity, occupied_times, now
+                    mock_db_entity,
+                    intervals_by_entity_insufficient,
+                    occupied_times,
+                    now,
                 )
 
-                # The logic calculates values and then applies motion sensor validation
                 # Since we have insufficient data (< 3600s), it should use defaults
-                # But the calculation still happens first, then validation
-                # The actual behavior shows that prob_given_true gets calculated to 0.99
-                # and prob_given_false gets reset to default due to validation
+                assert (
+                    test_entity.prob_given_true == 0.8
+                )  # Should use default after validation
                 assert (
                     test_entity.prob_given_false == 0.1
                 )  # Should use default after validation
+
+            # Test motion sensor logic (sufficient data - calculated values preserved)
+            test_entity_sufficient = create_test_entity(
+                "test_sensor_sufficient", coordinator=mock_coordinator
+            )
+            test_entity_sufficient.type.input_type = InputType.MOTION
+            test_entity_sufficient.type.prob_given_true = 0.95  # Default
+            test_entity_sufficient.type.prob_given_false = 0.02  # Default
+            manager._entities = {"test_sensor_sufficient": test_entity_sufficient}
+
+            # Mock intervals for sufficient data test (>= 3600s total)
+            # Create scenario that yields calculated values outside typical ranges
+            # We need two intervals with equal durations:
+            # - One active when occupied (true_occ)
+            # - One inactive when occupied (false_occ)
+            # This yields prob_given_true = 3600 / (3600 + 3600) = 0.5
+            mock_interval_sufficient = Mock()
+            mock_interval_sufficient.start_time = dt_util.utcnow() - timedelta(hours=2)
+            mock_interval_sufficient.duration_seconds = (
+                3600.0  # 1 hour - active interval
+            )
+            mock_interval_sufficient.state = "on"
+            mock_interval_sufficient.to_dict = lambda: {
+                "start_time": mock_interval_sufficient.start_time,
+                "duration_seconds": mock_interval_sufficient.duration_seconds,
+                "state": mock_interval_sufficient.state,
+            }
+
+            mock_interval_sufficient_2 = Mock()
+            mock_interval_sufficient_2.start_time = (
+                mock_interval_sufficient.start_time + timedelta(hours=1)
+            )
+            mock_interval_sufficient_2.duration_seconds = (
+                3600.0  # 1 hour - inactive interval
+            )
+            mock_interval_sufficient_2.state = "off"  # Not active
+            mock_interval_sufficient_2.to_dict = lambda: {
+                "start_time": mock_interval_sufficient_2.start_time,
+                "duration_seconds": mock_interval_sufficient_2.duration_seconds,
+                "state": mock_interval_sufficient_2.state,
+            }
+
+            mock_db_entity_sufficient = Mock()
+            mock_db_entity_sufficient.entity_id = "test_sensor_sufficient"
+
+            intervals_by_entity_sufficient = {
+                "test_sensor_sufficient": [
+                    mock_interval_sufficient,
+                    mock_interval_sufficient_2,
+                ]
+            }
+
+            # First interval: active when occupied (true_occ = 3600)
+            # Second interval: inactive when occupied (false_occ = 3600)
+            # This yields prob_given_true = 3600 / (3600 + 3600) = 0.5
+            # Occupied period covers both intervals' start times
+            occupied_times_sufficient = [
+                (
+                    mock_interval_sufficient.start_time,
+                    mock_interval_sufficient_2.start_time
+                    + timedelta(hours=1),  # Cover both intervals
+                )
+            ]
+
+            # Don't need to mock _is_occupied - it will use the actual occupied_times list
+            def mock_is_interval_active(interval, entity):
+                """Return True only for the first interval (active)."""
+                return interval == mock_interval_sufficient
+
+            with patch.object(
+                manager, "_is_interval_active", side_effect=mock_is_interval_active
+            ):
+                manager._update_entity_likelihoods(
+                    mock_db_entity_sufficient,
+                    intervals_by_entity_sufficient,
+                    occupied_times_sufficient,
+                    now,
+                )
+
+                # With sufficient data (>= 3600s), calculated values should be preserved
+                # even if outside typical ranges (prob_given_true < 0.8 or prob_given_false > 0.1)
+                calculated_prob_true = test_entity_sufficient.prob_given_true
+                calculated_prob_false = test_entity_sufficient.prob_given_false
+                # First interval: active=True, occupied=True -> true_occ = 3600
+                # Second interval: active=False, occupied=True -> false_occ = 3600
+                # prob_given_true = 3600 / (3600 + 3600) = 0.5
+                # prob_given_false = 0 / (0 + 0) = 0.5 (fallback when no data)
+                # These should be calculated values, not the defaults (0.95, 0.02)
+                # This proves threshold overrides are not applied
+                assert abs(calculated_prob_true - 0.5) < 0.01  # Calculated value ~0.5
+                assert (
+                    abs(calculated_prob_false - 0.5) < 0.01
+                )  # Fallback when no false_empty data
+                # Verify they are not the defaults
+                assert abs(calculated_prob_true - 0.95) > 0.01
+                assert abs(calculated_prob_false - 0.02) > 0.01
 
             # Test non-motion sensor logic - create a fresh entity to avoid interference
             fresh_entity = create_test_entity(
@@ -716,12 +816,16 @@ class TestEntityPropertiesAndMethods:
             fresh_entity.type.prob_given_false = 0.05
             manager._entities = {"test_sensor": fresh_entity}
 
+            # Use insufficient data intervals for non-motion sensor test
             with (
                 patch.object(manager, "_is_occupied", return_value=False),
                 patch.object(manager, "_is_interval_active", return_value=False),
             ):
                 manager._update_entity_likelihoods(
-                    mock_db_entity, intervals_by_entity, occupied_times, now
+                    mock_db_entity,
+                    intervals_by_entity_insufficient,
+                    occupied_times,
+                    now,
                 )
 
                 # Should use calculated values for non-motion sensors
