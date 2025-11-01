@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from custom_components.area_occupancy.const import RETENTION_DAYS
 from custom_components.area_occupancy.db import DB_VERSION, AreaOccupancyDB, Base
@@ -1418,6 +1418,101 @@ class TestAreaOccupancyDBUtilities:
         ):
             # Should not raise exception, just log error
             db._enable_wal_mode()
+
+    def test_verify_all_tables_exist_success(self, configured_db):
+        """Test _verify_all_tables_exist with all tables present."""
+        db = configured_db
+
+        # configured_db fixture already initializes tables via init_db()
+        # Verify all tables exist
+        assert db._verify_all_tables_exist() is True
+
+    def test_verify_all_tables_exist_error(self, configured_db):
+        """Test _verify_all_tables_exist with database error."""
+        db = configured_db
+
+        # Mock a database error
+        with patch.object(
+            db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("DB Error")
+        ):
+            # Should return False on error
+            assert db._verify_all_tables_exist() is False
+
+    def test_ensure_db_exists_new_database(self, configured_db, tmp_path):
+        """Test _ensure_db_exists with new database."""
+
+        db = configured_db
+        db.db_path = tmp_path / "test_new.db"
+
+        # Create new engine pointing to the new database path
+        db.engine = create_engine(
+            f"sqlite:///{db.db_path}",
+            echo=False,
+            pool_pre_ping=True,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        db._session_maker = sessionmaker(bind=db.engine)
+
+        # This should create all tables
+        db._ensure_db_exists()
+
+        # Verify tables were created
+        assert db._verify_all_tables_exist() is True
+
+    def test_ensure_db_exists_with_file_no_tables(self, configured_db, tmp_path):
+        """Test _ensure_db_exists when file exists but has no tables (race condition)."""
+
+        db = configured_db
+        db.db_path = tmp_path / "test_race.db"
+
+        # Create new engine pointing to the new database path
+        db.engine = create_engine(
+            f"sqlite:///{db.db_path}",
+            echo=False,
+            pool_pre_ping=True,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        db._session_maker = sessionmaker(bind=db.engine)
+
+        # Create an empty SQLite database file (valid header but no tables)
+        # This simulates the race condition where Instance A creates the file
+        # but hasn't created tables yet when Instance B checks
+        with db.engine.connect() as conn:
+            # Create a minimal valid SQLite file with valid header
+            # by creating and dropping a temporary table
+            conn.execute(text("CREATE TABLE _temp (id INTEGER)"))
+            conn.execute(text("DROP TABLE _temp"))
+            conn.commit()
+
+        # Now verify this triggers table creation
+        db._ensure_db_exists()
+
+        # Verify all required tables were created
+        assert db._verify_all_tables_exist() is True
+
+    def test_ensure_db_exists_with_complete_database(self, configured_db, tmp_path):
+        """Test _ensure_db_exists when database is already complete."""
+
+        db = configured_db
+        db.db_path = tmp_path / "test_complete.db"
+
+        # Create new engine pointing to the new database path
+        db.engine = create_engine(
+            f"sqlite:///{db.db_path}",
+            echo=False,
+            pool_pre_ping=True,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        db._session_maker = sessionmaker(bind=db.engine)
+
+        # Create a fully initialized database
+        db.init_db()
+        db.set_db_version()
+
+        db._ensure_db_exists()
+
+        # Verify tables still exist (not corrupted)
+        assert db._verify_all_tables_exist() is True
 
     def test_create_tables_individually_success(self, configured_db):
         """Test _create_tables_individually with success."""
