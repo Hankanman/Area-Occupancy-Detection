@@ -506,6 +506,8 @@ class EntityManager:
         if entity_obj.type.input_type == InputType.MOTION:
             # Check data quality for motion sensors
             total_occupied_time = true_occ + false_occ
+            total_unoccupied_time = true_empty + false_empty
+
             if total_occupied_time < 3600:  # Less than 1 hour of occupied time
                 _LOGGER.warning(
                     "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
@@ -525,13 +527,25 @@ class EntityManager:
                         prob_given_true,
                         total_occupied_time,
                     )
-                if prob_given_false > 0.1:
+
+                # Check if we have sufficient unoccupied data for prob_given_false
+                # If not, the calculated value is just a fallback (0.5), not real data
+                if total_unoccupied_time < 3600:  # Less than 1 hour of unoccupied time
+                    _LOGGER.info(
+                        "Motion sensor %s has insufficient unoccupied time data (%.1fs), "
+                        "using default for prob_given_false (%.3f)",
+                        entity_id,
+                        total_unoccupied_time,
+                        entity_obj.type.prob_given_false,
+                    )
+                    prob_given_false = entity_obj.type.prob_given_false
+                elif prob_given_false > 0.1:
                     _LOGGER.info(
                         "Motion sensor %s has calculated prob_given_false (%.3f) above typical range (0.1), "
                         "but using calculated value due to sufficient data (%.1fs)",
                         entity_id,
                         prob_given_false,
-                        total_occupied_time,
+                        total_unoccupied_time,
                     )
         else:
             # Fallback to defaults if too low for other sensors
