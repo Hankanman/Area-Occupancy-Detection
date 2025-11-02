@@ -63,11 +63,28 @@ DEFAULT_OCCUPIED_SECONDS = 0.0
 class Prior:
     """Compute the baseline probability for an Area entity."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the Prior class."""
+    def __init__(
+        self, coordinator: AreaOccupancyCoordinator, area_name: str | None = None
+    ) -> None:
+        """Initialize the Prior class.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+        """
         self.coordinator = coordinator
         self.db = coordinator.db
-        self.sensor_ids = coordinator.config.sensors.motion
+        self.area_name = area_name
+        # Get config from areas dict if area_name provided, otherwise from coordinator.config
+        if (
+            area_name
+            and hasattr(coordinator, "areas")
+            and area_name in coordinator.areas
+        ):
+            self.config = coordinator.areas[area_name].config
+        else:
+            self.config = coordinator.config
+        self.sensor_ids = self.config.sensors.motion
         self.hass = coordinator.hass
         self.global_prior: float | None = None
         self._last_updated: datetime | None = None
@@ -734,7 +751,7 @@ class Prior:
 
                 # Convert to tuples and apply motion timeout
                 raw_intervals = [(start, end) for start, end in intervals]
-                timeout_seconds = self.coordinator.config.sensors.motion_timeout
+                timeout_seconds = self.config.sensors.motion_timeout
 
                 _LOGGER.debug(
                     "Applying motion timeout of %d seconds to %d intervals for unified occupancy calculation",

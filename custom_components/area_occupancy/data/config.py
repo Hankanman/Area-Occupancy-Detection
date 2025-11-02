@@ -164,17 +164,32 @@ class WaspInBox:
 class Config:
     """Configuration for Area Occupancy Detection."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
-        """Initialize the config from a coordinator."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+        area_data: dict[str, Any] | None = None,
+    ):
+        """Initialize the config from a coordinator.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name identifier (for multi-area support)
+            area_data: Optional area-specific configuration data (if None, uses config_entry)
+        """
         self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self.hass = coordinator.hass
         self.db = coordinator.db
+        self.area_name = area_name  # Area identifier for multi-area support
 
-        # Load configuration from the merged entry data
-        if coordinator.config_entry is None:
-            raise ValueError("Coordinator config_entry cannot be None")
-        self._load_config(self._merge_entry(coordinator.config_entry))
+        # Load configuration from the merged entry data or provided area_data
+        if area_data is not None:
+            self._load_config(area_data)
+        else:
+            if coordinator.config_entry is None:
+                raise ValueError("Coordinator config_entry cannot be None")
+            self._load_config(self._merge_entry(coordinator.config_entry))
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -189,7 +204,10 @@ class Config:
         # Set all configuration attributes
         self.name = data.get(CONF_NAME, "Area Occupancy")
         self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        # For backward compatibility, try area_id first, then use area_name if set
         self.area_id = data.get(CONF_AREA_ID)
+        if self.area_name and not self.area_id:
+            self.area_id = self.area_name
         self.threshold = threshold
 
         self.sensors = Sensors(
@@ -216,13 +234,15 @@ class Config:
         )
 
         self.weights = Weights(
-            motion=data[CONF_WEIGHT_MOTION],
-            media=data[CONF_WEIGHT_MEDIA],
-            appliance=data[CONF_WEIGHT_APPLIANCE],
-            door=data[CONF_WEIGHT_DOOR],
-            window=data[CONF_WEIGHT_WINDOW],
-            environmental=data[CONF_WEIGHT_ENVIRONMENTAL],
-            wasp=data[CONF_WASP_WEIGHT],
+            motion=data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            media=data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            appliance=data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            door=data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            window=data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            environmental=data.get(
+                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+            ),
+            wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
         )
 
         self.decay = Decay(
