@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Final
 
 from homeassistant.const import (
@@ -200,3 +202,54 @@ ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
 ATTR_VERIFICATION_DELAY: Final = "verification_delay"
 ATTR_VERIFICATION_PENDING: Final = "verification_pending"
+
+
+def validate_and_sanitize_area_name(area_name: str) -> str:
+    """Validate and sanitize area name for use in unique IDs.
+
+    This function:
+    1. Validates that area name is not empty
+    2. Prevents conflicts with ALL_AREAS_IDENTIFIER
+    3. Sanitizes special characters that could break unique IDs
+    4. Normalizes whitespace
+
+    Args:
+        area_name: The area name to validate and sanitize
+
+    Returns:
+        str: The sanitized area name
+
+    Raises:
+        ValueError: If area name is empty or conflicts with ALL_AREAS_IDENTIFIER
+    """
+    if not area_name or not area_name.strip():
+        raise ValueError("Area name cannot be empty")
+
+    # Prevent conflicts with special identifier
+    if area_name.strip() == ALL_AREAS_IDENTIFIER:
+        raise ValueError(
+            f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with "
+            "the 'All Areas' aggregation identifier"
+        )
+
+    # Sanitize for use in unique IDs
+    # Replace special characters that could break unique IDs with underscores
+    sanitized = re.sub(r"[^\w\s-]", "_", area_name.strip())
+    # Replace multiple spaces/underscores with single underscore
+    sanitized = re.sub(r"[\s_]+", "_", sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip("_")
+
+    if not sanitized:
+        raise ValueError("Area name contains only invalid characters")
+
+    # Warn if sanitization changed the name
+    if sanitized != area_name.strip():
+        _LOGGER = logging.getLogger(__name__)
+        _LOGGER.warning(
+            "Area name sanitized: '%s' -> '%s' (special characters replaced)",
+            area_name,
+            sanitized,
+        )
+
+    return sanitized

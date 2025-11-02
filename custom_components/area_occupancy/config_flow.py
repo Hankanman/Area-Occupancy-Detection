@@ -89,8 +89,10 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
+    validate_and_sanitize_area_name,
 )
 from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
+from .migrations import _migrate_area_name_in_entity_registry
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -697,6 +699,15 @@ class BaseOccupancyFlow:
         if not name:
             raise vol.Invalid("Name is required")
 
+        # Validate and sanitize area name
+        try:
+            sanitized_name = validate_and_sanitize_area_name(name)
+            # Update data with sanitized name if it changed
+            if sanitized_name != name:
+                data[CONF_NAME] = sanitized_name
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
+
         # Validate purpose
         purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
         if not purpose:
@@ -806,6 +817,28 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         as it is built through the flow.
         """
         self._data: dict[str, Any] = {}
+
+    def _validate_duplicate_name_internal(
+        self, flattened_input: dict[str, Any], areas: list[dict[str, Any]]
+    ) -> None:
+        """Validate that area name is not a duplicate.
+
+        Args:
+            flattened_input: The flattened input configuration
+            areas: List of existing area configurations
+
+        Raises:
+            vol.Invalid: If area name is a duplicate
+        """
+        area_name = flattened_input.get(CONF_NAME, "")
+        if area_name:
+            for area in areas:
+                if area.get(CONF_NAME) == area_name and (
+                    not self._area_being_edited
+                    or area.get(CONF_NAME) != self._area_being_edited
+                ):
+                    msg = f"An area named '{area_name}' already exists"
+                    raise vol.Invalid(msg)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -1148,15 +1181,52 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 self._validate_config(flattened_input)
 
                 # Check for duplicate names (if adding or renaming)
-                area_name = flattened_input.get(CONF_NAME, "")
-                if area_name:
-                    for area in areas:
-                        if area.get(CONF_NAME) == area_name and (
-                            not self._area_being_edited
-                            or area.get(CONF_NAME) != self._area_being_edited
-                        ):
-                            msg = f"An area named '{area_name}' already exists"
-                            raise vol.Invalid(msg)
+                self._validate_duplicate_name_internal(flattened_input, areas)
+
+                # Handle area name changes - migrate entity registry if needed
+                if self._area_being_edited:
+                    old_area = next(
+                        (
+                            a
+                            for a in areas
+                            if a.get(CONF_NAME) == self._area_being_edited
+                        ),
+                        None,
+                    )
+                    new_area_name = flattened_input.get(CONF_NAME, "")
+                    if (
+                        old_area
+                        and new_area_name
+                        and new_area_name != self._area_being_edited
+                    ):
+                        # Area name changed - migrate entity registry
+                        _LOGGER.info(
+                            "Area name changed from '%s' to '%s', migrating entity registry",
+                            self._area_being_edited,
+                            new_area_name,
+                        )
+                        try:
+                            await _migrate_area_name_in_entity_registry(
+                                self.hass,
+                                self.config_entry,
+                                self._area_being_edited,
+                                new_area_name,
+                            )
+                        except (
+                            HomeAssistantError,
+                            ValueError,
+                            KeyError,
+                        ) as migrate_err:
+                            _LOGGER.error(
+                                "Failed to migrate entity registry for area rename: %s",
+                                migrate_err,
+                            )
+                            # Log warning but don't fail - entities will be recreated on reload
+                            # We add a warning message but don't prevent the config update
+                            _LOGGER.warning(
+                                "Entity registry migration failed for area rename. "
+                                "Entities will be recreated on reload."
+                            )
 
                 # Update or add area
                 updated_areas = []

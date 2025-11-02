@@ -1473,6 +1473,88 @@ class AreaOccupancyDB:
             return total_cleaned
         return total_cleaned
 
+    def delete_area_data(self, area_name: str) -> int:
+        """Delete all database data for a removed area.
+
+        This includes:
+        - All entities for the area
+        - All intervals for those entities
+        - All priors for the area
+        - The area record itself
+
+        Args:
+            area_name: Name of the area to delete
+
+        Returns:
+            int: Number of entities deleted
+        """
+        deleted_count = 0
+        try:
+            with self.get_session() as session:
+                # Get all entities for this area
+                db_entities = (
+                    session.query(self.Entities).filter_by(area_name=area_name).all()
+                )
+
+                # Delete all intervals for entities in this area
+                for entity in db_entities:
+                    intervals_deleted = (
+                        session.query(self.Intervals)
+                        .filter_by(entity_id=entity.entity_id)
+                        .delete()
+                    )
+                    if intervals_deleted > 0:
+                        _LOGGER.debug(
+                            "Deleted %d intervals for entity %s in removed area %s",
+                            intervals_deleted,
+                            entity.entity_id,
+                            area_name,
+                        )
+
+                # Delete all entities for this area
+                entities_deleted = (
+                    session.query(self.Entities).filter_by(area_name=area_name).delete()
+                )
+                deleted_count = entities_deleted
+                if entities_deleted > 0:
+                    _LOGGER.debug(
+                        "Deleted %d entities for removed area %s",
+                        entities_deleted,
+                        area_name,
+                    )
+
+                # Delete priors for this area
+                priors_deleted = (
+                    session.query(self.Priors).filter_by(area_name=area_name).delete()
+                )
+                if priors_deleted > 0:
+                    _LOGGER.debug(
+                        "Deleted %d priors for removed area %s",
+                        priors_deleted,
+                        area_name,
+                    )
+
+                # Delete the area record itself
+                area_deleted = (
+                    session.query(self.Areas).filter_by(area_name=area_name).delete()
+                )
+                if area_deleted > 0:
+                    _LOGGER.debug("Deleted area record for removed area %s", area_name)
+
+                session.commit()
+                _LOGGER.info(
+                    "Deleted all data for removed area %s (%d entities, %d priors, %d area records)",
+                    area_name,
+                    deleted_count,
+                    priors_deleted,
+                    area_deleted,
+                )
+        except (SQLAlchemyError, OSError) as err:
+            _LOGGER.error(
+                "Failed to delete data for removed area %s: %s", area_name, err
+            )
+        return deleted_count
+
     # --- Sync Data from Recorder ---
 
     def is_valid_state(self, state: Any) -> bool:

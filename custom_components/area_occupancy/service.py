@@ -28,17 +28,70 @@ def _get_coordinator(hass: HomeAssistant) -> "AreaOccupancyCoordinator":
     return coordinator
 
 
+def _get_area_name_from_service_call(hass: HomeAssistant, call: ServiceCall) -> str:
+    """Extract area_name from service call, handling backward compatibility with entry_id.
+
+    Args:
+        hass: Home Assistant instance
+        call: The service call
+
+    Returns:
+        str: The area name (or ALL_AREAS_IDENTIFIER for "all")
+    """
+    # Check for deprecated entry_id parameter
+    if "entry_id" in call.data:
+        _LOGGER.warning(
+            "The 'entry_id' parameter is deprecated and will be removed in a future version. "
+            "Use 'area_name' instead. For backward compatibility, using first area."
+        )
+        # For backward compatibility, use first area
+        coordinator = _get_coordinator(hass)
+        area_names = coordinator.get_area_names()
+        if area_names:
+            area_name = area_names[0]
+            _LOGGER.debug(
+                "Using first area '%s' for deprecated entry_id parameter", area_name
+            )
+            return area_name
+        # Fallback to "all" if no areas
+        return ALL_AREAS_IDENTIFIER
+
+    # Normal parameter handling
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
+    return area_name
+
+
+def _validate_area_exists(
+    coordinator: "AreaOccupancyCoordinator", area_name: str
+) -> None:
+    """Validate that the area exists.
+
+    Args:
+        coordinator: The area occupancy coordinator
+        area_name: The area name to validate
+
+    Raises:
+        HomeAssistantError: If area does not exist
+    """
+    if area_name not in coordinator.get_area_names():
+        raise HomeAssistantError(f"Area '{area_name}' not found")
+
+    area_check = coordinator.get_area_or_default(area_name)
+    if area_check is None:
+        raise HomeAssistantError(f"Area '{area_name}' not found")
+
+
 async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Manually trigger an update of sensor likelihoods.
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     runs analysis for all areas.
-    """
-    area_name = call.data.get("area_name", "all")
 
-    # Normalize "all" to ALL_AREAS_IDENTIFIER
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
+    Backward compatibility: Supports deprecated 'entry_id' parameter.
+    """
+    area_name = _get_area_name_from_service_call(hass, call)
 
     try:
         coordinator = _get_coordinator(hass)
@@ -88,13 +141,10 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
                 "areas": all_areas_data,
                 "update_timestamp": dt_util.utcnow().isoformat(),
             }
-        # Run for specific area
-        if area_name not in coordinator.get_area_names():
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
+        # Run for specific area
+        _validate_area_exists(coordinator, area_name)
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
         _LOGGER.info("Running analysis for area %s", area_name)
         await coordinator.run_analysis()
@@ -118,7 +168,7 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
                 "prob_given_false": entity.prob_given_false,
             }
 
-        response_data = {
+        return {
             "area_name": area_name,
             "current_prior": coordinator.area_prior(area_name),
             "global_prior": area.prior.global_prior,
@@ -129,7 +179,6 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             "likelihoods": likelihood_data,
             "update_timestamp": dt_util.utcnow().isoformat(),
         }
-        return response_data
 
     except Exception as err:
         error_msg = f"Failed to run analysis for {area_name}: {err}"
@@ -142,12 +191,10 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     resets entities for all areas.
-    """
-    area_name = call.data.get("area_name", "all")
 
-    # Normalize "all" to ALL_AREAS_IDENTIFIER
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
+    Backward compatibility: Supports deprecated 'entry_id' parameter.
+    """
+    area_name = _get_area_name_from_service_call(hass, call)
 
     try:
         coordinator = _get_coordinator(hass)
@@ -162,12 +209,8 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
             await coordinator.async_refresh()
             _LOGGER.info("Entity reset completed successfully for all areas")
         else:
-            if area_name not in coordinator.get_area_names():
-                raise HomeAssistantError(f"Area '{area_name}' not found")
-
+            _validate_area_exists(coordinator, area_name)
             area = coordinator.get_area_or_default(area_name)
-            if area is None:
-                raise HomeAssistantError(f"Area '{area_name}' not found")
 
             _LOGGER.info("Resetting entities for area %s", area_name)
             await area.entities.cleanup()
@@ -185,12 +228,10 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns metrics for all areas.
-    """
-    area_name = call.data.get("area_name", "all")
 
-    # Normalize "all" to ALL_AREAS_IDENTIFIER
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
+    Backward compatibility: Supports deprecated 'entry_id' parameter.
+    """
+    area_name = _get_area_name_from_service_call(hass, call)
 
     try:
         coordinator = _get_coordinator(hass)
@@ -235,12 +276,9 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
             _LOGGER.info("Retrieved entity metrics for all areas")
             return {"areas": all_metrics}
-        if area_name not in coordinator.get_area_names():
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
+        _validate_area_exists(coordinator, area_name)
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
         entities = area.entities.entities
         total_entities = len(entities)
@@ -267,12 +305,13 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
         }
 
         _LOGGER.info("Retrieved entity metrics for area %s", area_name)
-        return {"metrics": metrics}
 
     except Exception as err:
         error_msg = f"Failed to get entity metrics for {area_name}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
+    else:
+        return {"metrics": metrics}
 
 
 async def _get_problematic_entities(
@@ -282,12 +321,10 @@ async def _get_problematic_entities(
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns problematic entities for all areas.
-    """
-    area_name = call.data.get("area_name", "all")
 
-    # Normalize "all" to ALL_AREAS_IDENTIFIER
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
+    Backward compatibility: Supports deprecated 'entry_id' parameter.
+    """
+    area_name = _get_area_name_from_service_call(hass, call)
 
     try:
         coordinator = _get_coordinator(hass)
@@ -320,12 +357,9 @@ async def _get_problematic_entities(
 
             _LOGGER.info("Retrieved problematic entities for all areas")
             return {"areas": all_problems}
-        if area_name not in coordinator.get_area_names():
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
+        _validate_area_exists(coordinator, area_name)
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
         entities = area.entities.entities
         unavailable = [eid for eid, e in entities.items() if not e.available]
@@ -344,12 +378,13 @@ async def _get_problematic_entities(
         }
 
         _LOGGER.info("Retrieved problematic entities for area %s", area_name)
-        return {"problems": problems}
 
     except Exception as err:
         error_msg = f"Failed to get problematic entities for {area_name}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
+    else:
+        return {"problems": problems}
 
 
 async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
@@ -357,12 +392,10 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns status for all areas.
-    """
-    area_name = call.data.get("area_name", "all")
 
-    # Normalize "all" to ALL_AREAS_IDENTIFIER
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
+    Backward compatibility: Supports deprecated 'entry_id' parameter.
+    """
+    area_name = _get_area_name_from_service_call(hass, call)
 
     try:
         coordinator = _get_coordinator(hass)
@@ -430,12 +463,9 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
             _LOGGER.info("Retrieved area status for all areas")
             return {"areas": all_status}
-        if area_name not in coordinator.get_area_names():
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
+        _validate_area_exists(coordinator, area_name)
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise HomeAssistantError(f"Area '{area_name}' not found")
 
         # Get current occupancy state
         occupancy_probability = coordinator.probability(area_name)
@@ -477,12 +507,13 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         }
 
         _LOGGER.info("Retrieved area status for area %s", area_name)
-        return {"area_status": status}
 
     except Exception as err:
         error_msg = f"Failed to get area status for {area_name}: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
+    else:
+        return {"area_status": status}
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
@@ -490,11 +521,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     # Service schema: area_name is optional, defaults to "all"
     # Accepts area name or "all" for all areas operation
+    # Also supports deprecated entry_id for backward compatibility
     area_name_schema = vol.Schema(
         {
             vol.Optional("area_name", default="all"): vol.Any(
                 str, vol.In(["all", ALL_AREAS_IDENTIFIER])
-            )
+            ),
+            vol.Optional("entry_id"): str,  # Deprecated, for backward compatibility
         }
     )
 

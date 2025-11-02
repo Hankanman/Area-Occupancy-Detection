@@ -11,6 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
 # Dispatcher imports removed - no longer needed without master election
@@ -35,6 +36,7 @@ from .const import (
     DOMAIN,
     MIN_PROBABILITY,
     SAVE_DEBOUNCE_SECONDS,
+    validate_and_sanitize_area_name,
 )
 from .data.area_data import AreaData
 from .data.config import Config
@@ -116,6 +118,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not area_name:
                     _LOGGER.warning("Skipping area without name: %s", area_data)
                     continue
+
+                # Validate and sanitize area name
+                try:
+                    area_name = validate_and_sanitize_area_name(area_name)
+                    # Update area_data with sanitized name
+                    area_data[CONF_NAME] = area_name
+                except ValueError as err:
+                    _LOGGER.warning(
+                        "Invalid area name '%s': %s. Skipping area.", area_name, err
+                    )
+                    continue
+
                 if area_name in self.areas:
                     _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                     continue
@@ -130,6 +144,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             # Legacy single-area format - create area from entry data
             area_name = merged.get(CONF_NAME, DEFAULT_NAME)
+
+            # Validate and sanitize area name
+            try:
+                area_name = validate_and_sanitize_area_name(area_name)
+            except ValueError as err:
+                _LOGGER.warning(
+                    "Invalid area name '%s': %s. Using default name.", area_name, err
+                )
+                area_name = DEFAULT_NAME
+
             _LOGGER.info(
                 "Legacy config format detected, creating single area: %s", area_name
             )
@@ -397,14 +421,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return True
 
     # --- Public Methods ---
+    def _validate_areas_configured(self) -> None:
+        """Validate that at least one area is configured.
+
+        Raises:
+            HomeAssistantError: If no areas are configured
+        """
+        if not self.areas:
+            raise HomeAssistantError("No areas configured")
+
     async def setup(self) -> None:
         """Initialize the coordinator and its components (fast startup mode)."""
         try:
             # Load areas from config entry
             self._load_areas_from_config()
 
-            if not self.areas:
-                raise HomeAssistantError("No areas configured")
+            self._validate_areas_configured()
 
             _LOGGER.info(
                 "Initializing Area Occupancy for %d area(s): %s",
@@ -431,7 +463,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.db.load_data()
 
             # Ensure areas exist in database and persist configuration/state
-            for area_name, area in self.areas.items():
+            for area_name in self.areas:
                 try:
                     # Save area data to database
                     # Note: This will need to be updated to save per-area
@@ -658,12 +690,67 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         removed_area_names = set(self.areas.keys()) - new_area_names
         if removed_area_names:
             _LOGGER.info("Cleaning up removed areas: %s", ", ".join(removed_area_names))
+
+            # Get entity registry for cleanup
+            entity_registry = er.async_get(self.hass)
+
             for area_name in removed_area_names:
                 area = self.areas.get(area_name)
                 if area:
                     # Clean up entities and purpose managers for removed area
                     await area.entities.cleanup()
                     area.purpose.cleanup()
+
+                    # Remove entities from entity registry
+                    entities_removed = 0
+                    area_prefix = f"{area_name}_"
+                    for entity_id, entity_entry in list(
+                        entity_registry.entities.items()
+                    ):
+                        if (
+                            entity_entry.config_entry_id == self.entry_id
+                            and entity_entry.unique_id
+                            and str(entity_entry.unique_id).startswith(area_prefix)
+                        ):
+                            try:
+                                entity_registry.async_remove(entity_id)
+                                entities_removed += 1
+                                _LOGGER.debug(
+                                    "Removed entity %s from registry for removed area %s",
+                                    entity_id,
+                                    area_name,
+                                )
+                            except (ValueError, KeyError, AttributeError) as remove_err:
+                                _LOGGER.warning(
+                                    "Failed to remove entity %s from registry: %s",
+                                    entity_id,
+                                    remove_err,
+                                )
+
+                    if entities_removed > 0:
+                        _LOGGER.info(
+                            "Removed %d entities from registry for removed area %s",
+                            entities_removed,
+                            area_name,
+                        )
+
+                    # Delete all database records for this area
+                    try:
+                        deleted_count = await self.hass.async_add_executor_job(
+                            self.db.delete_area_data, area_name
+                        )
+                        _LOGGER.debug(
+                            "Deleted %d database records for removed area %s",
+                            deleted_count,
+                            area_name,
+                        )
+                    except (HomeAssistantError, OSError, RuntimeError) as db_err:
+                        _LOGGER.error(
+                            "Failed to delete database records for removed area %s: %s",
+                            area_name,
+                            db_err,
+                        )
+
                     _LOGGER.debug("Cleaned up area: %s", area_name)
 
         # Clear existing areas before reloading (this ensures removed areas are gone
