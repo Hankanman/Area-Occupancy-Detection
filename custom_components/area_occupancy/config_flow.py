@@ -50,6 +50,7 @@ from .const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
@@ -74,6 +75,7 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -527,6 +529,20 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=1,
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
+                )
+            ),
+            vol.Optional(
+                CONF_MIN_PRIOR_OVERRIDE,
+                default=defaults.get(
+                    CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0.0,
+                    max=1.0,
+                    step=0.01,
+                    mode=NumberSelectorMode.SLIDER,
+                    unit_of_measurement="probability",
                 )
             ),
         }
