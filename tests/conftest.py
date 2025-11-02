@@ -74,7 +74,7 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import (
-    Config,
+    AreaConfig,
     Decay,
     Sensors,
     SensorStates,
@@ -364,7 +364,7 @@ def mock_entity_manager() -> Mock:
 def mock_coordinator(
     mock_hass: Mock,
     mock_realistic_config_entry: Mock,
-    mock_config: Config,
+    mock_config: AreaConfig,
     mock_entity_manager: Mock,
     mock_entity_type_manager: Mock,
     mock_area_prior: Mock,
@@ -386,15 +386,17 @@ def mock_coordinator(
     coordinator.wasp_entity_id = None
     coordinator.last_update_success = True
 
-    # Use injected fixtures for config, entities, entity_types, prior
-    coordinator.config = mock_config
+    # Set up multi-area architecture with default test area
+    mock_area = Mock()
+    mock_area.config = mock_config
+    mock_area.entities = mock_entity_manager
+    mock_area.prior = mock_area_prior
+    mock_area.purpose = mock_purpose_manager
+    mock_area.area_name = "Test Area"
+    coordinator.areas = {"Test Area": mock_area}
 
-    # Mock the get_motion_sensors method to avoid the wasp_entity_id issue
-    # Note: This is handled by the mock_config fixture
-    coordinator.entities = mock_entity_manager
+    # Mock legacy attributes for backward compatibility in tests
     coordinator.entity_types = mock_entity_type_manager
-    coordinator.prior = mock_area_prior
-    coordinator.purpose = mock_purpose_manager
 
     # Database - use the new AreaOccupancyDB system
     coordinator.db = _create_mock_db()
@@ -402,7 +404,12 @@ def mock_coordinator(
     # Legacy store for backward compatibility
     coordinator.store = coordinator.db
 
-    # Config manager - handled by mock_config fixture
+    # Mock get_area_or_default to return default test area
+    coordinator.get_area_or_default = Mock(return_value=mock_area)
+    coordinator.get_area_names = Mock(return_value=["Test Area"])
+
+    # For backward compatibility in tests: expose config from first area
+    coordinator.config = mock_config
 
     # Only mock real public methods
     coordinator.async_shutdown = AsyncMock()
@@ -418,7 +425,7 @@ def mock_coordinator(
     # Device info
     coordinator.device_info = {
         "identifiers": {(coordinator.config_entry.domain, coordinator.entry_id)},
-        "name": coordinator.config.name,
+        "name": mock_config.name,
         "manufacturer": "Area Occupancy",
         "model": "Area Occupancy Detection",
         "sw_version": "1.0.0",

@@ -68,6 +68,7 @@ from ..const import (
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from .integration_config import IntegrationConfig
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,6 +88,9 @@ class Sensors:
     temperature: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
+    _parent_config: "AreaConfig | None" = field(
+        default=None, repr=False, compare=False
+    )
 
     def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
         """Get motion sensors including wasp sensor if enabled and available.
@@ -102,11 +106,14 @@ class Sensors:
         motion_sensors = self.motion.copy()
 
         # Add wasp sensor if enabled and entity_id is available
-        if (
-            coordinator
-            and coordinator.config.wasp_in_box.enabled
-            and getattr(coordinator, "wasp_entity_id", None)
-        ):
+        # Use parent config if available, otherwise fall back to checking coordinator
+        if self._parent_config and hasattr(self._parent_config, "wasp_in_box"):
+            wasp_enabled = self._parent_config.wasp_in_box.enabled
+        else:
+            # Fallback for cases where parent config isn't set
+            wasp_enabled = False
+
+        if wasp_enabled and getattr(coordinator, "wasp_entity_id", None):
             wasp_id = coordinator.wasp_entity_id
             if wasp_id is not None:
                 motion_sensors.append(wasp_id)
@@ -163,7 +170,7 @@ class WaspInBox:
     verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
-class Config:
+class AreaConfig:
     """Configuration for Area Occupancy Detection."""
 
     def __init__(
@@ -223,6 +230,7 @@ class Config:
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
+            _parent_config=self,
         )
 
         self.sensor_states = SensorStates(

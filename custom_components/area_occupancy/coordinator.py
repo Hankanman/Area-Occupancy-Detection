@@ -25,22 +25,19 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .const import (
-    ANALYSIS_INTERVAL,
     CONF_AREAS,
     CONF_NAME,
-    DECAY_INTERVAL,
     DEFAULT_NAME,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
     MIN_PROBABILITY,
-    SAVE_DEBOUNCE_SECONDS,
     validate_and_sanitize_area_name,
 )
 from .data.area_data import AreaData
-from .data.config import Config
 from .data.entity_type import InputType
+from .data.integration_config import IntegrationConfig
 from .db import AreaOccupancyDB
 from .utils import bayesian_probability
 
@@ -64,12 +61,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry_id = config_entry.entry_id
         self.db = AreaOccupancyDB(self)
 
+        # Integration-level configuration (global settings for entire integration)
+        self.integration_config = IntegrationConfig(self, config_entry)
+
         # Multi-area architecture: dict[str, AreaData] keyed by area name
         self.areas: dict[str, AreaData] = {}
-
-        # Legacy single-area support for backward compatibility during migration
-        # Will be removed after migration is complete
-        self.config: Config | None = None
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
@@ -158,10 +154,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Legacy config format detected, creating single area: %s", area_name
             )
 
-            # Create legacy config for backward compatibility
-            self.config = Config(self)
-
-            # Also create as area for migration path
+            # Create area for migration path
             self.areas[area_name] = AreaData(
                 coordinator=self,
                 area_name=area_name,
@@ -204,16 +197,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         area = self.get_area_or_default(area_name)
         if area is None:
-            # Fallback for legacy single-area mode
-            if self.config:
-                return DeviceInfo(
-                    identifiers={(DOMAIN, self.entry_id)},
-                    name=self.config.name,
-                    manufacturer=DEVICE_MANUFACTURER,
-                    model=DEVICE_MODEL,
-                    sw_version=DEVICE_SW_VERSION,
-                )
-            # No areas configured
+            # No areas configured - return default device info
             return DeviceInfo(
                 identifiers={(DOMAIN, self.entry_id)},
                 name=DEFAULT_NAME,
@@ -243,10 +227,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         area = self.get_area_or_default(area_name)
         if area is None:
-            # Fallback for legacy single-area mode
-            if self.config:
-                # Use legacy entities/prior if available
-                return MIN_PROBABILITY
             return MIN_PROBABILITY
 
         entities = area.entities.entities
@@ -389,9 +369,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         area = self.get_area_or_default(area_name)
         if area is None:
-            # Fallback for legacy
-            if self.config:
-                return self.config.threshold
             return 0.5
         return area.config.threshold
 
@@ -605,11 +582,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_names = ", ".join(self.areas.keys()) if self.areas else "no areas"
                 _LOGGER.error("Failed to save data for areas: %s: %s", area_names, err)
 
-        self._save_timer = async_call_later(self.hass, SAVE_DEBOUNCE_SECONDS, _do_save)
+        self._save_timer = async_call_later(
+            self.hass, self.integration_config.save_debounce, _do_save
+        )
         area_names = ", ".join(self.areas.keys()) if self.areas else "no areas"
         _LOGGER.debug(
             "Database save scheduled in %d seconds for areas: %s",
-            SAVE_DEBOUNCE_SECONDS,
+            self.integration_config.save_debounce,
             area_names,
         )
 
@@ -836,7 +815,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._global_decay_timer is not None or not self.hass:
             return
 
-        next_update = dt_util.utcnow() + timedelta(seconds=DECAY_INTERVAL)
+        next_update = dt_util.utcnow() + timedelta(
+            seconds=self.integration_config.decay_interval
+        )
 
         self._global_decay_timer = async_track_point_in_time(
             self.hass, self._handle_decay_timer, next_update
@@ -916,7 +897,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.db.save_data)
 
             # Schedule next run (1 hour interval)
-            next_update = _now + timedelta(seconds=ANALYSIS_INTERVAL)
+            next_update = _now + timedelta(
+                seconds=self.integration_config.analysis_interval
+            )
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
