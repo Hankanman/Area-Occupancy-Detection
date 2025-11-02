@@ -142,7 +142,23 @@
         "step": {
             "init": {
                 "title": "Area Occupancy Detection Options",
-                "description": "Modify area occupancy detection configuration",
+                "description": "Manage areas: add new areas, edit existing areas, or remove areas",
+                "data": {
+                    "action": "Action"
+                },
+                "data_description": {
+                    "action": "Choose an action: add a new area, edit an existing area, or remove an area"
+                }
+            },
+            "area_config": {
+                "title": "Configure Area",
+                "description": "Configure sensors and parameters for this area",
+                "data": {
+                    "name": "Name of Detection Area"
+                },
+                "data_description": {
+                    "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
+                },
                 "sections": {
                     "purpose": {
                         "name": "Area Purpose",
@@ -266,6 +282,21 @@
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                             "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
                         }
+                    }
+                }
+            },
+            "remove_area": {
+                "title": "Remove Area",
+                "description": "Are you sure you want to remove the area '{area_name}'? This action cannot be undone.",
+                "data": {
+                    "confirm": "Confirm Removal"
+                },
+                "data_description": {
+                    "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
+                },
+                "errors": {
+                    "base": {
+                        "cannot_remove_last": "Cannot remove the last area. At least one area must remain configured."
                     }
                 }
             }

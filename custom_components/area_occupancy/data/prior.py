@@ -21,6 +21,7 @@ from sqlalchemy.exc import (
     SQLAlchemyError,
 )
 
+from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -32,7 +33,7 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..data.entity_type import InputType
-from ..utils import apply_motion_timeout, clamp_probability, combine_priors
+from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -63,11 +64,30 @@ DEFAULT_OCCUPIED_SECONDS = 0.0
 class Prior:
     """Compute the baseline probability for an Area entity."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the Prior class."""
+    def __init__(
+        self, coordinator: AreaOccupancyCoordinator, area_name: str | None = None
+    ) -> None:
+        """Initialize the Prior class.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+        """
         self.coordinator = coordinator
         self.db = coordinator.db
-        self.sensor_ids = coordinator.config.sensors.motion
+        self.area_name = area_name
+        # Get config from areas dict if area_name provided, otherwise from coordinator.config
+        if (
+            area_name
+            and hasattr(coordinator, "areas")
+            and area_name in coordinator.areas
+        ):
+            self.config = coordinator.areas[area_name].config
+        else:
+            self.config = coordinator.config
+        self.sensor_ids = self.config.sensors.motion
+        self.media_sensor_ids = self.config.sensors.media
+        self.appliance_sensor_ids = self.config.sensors.appliance
         self.hass = coordinator.hass
         self.global_prior: float | None = None
         self._last_updated: datetime | None = None
@@ -217,10 +237,13 @@ class Prior:
         self._last_updated = dt_util.utcnow()
 
     def calculate_area_prior(self, entity_ids: list[str]) -> float:
-        """Calculate the overall occupancy prior for an area based on historical motion sensor data.
+        """Calculate the overall occupancy prior for an area based on historical sensor data.
+
+        First calculates from motion sensors only. If the result is below 0.10 (10%),
+        supplements with media players (playing state only) and appliances (on state only).
 
         Args:
-            entity_ids: List of entity IDs to calculate prior for. If None, uses all motion sensors.
+            entity_ids: List of entity IDs to calculate prior for (motion sensors).
 
         Returns:
             float: Prior probability of occupancy (0.0 to 1.0)
@@ -233,14 +256,15 @@ class Prior:
             _LOGGER.warning("No entity IDs provided for prior calculation")
             return DEFAULT_PRIOR
 
-        # Get total occupied time from motion sensors
+        # Step 1: Calculate prior from motion sensors only
         total_occupied_seconds = self.get_total_occupied_seconds()
 
-        # Get total time period
+        # Get total time period from motion sensors
         first_time, last_time = self.get_time_bounds(entity_ids)
 
-        if not first_time or not last_time or total_occupied_seconds == 0:
-            return DEFAULT_PRIOR  # Default prior if no data
+        if not first_time or not last_time:
+            _LOGGER.debug("No time bounds available, using default prior")
+            return DEFAULT_PRIOR
 
         total_seconds = (last_time - first_time).total_seconds()
 
@@ -265,18 +289,93 @@ class Prior:
             )
             total_occupied_seconds = total_seconds
 
-        prior = total_occupied_seconds / total_seconds
-
-        # Ensure result is within valid probability bounds
-        prior = clamp_probability(prior)
+        motion_prior = (
+            total_occupied_seconds / total_seconds if total_seconds > 0 else 0.0
+        )
+        motion_prior = clamp_probability(motion_prior)
 
         _LOGGER.debug(
-            "Calculated prior: %.4f (occupied: %.2fs, total: %.2fs)",
-            prior,
+            "Motion-only prior: %.4f (occupied: %.2fs, total: %.2fs)",
+            motion_prior,
             total_occupied_seconds,
             total_seconds,
         )
 
+        # Step 2: If motion prior < 0.10, supplement with media/appliance sensors
+        LOW_PRIOR_THRESHOLD = 0.10
+        if motion_prior >= LOW_PRIOR_THRESHOLD:
+            # Motion prior is sufficient, use it
+            prior = motion_prior
+            _LOGGER.debug(
+                "Motion prior %.4f >= %.2f, using motion-only prior",
+                motion_prior,
+                LOW_PRIOR_THRESHOLD,
+            )
+        else:
+            # Motion prior is too low, supplement with media/appliance sensors
+            _LOGGER.debug(
+                "Motion prior %.4f < %.2f, supplementing with media/appliance sensors",
+                motion_prior,
+                LOW_PRIOR_THRESHOLD,
+            )
+
+            # Get intervals including media and appliances
+            include_media = bool(self.media_sensor_ids)
+            include_appliance = bool(self.appliance_sensor_ids)
+
+            if not include_media and not include_appliance:
+                # No additional sensors available, use motion prior
+                prior = motion_prior
+                _LOGGER.debug(
+                    "No media or appliance sensors configured, using motion prior"
+                )
+            else:
+                # Get total occupied time from all sensor types
+                all_intervals = self.get_occupied_intervals(
+                    include_media=include_media, include_appliance=include_appliance
+                )
+
+                if not all_intervals:
+                    prior = motion_prior
+                    _LOGGER.debug(
+                        "No intervals found when including media/appliances, using motion prior"
+                    )
+                else:
+                    # Calculate total occupied seconds from all intervals
+                    total_all_occupied = sum(
+                        (end - start).total_seconds() for start, end in all_intervals
+                    )
+
+                    # Get time bounds from all sensor types if needed
+                    # For simplicity, use the same time bounds (from motion sensors)
+                    # since we're just supplementing the occupied time
+                    prior = (
+                        total_all_occupied / total_seconds if total_seconds > 0 else 0.0
+                    )
+
+                    # Ensure result is within valid probability bounds
+                    prior = clamp_probability(prior)
+
+                    _LOGGER.debug(
+                        "Prior with media/appliances: %.4f (occupied: %.2fs, total: %.2fs, motion: %.4f)",
+                        prior,
+                        total_all_occupied,
+                        total_seconds,
+                        motion_prior,
+                    )
+
+        # Step 3: Apply minimum prior override if configured
+        if self.config.min_prior_override > 0.0:
+            original_prior = prior
+            if prior < self.config.min_prior_override:
+                prior = self.config.min_prior_override
+                _LOGGER.debug(
+                    "Applied minimum prior override: %.4f -> %.4f",
+                    original_prior,
+                    prior,
+                )
+
+        _LOGGER.debug("Final calculated prior: %.4f", prior)
         return prior
 
     def get_time_prior(self) -> float:
@@ -658,7 +757,10 @@ class Prior:
         return total_seconds
 
     def get_occupied_intervals(
-        self, lookback_days: int = DEFAULT_LOOKBACK_DAYS
+        self,
+        lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+        include_media: bool = False,
+        include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
         """Get occupied time intervals from motion sensors using unified logic.
 
@@ -667,15 +769,19 @@ class Prior:
 
         Args:
             lookback_days: Number of days to look back for interval data (default: 90)
+            include_media: If True, include media player intervals (playing state only)
+            include_appliance: If True, include appliance intervals (on state only)
 
         Returns:
             List of (start_time, end_time) tuples representing occupied periods
 
         """
-        # Check cache first
+        # Check cache first (only for motion-only queries to keep cache simple)
         now = dt_util.utcnow()
         if (
-            self._cached_occupied_intervals is not None
+            not include_media
+            and not include_appliance
+            and self._cached_occupied_intervals is not None
             and self._cached_intervals_timestamp is not None
             and (now - self._cached_intervals_timestamp).total_seconds()
             < DEFAULT_CACHE_TTL_SECONDS
@@ -687,8 +793,10 @@ class Prior:
             return self._cached_occupied_intervals
 
         _LOGGER.debug(
-            "Getting occupied intervals with unified logic (lookback: %d days)",
+            "Getting occupied intervals with unified logic (lookback: %d days, media: %s, appliance: %s)",
             lookback_days,
+            include_media,
+            include_appliance,
         )
         entry_id = self.coordinator.entry_id
         db = self.db
@@ -696,11 +804,13 @@ class Prior:
         # Calculate lookback date
         lookback_date = now - timedelta(days=lookback_days)
 
+        all_intervals: list[tuple[datetime, datetime]] = []
+
         try:
             start_time = dt_util.utcnow()
             with db.get_session() as session:
                 # Get motion sensor intervals with state='on' within lookback period
-                intervals = (
+                motion_intervals = (
                     session.query(
                         db.Intervals.start_time,
                         db.Intervals.end_time,
@@ -719,45 +829,150 @@ class Prior:
                     .all()
                 )
 
+                motion_raw = [(start, end) for start, end in motion_intervals]
+                all_intervals.extend(motion_raw)
+
+                # Get media player intervals if requested (playing state only)
+                if include_media and self.media_sensor_ids:
+                    media_intervals = (
+                        session.query(
+                            db.Intervals.start_time,
+                            db.Intervals.end_time,
+                        )
+                        .join(
+                            db.Entities,
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                        )
+                        .filter(
+                            db.Entities.entry_id == entry_id,
+                            db.Entities.entity_type == InputType.MEDIA,
+                            db.Intervals.entity_id.in_(self.media_sensor_ids),
+                            db.Intervals.state == STATE_PLAYING,
+                            db.Intervals.start_time >= lookback_date,
+                        )
+                        .order_by(db.Intervals.start_time)
+                        .all()
+                    )
+                    media_raw = [(start, end) for start, end in media_intervals]
+                    all_intervals.extend(media_raw)
+                    _LOGGER.debug(
+                        "Found %d media player intervals (playing state only)",
+                        len(media_raw),
+                    )
+
+                # Get appliance intervals if requested (on state only)
+                if include_appliance and self.appliance_sensor_ids:
+                    appliance_intervals = (
+                        session.query(
+                            db.Intervals.start_time,
+                            db.Intervals.end_time,
+                        )
+                        .join(
+                            db.Entities,
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                        )
+                        .filter(
+                            db.Entities.entry_id == entry_id,
+                            db.Entities.entity_type == InputType.APPLIANCE,
+                            db.Intervals.entity_id.in_(self.appliance_sensor_ids),
+                            db.Intervals.state == STATE_ON,
+                            db.Intervals.start_time >= lookback_date,
+                        )
+                        .order_by(db.Intervals.start_time)
+                        .all()
+                    )
+                    appliance_raw = [(start, end) for start, end in appliance_intervals]
+                    all_intervals.extend(appliance_raw)
+                    _LOGGER.debug(
+                        "Found %d appliance intervals (on state only)",
+                        len(appliance_raw),
+                    )
+
                 query_time = (dt_util.utcnow() - start_time).total_seconds()
                 _LOGGER.debug(
-                    "Query executed in %.3f seconds, found %d intervals",
+                    "Query executed in %.3f seconds, found %d total intervals (motion: %d)",
                     query_time,
-                    len(intervals),
+                    len(all_intervals),
+                    len(motion_raw),
                 )
 
-                if not intervals:
-                    _LOGGER.debug("No motion intervals found for occupancy calculation")
-                    self._cached_occupied_intervals = []
-                    self._cached_intervals_timestamp = now
+                if not all_intervals:
+                    _LOGGER.debug("No intervals found for occupancy calculation")
+                    # Only cache if motion-only
+                    if not include_media and not include_appliance:
+                        self._cached_occupied_intervals = []
+                        self._cached_intervals_timestamp = now
                     return []
 
-                # Convert to tuples and apply motion timeout
-                raw_intervals = [(start, end) for start, end in intervals]
-                timeout_seconds = self.coordinator.config.sensors.motion_timeout
+                # Sort all intervals by start time for merging
+                all_intervals.sort(key=lambda x: x[0])
+
+                # Merge overlapping intervals
+                merged_intervals: list[tuple[datetime, datetime]] = []
+                for start, end in all_intervals:
+                    if not merged_intervals:
+                        merged_intervals.append((start, end))
+                    else:
+                        last_start, last_end = merged_intervals[-1]
+                        if start <= last_end:
+                            # Overlapping or adjacent, merge them
+                            merged_intervals[-1] = (last_start, max(last_end, end))
+                        else:
+                            # Non-overlapping, add as new interval
+                            merged_intervals.append((start, end))
+
+                # Apply motion timeout only to motion sensor intervals
+                # For media/appliances, we use the raw intervals directly
+                extended_intervals = []
+                for _i, (start, end) in enumerate(merged_intervals):
+                    # Check if this interval overlaps with any motion interval
+                    overlaps_motion = any(
+                        not (end < m_start or start > m_end)
+                        for m_start, m_end in motion_raw
+                    )
+
+                    if overlaps_motion:
+                        # Apply motion timeout to motion-based intervals
+                        timeout_seconds = self.config.sensors.motion_timeout
+                        # Extend end time by timeout
+                        extended_intervals.append(
+                            (start, end + timedelta(seconds=timeout_seconds))
+                        )
+                    else:
+                        # Media/appliance intervals, use as-is
+                        extended_intervals.append((start, end))
+
+                # Merge again after extending motion intervals
+                if extended_intervals:
+                    final_intervals: list[tuple[datetime, datetime]] = []
+                    extended_intervals.sort(key=lambda x: x[0])
+                    for start, end in extended_intervals:
+                        if not final_intervals:
+                            final_intervals.append((start, end))
+                        else:
+                            last_start, last_end = final_intervals[-1]
+                            if start <= last_end:
+                                final_intervals[-1] = (
+                                    last_start,
+                                    max(last_end, end),
+                                )
+                            else:
+                                final_intervals.append((start, end))
+                    extended_intervals = final_intervals
+
+                processing_time = (dt_util.utcnow() - start_time).total_seconds()
 
                 _LOGGER.debug(
-                    "Applying motion timeout of %d seconds to %d intervals for unified occupancy calculation",
-                    timeout_seconds,
-                    len(raw_intervals),
-                )
-
-                processing_start = dt_util.utcnow()
-                extended_intervals = apply_motion_timeout(
-                    raw_intervals, timeout_seconds
-                )
-                processing_time = (dt_util.utcnow() - processing_start).total_seconds()
-
-                _LOGGER.debug(
-                    "Unified occupancy calculation: %d raw intervals -> %d extended intervals (processing: %.3fs)",
-                    len(raw_intervals),
+                    "Unified occupancy calculation: %d raw intervals -> %d merged intervals (processing: %.3fs)",
+                    len(all_intervals),
                     len(extended_intervals),
                     processing_time,
                 )
 
-                # Cache the result
-                self._cached_occupied_intervals = extended_intervals
-                self._cached_intervals_timestamp = now
+                # Cache the result only if motion-only
+                if not include_media and not include_appliance:
+                    self._cached_occupied_intervals = extended_intervals
+                    self._cached_intervals_timestamp = now
 
                 return extended_intervals
 
