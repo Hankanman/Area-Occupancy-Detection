@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Final
 
 from homeassistant.const import (
@@ -20,10 +22,16 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.11.1"
-CONF_VERSION: Final = 12
-CONF_VERSION_MINOR: Final = 1
+DEVICE_SW_VERSION: Final = "2025.11.1-pre1"
+CONF_VERSION: Final = 13  # Incremented for single-instance multi-device architecture
+CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
+
+# Multi-area architecture constants
+CONF_AREAS: Final = "areas"  # Key for storing list of area configurations
+ALL_AREAS_IDENTIFIER: Final = (
+    "all_areas"  # Identifier for "All Areas" aggregation device
+)
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -49,6 +57,7 @@ CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
+CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 
 
 # Configured Weights
@@ -72,6 +81,7 @@ DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 
 # Database recovery defaults
 DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
@@ -161,15 +171,7 @@ ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
 # Database save debounce
 SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
 
-# Master coordination constants
-ANALYSIS_STAGGER_MINUTES: Final = 2  # minutes between instance analysis runs
-MASTER_HEARTBEAT_INTERVAL: Final = 15  # seconds between master heartbeats
-MASTER_HEALTH_TIMEOUT: Final = 30  # seconds before master considered dead
-MASTER_HEALTH_CHECK_INTERVAL: Final = 10  # seconds between health checks
-
-# Dispatcher signal names (replace event bus)
-SIGNAL_STATE_SAVE_REQUEST: Final = f"{DOMAIN}_save_request"
-SIGNAL_MASTER_HEARTBEAT: Final = f"{DOMAIN}_heartbeat"
+# Master coordination constants removed - no longer needed with single-instance architecture
 
 ########################################################
 # Virtual sensor constants
@@ -202,3 +204,54 @@ ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
 ATTR_VERIFICATION_DELAY: Final = "verification_delay"
 ATTR_VERIFICATION_PENDING: Final = "verification_pending"
+
+
+def validate_and_sanitize_area_name(area_name: str) -> str:
+    """Validate and sanitize area name for use in unique IDs.
+
+    This function:
+    1. Validates that area name is not empty
+    2. Prevents conflicts with ALL_AREAS_IDENTIFIER
+    3. Sanitizes special characters that could break unique IDs
+    4. Normalizes whitespace
+
+    Args:
+        area_name: The area name to validate and sanitize
+
+    Returns:
+        str: The sanitized area name
+
+    Raises:
+        ValueError: If area name is empty or conflicts with ALL_AREAS_IDENTIFIER
+    """
+    if not area_name or not area_name.strip():
+        raise ValueError("Area name cannot be empty")
+
+    # Prevent conflicts with special identifier
+    if area_name.strip() == ALL_AREAS_IDENTIFIER:
+        raise ValueError(
+            f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with "
+            "the 'All Areas' aggregation identifier"
+        )
+
+    # Sanitize for use in unique IDs
+    # Replace special characters that could break unique IDs with underscores
+    sanitized = re.sub(r"[^\w\s-]", "_", area_name.strip())
+    # Replace multiple spaces/underscores with single underscore
+    sanitized = re.sub(r"[\s_]+", "_", sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip("_")
+
+    if not sanitized:
+        raise ValueError("Area name contains only invalid characters")
+
+    # Warn if sanitization changed the name
+    if sanitized != area_name.strip():
+        _LOGGER = logging.getLogger(__name__)
+        _LOGGER.warning(
+            "Area name sanitized: '%s' -> '%s' (special characters replaced)",
+            area_name,
+            sanitized,
+        )
+
+    return sanitized
