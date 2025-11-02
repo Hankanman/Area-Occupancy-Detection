@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
+    validate_and_sanitize_area_name,
 )
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
@@ -391,6 +392,25 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         len(entries),
     )
 
+    # Store original entry states for potential rollback
+    original_entry_states: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        original_entry_states[entry.entry_id] = {
+            "data": dict(entry.data),
+            "options": dict(entry.options),
+            "version": entry.version,
+            "minor_version": getattr(entry, "minor_version", 0),
+            "title": entry.title,
+        }
+
+    # Track which steps completed successfully
+    migration_steps_completed = {
+        "entity_registry": False,
+        "database": False,
+        "config_update": False,
+        "entry_removal": [],
+    }
+
     try:
         # Step 1: Collect all areas from existing entries
         areas_list: list[dict[str, Any]] = []
@@ -401,6 +421,18 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
             merged = dict(entry.data)
             merged.update(entry.options)
             area_name = merged.get(CONF_NAME, DEFAULT_NAME)
+
+            # Validate and sanitize area name
+            try:
+                area_name = validate_and_sanitize_area_name(area_name)
+            except ValueError as err:
+                _LOGGER.warning(
+                    "Invalid area name '%s' for entry %s: %s. Using default name.",
+                    area_name,
+                    entry.entry_id,
+                    err,
+                )
+                area_name = DEFAULT_NAME
 
             # Ensure unique area names
             original_area_name = area_name
@@ -423,12 +455,32 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
             )
 
         # Step 2: Migrate entity registry entries
-        await _migrate_entity_registry_for_consolidation(
-            hass, entries, entry_id_to_area_name
-        )
+        try:
+            await _migrate_entity_registry_for_consolidation(
+                hass, entries, entry_id_to_area_name
+            )
+            migration_steps_completed["entity_registry"] = True
+            _LOGGER.debug("Step 2 completed: Entity registry migration")
+        except Exception as err:
+            _LOGGER.error("Step 2 failed: Entity registry migration - %s", err)
+            raise
 
         # Step 3: Migrate database entries
-        await _migrate_database_for_consolidation(hass, entries, entry_id_to_area_name)
+        try:
+            await _migrate_database_for_consolidation(
+                hass, entries, entry_id_to_area_name
+            )
+            migration_steps_completed["database"] = True
+            _LOGGER.debug("Step 3 completed: Database migration")
+        except Exception as err:
+            _LOGGER.error("Step 3 failed: Database migration - %s", err)
+            # Entity registry migration cannot be easily rolled back, so we continue
+            # and log the issue for manual intervention
+            _LOGGER.warning(
+                "Database migration failed but entity registry was already migrated. "
+                "Manual intervention may be required."
+            )
+            raise
 
         # Step 4: Create new consolidated config entry
         consolidated_data = {CONF_AREAS: areas_list}
@@ -440,30 +492,178 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
             "Creating consolidated config entry with %d areas", len(areas_list)
         )
 
-        # Update the first entry to the new format
-        hass.config_entries.async_update_entry(
-            base_entry,
-            data=consolidated_data,
-            options={},  # Options are now in each area's config
-            version=CONF_VERSION,
-            minor_version=CONF_VERSION_MINOR,
-            title="Area Occupancy Detection",
-        )
+        try:
+            # Update the first entry to the new format
+            hass.config_entries.async_update_entry(
+                base_entry,
+                data=consolidated_data,
+                options={},  # Options are now in each area's config
+                version=CONF_VERSION,
+                minor_version=CONF_VERSION_MINOR,
+                title="Area Occupancy Detection",
+            )
+            migration_steps_completed["config_update"] = True
+            _LOGGER.debug("Step 4 completed: Config entry update")
+        except Exception as err:
+            _LOGGER.error("Step 4 failed: Config entry update - %s", err)
+            # Attempt to restore original state
+            try:
+                original_state = original_entry_states[base_entry.entry_id]
+                hass.config_entries.async_update_entry(
+                    base_entry,
+                    data=original_state["data"],
+                    options=original_state["options"],
+                    version=original_state["version"],
+                    minor_version=original_state["minor_version"],
+                    title=original_state["title"],
+                )
+                _LOGGER.info(
+                    "Restored original config entry state for %s", base_entry.entry_id
+                )
+            except (ValueError, KeyError, AttributeError, RuntimeError) as restore_err:
+                _LOGGER.error("Failed to restore config entry state: %s", restore_err)
+            raise
 
         # Step 5: Remove other entries
+        removal_errors: list[tuple[str, Exception]] = []
         for entry in entries[1:]:
-            _LOGGER.info("Removing old config entry: %s", entry.entry_id)
-            await hass.config_entries.async_remove(entry.entry_id)
+            try:
+                _LOGGER.info("Removing old config entry: %s", entry.entry_id)
+                await hass.config_entries.async_remove(entry.entry_id)
+                migration_steps_completed["entry_removal"].append(entry.entry_id)
+                _LOGGER.debug("Removed entry: %s", entry.entry_id)
+            except (ValueError, KeyError, RuntimeError) as err:
+                _LOGGER.error("Failed to remove entry %s: %s", entry.entry_id, err)
+                removal_errors.append((entry.entry_id, err))
+                # Continue removing other entries even if one fails
+
+        if removal_errors:
+            _LOGGER.warning(
+                "Some entries could not be removed: %s. These may need manual cleanup.",
+                [entry_id for entry_id, _ in removal_errors],
+            )
+            # Partial failure - migration mostly succeeded but some entries remain
+            # This is acceptable as the main consolidation is complete
 
         _LOGGER.info(
             "Successfully consolidated %d entries into single-instance architecture",
             len(entries),
         )
+
     except Exception:
         _LOGGER.exception("Error during single-instance migration")
+        _LOGGER.error(
+            "Migration failed. Completed steps: %s. "
+            "Original entry states have been logged for recovery.",
+            migration_steps_completed,
+        )
+        _LOGGER.error(
+            "Original entry states for recovery: %s",
+            {
+                entry_id: {
+                    "data": state["data"],
+                    "version": state["version"],
+                }
+                for entry_id, state in original_entry_states.items()
+            },
+        )
         return False
     else:
         return True
+
+
+async def _migrate_area_name_in_entity_registry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    old_area_name: str,
+    new_area_name: str,
+) -> None:
+    """Migrate entity registry unique IDs when an area name changes.
+
+    Updates unique IDs from {old_area_name}_{entity_type} to {new_area_name}_{entity_type}
+
+    Args:
+        hass: Home Assistant instance
+        config_entry: The config entry
+        old_area_name: The old area name
+        new_area_name: The new area name
+    """
+    if old_area_name == new_area_name:
+        _LOGGER.debug("Area name unchanged, skipping entity registry migration")
+        return
+
+    _LOGGER.info(
+        "Migrating entity registry unique IDs for area rename: %s -> %s",
+        old_area_name,
+        new_area_name,
+    )
+
+    entity_registry = er.async_get(hass)
+    updated_count = 0
+    skipped_count = 0
+    conflicts: list[tuple[str, str, str]] = []
+
+    old_prefix = f"{old_area_name}_"
+    new_prefix = f"{new_area_name}_"
+
+    # Find all entities for this config entry
+    for entity_id, entity_entry in entity_registry.entities.items():
+        if entity_entry.config_entry_id != config_entry.entry_id:
+            continue
+
+        old_unique_id = entity_entry.unique_id
+        if not old_unique_id or not str(old_unique_id).startswith(old_prefix):
+            continue
+
+        # Extract entity type suffix
+        entity_suffix = str(old_unique_id)[len(old_prefix) :]
+        new_unique_id = f"{new_prefix}{entity_suffix}"
+
+        # Check for conflicts
+        conflict_found = False
+        for other_entity_id, other_entity_entry in entity_registry.entities.items():
+            if (
+                other_entity_id != entity_id
+                and other_entity_entry.unique_id == new_unique_id
+            ):
+                conflict_found = True
+                conflicts.append((entity_id, str(old_unique_id), new_unique_id))
+                _LOGGER.warning(
+                    "Unique ID conflict: %s already exists for entity %s. "
+                    "Skipping migration for %s",
+                    new_unique_id,
+                    other_entity_id,
+                    entity_id,
+                )
+                skipped_count += 1
+                break
+
+        if conflict_found:
+            continue
+
+        _LOGGER.info(
+            "Migrating entity unique_id: %s -> %s (entity: %s)",
+            old_unique_id,
+            new_unique_id,
+            entity_id,
+        )
+
+        entity_registry.async_update_entity(
+            entity_id,
+            new_unique_id=new_unique_id,
+        )
+        updated_count += 1
+
+    _LOGGER.info(
+        "Migrated %d entity registry entries for area rename, skipped %d due to conflicts",
+        updated_count,
+        skipped_count,
+    )
+    if conflicts:
+        _LOGGER.warning(
+            "The following entities could not be migrated due to unique ID conflicts: %s",
+            conflicts,
+        )
 
 
 async def _migrate_entity_registry_for_consolidation(
@@ -478,6 +678,10 @@ async def _migrate_entity_registry_for_consolidation(
     _LOGGER.info("Migrating entity registry entries for consolidation")
     entity_registry = er.async_get(hass)
     updated_count = 0
+    skipped_count = 0
+    conflicts: list[
+        tuple[str, str, str]
+    ] = []  # (entity_id, old_unique_id, new_unique_id)
 
     for entry in entries:
         area_name = entry_id_to_area_name[entry.entry_id]
@@ -498,6 +702,29 @@ async def _migrate_entity_registry_for_consolidation(
             # Update to new format: {area_name}_{entity_type}
             new_unique_id = f"{area_name}_{entity_suffix}"
 
+            # Check for conflicts: see if another entity already has this unique_id
+            conflict_found = False
+            for other_entity_id, other_entity_entry in entity_registry.entities.items():
+                if (
+                    other_entity_id != entity_id
+                    and other_entity_entry.unique_id == new_unique_id
+                ):
+                    conflict_found = True
+                    conflicts.append((entity_id, str(old_unique_id), new_unique_id))
+                    _LOGGER.warning(
+                        "Unique ID conflict: %s already exists for entity %s. "
+                        "Skipping migration for %s (old unique_id: %s)",
+                        new_unique_id,
+                        other_entity_id,
+                        entity_id,
+                        old_unique_id,
+                    )
+                    skipped_count += 1
+                    break
+
+            if conflict_found:
+                continue
+
             _LOGGER.info(
                 "Migrating entity unique_id: %s -> %s (entity: %s)",
                 old_unique_id,
@@ -511,7 +738,16 @@ async def _migrate_entity_registry_for_consolidation(
             )
             updated_count += 1
 
-    _LOGGER.info("Migrated %d entity registry entries", updated_count)
+    _LOGGER.info(
+        "Migrated %d entity registry entries, skipped %d due to conflicts",
+        updated_count,
+        skipped_count,
+    )
+    if conflicts:
+        _LOGGER.warning(
+            "The following entities could not be migrated due to unique ID conflicts: %s",
+            conflicts,
+        )
 
 
 async def _migrate_database_for_consolidation(
@@ -549,6 +785,19 @@ async def _migrate_database_for_consolidation(
             with session_maker() as session:
                 # Update areas table: change entry_id to area_name
                 try:
+                    # Check if tables exist before attempting operations
+                    inspector = sa.inspect(engine)
+                    if not inspector.has_table("entities"):
+                        _LOGGER.debug(
+                            "Entities table does not exist, skipping database migration"
+                        )
+                        return
+                    if not inspector.has_table("areas"):
+                        _LOGGER.debug(
+                            "Areas table does not exist, skipping database migration"
+                        )
+                        return
+
                     # Get all areas with old entry_id
                     result = session.execute(
                         text("SELECT entry_id, area_name FROM areas")

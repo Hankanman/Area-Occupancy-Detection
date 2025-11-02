@@ -241,11 +241,8 @@ class EvidenceSensor(AreaOccupancySensorBase):
                     area = self.coordinator.get_area_or_default(area_name)
                     if area is None:
                         continue
-                    for entity in sorted(
-                        area.entities.entities.values(),
-                        key=lambda x: (not x.evidence, -x.type.weight),
-                    ):
-                        all_details.append(
+                    all_details.extend(
+                        [
                             {
                                 "area": area_name,
                                 "id": entity.entity_id,
@@ -258,7 +255,12 @@ class EvidenceSensor(AreaOccupancySensorBase):
                                 "decaying": entity.decay.is_decaying,
                                 "decay_factor": entity.decay.decay_factor,
                             }
-                        )
+                            for entity in sorted(
+                                area.entities.entities.values(),
+                                key=lambda x: (not x.evidence, -x.type.weight),
+                            )
+                        ]
+                    )
                 return {
                     "total": self.native_value,
                     "details": all_details,
@@ -348,14 +350,16 @@ class DecaySensor(AreaOccupancySensorBase):
                     area = self.coordinator.get_area_or_default(area_name)
                     if area is None:
                         continue
-                    for entity in area.entities.decaying_entities:
-                        all_decaying.append(
+                    all_decaying.extend(
+                        [
                             {
                                 "area": area_name,
                                 "id": entity.entity_id,
                                 "decay": format_percentage(entity.decay.decay_factor),
                             }
-                        )
+                            for entity in area.entities.decaying_entities
+                        ]
+                    )
                 return {"decaying": all_decaying}
             area = self.coordinator.get_area_or_default(self._area_name)
             if area is None:
