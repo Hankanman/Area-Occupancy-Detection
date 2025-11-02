@@ -6,8 +6,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
+import sqlalchemy as sa
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from homeassistant.config_entries import ConfigEntry
@@ -19,11 +21,13 @@ from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
+    CONF_AREAS,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
+    CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -35,6 +39,7 @@ from .const import (
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MOTION_TIMEOUT,
+    DEFAULT_NAME,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_ACTIVE_STATE,
@@ -359,6 +364,275 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
     await hass.async_add_executor_job(_drop_tables_locked, storage_dir, entry_major)
 
 
+async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
+    """Migrate multiple config entries to single-instance architecture.
+
+    This function consolidates multiple Area Occupancy config entries into
+    a single entry with multiple areas in CONF_AREAS list format.
+
+    Returns:
+        bool: True if migration was successful or not needed, False on error
+    """
+    _LOGGER.info("Checking for single-instance migration...")
+
+    # Find all existing entries for this domain
+    entries = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.version < 13  # Only migrate entries before version 13
+    ]
+
+    if len(entries) <= 1:
+        _LOGGER.debug("No consolidation needed: %d entries found", len(entries))
+        return True
+
+    _LOGGER.info(
+        "Found %d Area Occupancy entries, consolidating into single-instance architecture",
+        len(entries),
+    )
+
+    try:
+        # Step 1: Collect all areas from existing entries
+        areas_list: list[dict[str, Any]] = []
+        entry_id_to_area_name: dict[str, str] = {}  # Map for entity registry migration
+
+        for entry in entries:
+            # Get area name from config
+            merged = dict(entry.data)
+            merged.update(entry.options)
+            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
+
+            # Ensure unique area names
+            original_area_name = area_name
+            counter = 1
+            while area_name in entry_id_to_area_name.values():
+                area_name = f"{original_area_name}_{counter}"
+                counter += 1
+
+            entry_id_to_area_name[entry.entry_id] = area_name
+
+            # Create area config (merge data and options, ensure CONF_NAME is set)
+            area_config = {**merged}
+            area_config[CONF_NAME] = area_name
+            areas_list.append(area_config)
+
+            _LOGGER.debug(
+                "Prepared area '%s' from entry %s for consolidation",
+                area_name,
+                entry.entry_id,
+            )
+
+        # Step 2: Migrate entity registry entries
+        await _migrate_entity_registry_for_consolidation(
+            hass, entries, entry_id_to_area_name
+        )
+
+        # Step 3: Migrate database entries
+        await _migrate_database_for_consolidation(hass, entries, entry_id_to_area_name)
+
+        # Step 4: Create new consolidated config entry
+        consolidated_data = {CONF_AREAS: areas_list}
+
+        # Use the first entry as the base for the consolidated entry
+        base_entry = entries[0]
+
+        _LOGGER.info(
+            "Creating consolidated config entry with %d areas", len(areas_list)
+        )
+
+        # Update the first entry to the new format
+        hass.config_entries.async_update_entry(
+            base_entry,
+            data=consolidated_data,
+            options={},  # Options are now in each area's config
+            version=CONF_VERSION,
+            minor_version=CONF_VERSION_MINOR,
+            title="Area Occupancy Detection",
+        )
+
+        # Step 5: Remove other entries
+        for entry in entries[1:]:
+            _LOGGER.info("Removing old config entry: %s", entry.entry_id)
+            await hass.config_entries.async_remove(entry.entry_id)
+
+        _LOGGER.info(
+            "Successfully consolidated %d entries into single-instance architecture",
+            len(entries),
+        )
+    except Exception:
+        _LOGGER.exception("Error during single-instance migration")
+        return False
+    else:
+        return True
+
+
+async def _migrate_entity_registry_for_consolidation(
+    hass: HomeAssistant,
+    entries: list[ConfigEntry],
+    entry_id_to_area_name: dict[str, str],
+) -> None:
+    """Migrate entity registry entries for consolidation.
+
+    Updates unique IDs from {entry_id}_{entity_type} to {area_name}_{entity_type}
+    """
+    _LOGGER.info("Migrating entity registry entries for consolidation")
+    entity_registry = er.async_get(hass)
+    updated_count = 0
+
+    for entry in entries:
+        area_name = entry_id_to_area_name[entry.entry_id]
+        old_prefix = f"{entry.entry_id}_"
+
+        # Find all entities for this entry
+        for entity_id, entity_entry in entity_registry.entities.items():
+            if entity_entry.config_entry_id != entry.entry_id:
+                continue
+
+            old_unique_id = entity_entry.unique_id
+            if not old_unique_id or not str(old_unique_id).startswith(old_prefix):
+                continue
+
+            # Extract entity type suffix
+            entity_suffix = str(old_unique_id)[len(old_prefix) :]
+
+            # Update to new format: {area_name}_{entity_type}
+            new_unique_id = f"{area_name}_{entity_suffix}"
+
+            _LOGGER.info(
+                "Migrating entity unique_id: %s -> %s (entity: %s)",
+                old_unique_id,
+                new_unique_id,
+                entity_id,
+            )
+
+            entity_registry.async_update_entity(
+                entity_id,
+                new_unique_id=new_unique_id,
+            )
+            updated_count += 1
+
+    _LOGGER.info("Migrated %d entity registry entries", updated_count)
+
+
+async def _migrate_database_for_consolidation(
+    hass: HomeAssistant,
+    entries: list[ConfigEntry],
+    entry_id_to_area_name: dict[str, str],
+) -> None:
+    """Migrate database entries for consolidation.
+
+    Updates database to use area_name instead of entry_id as keys.
+    """
+    _LOGGER.info("Migrating database entries for consolidation")
+
+    # Get storage directory
+    storage_dir = Path(hass.config.config_dir) / ".storage"
+    db_path = storage_dir / DB_NAME
+
+    if not db_path.exists():
+        _LOGGER.debug("Database file not found, skipping database migration")
+        return
+
+    # Use file lock for safe migration
+    lock_file = storage_dir / f"{DB_NAME}.lock"
+
+    try:
+        with FileLock(lock_file, timeout=30):
+            # Open database connection
+            engine = create_engine(
+                f"sqlite:///{db_path}",
+                echo=False,
+                connect_args={"check_same_thread": False, "timeout": 30},
+            )
+            session_maker = sessionmaker(bind=engine)
+
+            with session_maker() as session:
+                # Update areas table: change entry_id to area_name
+                try:
+                    # Get all areas with old entry_id
+                    result = session.execute(
+                        text("SELECT entry_id, area_name FROM areas")
+                    ).fetchall()
+
+                    for row in result:
+                        old_entry_id = row[0]
+                        if old_entry_id in entry_id_to_area_name:
+                            new_area_name = entry_id_to_area_name[old_entry_id]
+                            # Update the area_name field (it might already be set correctly)
+                            session.execute(
+                                text(
+                                    "UPDATE areas SET area_name = :area_name WHERE entry_id = :entry_id"
+                                ),
+                                {"area_name": new_area_name, "entry_id": old_entry_id},
+                            )
+                            _LOGGER.debug(
+                                "Updated area in database: entry_id=%s -> area_name=%s",
+                                old_entry_id,
+                                new_area_name,
+                            )
+                except (SQLAlchemyError, OSError) as e:
+                    _LOGGER.warning("Error updating areas table: %s", e)
+
+                # Add area_name column to entities table if it doesn't exist
+                try:
+                    # Check if area_name column exists
+                    inspector = sa.inspect(engine)
+                    columns = [col["name"] for col in inspector.get_columns("entities")]
+
+                    if "area_name" not in columns:
+                        _LOGGER.info("Adding area_name column to entities table")
+                        # Add the column (nullable initially so existing rows don't fail)
+                        session.execute(
+                            text("ALTER TABLE entities ADD COLUMN area_name TEXT")
+                        )
+
+                        # Populate area_name for existing entities based on entry_id -> area_name mapping
+                        for (
+                            old_entry_id,
+                            new_area_name,
+                        ) in entry_id_to_area_name.items():
+                            session.execute(
+                                text(
+                                    "UPDATE entities SET area_name = :area_name WHERE entry_id = :entry_id"
+                                ),
+                                {"area_name": new_area_name, "entry_id": old_entry_id},
+                            )
+                            _LOGGER.debug(
+                                "Updated entities for entry_id %s with area_name %s",
+                                old_entry_id,
+                                new_area_name,
+                            )
+
+                        # Make the column NOT NULL now that it's populated
+                        # SQLite doesn't support MODIFY COLUMN directly, so we'll leave it nullable
+                        # for now. New inserts will always have area_name.
+                        _LOGGER.info(
+                            "Added and populated area_name column in entities table"
+                        )
+                except (SQLAlchemyError, OSError) as e:
+                    _LOGGER.warning("Error adding area_name column to entities: %s", e)
+
+                # Clean up master-related metadata
+                try:
+                    session.execute(
+                        text(
+                            "DELETE FROM metadata WHERE key IN ('master_entry_id', 'master_heartbeat')"
+                        )
+                    )
+                    _LOGGER.debug("Cleaned up master-related metadata")
+                except (SQLAlchemyError, OSError) as e:
+                    _LOGGER.debug("No master metadata to clean up: %s", e)
+
+                session.commit()
+
+        _LOGGER.info("Database migration completed")
+
+    except Timeout:
+        _LOGGER.error("Timeout acquiring database lock for migration")
+    except Exception:
+        _LOGGER.exception("Error during database migration")
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to the new version."""
     current_major = CONF_VERSION
@@ -390,6 +664,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         current_major,
         current_minor,
     )
+
+    # Check if we need to consolidate multiple entries (for version < 13)
+    if entry_major < 13:
+        _LOGGER.info("Checking for multiple entries that need consolidation...")
+        consolidation_result = await async_migrate_to_single_instance(hass)
+        if not consolidation_result:
+            _LOGGER.error("Single-instance consolidation failed")
+            # Continue with per-entry migration anyway
+        # If consolidation happened, the entry might have been removed
+        # Check if this entry still exists
+        if config_entry.entry_id not in [
+            e.entry_id for e in hass.config_entries.async_entries(DOMAIN)
+        ]:
+            _LOGGER.info("Entry was consolidated, skipping individual migration")
+            return True
 
     # --- Run Storage File Migration First ---
     _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)

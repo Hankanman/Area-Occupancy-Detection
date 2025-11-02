@@ -21,9 +21,15 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2025.11.1-pre1"
-CONF_VERSION: Final = 12
-CONF_VERSION_MINOR: Final = 1
+CONF_VERSION: Final = 13  # Incremented for single-instance multi-device architecture
+CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
+
+# Multi-area architecture constants
+CONF_AREAS: Final = "areas"  # Key for storing list of area configurations
+ALL_AREAS_IDENTIFIER: Final = (
+    "all_areas"  # Identifier for "All Areas" aggregation device
+)
 
 # Configuration constants
 CONF_NAME: Final = "name"
@@ -161,15 +167,7 @@ ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
 # Database save debounce
 SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
 
-# Master coordination constants
-ANALYSIS_STAGGER_MINUTES: Final = 2  # minutes between instance analysis runs
-MASTER_HEARTBEAT_INTERVAL: Final = 15  # seconds between master heartbeats
-MASTER_HEALTH_TIMEOUT: Final = 30  # seconds before master considered dead
-MASTER_HEALTH_CHECK_INTERVAL: Final = 10  # seconds between health checks
-
-# Dispatcher signal names (replace event bus)
-SIGNAL_STATE_SAVE_REQUEST: Final = f"{DOMAIN}_save_request"
-SIGNAL_MASTER_HEARTBEAT: Final = f"{DOMAIN}_heartbeat"
+# Master coordination constants removed - no longer needed with single-instance architecture
 
 ########################################################
 # Virtual sensor constants
