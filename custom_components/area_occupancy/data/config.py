@@ -22,6 +22,7 @@ from ..const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_NAME,
@@ -47,6 +48,7 @@ from ..const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -262,6 +264,10 @@ class Config:
             verification_delay=int(
                 data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
+        )
+
+        self.min_prior_override = float(
+            data.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE)
         )
 
     @property

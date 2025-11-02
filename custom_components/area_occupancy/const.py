@@ -57,6 +57,7 @@ CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
+CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 
 
 # Configured Weights
@@ -80,6 +81,7 @@ DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 
 # Database recovery defaults
 DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
