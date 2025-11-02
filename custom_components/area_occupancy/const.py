@@ -20,7 +20,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.11.1-pre1"
+DEVICE_SW_VERSION: Final = "2025.11.1"
 CONF_VERSION: Final = 12
 CONF_VERSION_MINOR: Final = 1
 HA_RECORDER_DAYS: Final = 10  # days
@@ -90,7 +90,7 @@ DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01
 MAX_PROBABILITY: Final = 0.99
-MIN_PRIOR: Final[float] = 0.01
+MIN_PRIOR: Final[float] = 0.1
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
