@@ -184,7 +184,7 @@ class EntityFactory:
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        # Get config from areas dict if area_name provided, otherwise from coordinator.config
+        # Get config from areas dict if area_name provided
         if (
             area_name
             and hasattr(coordinator, "areas")
@@ -192,7 +192,10 @@ class EntityFactory:
         ):
             self.config = coordinator.areas[area_name].config
         else:
-            self.config = coordinator.config
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data.
@@ -364,7 +367,7 @@ class EntityManager:
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        # Get config from areas dict if area_name provided, otherwise from coordinator.config
+        # Get config from areas dict if area_name provided
         if (
             area_name
             and hasattr(coordinator, "areas")
@@ -372,7 +375,10 @@ class EntityManager:
         ):
             self.config = coordinator.areas[area_name].config
         else:
-            self.config = coordinator.config
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
         self.hass = coordinator.hass
         self._factory = EntityFactory(coordinator, area_name=area_name)
         self._entities: dict[str, Entity] = self._factory.create_all_from_config()

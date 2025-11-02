@@ -35,13 +35,18 @@ def configured_db(mock_db_with_engine):
     """Return a DB instance with a configured coordinator."""
     db = mock_db_with_engine
     db.coordinator.area_prior = 0.3
-    db.coordinator.config = SimpleNamespace(
+
+    # Set up multi-area architecture with a test area
+    mock_area = Mock()
+    mock_area.config = SimpleNamespace(
         name="Test Area",
         area_id="test_area",
         purpose="living",
         threshold=0.5,
         entity_ids=["binary_sensor.motion"],
     )
+    db.coordinator.areas = {"Test Area": mock_area}
+
     return db
 
 

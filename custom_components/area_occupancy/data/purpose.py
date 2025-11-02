@@ -49,7 +49,7 @@ class PurposeManager:
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        # Get config from areas dict if area_name provided, otherwise from coordinator.config
+        # Get config from areas dict if area_name provided
         if (
             area_name
             and hasattr(coordinator, "areas")
@@ -57,7 +57,10 @@ class PurposeManager:
         ):
             self.config = coordinator.areas[area_name].config
         else:
-            self.config = coordinator.config
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
         self._current_purpose: Purpose | None = None
 
     async def async_initialize(self) -> None:
