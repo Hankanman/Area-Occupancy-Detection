@@ -1437,10 +1437,10 @@ class AreaOccupancyDB:
             for attempt, delay in enumerate(backoffs, start=1):
                 try:
                     with self.get_locked_session() as session:
-                        success = _attempt(session)
-                    if success:
-                        # Update debounce timestamp only after a successful save
-                        self._last_area_save_ts = time.monotonic()
+                        _attempt(session)
+                    # Update debounce timestamp after any completed attempt
+                    # (success or validation failure) to prevent rapid retries
+                    self._last_area_save_ts = time.monotonic()
                     # Whether success or validation failure, no further retries are useful
                     break
                 except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
@@ -1537,10 +1537,10 @@ class AreaOccupancyDB:
             for attempt, delay in enumerate(backoffs, start=1):
                 try:
                     with self.get_locked_session() as session:
-                        merges = _attempt(session)
-                    if merges > 0:
-                        # Update debounce timestamp only after a successful save
-                        self._last_entities_save_ts = time.monotonic()
+                        _attempt(session)
+                    # Update debounce timestamp after any successful attempt,
+                    # regardless of whether merges occurred, to avoid rapid retries
+                    self._last_entities_save_ts = time.monotonic()
                     # Whether merges happened or not, no further retries are useful
                     break
                 except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
