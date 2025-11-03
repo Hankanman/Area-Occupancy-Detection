@@ -127,9 +127,10 @@ class AreaOccupancyDB:
             f"sqlite:///{self.db_path}",
             echo=False,
             pool_pre_ping=True,
+            poolclass=sa.pool.NullPool,
             connect_args={
                 "check_same_thread": False,
-                "timeout": 30,
+                "timeout": 10,
             },
         )
 
@@ -139,6 +140,10 @@ class AreaOccupancyDB:
 
         # Create session maker
         self._session_maker = sessionmaker(bind=self.engine)
+        # Debounce timestamps
+        self._last_area_save_ts: float = 0.0
+        self._last_entities_save_ts: float = 0.0
+        self._save_debounce_seconds: float = 1.5
 
         # Create model classes dictionary for ORM
         self.model_classes = {
@@ -1366,166 +1371,205 @@ class AreaOccupancyDB:
     # --- Save Data ---
 
     def save_area_data(self) -> None:
-        """Save the area data to the database (master-only, no lock needed).
+        """Save the area data to the database (master-only)."""
+        # Debounce to reduce bursts
+        now_ts = time.monotonic()
+        if (now_ts - self._last_area_save_ts) < self._save_debounce_seconds:
+            _LOGGER.debug("save_area_data debounced")
+            return
 
-        Note: Only the master performs saves, so no file lock is required.
-        """
+        def _attempt(session: Any) -> bool:
+            cfg = self.coordinator.config
+
+            area_data = {
+                "entry_id": self.coordinator.entry_id,
+                "area_name": cfg.name,
+                "area_id": cfg.area_id,
+                "purpose": cfg.purpose,
+                "threshold": cfg.threshold,
+                "area_prior": self.coordinator.area_prior,
+                "updated_at": dt_util.utcnow(),
+            }
+
+            _LOGGER.debug("Attempting to upsert area data: %s", area_data)
+
+            # Validate required fields
+            if not area_data["entry_id"]:
+                _LOGGER.error("entry_id is empty or None, cannot insert area")
+                return False
+
+            if not area_data["area_name"]:
+                _LOGGER.error("area_name is empty or None, cannot insert area")
+                return False
+
+            if not area_data["purpose"]:
+                _LOGGER.error("purpose is empty or None, cannot insert area")
+                return False
+
+            if area_data["threshold"] is None:
+                _LOGGER.error("threshold is None, cannot insert area")
+                return False
+
+            if area_data["area_prior"] is None:
+                _LOGGER.error("area_prior is None, cannot insert area")
+                return False
+
+            # Handle area_id - use entry_id as fallback if area_id is None or empty
+            if not area_data["area_id"]:
+                _LOGGER.info(
+                    "area_id is None or empty, using entry_id as fallback: %s",
+                    area_data["entry_id"],
+                )
+                area_data["area_id"] = area_data["entry_id"]
+
+            area_obj = self.Areas.from_dict(area_data)
+            session.merge(area_obj)
+            session.commit()
+            _LOGGER.info(
+                "Successfully saved area data for entry_id: %s",
+                area_data["entry_id"],
+            )
+            return True
+
         try:
-            with self.get_session() as session:
-                cfg = self.coordinator.config
-
-                area_data = {
-                    "entry_id": self.coordinator.entry_id,
-                    "area_name": cfg.name,
-                    "area_id": cfg.area_id,
-                    "purpose": cfg.purpose,
-                    "threshold": cfg.threshold,
-                    "area_prior": self.coordinator.area_prior,
-                    "updated_at": dt_util.utcnow(),
-                }
-
-                _LOGGER.debug("Attempting to insert area data: %s", area_data)
-
-                # Validate required fields
-                if not area_data["entry_id"]:
-                    _LOGGER.error("entry_id is empty or None, cannot insert area")
-                    return
-
-                if not area_data["area_name"]:
-                    _LOGGER.error("area_name is empty or None, cannot insert area")
-                    return
-
-                if not area_data["purpose"]:
-                    _LOGGER.error("purpose is empty or None, cannot insert area")
-                    return
-
-                if area_data["threshold"] is None:
-                    _LOGGER.error("threshold is None, cannot insert area")
-                    return
-
-                if area_data["area_prior"] is None:
-                    _LOGGER.error("area_prior is None, cannot insert area")
-                    return
-
-                # Handle area_id - use entry_id as fallback if area_id is None or empty
-                if not area_data["area_id"]:
-                    _LOGGER.info(
-                        "area_id is None or empty, using entry_id as fallback: %s",
-                        area_data["entry_id"],
-                    )
-                    area_data["area_id"] = area_data["entry_id"]
-
+            # Retry with backoff under a file lock
+            backoffs = [0.1, 0.25, 0.5, 1.0]
+            for attempt, delay in enumerate(backoffs, start=1):
                 try:
-                    # Use session.merge for upsert functionality
-                    area_obj = self.Areas.from_dict(area_data)
-                    session.merge(area_obj)
-                    session.commit()
-
-                    _LOGGER.info(
-                        "Successfully saved area data for entry_id: %s",
-                        area_data["entry_id"],
+                    with self.get_locked_session() as session:
+                        success = _attempt(session)
+                    if not success:
+                        raise ValueError(
+                            "Area data validation failed; required fields missing or invalid"
+                        )
+                    # Update debounce timestamp only after a successful attempt
+                    self._last_area_save_ts = time.monotonic()
+                    break
+                except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
+                    _LOGGER.warning(
+                        "save_area_data attempt %d failed: %s", attempt, err
                     )
-
-                except (
-                    sa.exc.SQLAlchemyError,
-                    HomeAssistantError,
-                    TimeoutError,
-                    OSError,
-                ) as insert_err:
-                    _LOGGER.error("Failed to save area data: %s", insert_err)
-                    session.rollback()
-                    try:
-                        # Fallback to direct insert
-                        area_obj = self.Areas.from_dict(area_data)
-                        session.add(area_obj)
-                        session.commit()
-                        _LOGGER.info("Direct insert succeeded")
-                    except Exception as direct_err:
-                        _LOGGER.error("Direct insert also failed: %s", direct_err)
-                        session.rollback()
+                    if attempt == len(backoffs):
+                        # Ensure next call is not debounced due to a recent success
+                        self._last_area_save_ts = 0.0
                         raise
+                    time.sleep(delay)
             _LOGGER.debug("Saved area data")
         except Exception as err:
             _LOGGER.error("Failed to save area data: %s", err)
             raise
 
     def save_entity_data(self) -> None:
-        """Save the entity data to the database (master-only, no lock needed).
+        """Save the entity data to the database (master-only)."""
+        # Debounce to reduce bursts
+        now_ts = time.monotonic()
+        if (now_ts - self._last_entities_save_ts) < self._save_debounce_seconds:
+            _LOGGER.debug("save_entity_data debounced")
+            return
 
-        Note: Only the master performs saves, so no file lock is required.
-        """
+        def _attempt(session: Any) -> int:
+            entities = self.coordinator.entities.entities.values()
+            merges_count = 0
+            for entity in entities:
+                # Skip entities with missing type information
+                if not hasattr(entity, "type") or not entity.type:
+                    _LOGGER.warning(
+                        "Entity %s has no type information, skipping",
+                        entity.entity_id,
+                    )
+                    continue
+
+                entity_type = getattr(entity.type, "input_type", None)
+                if entity_type is None:
+                    _LOGGER.warning(
+                        "Entity %s has no input_type, skipping", entity.entity_id
+                    )
+                    continue
+
+                # Normalize values before persisting
+                try:
+                    weight = float(
+                        getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
+                    )
+                except (TypeError, ValueError):
+                    weight = DEFAULT_ENTITY_WEIGHT
+                # Clamp weight to bounds
+                weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
+
+                # Clamp likelihoods to valid probability bounds
+                prob_true = max(
+                    MIN_PROBABILITY,
+                    min(MAX_PROBABILITY, float(entity.prob_given_true)),
+                )
+                prob_false = max(
+                    MIN_PROBABILITY,
+                    min(MAX_PROBABILITY, float(entity.prob_given_false)),
+                )
+
+                # Evidence must be a boolean for the DB schema
+                evidence_val = (
+                    bool(entity.evidence) if entity.evidence is not None else False
+                )
+
+                last_updated = entity.last_updated or dt_util.utcnow()
+
+                entity_data = {
+                    "entry_id": self.coordinator.entry_id,
+                    "entity_id": entity.entity_id,
+                    "entity_type": entity_type,
+                    "weight": weight,
+                    "prob_given_true": prob_true,
+                    "prob_given_false": prob_false,
+                    "last_updated": last_updated,
+                    "is_decaying": entity.decay.is_decaying,
+                    "decay_start": entity.decay.decay_start,
+                    "evidence": evidence_val,
+                }
+
+                # Use session.merge for upsert functionality
+                entity_obj = self.Entities.from_dict(entity_data)
+                session.merge(entity_obj)
+                merges_count += 1
+
+            session.commit()
+            return merges_count
+
         try:
-            with self.get_session() as session:
-                entities = self.coordinator.entities.entities.values()
-                for entity in entities:
-                    # Skip entities with missing type information
-                    if not hasattr(entity, "type") or not entity.type:
-                        _LOGGER.warning(
-                            "Entity %s has no type information, skipping",
-                            entity.entity_id,
-                        )
-                        continue
-
-                    entity_type = getattr(entity.type, "input_type", None)
-                    if entity_type is None:
-                        _LOGGER.warning(
-                            "Entity %s has no input_type, skipping", entity.entity_id
-                        )
-                        continue
-
-                    # Normalize values before persisting
-                    try:
-                        weight = float(
-                            getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
-                        )
-                    except (TypeError, ValueError):
-                        weight = DEFAULT_ENTITY_WEIGHT
-                    # Clamp weight to bounds
-                    weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
-
-                    # Clamp likelihoods to valid probability bounds
-                    prob_true = max(
-                        MIN_PROBABILITY,
-                        min(MAX_PROBABILITY, float(entity.prob_given_true)),
+            backoffs = [0.1, 0.25, 0.5, 1.0]
+            for attempt, delay in enumerate(backoffs, start=1):
+                try:
+                    with self.get_locked_session() as session:
+                        _attempt(session)
+                    # Update debounce timestamp after any successful attempt,
+                    # regardless of whether merges occurred, to avoid rapid retries
+                    self._last_entities_save_ts = time.monotonic()
+                    # Whether merges happened or not, no further retries are useful
+                    break
+                except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
+                    _LOGGER.warning(
+                        "save_entity_data attempt %d failed: %s", attempt, err
                     )
-                    prob_false = max(
-                        MIN_PROBABILITY,
-                        min(MAX_PROBABILITY, float(entity.prob_given_false)),
-                    )
-
-                    # Evidence must be a boolean for the DB schema
-                    evidence_val = (
-                        bool(entity.evidence) if entity.evidence is not None else False
-                    )
-
-                    last_updated = entity.last_updated or dt_util.utcnow()
-
-                    entity_data = {
-                        "entry_id": self.coordinator.entry_id,
-                        "entity_id": entity.entity_id,
-                        "entity_type": entity_type,
-                        "weight": weight,
-                        "prob_given_true": prob_true,
-                        "prob_given_false": prob_false,
-                        "last_updated": last_updated,
-                        "is_decaying": entity.decay.is_decaying,
-                        "decay_start": entity.decay.decay_start,
-                        "evidence": evidence_val,
-                    }
-
-                    # Use session.merge for upsert functionality
-                    entity_obj = self.Entities.from_dict(entity_data)
-                    session.merge(entity_obj)
-
-                session.commit()
+                    if attempt == len(backoffs):
+                        # Ensure next call is not debounced due to a recent success
+                        self._last_entities_save_ts = 0.0
+                        raise
+                    time.sleep(delay)
             _LOGGER.debug("Saved entity data")
 
             # Clean up any orphaned entities after saving current ones
-            cleaned_count = self.cleanup_orphaned_entities()
-            if cleaned_count > 0:
-                _LOGGER.info(
-                    "Cleaned up %d orphaned entities after saving", cleaned_count
-                )
+            try:
+                cleaned_count = self.cleanup_orphaned_entities()
+                if cleaned_count > 0:
+                    _LOGGER.info(
+                        "Cleaned up %d orphaned entities after saving", cleaned_count
+                    )
+            except (
+                sa.exc.SQLAlchemyError,
+                HomeAssistantError,
+                TimeoutError,
+                OSError,
+            ) as cleanup_err:
+                _LOGGER.error("Failed to cleanup orphaned entities: %s", cleanup_err)
 
         except Exception as err:
             _LOGGER.error("Failed to save entity data: %s", err)
