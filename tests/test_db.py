@@ -894,8 +894,8 @@ class TestAreaOccupancyDBUtilities:
             db.coordinator.config.threshold = value
         elif field == "area_prior":
             db.coordinator.area_prior = value
-
-        db.save_area_data()
+        with pytest.raises(ValueError):
+            db.save_area_data()
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0
