@@ -1555,11 +1555,19 @@ class AreaOccupancyDB:
             _LOGGER.debug("Saved entity data")
 
             # Clean up any orphaned entities after saving current ones
-            cleaned_count = self.cleanup_orphaned_entities()
-            if cleaned_count > 0:
-                _LOGGER.info(
-                    "Cleaned up %d orphaned entities after saving", cleaned_count
-                )
+            try:
+                cleaned_count = self.cleanup_orphaned_entities()
+                if cleaned_count > 0:
+                    _LOGGER.info(
+                        "Cleaned up %d orphaned entities after saving", cleaned_count
+                    )
+            except (
+                sa.exc.SQLAlchemyError,
+                HomeAssistantError,
+                TimeoutError,
+                OSError,
+            ) as cleanup_err:
+                _LOGGER.error("Failed to cleanup orphaned entities: %s", cleanup_err)
 
         except Exception as err:
             _LOGGER.error("Failed to save entity data: %s", err)
