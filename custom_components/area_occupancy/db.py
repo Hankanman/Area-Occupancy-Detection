@@ -1437,11 +1437,13 @@ class AreaOccupancyDB:
             for attempt, delay in enumerate(backoffs, start=1):
                 try:
                     with self.get_locked_session() as session:
-                        _attempt(session)
-                    # Update debounce timestamp after any completed attempt
-                    # (success or validation failure) to prevent rapid retries
+                        success = _attempt(session)
+                    if not success:
+                        raise ValueError(
+                            "Area data validation failed; required fields missing or invalid"
+                        )
+                    # Update debounce timestamp only after a successful attempt
                     self._last_area_save_ts = time.monotonic()
-                    # Whether success or validation failure, no further retries are useful
                     break
                 except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
                     _LOGGER.warning(
