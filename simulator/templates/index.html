@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Area Occupancy Simulator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Area Occupancy Detection Simulator</h1>
+            <p class="subtitle">Paste analysis output and interactively explore how sensor states affect probability</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Input Section -->
+            <section class="input-section">
+                <h2>Analysis Output</h2>
+                <textarea id="yaml-input" placeholder="Paste your YAML analysis output here..."></textarea>
+                <button id="load-btn" class="btn btn-primary">Load Simulation</button>
+                <div id="error-message" class="error-message"></div>
+            </section>
+
+            <!-- Simulation Display -->
+            <div id="simulation-display" class="simulation-display hidden">
+                <div class="simulation-layout">
+                    <!-- Left Sidebar: Probability + Chart (Always Visible) -->
+                    <aside class="sidebar">
+                        <!-- Probability Display -->
+                        <section class="probability-section">
+                            <div class="probability-display">
+                                <div class="probability-label">Occupancy Probability</div>
+                                <div id="probability-value" class="probability-value">0.00%</div>
+                                <div id="probability-bar" class="probability-bar">
+                                    <div id="probability-fill" class="probability-fill"></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Chart Section -->
+                        <section class="chart-section">
+                            <h3>Probability Over Time</h3>
+                            <canvas id="probability-chart"></canvas>
+                        </section>
+                    </aside>
+
+                    <!-- Main Content Area -->
+                    <main class="content-area">
+                        <!-- Area Info -->
+                        <section class="area-info">
+                            <h2 id="area-name">Area Name</h2>
+                        </section>
+
+                        <!-- Prior Controls -->
+                        <section class="prior-controls-section">
+                            <h2>Prior Probabilities</h2>
+                            <div class="prior-controls">
+                                <div class="prior-control-item">
+                                    <label for="global-prior-slider">Global Prior:</label>
+                                    <div class="prior-control-inputs">
+                                        <input type="range"
+                                               id="global-prior-slider"
+                                               min="0"
+                                               max="1"
+                                               step="0.01"
+                                               value="0.5"
+                                               class="prior-slider">
+                                        <input type="number"
+                                               id="global-prior-input"
+                                               min="0"
+                                               max="1"
+                                               step="0.01"
+                                               value="0.5"
+                                               class="prior-input">
+                                    </div>
+                                    <span class="prior-display" id="global-prior-display">50.00%</span>
+                                </div>
+                                <div class="prior-control-item">
+                                    <label for="time-prior-slider">Time Prior:</label>
+                                    <div class="prior-control-inputs">
+                                        <input type="range"
+                                               id="time-prior-slider"
+                                               min="0"
+                                               max="1"
+                                               step="0.01"
+                                               value="0.5"
+                                               class="prior-slider">
+                                        <input type="number"
+                                               id="time-prior-input"
+                                               min="0"
+                                               max="1"
+                                               step="0.01"
+                                               value="0.5"
+                                               class="prior-input">
+                                    </div>
+                                    <span class="prior-display" id="time-prior-display">50.00%</span>
+                                </div>
+                                <div class="prior-control-item combined">
+                                    <label>Combined Prior:</label>
+                                    <span class="prior-display large" id="combined-prior-display">50.00%</span>
+                                </div>
+                                <div class="prior-control-item">
+                                    <label for="purpose-select">Area Purpose:</label>
+                                    <select id="purpose-select" class="purpose-select">
+                                        <option value="">Loading...</option>
+                                    </select>
+                                    <span class="prior-display" id="half-life-display">Half-life: --</span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Sensors Section -->
+                        <section class="sensors-section">
+                            <h2>Sensors</h2>
+                            <div id="sensors-list" class="sensors-list"></div>
+                        </section>
+
+                        <!-- Breakdown Section -->
+                        <section class="breakdown-section">
+                            <h2>Sensor Contributions</h2>
+                            <div id="breakdown-list" class="breakdown-list"></div>
+                        </section>
+                    </main>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+
