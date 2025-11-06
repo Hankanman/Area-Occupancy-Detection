@@ -48,28 +48,25 @@ def clamp_probability(value: float) -> float:
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────
-def bayesian_probability(
-    entities: dict[str, Entity], area_prior: float = 0.5, time_prior: float = 0.5
-) -> float:
-    """Compute posterior probability of occupancy given current features, area prior, and time prior.
+def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> float:
+    """Compute posterior probability of occupancy given current features and prior.
 
     Args:
         entities: Dict mapping entity_id to Entity objects containing evidence and likelihood
-        area_prior: Base prior probability of occupancy for this area (default: 0.5)
-        time_prior: Time-based modifier for the prior (default: 0.5)
+        prior: Prior probability of occupancy for this area (default: 0.5)
 
     """
     # Handle edge cases first
     if not entities:
-        # No entities provided - return combined prior
-        return combine_priors(area_prior, time_prior)
+        # No entities provided - return prior
+        return clamp_probability(prior)
 
     # Check for entities with zero weights (they contribute nothing)
     active_entities = {k: v for k, v in entities.items() if v.weight > 0.0}
 
     if not active_entities:
-        # All entities have zero weight - return combined prior
-        return combine_priors(area_prior, time_prior)
+        # All entities have zero weight - return prior
+        return clamp_probability(prior)
 
     # Check for entities with invalid likelihoods
     entities_to_remove = []
@@ -88,18 +85,15 @@ def bayesian_probability(
         active_entities.pop(entity_id, None)
 
     if not active_entities:
-        # All entities had invalid likelihoods - return combined prior
-        return combine_priors(area_prior, time_prior)
+        # All entities had invalid likelihoods - return prior
+        return clamp_probability(prior)
 
-    # Combine area prior with time prior using the helper function
-    combined_prior = combine_priors(area_prior, time_prior)
-
-    # Clamp combined prior
-    combined_prior = clamp_probability(combined_prior)
+    # Clamp prior
+    prior = clamp_probability(prior)
 
     # log-space for numerical stability
-    log_true = math.log(combined_prior)
-    log_false = math.log(1 - combined_prior)
+    log_true = math.log(prior)
+    log_false = math.log(1 - prior)
 
     for entity in active_entities.values():
         value = entity.evidence
@@ -108,6 +102,11 @@ def bayesian_probability(
         if decay_factor < 0.0 or decay_factor > 1.0:
             decay_factor = max(0.0, min(1.0, decay_factor))
         is_decaying = entity.decay.is_decaying
+
+        # Skip entities with no evidence (unavailable) unless they're decaying
+        # Unavailable entities should not contribute to the calculation
+        if value is None and not is_decaying:
+            continue
 
         # Determine effective evidence: True if evidence is True OR if decaying
         effective_evidence = value or is_decaying
@@ -132,8 +131,13 @@ def bayesian_probability(
         p_t = clamp_probability(p_t)
         p_f = clamp_probability(p_f)
 
-        log_true += math.log(p_t) * entity.weight
-        log_false += math.log(p_f) * entity.weight
+        log_p_t = math.log(p_t)
+        log_p_f = math.log(p_f)
+        contribution_true = log_p_t * entity.weight
+        contribution_false = log_p_f * entity.weight
+
+        log_true += contribution_true
+        log_false += contribution_false
 
     # convert back
     max_log = max(log_true, log_false)
@@ -143,8 +147,8 @@ def bayesian_probability(
     # Handle numerical overflow/underflow edge case
     total_prob = true_prob + false_prob
     if total_prob == 0.0:
-        # Both probabilities are zero - return combined prior as fallback
-        return combined_prior
+        # Both probabilities are zero - return prior as fallback
+        return prior
 
     return true_prob / total_prob
 

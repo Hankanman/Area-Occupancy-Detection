@@ -97,7 +97,7 @@ class Prior:
         # Validate that prior is within reasonable bounds before applying factor
         if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
             _LOGGER.warning(
-                "Prior %.4f is outside valid range [%.1f, %.1f], clamping to bounds",
+                "Prior %.10f is outside valid range [%.10f, %.10f], clamping to bounds",
                 prior,
                 MIN_PROBABILITY,
                 MAX_PROBABILITY,
@@ -115,17 +115,6 @@ class Prior:
             result = MAX_PRIOR
         else:
             result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
-
-        # Log if the factor caused a significant change
-        if abs(result - prior) > SIGNIFICANT_CHANGE_THRESHOLD:
-            _LOGGER.debug(
-                "Prior adjusted by factor: %.4f -> %.4f (factor: %.2f, bounds: [%.2f, %.2f])",
-                prior,
-                result,
-                PRIOR_FACTOR,
-                MIN_PRIOR,
-                MAX_PRIOR,
-            )
 
         return result
 
