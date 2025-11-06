@@ -1408,6 +1408,14 @@ class AreaOccupancyDB:
             else:
                 # global_prior has been explicitly set - use the calculated value
                 area_prior_to_save = self.coordinator.area_prior
+                # Defensive check: if area_prior is None despite global_prior being set,
+                # use DEFAULT_AREA_PRIOR as fallback to avoid validation failure
+                if area_prior_to_save is None:
+                    _LOGGER.warning(
+                        "coordinator.area_prior is None despite global_prior being set, "
+                        "using DEFAULT_AREA_PRIOR as fallback"
+                    )
+                    area_prior_to_save = DEFAULT_AREA_PRIOR
 
             area_data = {
                 "entry_id": self.coordinator.entry_id,
