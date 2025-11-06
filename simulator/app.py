@@ -3,25 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from pathlib import Path
 import sys
 from typing import Any
 
-# Add parent directory to path to import custom_components
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from flask import Flask, jsonify, render_template, request
 import yaml
 
+from custom_components.area_occupancy.const import (
+    DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+    MAX_PRIOR,
+    MAX_WEIGHT,
+    MIN_PRIOR,
+    MIN_WEIGHT,
+)
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.prior import PRIOR_FACTOR
 from custom_components.area_occupancy.data.purpose import (
     PURPOSE_DEFINITIONS,
     AreaPurpose,
 )
-from custom_components.area_occupancy.utils import bayesian_probability
+from custom_components.area_occupancy.utils import bayesian_probability, combine_priors
 from homeassistant.const import STATE_OFF, STATE_ON
+
+# Add parent directory to path to import custom_components
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+_LOGGER = logging.getLogger(__name__)
+
 
 # ruff: noqa: PLW0603, PLW0602, BLE001, INP001
 
@@ -90,11 +104,38 @@ def parse_yaml_input(yaml_text: str) -> dict:
     return yaml.safe_load(yaml_text)
 
 
-def create_entity_type(input_type_str: str) -> EntityType:
+def create_simulator_config():
+    """Create a minimal config object with correct sensor states for the simulator.
+
+    Returns:
+        Object with sensor_states attribute matching real integration defaults
+    """
+
+    # Create a minimal config-like object with sensor_states
+    # This ensures EntityType.create uses the same active states as the real integration
+    class SimulatorConfig:
+        def __init__(self):
+            self.sensor_states = type(
+                "SensorStates",
+                (),
+                {
+                    "motion": [STATE_ON],
+                    "door": [DEFAULT_DOOR_ACTIVE_STATE],  # STATE_CLOSED
+                    "window": [DEFAULT_WINDOW_ACTIVE_STATE],  # STATE_OPEN
+                    "appliance": [STATE_ON, "standby"],
+                    "media": ["playing", "paused"],
+                },
+            )()
+
+    return SimulatorConfig()
+
+
+def create_entity_type(input_type_str: str, config=None) -> EntityType:
     """Create EntityType from string input type.
 
     Args:
         input_type_str: String representation of input type
+        config: Optional config object with sensor_states (defaults to simulator config)
 
     Returns:
         EntityType object
@@ -104,7 +145,11 @@ def create_entity_type(input_type_str: str) -> EntityType:
     except ValueError:
         input_type = InputType.UNKNOWN
 
-    return EntityType.create(input_type)
+    # Use simulator config if no config provided
+    if config is None:
+        config = create_simulator_config()
+
+    return EntityType.create(input_type, config)
 
 
 def create_simulator_entities(
@@ -127,11 +172,14 @@ def create_simulator_entities(
     # Clear and populate state store
     entity_state_store.clear()
 
+    # Create simulator config once for all entities
+    simulator_config = create_simulator_config()
+
     # Convert states to appropriate types and store them
     for entity_id, state_str in entity_states.items():
         likelihood_data = likelihoods.get(entity_id, {})
         input_type_str = likelihood_data.get("type", "unknown")
-        entity_type = create_entity_type(input_type_str)
+        entity_type = create_entity_type(input_type_str, simulator_config)
 
         # Convert state to appropriate type
         if entity_type.active_range is not None:
@@ -150,7 +198,19 @@ def create_simulator_entities(
     entities = {}
     for entity_id, likelihood_data in likelihoods.items():
         input_type_str = likelihood_data.get("type", "unknown")
-        entity_type = create_entity_type(input_type_str)
+        entity_type = create_entity_type(input_type_str, simulator_config)
+
+        # Apply weight from YAML if provided (matching create_from_db behavior)
+        weight = likelihood_data.get("weight")
+        if weight is not None:
+            try:
+                weight_float = float(weight)
+                # Clamp weight to valid range (MIN_WEIGHT to MAX_WEIGHT)
+                if MIN_WEIGHT <= weight_float <= MAX_WEIGHT:
+                    entity_type.weight = weight_float
+            except (TypeError, ValueError):
+                # Weight is invalid, keep the default from EntityType.create
+                pass
 
         # Use provided values or fall back to defaults
         prob_given_true = likelihood_data.get(
@@ -214,21 +274,56 @@ def calculate_probability_breakdown(
 
     Args:
         entities: Dictionary of entities
-        area_prior: Area prior probability
+        area_prior: Area prior probability (global_prior from YAML)
         time_prior: Time prior probability
 
     Returns:
         Tuple of (overall_probability, breakdown_dict)
     """
+    _LOGGER.debug("=== SIMULATOR PRIOR CALCULATION TRACE START ===")
+    _LOGGER.debug("Phase 1.1: Extract Input Values")
+    _LOGGER.debug("  global_prior = %.10f", area_prior)
+    _LOGGER.debug("  time_prior = %.10f", time_prior)
+    _LOGGER.debug("  PRIOR_FACTOR = %.10f", PRIOR_FACTOR)
+    _LOGGER.debug("  MIN_PRIOR = %.10f, MAX_PRIOR = %.10f", MIN_PRIOR, MAX_PRIOR)
+
+    # Combine priors and apply PRIOR_FACTOR to match real integration behavior
+    _LOGGER.debug("Phase 1.2: Combine Priors")
+    combined_prior = combine_priors(area_prior, time_prior)
+    _LOGGER.debug(
+        "  combined_prior = combine_priors(%.10f, %.10f) = %.10f",
+        area_prior,
+        time_prior,
+        combined_prior,
+    )
+
+    _LOGGER.debug("Phase 1.3: Apply PRIOR_FACTOR")
+    prior_before_factor = combined_prior
+    prior = combined_prior * PRIOR_FACTOR
+    _LOGGER.debug(
+        "  prior = %.10f * %.10f = %.10f", prior_before_factor, PRIOR_FACTOR, prior
+    )
+
+    _LOGGER.debug("Phase 1.4: Clamp Prior")
+    prior_before_clamp = prior
+    prior = max(MIN_PRIOR, min(MAX_PRIOR, prior))
+    if prior != prior_before_clamp:
+        _LOGGER.debug("  prior clamped: %.10f -> %.10f", prior_before_clamp, prior)
+    else:
+        _LOGGER.debug("  prior (no clamping needed): %.10f", prior)
+
+    _LOGGER.debug("Phase 1.5: Final Prior Value = %.10f", prior)
+    _LOGGER.debug("=== SIMULATOR PRIOR CALCULATION TRACE END ===")
+
     # Calculate probability with all sensors
-    overall_prob = bayesian_probability(entities, area_prior, time_prior)
+    overall_prob = bayesian_probability(entities, prior)
 
     # Calculate contribution of each sensor
     breakdown = {}
     for entity_id in entities:
         # Calculate probability without this sensor
         entities_without = {k: v for k, v in entities.items() if k != entity_id}
-        prob_without = bayesian_probability(entities_without, area_prior, time_prior)
+        prob_without = bayesian_probability(entities_without, prior)
         contribution = overall_prob - prob_without
         breakdown[entity_id] = contribution
 
@@ -259,8 +354,8 @@ def load_data():
 
         # Extract required fields
         area_name = data.get("area_name", "Unknown Area")
-        current_prior = data.get("current_prior", 0.5)
-        global_prior = data.get("global_prior", 0.5)
+        current_prior = data.get("current_prior", 0.5)  # Keep for display
+        global_prior = data.get("global_prior", 0.5)  # Use this for calculation
         time_prior = data.get("time_prior", 0.5)
         area_purpose = data.get("area_purpose", "social")
         entity_states = data.get("entity_states", {})
@@ -272,20 +367,35 @@ def load_data():
         # Create entities with half-life
         entities = create_simulator_entities(entity_states, likelihoods, half_life)
 
-        # Calculate initial probability
+        # Calculate initial probability using global_prior (not current_prior)
+        # current_prior is already combined and adjusted, we need the raw global_prior
         overall_prob, breakdown = calculate_probability_breakdown(
-            entities, current_prior, time_prior
+            entities, global_prior, time_prior
         )
+
+        # Initialize weights per entity type from YAML or use defaults
+        # Extract weights from entities (they may have been set from YAML)
+        entity_type_weights = {}
+        for entity in entities.values():
+            input_type = entity.type.input_type.value
+            if input_type not in entity_type_weights:
+                entity_type_weights[input_type] = entity.weight
+
+        # Calculate final prior (after PRIOR_FACTOR and clamping) for display
+        combined_prior = combine_priors(global_prior, time_prior)
+        final_prior = combined_prior * PRIOR_FACTOR
+        final_prior = max(MIN_PRIOR, min(MAX_PRIOR, final_prior))
 
         # Store simulator state
         simulator_state = {
             "area_name": area_name,
-            "current_prior": current_prior,
-            "global_prior": global_prior,
+            "current_prior": current_prior,  # Keep for display/reference
+            "global_prior": global_prior,  # Use this for calculations
             "time_prior": time_prior,
             "area_purpose": area_purpose,
             "half_life": half_life,
             "entities": entities,
+            "entity_type_weights": entity_type_weights,  # Track weights per entity type
         }
 
         # Prepare response
@@ -294,10 +404,12 @@ def load_data():
             "current_prior": current_prior,
             "global_prior": global_prior,
             "time_prior": time_prior,
+            "final_prior": final_prior,  # Final prior after PRIOR_FACTOR and clamping
             "area_purpose": area_purpose,
             "half_life": half_life,
             "probability": overall_prob,
             "breakdown": breakdown,
+            "entity_type_weights": entity_type_weights,  # Include weights in response
             "entities": [
                 {
                     "entity_id": entity_id,
@@ -371,7 +483,7 @@ def toggle_sensor():
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
@@ -418,7 +530,7 @@ def update_sensor():
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
@@ -488,15 +600,24 @@ def update_priors():
         # Update simulator state
         simulator_state["global_prior"] = float(global_prior)
         simulator_state["time_prior"] = float(time_prior)
-        # Use global_prior as current_prior for calculation
-        simulator_state["current_prior"] = float(global_prior)
+        # Update current_prior for display (it's the combined and adjusted value)
+        # But we use global_prior for calculations
+        combined_prior = combine_priors(float(global_prior), float(time_prior))
+        simulator_state["current_prior"] = combined_prior * PRIOR_FACTOR
 
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
+
+        # Calculate final prior for display
+        combined_prior = combine_priors(
+            simulator_state["global_prior"], simulator_state["time_prior"]
+        )
+        final_prior = combined_prior * PRIOR_FACTOR
+        final_prior = max(MIN_PRIOR, min(MAX_PRIOR, final_prior))
 
         return jsonify(
             {
@@ -504,6 +625,7 @@ def update_priors():
                 "breakdown": breakdown,
                 "global_prior": simulator_state["global_prior"],
                 "time_prior": simulator_state["time_prior"],
+                "final_prior": final_prior,
             }
         )
 
@@ -530,7 +652,7 @@ def tick():
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
@@ -586,7 +708,7 @@ def update_purpose():
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
@@ -601,6 +723,65 @@ def update_purpose():
 
     except Exception as e:
         return jsonify({"error": f"Error updating purpose: {e!s}"}), 500
+
+
+@app.route("/api/update-weights", methods=["POST"])
+def update_weights():
+    """Update weights for entity types and recalculate probability.
+
+    Returns:
+        JSON response with updated probability and breakdown
+    """
+    global simulator_state
+
+    if simulator_state is None:
+        return jsonify({"error": "No simulation loaded"}), 400
+
+    try:
+        weights = request.json.get("weights")
+        if weights is None:
+            return jsonify({"error": "Weights are required"}), 400
+
+        # Validate and update weights for each entity type
+        updated_types = set()
+        for entity_type_str, weight_value in weights.items():
+            try:
+                weight_float = float(weight_value)
+                # Clamp weight to valid range
+                weight_float = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_float))
+
+                # Update all entities of this type
+                for entity in simulator_state["entities"].values():
+                    if entity.type.input_type.value == entity_type_str:
+                        entity.type.weight = weight_float
+                        updated_types.add(entity_type_str)
+
+                # Update stored weights
+                if "entity_type_weights" not in simulator_state:
+                    simulator_state["entity_type_weights"] = {}
+                simulator_state["entity_type_weights"][entity_type_str] = weight_float
+
+            except (TypeError, ValueError):
+                # Skip invalid weights
+                continue
+
+        # Recalculate probability
+        overall_prob, breakdown = calculate_probability_breakdown(
+            simulator_state["entities"],
+            simulator_state["global_prior"],
+            simulator_state["time_prior"],
+        )
+
+        return jsonify(
+            {
+                "probability": overall_prob,
+                "breakdown": breakdown,
+                "weights": simulator_state.get("entity_type_weights", {}),
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": f"Error updating weights: {e!s}"}), 500
 
 
 @app.route("/api/get-purposes", methods=["GET"])

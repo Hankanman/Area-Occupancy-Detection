@@ -101,12 +101,183 @@
                                     <label>Combined Prior:</label>
                                     <span class="prior-display large" id="combined-prior-display">50.00%</span>
                                 </div>
+                                <div class="prior-control-item combined">
+                                    <label>Final Prior (after factor & clamp):</label>
+                                    <span class="prior-display large" id="final-prior-display">50.00%</span>
+                                </div>
                                 <div class="prior-control-item">
                                     <label for="purpose-select">Area Purpose:</label>
                                     <select id="purpose-select" class="purpose-select">
                                         <option value="">Loading...</option>
                                     </select>
                                     <span class="prior-display" id="half-life-display">Half-life: --</span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Weight Controls Section -->
+                        <section class="weight-controls-section">
+                            <h2>Entity Type Weights</h2>
+                            <div class="weight-controls">
+                                <div class="weight-control-item">
+                                    <label for="weight-motion-slider">Motion:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-motion-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="1.0"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-motion-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="1.0"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-motion-display">1.00</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-media-slider">Media:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-media-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.85"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-media-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.85"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-media-display">0.85</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-appliance-slider">Appliance:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-appliance-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.4"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-appliance-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.4"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-appliance-display">0.40</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-door-slider">Door:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-door-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.3"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-door-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.3"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-door-display">0.30</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-window-slider">Window:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-window-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.2"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-window-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.2"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-window-display">0.20</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-illuminance-slider">Illuminance:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-illuminance-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-illuminance-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-illuminance-display">0.10</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-humidity-slider">Humidity:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-humidity-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-humidity-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-humidity-display">0.10</span>
+                                </div>
+                                <div class="weight-control-item">
+                                    <label for="weight-temperature-slider">Temperature:</label>
+                                    <div class="weight-control-inputs">
+                                        <input type="range"
+                                               id="weight-temperature-slider"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-slider">
+                                        <input type="number"
+                                               id="weight-temperature-input"
+                                               min="0.01"
+                                               max="0.99"
+                                               step="0.01"
+                                               value="0.1"
+                                               class="weight-input">
+                                    </div>
+                                    <span class="weight-display" id="weight-temperature-display">0.10</span>
                                 </div>
                             </div>
                         </section>

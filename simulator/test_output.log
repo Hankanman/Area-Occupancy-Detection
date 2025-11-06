@@ -1,0 +1,185 @@
+=== COORDINATOR PROBABILITY CALCULATION START ===
+Total entities: 8
+=== REAL INTEGRATION PRIOR CALCULATION TRACE START ===
+Phase 1.1: Extract Input Values
+  global_prior = 0.2889724898
+  time_prior = 0.0100000000
+  PRIOR_FACTOR = 1.0500000000
+  MIN_PRIOR = 0.1000000000, MAX_PRIOR = 0.9900000000
+  MIN_PROBABILITY = 0.0100000000, MAX_PROBABILITY = 0.9900000000
+Phase 1.2: Combine Priors
+  combined_prior = combine_priors(0.2889724898, 0.0100000000) = 0.1625565670
+Phase 1.3: Validate Prior Before Factor
+  prior within bounds: 0.1625565670
+Phase 1.4: Apply PRIOR_FACTOR
+  adjusted_prior = 0.1625565670 * 1.0500000000 = 0.1706843953
+Phase 1.5: Final Clamp to MIN_PRIOR/MAX_PRIOR
+  result (no clamping needed): 0.1706843953
+Phase 1.6: Final Prior Value = 0.1706843953
+=== REAL INTEGRATION PRIOR CALCULATION TRACE END ===
+Prior value from self.prior.value: 0.1706843953
+Calling bayesian_probability with 8 entities and prior=0.1706843953
+=== BAYESIAN_PROBABILITY TRACE START ===
+Input prior (before clamping): 0.1706843953
+Phase 2.1: Entity Filtering
+  Total entities: 8
+  Entities after weight filter (>0.0): 8
+  Entities after likelihood filter: 8
+Phase 3.1: Initialize Log Probabilities
+  log_true = log(0.1706843953) = -1.7679390692
+  log_false = log(0.8293156047) = -0.1871544910
+Phase 3.2: Accumulate Entity Contributions
+  Entity 1: binary_sensor.study_motion_1_occupancy
+    weight=0.850000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.3347714596 (clamped from 0.3347714596), p_f=0.0100000000 (clamped from 0.0100000000)
+    log(p_t)=-1.0943071903, log(p_f)=-4.6051701860
+    contribution_true=-1.0943071903 * 0.850000 = -0.9301611117
+    contribution_false=-4.6051701860 * 0.850000 = -3.9143946581
+    log_true: -1.7679390692 -> -2.6981001810
+    log_false: -0.1871544910 -> -4.1015491491
+  Entity 2: media_player.echojumper - SKIPPED (evidence=None, is_decaying=False)
+  Entity 3: binary_sensor.study_door_contact
+    weight=0.300000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.300000 = -0.2079441542
+    contribution_false=-0.6931471806 * 0.300000 = -0.2079441542
+    log_true: -2.6981001810 -> -2.9060443351
+    log_false: -4.1015491491 -> -4.3094933033
+  Entity 4: binary_sensor.study_window_right_contact
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -2.9060443351 -> -2.9753590532
+    log_false: -4.3094933033 -> -4.3788080213
+  Entity 5: binary_sensor.study_window_left_contact
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -2.9753590532 -> -3.0446737712
+    log_false: -4.3788080213 -> -4.4481227394
+  Entity 6: sensor.study_illuminance
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -3.0446737712 -> -3.1139884893
+    log_false: -4.4481227394 -> -4.5174374574
+  Entity 7: sensor.study_humidity
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -3.1139884893 -> -3.1833032073
+    log_false: -4.5174374574 -> -4.5867521755
+  Entity 8: sensor.study_temperature
+    weight=0.100000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.5451733075 (clamped from 0.5451733075), p_f=0.7421734924 (clamped from 0.7421734924)
+    log(p_t)=-0.6066515395, log(p_f)=-0.2981722459
+    contribution_true=-0.6066515395 * 0.100000 = -0.0606651539
+    contribution_false=-0.2981722459 * 0.100000 = -0.0298172246
+    log_true: -3.1833032073 -> -3.2439683613
+    log_false: -4.5867521755 -> -4.6165694001
+Phase 3.3: Convert Back to Probability
+  max_log = max(-3.2439683613, -4.6165694001) = -3.2439683613
+  true_prob = exp(-3.2439683613 - -3.2439683613) = 1.0000000000
+  false_prob = exp(-4.6165694001 - -3.2439683613) = 0.2534468763
+  total_prob = 1.0000000000 + 0.2534468763 = 1.2534468763
+  final_probability = 1.0000000000 / 1.2534468763 = 0.7978000655 (79.78%)
+=== BAYESIAN_PROBABILITY TRACE END ===
+Final probability result: 0.7978000655 (79.78%)
+=== COORDINATOR PROBABILITY CALCULATION END ===
+
+
+=== SIMULATOR CALCULATION ===
+=== BAYESIAN_PROBABILITY TRACE START ===
+Input prior (before clamping): 0.1706843953
+Phase 2.1: Entity Filtering
+  Total entities: 8
+  Entities after weight filter (>0.0): 8
+  Entities after likelihood filter: 8
+Phase 3.1: Initialize Log Probabilities
+  log_true = log(0.1706843953) = -1.7679390692
+  log_false = log(0.8293156047) = -0.1871544910
+Phase 3.2: Accumulate Entity Contributions
+  Entity 1: binary_sensor.study_motion_1_occupancy
+    weight=0.850000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.3347714596 (clamped from 0.3347714596), p_f=0.0100000000 (clamped from 0.0100000000)
+    log(p_t)=-1.0943071903, log(p_f)=-4.6051701860
+    contribution_true=-1.0943071903 * 0.850000 = -0.9301611117
+    contribution_false=-4.6051701860 * 0.850000 = -3.9143946581
+    log_true: -1.7679390692 -> -2.6981001810
+    log_false: -0.1871544910 -> -4.1015491491
+  Entity 2: media_player.echojumper - SKIPPED (evidence=None, is_decaying=False)
+  Entity 3: binary_sensor.study_door_contact
+    weight=0.300000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.300000 = -0.2079441542
+    contribution_false=-0.6931471806 * 0.300000 = -0.2079441542
+    log_true: -2.6981001810 -> -2.9060443351
+    log_false: -4.1015491491 -> -4.3094933033
+  Entity 4: binary_sensor.study_window_right_contact
+    weight=0.100000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.2000000000 (clamped from 0.2000000000), p_f=0.0200000000 (clamped from 0.0200000000)
+    log(p_t)=-1.6094379124, log(p_f)=-3.9120230054
+    contribution_true=-1.6094379124 * 0.100000 = -0.1609437912
+    contribution_false=-3.9120230054 * 0.100000 = -0.3912023005
+    log_true: -2.9060443351 -> -3.0669881264
+    log_false: -4.3094933033 -> -4.7006956038
+  Entity 5: binary_sensor.study_window_left_contact
+    weight=0.100000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.2000000000 (clamped from 0.2000000000), p_f=0.0200000000 (clamped from 0.0200000000)
+    log(p_t)=-1.6094379124, log(p_f)=-3.9120230054
+    contribution_true=-1.6094379124 * 0.100000 = -0.1609437912
+    contribution_false=-3.9120230054 * 0.100000 = -0.3912023005
+    log_true: -3.0669881264 -> -3.2279319176
+    log_false: -4.7006956038 -> -5.0918979043
+  Entity 6: sensor.study_illuminance
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -3.2279319176 -> -3.2972466357
+    log_false: -5.0918979043 -> -5.1612126224
+  Entity 7: sensor.study_humidity
+    weight=0.100000, evidence=False, is_decaying=False, decay_factor=1.000000
+    p_t=0.5000000000 (clamped from 0.5000000000), p_f=0.5000000000 (clamped from 0.5000000000)
+    log(p_t)=-0.6931471806, log(p_f)=-0.6931471806
+    contribution_true=-0.6931471806 * 0.100000 = -0.0693147181
+    contribution_false=-0.6931471806 * 0.100000 = -0.0693147181
+    log_true: -3.2972466357 -> -3.3665613537
+    log_false: -5.1612126224 -> -5.2305273405
+  Entity 8: sensor.study_temperature
+    weight=0.100000, evidence=True, is_decaying=False, decay_factor=1.000000
+    p_t=0.5451733075 (clamped from 0.5451733075), p_f=0.7421734924 (clamped from 0.7421734924)
+    log(p_t)=-0.6066515395, log(p_f)=-0.2981722459
+    contribution_true=-0.6066515395 * 0.100000 = -0.0606651539
+    contribution_false=-0.2981722459 * 0.100000 = -0.0298172246
+    log_true: -3.3665613537 -> -3.4272265077
+    log_false: -5.2305273405 -> -5.2603445650
+Phase 3.3: Convert Back to Probability
+  max_log = max(-3.4272265077, -5.2603445650) = -3.4272265077
+  true_prob = exp(-3.4272265077 - -3.4272265077) = 1.0000000000
+  false_prob = exp(-5.2603445650 - -3.4272265077) = 0.1599141681
+  total_prob = 1.0000000000 + 0.1599141681 = 1.1599141681
+  final_probability = 1.0000000000 / 1.1599141681 = 0.8621327574 (86.21%)
+=== BAYESIAN_PROBABILITY TRACE END ===
+Simulator result: 0.8621327574 (86.21%)
+
+=== SUMMARY ===
+Simulator probability: 0.8621327574 (86.21%)
+
+Check the debug logs above to compare step-by-step calculations.
+Look for differences in:
+  1. Prior calculation (Phase 1)
+  2. Entity filtering (Phase 2.1)
+  3. Entity contributions (Phase 2.2, 3.2)
+  4. Final probability (Phase 3.3)
