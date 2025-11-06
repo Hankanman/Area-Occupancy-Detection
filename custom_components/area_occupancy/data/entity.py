@@ -2,11 +2,13 @@
 
 import bisect
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
@@ -31,14 +33,29 @@ class Entity:
     prob_given_true: float
     prob_given_false: float
     decay: Decay
-    coordinator: "AreaOccupancyCoordinator"
-    last_updated: datetime
-    previous_evidence: bool | None
+    hass: HomeAssistant | None = None
+    state_provider: Callable[[str], Any] | None = None
+    last_updated: datetime = None
+    previous_evidence: bool | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that either hass or state_provider is provided."""
+        if self.hass is None and self.state_provider is None:
+            raise ValueError("Either hass or state_provider must be provided")
+        if self.hass is not None and self.state_provider is not None:
+            raise ValueError("Cannot provide both hass and state_provider")
+        if self.last_updated is None:
+            self.last_updated = dt_util.utcnow()
 
     @property
     def name(self) -> str | None:
-        """Get the entity name from Home Assistant state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity name from Home Assistant state or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "name"):
+                return state_obj.name
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
     @property
@@ -48,19 +65,32 @@ class Entity:
 
     @property
     def state(self) -> str | float | bool | None:
-        """Get the entity state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity state from Home Assistant or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj is None:
+                return None
+            # Handle both object with .state attribute and direct value
+            if hasattr(state_obj, "state"):
+                state_value = state_obj.state
+            else:
+                state_value = state_obj
+        else:
+            ha_state = self.hass.states.get(self.entity_id)
+            if ha_state is None:
+                return None
+            state_value = ha_state.state
 
-        # Check if HA state is valid
-        if ha_state and ha_state.state not in [
+        # Check if state is valid
+        if state_value in [
             "unknown",
             "unavailable",
             None,
             "",
             "NaN",
         ]:
-            return ha_state.state
-        return None
+            return None
+        return state_value
 
     @property
     def weight(self) -> float:
@@ -256,7 +286,7 @@ class EntityFactory:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=last_updated,
             previous_evidence=previous_evidence,
         )
@@ -280,7 +310,7 @@ class EntityFactory:
             prob_given_true=entity_type.prob_given_true,
             prob_given_false=entity_type.prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
         )
