@@ -16,7 +16,12 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from custom_components.area_occupancy.const import RETENTION_DAYS
-from custom_components.area_occupancy.db import DB_VERSION, AreaOccupancyDB, Base
+from custom_components.area_occupancy.db import (
+    DB_VERSION,
+    DEFAULT_AREA_PRIOR,
+    AreaOccupancyDB,
+    Base,
+)
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -42,6 +47,8 @@ def configured_db(mock_db_with_engine):
         threshold=0.5,
         entity_ids=["binary_sensor.motion"],
     )
+    # Set up prior object with global_prior for new logic
+    db.coordinator.prior = SimpleNamespace(global_prior=0.3)
     return db
 
 
@@ -878,7 +885,6 @@ class TestAreaOccupancyDBUtilities:
             ("area_name", ""),
             ("purpose", ""),
             ("threshold", None),
-            ("area_prior", None),
         ],
     )
     async def test_save_area_data_validation(self, configured_db, field, value):
@@ -892,13 +898,94 @@ class TestAreaOccupancyDBUtilities:
             db.coordinator.config.purpose = value
         elif field == "threshold":
             db.coordinator.config.threshold = value
-        elif field == "area_prior":
-            db.coordinator.area_prior = value
         with pytest.raises(ValueError):
             db.save_area_data()
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_preserves_existing_prior_when_global_prior_none(
+        self, configured_db
+    ):
+        """Test that save_area_data preserves existing area_prior when global_prior is None."""
+        db = configured_db
+        existing_prior = 0.45
+
+        # Set up existing area in database with a learned prior
+        with db.get_locked_session() as session:
+            existing_area = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
+                area_id="test_area",
+                purpose="living",
+                threshold=0.5,
+                area_prior=existing_prior,
+            )
+            session.add(existing_area)
+            session.commit()
+
+        # Set global_prior to None to simulate first run or failed load
+        db.coordinator.prior.global_prior = None
+
+        # Save should preserve the existing prior
+        db.save_area_data()
+
+        # Verify the existing prior was preserved
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
+                {"e": db.coordinator.entry_id},
+            ).fetchone()
+        assert row[0] == existing_prior
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_uses_default_when_no_existing_prior(
+        self, configured_db
+    ):
+        """Test that save_area_data uses DEFAULT_AREA_PRIOR when global_prior is None and no existing value."""
+        db = configured_db
+
+        # Ensure no existing area in database
+        with db.get_locked_session() as session:
+            session.query(db.Areas).filter_by(entry_id=db.coordinator.entry_id).delete()
+            session.commit()
+
+        # Set global_prior to None
+        db.coordinator.prior.global_prior = None
+
+        # Save should use DEFAULT_AREA_PRIOR
+        db.save_area_data()
+
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
+                {"e": db.coordinator.entry_id},
+            ).fetchone()
+        assert row[0] == DEFAULT_AREA_PRIOR
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_handles_none_area_prior_with_global_prior_set(
+        self, configured_db
+    ):
+        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior is None despite global_prior being set."""
+        db = configured_db
+
+        # Set global_prior to a value, but make coordinator.area_prior return None
+        # This simulates an edge case where the property is not properly initialized
+        db.coordinator.prior.global_prior = 0.4
+        db.coordinator.area_prior = None
+
+        # Save should use DEFAULT_AREA_PRIOR as fallback
+        db.save_area_data()
+
+        # Verify DEFAULT_AREA_PRIOR was used as fallback
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
+                {"e": db.coordinator.entry_id},
+            ).fetchone()
+        assert row[0] == DEFAULT_AREA_PRIOR
 
     @pytest.mark.asyncio
     async def test_save_area_data_success(self, configured_db):

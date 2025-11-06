@@ -1381,13 +1381,49 @@ class AreaOccupancyDB:
         def _attempt(session: Any) -> bool:
             cfg = self.coordinator.config
 
+            # Determine area_prior value to save
+            # If global_prior has not been explicitly set (is None), preserve existing DB value
+            # or use DEFAULT_AREA_PRIOR to avoid overwriting learned priors with MIN_PRIOR
+            if self.coordinator.prior.global_prior is None:
+                # global_prior not set yet - preserve existing value or use reasonable default
+                existing_area = (
+                    session.query(self.Areas)
+                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .first()
+                )
+                if existing_area and existing_area.area_prior is not None:
+                    # Preserve existing learned prior from database
+                    area_prior_to_save = existing_area.area_prior
+                    _LOGGER.debug(
+                        "global_prior not set, preserving existing area_prior from DB: %.4f",
+                        area_prior_to_save,
+                    )
+                else:
+                    # No existing value - use DEFAULT_AREA_PRIOR instead of MIN_PRIOR
+                    area_prior_to_save = DEFAULT_AREA_PRIOR
+                    _LOGGER.debug(
+                        "global_prior not set and no existing value, using DEFAULT_AREA_PRIOR: %.4f",
+                        area_prior_to_save,
+                    )
+            else:
+                # global_prior has been explicitly set - use the calculated value
+                area_prior_to_save = self.coordinator.area_prior
+                # Defensive check: if area_prior is None despite global_prior being set,
+                # use DEFAULT_AREA_PRIOR as fallback to avoid validation failure
+                if area_prior_to_save is None:
+                    _LOGGER.warning(
+                        "coordinator.area_prior is None despite global_prior being set, "
+                        "using DEFAULT_AREA_PRIOR as fallback"
+                    )
+                    area_prior_to_save = DEFAULT_AREA_PRIOR
+
             area_data = {
                 "entry_id": self.coordinator.entry_id,
                 "area_name": cfg.name,
                 "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
-                "area_prior": self.coordinator.area_prior,
+                "area_prior": area_prior_to_save,
                 "updated_at": dt_util.utcnow(),
             }
 
