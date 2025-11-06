@@ -965,6 +965,29 @@ class TestAreaOccupancyDBUtilities:
         assert row[0] == DEFAULT_AREA_PRIOR
 
     @pytest.mark.asyncio
+    async def test_save_area_data_handles_none_area_prior_with_global_prior_set(
+        self, configured_db
+    ):
+        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior is None despite global_prior being set."""
+        db = configured_db
+
+        # Set global_prior to a value, but make coordinator.area_prior return None
+        # This simulates an edge case where the property is not properly initialized
+        db.coordinator.prior.global_prior = 0.4
+        db.coordinator.area_prior = None
+
+        # Save should use DEFAULT_AREA_PRIOR as fallback
+        db.save_area_data()
+
+        # Verify DEFAULT_AREA_PRIOR was used as fallback
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
+                {"e": db.coordinator.entry_id},
+            ).fetchone()
+        assert row[0] == DEFAULT_AREA_PRIOR
+
+    @pytest.mark.asyncio
     async def test_save_area_data_success(self, configured_db):
         """Test successful save_area_data operation."""
         db = configured_db
