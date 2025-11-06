@@ -270,10 +270,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.entities.entities:
             return MIN_PROBABILITY
 
+        prior_value = self.prior.value
         return bayesian_probability(
             entities=self.entities.entities,
-            area_prior=self.prior.value,
-            time_prior=self.prior.time_prior,
+            prior=prior_value,
         )
 
     @property
@@ -285,47 +285,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {
             InputType.MOTION: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.MOTION),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.MEDIA: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.MEDIA),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.APPLIANCE: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.APPLIANCE),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.DOOR: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.DOOR),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.WINDOW: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.WINDOW),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.ILLUMINANCE: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(
                     InputType.ILLUMINANCE
                 ),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.HUMIDITY: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(InputType.HUMIDITY),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
             InputType.TEMPERATURE: bayesian_probability(
                 entities=self.entities.get_entities_by_input_type(
                     InputType.TEMPERATURE
                 ),
-                area_prior=self.prior.value,
-                time_prior=self.prior.time_prior,
+                prior=self.prior.value,
             ),
         }
 
