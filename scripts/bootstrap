@@ -20,6 +20,9 @@ fi
 echo "==> Installing dependencies..."
 uv pip install --python .venv/bin/python --requirement requirements.txt
 
+echo "==> Installing test dependencies..."
+uv pip install --python .venv/bin/python --requirement requirements_test.txt
+
 echo "==> Installing pre-commit hooks..."
 uv run pre-commit install
 
