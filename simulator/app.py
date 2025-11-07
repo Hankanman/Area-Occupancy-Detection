@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -16,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from flask import Flask, jsonify, render_template, request
+from flask_cors import CORS  # type: ignore[import]
 from homeassistant.const import STATE_OFF, STATE_ON
 import yaml
 
@@ -47,11 +49,223 @@ app = Flask(
     static_folder=str(BASE_DIR / "static"),
 )
 
+
+def get_allowed_origins() -> list[str] | str:
+    """Return allowed origins for CORS configuration."""
+
+    env_value = os.getenv("SIMULATOR_ALLOWED_ORIGINS")
+    if env_value is None:
+        # Default origins cover published docs site and local development
+        return [
+            "https://hankanman.github.io",
+            "https://hankanman.github.io/Area-Occupancy-Detection",
+            "https://hankanman.github.io/Area-Occupancy-Detection/",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]
+
+    origins = [origin.strip() for origin in env_value.split(",") if origin.strip()]
+    if not origins:
+        return "*"
+
+    if "*" in origins:
+        return "*"
+
+    return origins
+
+
+CORS(
+    app,
+    resources={r"/api/*": {"origins": get_allowed_origins()}},
+    supports_credentials=False,
+)
+
 # Global state for the simulator
-simulator_state: dict[str, any] | None = None
+simulator_state: dict[str, Any] | None = None
 
 # Global state store for entity states (used by state_provider)
 entity_state_store: dict[str, str | float] = {}
+
+
+def _friendly_name(entity_id: str) -> str:
+    """Create a human-friendly name for an entity."""
+
+    object_id = entity_id.split(".")[-1]
+    return object_id.replace("_", " ").title()
+
+
+def _format_state_display(entity: Entity) -> str:
+    """Format the entity state for UI display."""
+
+    state = entity.state
+    if state is None:
+        return "Unavailable"
+
+    if entity.type.active_range is not None:
+        try:
+            return f"{float(state):.2f}"
+        except (TypeError, ValueError):
+            return str(state)
+
+    return str(state)
+
+
+def _build_entity_actions(entity: Entity) -> list[dict[str, Any]]:
+    """Create UI action descriptors for an entity."""
+
+    if entity.type.active_range is not None:
+        # Numeric entities are adjusted via sliders/inputs in the UI
+        return []
+
+    is_active = entity.evidence is True
+    is_inactive = entity.evidence is False
+
+    return [
+        {
+            "label": "Active",
+            "state": "on",
+            "active": is_active,
+        },
+        {
+            "label": "Inactive",
+            "state": "off",
+            "active": is_inactive,
+        },
+    ]
+
+
+def _serialize_entities(entities: dict[str, Entity]) -> list[dict[str, Any]]:
+    """Serialize Entity objects for the simulator UI."""
+
+    serialized = []
+    for entity_id, entity in entities.items():
+        state_display = _format_state_display(entity)
+        details_parts = [
+            f"Type: {entity.type.input_type.value}",
+            f"Weight: {entity.weight:.2f}",
+            f"P(active|occupied): {entity.prob_given_true:.2f}",
+            f"P(active|vacant): {entity.prob_given_false:.2f}",
+        ]
+
+        if entity.type.active_states:
+            active_states = ", ".join(entity.type.active_states)
+            details_parts.append(f"Active states: {active_states}")
+        if entity.type.active_range:
+            min_val, max_val = entity.type.active_range
+            details_parts.append(f"Active range: {min_val} – {max_val}")
+
+        serialized.append(
+            {
+                "entity_id": entity_id,
+                "name": entity.name or _friendly_name(entity_id),
+                "type": entity.type.input_type.value,
+                "weight": entity.weight,
+                "state": entity.state,
+                "state_display": state_display,
+                "details": " • ".join(details_parts),
+                "is_numeric": entity.type.active_range is not None,
+                "actions": _build_entity_actions(entity),
+                "evidence": entity.evidence,
+            }
+        )
+
+    return serialized
+
+
+def _build_breakdown_list(
+    breakdown: dict[str, float], entities: dict[str, Entity]
+) -> list[dict[str, Any]]:
+    """Convert breakdown dict into sorted list for the UI."""
+
+    breakdown_list = []
+    for entity_id, contribution in breakdown.items():
+        entity = entities.get(entity_id)
+        if entity is None:
+            continue
+
+        state_display = _format_state_display(entity)
+        evidence = entity.evidence
+        if evidence is True:
+            likelihood = entity.prob_given_true
+        elif evidence is False:
+            likelihood = entity.prob_given_false
+        else:
+            likelihood = entity.prob_given_true
+
+        breakdown_list.append(
+            {
+                "entity_id": entity_id,
+                "name": entity.name or _friendly_name(entity_id),
+                "description": f"State: {state_display}",
+                "likelihood": likelihood,
+                "contribution": contribution,
+            }
+        )
+
+    breakdown_list.sort(key=lambda item: abs(item["contribution"]), reverse=True)
+    return breakdown_list
+
+
+def _current_weights(state: dict[str, Any]) -> dict[str, float]:
+    """Return a mapping of entity type -> weight for UI consumption."""
+
+    weights = {**state.get("entity_type_weights", {})}
+    for entity in state["entities"].values():
+        weights.setdefault(entity.type.input_type.value, entity.weight)
+    return weights
+
+
+def _calculate_priors(state: dict[str, Any]) -> tuple[float, float, float]:
+    """Return combined, adjusted, and final priors."""
+
+    combined_prior = combine_priors(state["global_prior"], state["time_prior"])
+    adjusted_prior = combined_prior * PRIOR_FACTOR
+    final_prior = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+    return combined_prior, adjusted_prior, final_prior
+
+
+def _build_simulation_payload(
+    probability: float,
+    breakdown: dict[str, float],
+    *,
+    include_decay: bool = False,
+) -> dict[str, Any]:
+    """Construct the payload returned to the frontend."""
+
+    if simulator_state is None:
+        raise ValueError("Simulator has not been initialized")
+
+    combined_prior, adjusted_prior, final_prior = _calculate_priors(simulator_state)
+
+    simulator_state["current_prior"] = adjusted_prior
+
+    entities = simulator_state["entities"]
+    payload: dict[str, Any] = {
+        "area_name": simulator_state["area_name"],
+        "area_purpose": simulator_state["area_purpose"],
+        "probability": probability,
+        "breakdown": _build_breakdown_list(breakdown, entities),
+        "entities": _serialize_entities(entities),
+        "weights": _current_weights(simulator_state),
+        "global_prior": simulator_state["global_prior"],
+        "time_prior": simulator_state["time_prior"],
+        "combined_prior": combined_prior,
+        "current_prior": adjusted_prior,
+        "final_prior": final_prior,
+        "half_life": simulator_state["half_life"],
+    }
+
+    if include_decay:
+        payload["entity_decay"] = {
+            entity_id: {
+                "is_decaying": entity.decay.is_decaying,
+                "decay_factor": entity.decay.decay_factor,
+                "evidence": entity.evidence,
+            }
+            for entity_id, entity in entities.items()
+        }
+
+    return payload
 
 
 def create_state_provider() -> Callable[[str], Any]:
@@ -389,47 +603,16 @@ def load_data():
         # Store simulator state
         simulator_state = {
             "area_name": area_name,
-            "current_prior": current_prior,  # Keep for display/reference
-            "global_prior": global_prior,  # Use this for calculations
+            "current_prior": current_prior,
+            "global_prior": global_prior,
             "time_prior": time_prior,
             "area_purpose": area_purpose,
             "half_life": half_life,
             "entities": entities,
-            "entity_type_weights": entity_type_weights,  # Track weights per entity type
+            "entity_type_weights": entity_type_weights,
         }
 
-        # Prepare response
-        response = {
-            "area_name": area_name,
-            "current_prior": current_prior,
-            "global_prior": global_prior,
-            "time_prior": time_prior,
-            "final_prior": final_prior,  # Final prior after PRIOR_FACTOR and clamping
-            "area_purpose": area_purpose,
-            "half_life": half_life,
-            "probability": overall_prob,
-            "breakdown": breakdown,
-            "entity_type_weights": entity_type_weights,  # Include weights in response
-            "entities": [
-                {
-                    "entity_id": entity_id,
-                    "type": entity.type.input_type.value,
-                    "weight": entity.weight,
-                    "prob_given_true": entity.prob_given_true,
-                    "prob_given_false": entity.prob_given_false,
-                    "current_state": str(entity.state)
-                    if entity.state is not None
-                    else None,
-                    "evidence": entity.evidence,
-                    "is_numeric": entity.type.active_range is not None,
-                    "active_states": entity.type.active_states,
-                    "active_range": entity.type.active_range,
-                }
-                for entity_id, entity in entities.items()
-            ],
-        }
-
-        return jsonify(response)
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except yaml.YAMLError as e:
         return jsonify({"error": f"Invalid YAML: {e!s}"}), 400
@@ -487,14 +670,7 @@ def toggle_sensor():
             simulator_state["time_prior"],
         )
 
-        return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "entity_state": str(entity.state) if entity.state is not None else None,
-                "evidence": entity.evidence,
-            }
-        )
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error toggling sensor: {e!s}"}), 500
@@ -519,8 +695,6 @@ def update_sensor():
         if entity_id not in simulator_state["entities"]:
             return jsonify({"error": f"Entity {entity_id} not found"}), 404
 
-        entity = simulator_state["entities"][entity_id]
-
         # Update state in state store
         try:
             entity_state_store[entity_id] = float(new_value)
@@ -534,14 +708,7 @@ def update_sensor():
             simulator_state["time_prior"],
         )
 
-        return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "entity_state": str(entity.state) if entity.state is not None else None,
-                "evidence": entity.evidence,
-            }
-        )
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error updating sensor: {e!s}"}), 500
@@ -562,11 +729,11 @@ def get_probability():
     try:
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
-            simulator_state["current_prior"],
+            simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
-        return jsonify({"probability": overall_prob, "breakdown": breakdown})
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error calculating probability: {e!s}"}), 500
@@ -585,49 +752,46 @@ def update_priors():
         return jsonify({"error": "No simulation loaded"}), 400
 
     try:
-        global_prior = request.json.get("global_prior")
-        time_prior = request.json.get("time_prior")
+        payload = request.json or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Invalid request payload"}), 400
 
-        if global_prior is None or time_prior is None:
-            return jsonify(
-                {"error": "Both global_prior and time_prior are required"}
-            ), 400
+        updated = False
 
-        # Validate ranges
-        if not 0.0 <= global_prior <= 1.0 or not 0.0 <= time_prior <= 1.0:
-            return jsonify({"error": "Priors must be between 0.0 and 1.0"}), 400
+        if "global_prior" in payload:
+            try:
+                new_global = float(payload["global_prior"])
+            except (TypeError, ValueError) as exc:
+                return jsonify({"error": f"Invalid global_prior: {exc}"}), 400
 
-        # Update simulator state
-        simulator_state["global_prior"] = float(global_prior)
-        simulator_state["time_prior"] = float(time_prior)
-        # Update current_prior for display (it's the combined and adjusted value)
-        # But we use global_prior for calculations
-        combined_prior = combine_priors(float(global_prior), float(time_prior))
-        simulator_state["current_prior"] = combined_prior * PRIOR_FACTOR
+            if not 0.0 <= new_global <= 1.0:
+                return jsonify(
+                    {"error": "global_prior must be between 0.0 and 1.0"}
+                ), 400
+            simulator_state["global_prior"] = new_global
+            updated = True
 
-        # Recalculate probability
+        if "time_prior" in payload:
+            try:
+                new_time = float(payload["time_prior"])
+            except (TypeError, ValueError) as exc:
+                return jsonify({"error": f"Invalid time_prior: {exc}"}), 400
+
+            if not 0.0 <= new_time <= 1.0:
+                return jsonify({"error": "time_prior must be between 0.0 and 1.0"}), 400
+            simulator_state["time_prior"] = new_time
+            updated = True
+
+        if not updated:
+            return jsonify({"error": "At least one prior value is required"}), 400
+
         overall_prob, breakdown = calculate_probability_breakdown(
             simulator_state["entities"],
             simulator_state["global_prior"],
             simulator_state["time_prior"],
         )
 
-        # Calculate final prior for display
-        combined_prior = combine_priors(
-            simulator_state["global_prior"], simulator_state["time_prior"]
-        )
-        final_prior = combined_prior * PRIOR_FACTOR
-        final_prior = max(MIN_PRIOR, min(MAX_PRIOR, final_prior))
-
-        return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "global_prior": simulator_state["global_prior"],
-                "time_prior": simulator_state["time_prior"],
-                "final_prior": final_prior,
-            }
-        )
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error updating priors: {e!s}"}), 500
@@ -656,21 +820,8 @@ def tick():
             simulator_state["time_prior"],
         )
 
-        # Get decay information for each entity
-        entity_decay_info = {}
-        for entity_id, entity in simulator_state["entities"].items():
-            entity_decay_info[entity_id] = {
-                "is_decaying": entity.decay.is_decaying,
-                "decay_factor": entity.decay.decay_factor,
-                "evidence": entity.evidence,
-            }
-
         return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "entity_decay": entity_decay_info,
-            }
+            _build_simulation_payload(overall_prob, breakdown, include_decay=True)
         )
 
     except Exception as e:
@@ -712,14 +863,7 @@ def update_purpose():
             simulator_state["time_prior"],
         )
 
-        return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "area_purpose": new_purpose,
-                "half_life": new_half_life,
-            }
-        )
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error updating purpose: {e!s}"}), 500
@@ -738,32 +882,35 @@ def update_weights():
         return jsonify({"error": "No simulation loaded"}), 400
 
     try:
-        weights = request.json.get("weights")
-        if weights is None:
-            return jsonify({"error": "Weights are required"}), 400
+        payload = request.json or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Invalid request payload"}), 400
 
-        # Validate and update weights for each entity type
-        updated_types = set()
-        for entity_type_str, weight_value in weights.items():
-            try:
-                weight_float = float(weight_value)
-                # Clamp weight to valid range
-                weight_float = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_float))
+        weight_type = payload.get("weight_type")
+        weight_value = payload.get("value")
 
-                # Update all entities of this type
-                for entity in simulator_state["entities"].values():
-                    if entity.type.input_type.value == entity_type_str:
-                        entity.type.weight = weight_float
-                        updated_types.add(entity_type_str)
+        if weight_type is None or weight_value is None:
+            return jsonify({"error": "weight_type and value are required"}), 400
 
-                # Update stored weights
-                if "entity_type_weights" not in simulator_state:
-                    simulator_state["entity_type_weights"] = {}
-                simulator_state["entity_type_weights"][entity_type_str] = weight_float
+        try:
+            weight_float = float(weight_value)
+        except (TypeError, ValueError) as exc:
+            return jsonify({"error": f"Invalid weight value: {exc}"}), 400
 
-            except (TypeError, ValueError):
-                # Skip invalid weights
-                continue
+        weight_float = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_float))
+
+        updated = False
+        for entity in simulator_state["entities"].values():
+            if entity.type.input_type.value == weight_type:
+                entity.type.weight = weight_float
+                updated = True
+
+        if not updated:
+            return jsonify({"error": f"No entities found for type {weight_type}"}), 404
+
+        simulator_state.setdefault("entity_type_weights", {})[weight_type] = (
+            weight_float
+        )
 
         # Recalculate probability
         overall_prob, breakdown = calculate_probability_breakdown(
@@ -772,13 +919,7 @@ def update_weights():
             simulator_state["time_prior"],
         )
 
-        return jsonify(
-            {
-                "probability": overall_prob,
-                "breakdown": breakdown,
-                "weights": simulator_state.get("entity_type_weights", {}),
-            }
-        )
+        return jsonify(_build_simulation_payload(overall_prob, breakdown))
 
     except Exception as e:
         return jsonify({"error": f"Error updating weights: {e!s}"}), 500
@@ -796,7 +937,7 @@ def get_purposes():
         purposes.append(
             {
                 "value": purpose_enum.value,
-                "name": purpose_def.name,
+                "label": purpose_def.name,
                 "half_life": purpose_def.half_life,
             }
         )
@@ -804,4 +945,6 @@ def get_purposes():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=10000)
+    port = int(os.getenv("PORT", "10000"))
+    debug = os.getenv("FLASK_DEBUG", "1") == "1"
+    app.run(debug=debug, host="0.0.0.0", port=port)
