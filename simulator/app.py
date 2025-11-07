@@ -1,5 +1,7 @@
 """Flask web application for area occupancy simulator."""
 
+# ruff: noqa: E402, I001, PLW0603, PLW0602, BLE001
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -8,7 +10,13 @@ from pathlib import Path
 import sys
 from typing import Any
 
+# Ensure project root is on sys.path so local custom_components can be imported
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from flask import Flask, jsonify, render_template, request
+from homeassistant.const import STATE_OFF, STATE_ON
 import yaml
 
 from custom_components.area_occupancy.const import (
@@ -28,16 +36,8 @@ from custom_components.area_occupancy.data.purpose import (
     AreaPurpose,
 )
 from custom_components.area_occupancy.utils import bayesian_probability, combine_priors
-from homeassistant.const import STATE_OFF, STATE_ON
-
-# Add parent directory to path to import custom_components
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# ruff: noqa: PLW0603, PLW0602, BLE001, INP001
 
 # Get the directory where this script is located
 BASE_DIR = Path(__file__).parent
@@ -804,4 +804,4 @@ def get_purposes():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=10000)
