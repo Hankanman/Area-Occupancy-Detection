@@ -114,3 +114,4 @@ nav:
       - Deep Dive: technical/deep-dive.md
       - Pre-Releases: technical/prerelease.md
       - Debugging: technical/debug.md
+  - Simulator: simulator/index.md

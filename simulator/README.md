@@ -12,31 +12,45 @@ A web-based simulator for the Area Occupancy Detection integration that allows y
 - **Probability Breakdown**: See how each sensor contributes to the overall probability
 - **Time-series Chart**: Visualize how probability changes over time as you toggle sensors
 
-## Installation
+## Local Development
 
-1. Install dependencies:
+1. Create and activate the project virtual environment (if it is not already available):
+
 ```bash
-cd simulator
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
 ```
 
-## Running the Simulator
+2. Install simulator dependencies from the repository root:
 
-1. Start the Flask server:
 ```bash
-python app.py
+pip install -r simulator/requirements.txt
 ```
 
-2. Open your browser and navigate to:
+3. Start the backend API by running the repository entry point (`main.py`):
+
+```bash
+python main.py
 ```
-http://localhost:5000
+
+   The server listens on `0.0.0.0` and uses port `5000` by default. Set the `PORT` environment variable to override the port, and `FLASK_DEBUG=0` to disable debug mode.
+
+4. (Optional) Start the MkDocs preview to load the simulator UI:
+
+```bash
+cd docs
+mkdocs serve
 ```
 
-3. Paste your analysis output (YAML format) from the `area_occupancy.run_analysis` service into the text area
+   Then open `http://localhost:8000/Area-Occupancy-Detection/simulator/` and update the **API Connection** field to `http://127.0.0.1:5000`.
 
-4. Click "Load Simulation" to initialize the simulator
+5. Paste your `area_occupancy.run_analysis` YAML output, click **Load Simulation**, and interact with the sensor controls to see live probability updates.
 
-5. Toggle sensors and watch the probability update in real-time!
+## Configuration
+
+- `SIMULATOR_ALLOWED_ORIGINS`: Comma-separated list of origins allowed to access the API (defaults include GitHub Pages and `http://localhost:8000`). Use `*` during private testing.
+- `PORT`: Overrides the HTTP port (`5000` default when launched via `main.py`).
+- `FLASK_DEBUG`: Set to `0` to disable Flask debug mode (defaults to `1`).
 
 ## Example Analysis Output
 
