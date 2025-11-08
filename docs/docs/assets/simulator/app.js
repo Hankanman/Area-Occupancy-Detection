@@ -14,7 +14,7 @@
 
   document.body.classList.add("aod-simulator-mode");
 
-  function formatPercent(value, digits = 2) {
+  function formatPercent(value, digits = 1) {
     return `${(value * 100).toFixed(digits)}%`;
   }
 
@@ -150,6 +150,58 @@
     return response;
   }
 
+  async function requestJson(path, options = {}) {
+    const response = await apiFetch(path, options);
+    const contentType = response.headers.get("content-type") ?? "";
+    let payload = null;
+
+    if (contentType.includes("application/json")) {
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = null;
+      }
+    }
+
+    if (!response.ok) {
+      const statusMessage = options.errorMessage || `HTTP ${response.status}`;
+      const message = payload?.error || statusMessage;
+      throw new Error(message);
+    }
+
+    return payload ?? {};
+  }
+
+  function applySimulationPayload(payload, { resetHistory = false } = {}) {
+    if (resetHistory) {
+      state.probabilityHistory = [];
+      initChart();
+    }
+
+    state.simulationData = payload;
+    renderSimulation(payload);
+    hideError();
+  }
+
+  async function executeSimulationUpdate(
+    path,
+    options = {},
+    { resetHistory = false } = {}
+  ) {
+    const payload = await requestJson(path, options);
+    applySimulationPayload(payload, { resetHistory });
+    return payload;
+  }
+
+  function handleApiFailure(error, { silent = false } = {}) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!silent) {
+      showError(message);
+    }
+
+    updateApiStatus("offline", "API Offline");
+  }
+
   function updateApiStatus(stateClass, label) {
     if (!apiStatusBadge) {
       return;
@@ -164,11 +216,7 @@
 
   async function verifyApiOnline() {
     try {
-      const response = await apiFetch("/api/get-purposes");
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
+      await requestJson("/api/get-purposes");
       updateApiStatus("online", "API Online");
     } catch (error) {
       updateApiStatus("offline", "API Offline");
@@ -357,249 +405,274 @@
     }
 
     data.entities.forEach((entity) => {
-      const card = document.createElement("div");
-      card.className = "md-card sim-card entity";
-
-      const actionsContainer = document.createElement("div");
-      actionsContainer.className = "sim-card-actions";
-
-      const contentContainer = document.createElement("div");
-      contentContainer.className = "sim-card-content";
-
-      const header = document.createElement("div");
-      header.className = "sim-card-header";
-
-      const title = document.createElement("h3");
-      title.textContent = entity.name;
-      header.appendChild(title);
-
-      const stateEl = document.createElement("div");
-      stateEl.textContent = `State: ${entity.state_display}`;
-      header.appendChild(stateEl);
-
-      contentContainer.appendChild(header);
-
-      if (entity.details) {
-        const detailsRow = document.createElement("div");
-        detailsRow.className = "sim-card-row";
-
-        const segments = Array.isArray(entity.details)
-          ? entity.details
-          : String(entity.details)
-              .split(/(?:\s*•\s*|\n+)/)
-              .map((segment) => segment.trim())
-              .filter(Boolean);
-
-        if (segments.length === 0) {
-          segments.push(String(entity.details));
-        }
-
-        segments.forEach((segment) => {
-          const detailItem = document.createElement("div");
-          detailItem.textContent = segment;
-          detailsRow.appendChild(detailItem);
-        });
-
-        contentContainer.appendChild(detailsRow);
-      }
-
-      let hasActions = false;
-
-      const supportsBinaryToggle =
-        !entity.is_numeric &&
-        entity.actions.length >= 2 &&
-        entity.actions.every((action) => typeof action.state === "string");
-
-      if (supportsBinaryToggle) {
-        const onAction =
-          entity.actions.find(
-            (action) => action.state?.toLowerCase() === "on"
-          ) ?? entity.actions.find((action) => action.active);
-        const offAction = entity.actions.find((action) => action !== onAction);
-
-        const toggle = document.createElement("sl-switch");
-        toggle.textContent = onAction?.label ?? "Active";
-        toggle.checked = Boolean(onAction?.active);
-        toggle.disabled = !onAction || !offAction;
-
-        let lastKnownChecked = toggle.checked;
-
-        toggle.addEventListener("sl-change", async (event) => {
-          if (!onAction || !offAction) {
-            return;
-          }
-
-          const control = event.currentTarget;
-          const isChecked = control.checked;
-          const targetAction = isChecked ? onAction : offAction;
-
-          control.disabled = true;
-
-          try {
-            const response = await apiFetch("/api/toggle", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                entity_id: entity.entity_id,
-                state: targetAction.state,
-              }),
-            });
-
-            const payload = await response.json();
-
-            if (!response.ok) {
-              throw new Error(payload.error || "Failed to toggle sensor");
-            }
-
-            state.simulationData = payload;
-            renderSimulation(payload);
-            lastKnownChecked = isChecked;
-          } catch (error) {
-            showError(error.message);
-            control.checked = lastKnownChecked;
-          } finally {
-            control.disabled = false;
-          }
-        });
-
-        actionsContainer.appendChild(toggle);
-        hasActions = true;
-      } else if (entity.is_numeric) {
-        const currentValueAction = entity.actions.find(
-          (action) => action.active
-        );
-        const input = document.createElement("sl-input");
-        input.type = "number";
-        input.size = "medium";
-        input.value =
-          currentValueAction?.value?.toString() ?? entity.state ?? "";
-        input.placeholder = "--";
-        input.step = "any";
-        input.inputMode = "decimal";
-        input.disabled = false;
-
-        let lastKnownValue = input.value;
-        let isUpdating = false;
-
-        const setLoadingState = (loading) => {
-          isUpdating = loading;
-          input.loading = loading;
-          input.disabled = loading;
-        };
-
-        const submitValue = async (rawValue) => {
-          const numericValue = Number.parseFloat(rawValue);
-          if (!Number.isFinite(numericValue)) {
-            showError(`Invalid numeric value: ${rawValue}`);
-            input.value = lastKnownValue;
-            return;
-          }
-
-          const lastNumeric = Number.parseFloat(lastKnownValue);
-          if (!Number.isNaN(lastNumeric) && lastNumeric === numericValue) {
-            input.value = lastKnownValue;
-            return;
-          }
-
-          setLoadingState(true);
-
-          try {
-            const response = await apiFetch("/api/update", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                entity_id: entity.entity_id,
-                value: numericValue,
-              }),
-            });
-
-            const payload = await response.json();
-
-            if (!response.ok) {
-              throw new Error(payload.error || "Failed to update sensor");
-            }
-
-            lastKnownValue = numericValue.toString();
-            input.value = lastKnownValue;
-            state.simulationData = payload;
-            renderSimulation(payload);
-            hideError();
-          } catch (error) {
-            showError(error.message ?? error);
-            input.value = lastKnownValue;
-          } finally {
-            setLoadingState(false);
-          }
-        };
-
-        input.addEventListener("sl-change", (event) => {
-          if (isUpdating) {
-            return;
-          }
-
-          const target = event.currentTarget;
-          submitValue(target.value);
-        });
-
-        input.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            input.blur();
-          }
-        });
-
-        actionsContainer.appendChild(input);
-        hasActions = true;
-      } else if (entity.actions.length > 0) {
-        entity.actions.forEach((action) => {
-          const button = document.createElement("sl-button");
-          button.variant = action.active ? "primary" : "default";
-          button.size = "small";
-          button.textContent = action.label;
-
-          button.addEventListener("click", async () => {
-            try {
-              const response = await apiFetch("/api/toggle", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  entity_id: entity.entity_id,
-                  state: action.state,
-                }),
-              });
-
-              const payload = await response.json();
-
-              if (!response.ok) {
-                throw new Error(payload.error || "Failed to toggle sensor");
-              }
-
-              state.simulationData = payload;
-              renderSimulation(payload);
-            } catch (error) {
-              showError(error.message);
-            }
-          });
-
-          actionsContainer.appendChild(button);
-        });
-
-        hasActions = true;
-      }
-
-      if (hasActions) {
-        card.appendChild(actionsContainer);
-      }
-
-      card.appendChild(contentContainer);
-      sensorsContainer.appendChild(card);
+      sensorsContainer.appendChild(createSensorCard(entity));
     });
+  }
+
+  function createElementWithClass(tagName, className) {
+    const element = document.createElement(tagName);
+    if (className) {
+      element.className = className;
+    }
+
+    return element;
+  }
+
+  function parseDetailSegments(details) {
+    if (!details) {
+      return [];
+    }
+
+    if (Array.isArray(details)) {
+      return details.filter(Boolean);
+    }
+
+    return String(details)
+      .split(/(?:\s*•\s*|\n+)/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+  }
+
+  function buildSensorContent(entity) {
+    const content = createElementWithClass("div", "sim-card-content");
+    const header = createElementWithClass("div", "sim-card-header");
+
+    const title = document.createElement("h3");
+    title.textContent = entity.name;
+    header.appendChild(title);
+
+    const stateEl = document.createElement("div");
+    stateEl.textContent = `State: ${entity.state_display}`;
+    header.appendChild(stateEl);
+
+    content.appendChild(header);
+
+    const segments = parseDetailSegments(entity.details);
+    if (segments.length > 0) {
+      const row = createElementWithClass("div", "sim-card-row");
+      segments.forEach((segment) => {
+        const detailItem = document.createElement("div");
+        detailItem.textContent = segment;
+        row.appendChild(detailItem);
+      });
+      content.appendChild(row);
+    }
+
+    return content;
+  }
+
+  function findToggleActions(actions) {
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return { onAction: null, offAction: null };
+    }
+
+    const onAction =
+      actions.find(
+        (action) =>
+          typeof action.state === "string" &&
+          action.state.toLowerCase() === "on"
+      ) ?? actions.find((action) => action.active);
+    const offAction = actions.find((action) => action !== onAction) ?? null;
+
+    return { onAction, offAction };
+  }
+
+  function createToggleControl(entity, onAction, offAction) {
+    if (!onAction || !offAction) {
+      return null;
+    }
+
+    const toggle = document.createElement("sl-switch");
+    toggle.textContent = onAction.label ?? "Active";
+    toggle.checked = Boolean(onAction.active);
+    toggle.disabled = !onAction || !offAction;
+
+    let lastKnownChecked = toggle.checked;
+
+    toggle.addEventListener("sl-change", async (event) => {
+      const control = event.currentTarget;
+      const isChecked = control.checked;
+      const targetAction = isChecked ? onAction : offAction;
+
+      control.disabled = true;
+
+      try {
+        await executeSimulationUpdate("/api/toggle", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            entity_id: entity.entity_id,
+            state: targetAction.state,
+          }),
+        });
+        lastKnownChecked = isChecked;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        showError(message);
+        control.checked = lastKnownChecked;
+      } finally {
+        control.disabled = false;
+      }
+    });
+
+    return toggle;
+  }
+
+  function createNumericInput(entity, initialValue = "") {
+    const input = document.createElement("sl-input");
+    input.type = "number";
+    input.size = "medium";
+    input.value = initialValue;
+    input.placeholder = "--";
+    input.step = "any";
+    input.inputMode = "decimal";
+    input.disabled = false;
+
+    let lastKnownValue = input.value;
+    let isUpdating = false;
+
+    const setLoadingState = (loading) => {
+      isUpdating = loading;
+      input.disabled = loading;
+    };
+
+    const submitValue = async (rawValue) => {
+      const numericValue = Number.parseFloat(rawValue);
+      if (!Number.isFinite(numericValue)) {
+        showError(`Invalid numeric value: ${rawValue}`);
+        input.value = lastKnownValue;
+        return;
+      }
+
+      const lastNumeric = Number.parseFloat(lastKnownValue);
+      if (!Number.isNaN(lastNumeric) && lastNumeric === numericValue) {
+        input.value = lastKnownValue;
+        return;
+      }
+
+      setLoadingState(true);
+
+      try {
+        await executeSimulationUpdate("/api/update", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            entity_id: entity.entity_id,
+            value: numericValue,
+          }),
+        });
+        lastKnownValue = numericValue.toString();
+        input.value = lastKnownValue;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        showError(message);
+        input.value = lastKnownValue;
+      } finally {
+        setLoadingState(false);
+      }
+    };
+
+    input.addEventListener("sl-change", (event) => {
+      if (isUpdating) {
+        return;
+      }
+
+      submitValue(event.currentTarget.value);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+
+    return input;
+  }
+
+  function createActionButton(entity, action) {
+    const button = document.createElement("sl-button");
+    button.variant = action.active ? "primary" : "default";
+    button.size = "small";
+    button.textContent = action.label;
+
+    button.addEventListener("click", async () => {
+      try {
+        await executeSimulationUpdate("/api/toggle", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            entity_id: entity.entity_id,
+            state: action.state,
+          }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        showError(message);
+      }
+    });
+
+    return button;
+  }
+
+  function buildSensorActions(entity) {
+    const actions = Array.isArray(entity.actions) ? entity.actions : [];
+    const container = createElementWithClass("div", "sim-card-actions");
+
+    const supportsBinaryToggle =
+      !entity.is_numeric &&
+      actions.length >= 2 &&
+      actions.every((action) => typeof action.state === "string");
+
+    if (supportsBinaryToggle) {
+      const { onAction, offAction } = findToggleActions(actions);
+      const toggle = createToggleControl(entity, onAction, offAction);
+      if (toggle) {
+        container.appendChild(toggle);
+        return container;
+      }
+    }
+
+    if (entity.is_numeric) {
+      const currentValueAction = actions.find((action) => action.active);
+      const input = createNumericInput(
+        entity,
+        currentValueAction?.value?.toString() ?? entity.state ?? ""
+      );
+      container.appendChild(input);
+      return container;
+    }
+
+    if (actions.length > 0) {
+      actions.forEach((action) => {
+        const button = createActionButton(entity, action);
+        container.appendChild(button);
+      });
+
+      if (container.children.length > 0) {
+        return container;
+      }
+    }
+
+    return null;
+  }
+
+  function createSensorCard(entity) {
+    const card = createElementWithClass("div", "md-card sim-card entity");
+    const actions = buildSensorActions(entity);
+
+    if (actions) {
+      card.appendChild(actions);
+    }
+
+    card.appendChild(buildSensorContent(entity));
+    return card;
   }
 
   function renderBreakdown(data) {
@@ -716,7 +789,7 @@
       }
 
       try {
-        const response = await apiFetch("/api/tick", {
+        const payload = await requestJson("/api/tick", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -724,19 +797,59 @@
           body: JSON.stringify({}),
         });
 
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error || "Failed to update simulation");
-        }
-
-        state.simulationData = payload;
-        renderSimulation(payload);
+        applySimulationPayload(payload);
       } catch (error) {
-        // Silent failure keeps UI responsive, show status only if API offline
-        updateApiStatus("offline", "API Offline");
+        handleApiFailure(error, { silent: true });
       }
-    }, 5000);
+    }, 1000);
+  }
+
+  function registerApiSlider({
+    slider,
+    clamp,
+    endpoint,
+    payloadBuilder,
+    baseLabel,
+    formatter = formatPercent,
+  }) {
+    if (!slider) {
+      return;
+    }
+
+    const applyValue = (value) => {
+      const numericValue = Number.parseFloat(value);
+      const normalized = Number.isFinite(numericValue) ? numericValue : 0;
+      const clampedValue = clamp(normalized);
+      slider.value = clampedValue;
+      setRangeLabelWithValue(slider, clampedValue, baseLabel, formatter);
+      return clampedValue;
+    };
+
+    slider.addEventListener("sl-input", (event) => {
+      applyValue(getEventValue(event));
+    });
+
+    slider.addEventListener("sl-change", async (event) => {
+      const clampedValue = applyValue(getEventValue(event));
+
+      if (!state.simulationData) {
+        return;
+      }
+
+      try {
+        await executeSimulationUpdate(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payloadBuilder(clampedValue)),
+        });
+      } catch (error) {
+        handleApiFailure(error);
+      }
+    });
+
+    applyValue(slider.value);
   }
 
   async function loadPurposes() {
@@ -745,13 +858,7 @@
     }
 
     try {
-      const response = await apiFetch("/api/get-purposes");
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to load purposes");
-      }
-
+      const payload = await requestJson("/api/get-purposes");
       purposeSelect.innerHTML = "";
       payload.purposes.forEach((purpose) => {
         const option = document.createElement("sl-option");
@@ -762,8 +869,7 @@
 
       updateApiStatus("online", "API Online");
     } catch (error) {
-      showError(error.message);
-      updateApiStatus("offline", "API Offline");
+      handleApiFailure(error);
     }
   }
 
@@ -776,7 +882,7 @@
     }
 
     try {
-      const response = await apiFetch("/api/load", {
+      const payload = await requestJson("/api/load", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -784,145 +890,15 @@
         body: JSON.stringify({ yaml: yamlText }),
       });
 
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to load simulation");
-      }
-
-      state.simulationData = payload;
-      state.probabilityHistory = [];
-      initChart();
-      renderSimulation(payload);
-      hideError();
+      applySimulationPayload(payload, { resetHistory: true });
 
       startAutoUpdate();
       updateApiStatus("online", "API Online");
     } catch (error) {
-      showError(`Error loading simulation: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      showError(`Error loading simulation: ${message}`);
       updateApiStatus("offline", "API Offline");
     }
-  }
-
-  function addPriorListeners(control) {
-    const slider = control.slider;
-    const key = control.key;
-    const baseLabel = control.baseLabel;
-
-    if (!slider) {
-      return;
-    }
-
-    const updateValue = (value) => {
-      const numericValue = Number.parseFloat(value);
-      const clamped = Math.min(
-        Math.max(Number.isNaN(numericValue) ? 0 : numericValue, 0),
-        1
-      );
-      slider.value = clamped;
-      setRangeLabelWithValue(slider, clamped, baseLabel);
-      return clamped;
-    };
-
-    const handleUpdate = async (value) => {
-      const clamped = updateValue(value);
-
-      if (!state.simulationData) {
-        return;
-      }
-
-      try {
-        const response = await apiFetch("/api/update-priors", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ [key]: clamped }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error || "Failed to update priors");
-        }
-
-        state.simulationData = payload;
-        renderSimulation(payload);
-      } catch (error) {
-        showError(error.message);
-        updateApiStatus("offline", "API Offline");
-      }
-    };
-
-    slider.addEventListener("sl-input", (event) => {
-      updateValue(getEventValue(event));
-    });
-
-    slider.addEventListener("sl-change", (event) => {
-      handleUpdate(getEventValue(event));
-    });
-
-    updateValue(slider.value);
-  }
-
-  function addWeightListeners(type, control) {
-    const slider = control.slider;
-    const baseLabel = control.baseLabel;
-
-    if (!slider) {
-      return;
-    }
-
-    const updateValue = (value) => {
-      const numericValue = Number.parseFloat(value);
-      const clamped = Math.min(
-        Math.max(Number.isNaN(numericValue) ? 0.01 : numericValue, 0.01),
-        1
-      );
-      slider.value = clamped;
-      setRangeLabelWithValue(slider, clamped, baseLabel, formatDecimal);
-      return clamped;
-    };
-
-    const handleUpdate = async (value) => {
-      const clamped = updateValue(value);
-
-      if (!state.simulationData) {
-        return;
-      }
-
-      try {
-        const response = await apiFetch("/api/update-weights", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ weight_type: type, value: clamped }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error || "Failed to update weights");
-        }
-
-        state.simulationData = payload;
-        renderSimulation(payload);
-      } catch (error) {
-        showError(error.message);
-        updateApiStatus("offline", "API Offline");
-      }
-    };
-
-    slider.addEventListener("sl-input", (event) => {
-      updateValue(getEventValue(event));
-    });
-
-    slider.addEventListener("sl-change", (event) => {
-      handleUpdate(getEventValue(event));
-    });
-
-    updateValue(slider.value);
   }
 
   async function handlePurposeChange(event) {
@@ -933,45 +909,46 @@
     }
 
     try {
-      const response = await apiFetch("/api/update-purpose", {
+      await executeSimulationUpdate("/api/update-purpose", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ purpose: value }),
       });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to update purpose");
-      }
-
-      state.simulationData = payload;
-      renderSimulation(payload);
     } catch (error) {
-      showError(error.message);
-      updateApiStatus("offline", "API Offline");
+      handleApiFailure(error);
     }
   }
 
   function initPriorControls() {
-    addPriorListeners({
+    registerApiSlider({
       slider: globalPriorSlider,
-      key: "global_prior",
+      clamp: (v) => Math.min(Math.max(v, 0), 1),
+      endpoint: "/api/update-priors",
+      payloadBuilder: (value) => ({ global_prior: value }),
       baseLabel: "Global Prior",
     });
 
-    addPriorListeners({
+    registerApiSlider({
       slider: timePriorSlider,
-      key: "time_prior",
+      clamp: (v) => Math.min(Math.max(v, 0), 1),
+      endpoint: "/api/update-priors",
+      payloadBuilder: (value) => ({ time_prior: value }),
       baseLabel: "Time Prior",
     });
   }
 
   function initWeightControls() {
     Object.entries(weightControls).forEach(([type, control]) => {
-      addWeightListeners(type, control);
+      registerApiSlider({
+        slider: control.slider,
+        clamp: (v) => Math.min(Math.max(v, 0.01), 1),
+        endpoint: "/api/update-weights",
+        payloadBuilder: (value) => ({ weight_type: type, value: value }),
+        baseLabel: control.baseLabel,
+        formatter: formatDecimal,
+      });
     });
   }
 

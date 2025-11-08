@@ -87,6 +87,70 @@ simulator_state: dict[str, Any] | None = None
 entity_state_store: dict[str, str | float] = {}
 
 
+def _json_success(payload: dict[str, Any], status: int = 200):
+    """Return a successful JSON response."""
+
+    return jsonify(payload), status
+
+
+def _json_error(message: str, status: int = 400):
+    """Return a standardized JSON error response."""
+
+    return jsonify({"error": message}), status
+
+
+def _require_simulator_state() -> dict[str, Any]:
+    """Ensure the simulator has been initialized before proceeding."""
+
+    if simulator_state is None:
+        raise RuntimeError("No simulation loaded")
+
+    return simulator_state
+
+
+def _require_entity(state: dict[str, Any], entity_id: str) -> Entity:
+    """Return an entity from the simulator state or raise a KeyError."""
+
+    try:
+        return state["entities"][entity_id]
+    except KeyError as exc:
+        raise KeyError(entity_id) from exc
+
+
+def _simulation_payload(
+    *,
+    probability: float | None = None,
+    breakdown: dict[str, float] | None = None,
+    include_decay: bool = False,
+) -> dict[str, Any]:
+    """Build a simulation payload, recalculating if necessary."""
+
+    state = _require_simulator_state()
+
+    if probability is None or breakdown is None:
+        probability, breakdown = calculate_probability_breakdown(
+            state["entities"], state["global_prior"], state["time_prior"]
+        )
+
+    return _build_simulation_payload(
+        probability, breakdown, include_decay=include_decay
+    )
+
+
+def _simulation_response(
+    *,
+    probability: float | None = None,
+    breakdown: dict[str, float] | None = None,
+    include_decay: bool = False,
+):
+    """Return a standardized simulation response."""
+
+    payload = _simulation_payload(
+        probability=probability, breakdown=breakdown, include_decay=include_decay
+    )
+    return _json_success(payload)
+
+
 def _friendly_name(entity_id: str) -> str:
     """Create a human-friendly name for an entity."""
 
@@ -562,7 +626,7 @@ def load_data():
     try:
         yaml_text = request.json.get("yaml", "")
         if not yaml_text:
-            return jsonify({"error": "No YAML data provided"}), 400
+            return _json_error("No YAML data provided", 400)
 
         data = parse_yaml_input(yaml_text)
 
@@ -612,12 +676,12 @@ def load_data():
             "entity_type_weights": entity_type_weights,
         }
 
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
+        return _simulation_response(probability=overall_prob, breakdown=breakdown)
 
-    except yaml.YAMLError as e:
-        return jsonify({"error": f"Invalid YAML: {e!s}"}), 400
-    except Exception as e:
-        return jsonify({"error": f"Error loading data: {e!s}"}), 500
+    except yaml.YAMLError as exc:
+        return _json_error(f"Invalid YAML: {exc!s}", 400)
+    except Exception as exc:
+        return _json_error(f"Error loading data: {exc!s}", 500)
 
 
 @app.route("/api/toggle", methods=["POST"])
@@ -629,18 +693,24 @@ def toggle_sensor():
     """
     global simulator_state
 
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
+
+    payload = request.get_json(silent=True) or {}
+    entity_id = payload.get("entity_id")
+    new_state = payload.get("state")
+
+    if entity_id is None:
+        return _json_error("Entity ID is required", 400)
 
     try:
-        entity_id = request.json.get("entity_id")
-        new_state = request.json.get("state")  # "on" or "off"
+        entity = _require_entity(state, entity_id)
+    except KeyError:
+        return _json_error(f"Entity {entity_id} not found", 404)
 
-        if entity_id not in simulator_state["entities"]:
-            return jsonify({"error": f"Entity {entity_id} not found"}), 404
-
-        entity = simulator_state["entities"][entity_id]
-
+    try:
         # Update state in state store
         if new_state == "on":
             # For binary sensors, set to appropriate active state
@@ -663,17 +733,9 @@ def toggle_sensor():
         else:
             entity_state_store[entity_id] = STATE_OFF
 
-        # Recalculate probability
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error toggling sensor: {e!s}"}), 500
+        return _simulation_response()
+    except Exception as exc:
+        return _json_error(f"Error toggling sensor: {exc!s}", 500)
 
 
 @app.route("/api/update", methods=["POST"])
@@ -685,33 +747,29 @@ def update_sensor():
     """
     global simulator_state
 
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
+
+    payload = request.get_json(silent=True) or {}
+    entity_id = payload.get("entity_id")
+    new_value = payload.get("value")
+
+    if entity_id is None:
+        return _json_error("Entity ID is required", 400)
 
     try:
-        entity_id = request.json.get("entity_id")
-        new_value = request.json.get("value")
+        _require_entity(state, entity_id)
+    except KeyError:
+        return _json_error(f"Entity {entity_id} not found", 404)
 
-        if entity_id not in simulator_state["entities"]:
-            return jsonify({"error": f"Entity {entity_id} not found"}), 404
+    try:
+        entity_state_store[entity_id] = float(new_value)
+    except (ValueError, TypeError):
+        return _json_error(f"Invalid numeric value: {new_value}", 400)
 
-        # Update state in state store
-        try:
-            entity_state_store[entity_id] = float(new_value)
-        except (ValueError, TypeError):
-            return jsonify({"error": f"Invalid numeric value: {new_value}"}), 400
-
-        # Recalculate probability
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error updating sensor: {e!s}"}), 500
+    return _simulation_response()
 
 
 @app.route("/api/probability", methods=["GET"])
@@ -721,22 +779,15 @@ def get_probability():
     Returns:
         JSON response with current probability and breakdown
     """
-    global simulator_state
-
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    try:
+        _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
 
     try:
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error calculating probability: {e!s}"}), 500
+        return _simulation_response()
+    except Exception as exc:
+        return _json_error(f"Error calculating probability: {exc!s}", 500)
 
 
 @app.route("/api/update-priors", methods=["POST"])
@@ -746,55 +797,46 @@ def update_priors():
     Returns:
         JSON response with updated probability
     """
-    global simulator_state
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
 
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return _json_error("Invalid request payload", 400)
+
+    updated = False
+
+    if "global_prior" in payload:
+        try:
+            new_global = float(payload["global_prior"])
+        except (TypeError, ValueError) as exc:
+            return _json_error(f"Invalid global_prior: {exc}", 400)
+
+        if not 0.0 <= new_global <= 1.0:
+            return _json_error("global_prior must be between 0.0 and 1.0", 400)
+        state["global_prior"] = new_global
+        updated = True
+
+    if "time_prior" in payload:
+        try:
+            new_time = float(payload["time_prior"])
+        except (TypeError, ValueError) as exc:
+            return _json_error(f"Invalid time_prior: {exc}", 400)
+
+        if not 0.0 <= new_time <= 1.0:
+            return _json_error("time_prior must be between 0.0 and 1.0", 400)
+        state["time_prior"] = new_time
+        updated = True
+
+    if not updated:
+        return _json_error("At least one prior value is required", 400)
 
     try:
-        payload = request.json or {}
-        if not isinstance(payload, dict):
-            return jsonify({"error": "Invalid request payload"}), 400
-
-        updated = False
-
-        if "global_prior" in payload:
-            try:
-                new_global = float(payload["global_prior"])
-            except (TypeError, ValueError) as exc:
-                return jsonify({"error": f"Invalid global_prior: {exc}"}), 400
-
-            if not 0.0 <= new_global <= 1.0:
-                return jsonify(
-                    {"error": "global_prior must be between 0.0 and 1.0"}
-                ), 400
-            simulator_state["global_prior"] = new_global
-            updated = True
-
-        if "time_prior" in payload:
-            try:
-                new_time = float(payload["time_prior"])
-            except (TypeError, ValueError) as exc:
-                return jsonify({"error": f"Invalid time_prior: {exc}"}), 400
-
-            if not 0.0 <= new_time <= 1.0:
-                return jsonify({"error": "time_prior must be between 0.0 and 1.0"}), 400
-            simulator_state["time_prior"] = new_time
-            updated = True
-
-        if not updated:
-            return jsonify({"error": "At least one prior value is required"}), 400
-
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error updating priors: {e!s}"}), 500
+        return _simulation_response()
+    except Exception as exc:
+        return _json_error(f"Error updating priors: {exc!s}", 500)
 
 
 @app.route("/api/tick", methods=["POST"])
@@ -804,28 +846,18 @@ def tick():
     Returns:
         JSON response with updated probability and breakdown
     """
-    global simulator_state
-
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
 
     try:
         # Update decay states (detect transitions)
-        update_decay_states(simulator_state["entities"])
+        update_decay_states(state["entities"])
 
-        # Recalculate probability
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(
-            _build_simulation_payload(overall_prob, breakdown, include_decay=True)
-        )
-
-    except Exception as e:
-        return jsonify({"error": f"Error in tick: {e!s}"}), 500
+        return _simulation_response(include_decay=True)
+    except Exception as exc:
+        return _json_error(f"Error in tick: {exc!s}", 500)
 
 
 @app.route("/api/update-purpose", methods=["POST"])
@@ -835,38 +867,31 @@ def update_purpose():
     Returns:
         JSON response with updated probability and breakdown
     """
-    global simulator_state
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
 
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    payload = request.get_json(silent=True) or {}
+    new_purpose = payload.get("purpose")
+    if new_purpose is None:
+        return _json_error("Purpose is required", 400)
 
     try:
-        new_purpose = request.json.get("purpose")
-        if new_purpose is None:
-            return jsonify({"error": "Purpose is required"}), 400
-
         # Get new half-life
         new_half_life = get_half_life_from_purpose(new_purpose)
 
         # Update all entities' decay half-life
-        for entity in simulator_state["entities"].values():
+        for entity in state["entities"].values():
             entity.decay.half_life = new_half_life
 
         # Update simulator state
-        simulator_state["area_purpose"] = new_purpose
-        simulator_state["half_life"] = new_half_life
+        state["area_purpose"] = new_purpose
+        state["half_life"] = new_half_life
 
-        # Recalculate probability
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error updating purpose: {e!s}"}), 500
+        return _simulation_response()
+    except Exception as exc:
+        return _json_error(f"Error updating purpose: {exc!s}", 500)
 
 
 @app.route("/api/update-weights", methods=["POST"])
@@ -874,55 +899,45 @@ def update_weights():
     """Update weights for entity types and recalculate probability.
 
     Returns:
-        JSON response with updated probability and breakdown
+        JSON response with updated probability
     """
-    global simulator_state
+    try:
+        state = _require_simulator_state()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 400)
 
-    if simulator_state is None:
-        return jsonify({"error": "No simulation loaded"}), 400
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return _json_error("Invalid request payload", 400)
+
+    weight_type = payload.get("weight_type")
+    weight_value = payload.get("value")
+
+    if weight_type is None or weight_value is None:
+        return _json_error("weight_type and value are required", 400)
 
     try:
-        payload = request.json or {}
-        if not isinstance(payload, dict):
-            return jsonify({"error": "Invalid request payload"}), 400
+        weight_float = float(weight_value)
+    except (TypeError, ValueError) as exc:
+        return _json_error(f"Invalid weight value: {exc}", 400)
 
-        weight_type = payload.get("weight_type")
-        weight_value = payload.get("value")
+    weight_float = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_float))
 
-        if weight_type is None or weight_value is None:
-            return jsonify({"error": "weight_type and value are required"}), 400
+    updated = False
+    for entity in state["entities"].values():
+        if entity.type.input_type.value == weight_type:
+            entity.type.weight = weight_float
+            updated = True
 
-        try:
-            weight_float = float(weight_value)
-        except (TypeError, ValueError) as exc:
-            return jsonify({"error": f"Invalid weight value: {exc}"}), 400
+    if not updated:
+        return _json_error(f"No entities found for type {weight_type}", 404)
 
-        weight_float = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_float))
+    state.setdefault("entity_type_weights", {})[weight_type] = weight_float
 
-        updated = False
-        for entity in simulator_state["entities"].values():
-            if entity.type.input_type.value == weight_type:
-                entity.type.weight = weight_float
-                updated = True
-
-        if not updated:
-            return jsonify({"error": f"No entities found for type {weight_type}"}), 404
-
-        simulator_state.setdefault("entity_type_weights", {})[weight_type] = (
-            weight_float
-        )
-
-        # Recalculate probability
-        overall_prob, breakdown = calculate_probability_breakdown(
-            simulator_state["entities"],
-            simulator_state["global_prior"],
-            simulator_state["time_prior"],
-        )
-
-        return jsonify(_build_simulation_payload(overall_prob, breakdown))
-
-    except Exception as e:
-        return jsonify({"error": f"Error updating weights: {e!s}"}), 500
+    try:
+        return _simulation_response()
+    except Exception as exc:
+        return _json_error(f"Error updating weights: {exc!s}", 500)
 
 
 @app.route("/api/get-purposes", methods=["GET"])
@@ -941,7 +956,7 @@ def get_purposes():
                 "half_life": purpose_def.half_life,
             }
         )
-    return jsonify({"purposes": purposes})
+    return _json_success({"purposes": purposes})
 
 
 if __name__ == "__main__":
