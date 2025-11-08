@@ -14,6 +14,63 @@
 
   document.body.classList.add("aod-simulator-mode");
 
+  function formatPercent(value, digits = 2) {
+    return `${(value * 100).toFixed(digits)}%`;
+  }
+
+  function formatDecimal(value, digits = 2) {
+    return value.toFixed(digits);
+  }
+
+  function setDisplayText(element, text) {
+    if (!element) {
+      return;
+    }
+
+    element.textContent = text;
+    element.dataset.displayValue = text;
+  }
+
+  function getRangeBaseLabel(slider, fallback = "") {
+    if (!slider) {
+      return fallback;
+    }
+
+    if (!slider.dataset.baseLabel) {
+      slider.dataset.baseLabel =
+        slider.dataset.label ||
+        slider.getAttribute("data-label") ||
+        slider.label ||
+        fallback;
+    }
+
+    return slider.dataset.baseLabel;
+  }
+
+  function setRangeLabelWithValue(
+    slider,
+    value,
+    fallbackLabel = "",
+    formatter = (val) => formatPercent(val)
+  ) {
+    if (!slider) {
+      return;
+    }
+
+    const baseLabel = getRangeBaseLabel(slider, fallbackLabel);
+    slider.label = `${baseLabel}: ${formatter(value)}`;
+  }
+
+  function getEventValue(event) {
+    if (
+      event?.detail &&
+      Object.prototype.hasOwnProperty.call(event.detail, "value")
+    ) {
+      return event.detail.value;
+    }
+    return event?.target?.value;
+  }
+
   function normalizeBaseUrl(url) {
     if (!url) {
       return DEFAULT_API_BASE_URL;
@@ -127,20 +184,15 @@
   const areaName = document.getElementById("area-name");
   const probabilityValue = document.getElementById("probability-value");
   const probabilityFill = document.getElementById("probability-fill");
-  const sensorsList = document.getElementById("sensors-list");
+  const sensorsPlaceholder = document.getElementById("sensors-placeholder");
+  const sensorsContainer = document.getElementById("sensors-container");
   const breakdownList = document.getElementById("breakdown-list");
   const globalPriorSlider = document.getElementById("global-prior-slider");
-  const globalPriorInput = document.getElementById("global-prior-input");
-  const globalPriorDisplay = document.getElementById("global-prior-display");
   const timePriorSlider = document.getElementById("time-prior-slider");
-  const timePriorInput = document.getElementById("time-prior-input");
-  const timePriorDisplay = document.getElementById("time-prior-display");
-  const combinedPriorDisplay = document.getElementById(
-    "combined-prior-display"
-  );
-  const finalPriorDisplay = document.getElementById("final-prior-display");
+  const combinedPriorInput = document.getElementById("combined-prior-input");
+  const finalPriorInput = document.getElementById("final-prior-input");
   const purposeSelect = document.getElementById("purpose-select");
-  const halfLifeDisplay = document.getElementById("half-life-display");
+  const halfLifeInput = document.getElementById("half-life-display");
   const apiBaseInput = document.getElementById("api-base-input");
   const apiBaseSave = document.getElementById("api-base-save");
   const apiBaseReset = document.getElementById("api-base-reset");
@@ -150,43 +202,35 @@
   const weightControls = {
     motion: {
       slider: document.getElementById("weight-motion-slider"),
-      input: document.getElementById("weight-motion-input"),
-      display: document.getElementById("weight-motion-display"),
+      baseLabel: "Motion",
     },
     media: {
       slider: document.getElementById("weight-media-slider"),
-      input: document.getElementById("weight-media-input"),
-      display: document.getElementById("weight-media-display"),
+      baseLabel: "Media",
     },
     appliance: {
       slider: document.getElementById("weight-appliance-slider"),
-      input: document.getElementById("weight-appliance-input"),
-      display: document.getElementById("weight-appliance-display"),
+      baseLabel: "Appliance",
     },
     door: {
       slider: document.getElementById("weight-door-slider"),
-      input: document.getElementById("weight-door-input"),
-      display: document.getElementById("weight-door-display"),
+      baseLabel: "Door",
     },
     window: {
       slider: document.getElementById("weight-window-slider"),
-      input: document.getElementById("weight-window-input"),
-      display: document.getElementById("weight-window-display"),
+      baseLabel: "Window",
     },
     illuminance: {
       slider: document.getElementById("weight-illuminance-slider"),
-      input: document.getElementById("weight-illuminance-input"),
-      display: document.getElementById("weight-illuminance-display"),
+      baseLabel: "Illuminance",
     },
     humidity: {
       slider: document.getElementById("weight-humidity-slider"),
-      input: document.getElementById("weight-humidity-input"),
-      display: document.getElementById("weight-humidity-display"),
+      baseLabel: "Humidity",
     },
     temperature: {
       slider: document.getElementById("weight-temperature-slider"),
-      input: document.getElementById("weight-temperature-input"),
-      display: document.getElementById("weight-temperature-display"),
+      baseLabel: "Temperature",
     },
   };
 
@@ -290,7 +334,7 @@
 
   function setProbability(probability) {
     if (probabilityValue) {
-      probabilityValue.textContent = `${(probability * 100).toFixed(2)}%`;
+      setDisplayText(probabilityValue, formatPercent(probability));
     }
 
     if (probabilityFill) {
@@ -301,42 +345,221 @@
   }
 
   function renderSensors(data) {
-    if (!sensorsList) {
+    if (!sensorsContainer) {
       return;
     }
 
-    sensorsList.innerHTML = "";
+    sensorsContainer.innerHTML = "";
+    sensorsContainer.classList.toggle("empty", data.entities.length === 0);
+
+    if (sensorsPlaceholder) {
+      sensorsPlaceholder.classList.toggle("hidden", data.entities.length > 0);
+    }
 
     data.entities.forEach((entity) => {
       const card = document.createElement("div");
-      card.className = "sim-sensor-card";
+      card.className = "md-card sim-card entity";
+
+      const actionsContainer = document.createElement("div");
+      actionsContainer.className = "sim-card-actions";
+
+      const contentContainer = document.createElement("div");
+      contentContainer.className = "sim-card-content";
+
+      const header = document.createElement("div");
+      header.className = "sim-card-header";
 
       const title = document.createElement("h3");
       title.textContent = entity.name;
-      card.appendChild(title);
+      header.appendChild(title);
 
       const stateEl = document.createElement("div");
-      stateEl.className = "sim-sensor-state";
       stateEl.textContent = `State: ${entity.state_display}`;
-      card.appendChild(stateEl);
+      header.appendChild(stateEl);
 
-      const details = document.createElement("div");
-      details.className = "sim-sensor-details";
-      details.textContent = entity.details;
-      card.appendChild(details);
+      contentContainer.appendChild(header);
 
-      if (entity.actions.length > 0) {
-        const buttonsContainer = document.createElement("div");
-        buttonsContainer.className = "sim-sensor-buttons";
+      if (entity.details) {
+        const detailsRow = document.createElement("div");
+        detailsRow.className = "sim-card-row";
 
-        entity.actions.forEach((action) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "sim-sensor-button";
-          button.textContent = action.label;
-          if (action.active) {
-            button.classList.add("active");
+        const segments = Array.isArray(entity.details)
+          ? entity.details
+          : String(entity.details)
+              .split(/(?:\s*•\s*|\n+)/)
+              .map((segment) => segment.trim())
+              .filter(Boolean);
+
+        if (segments.length === 0) {
+          segments.push(String(entity.details));
+        }
+
+        segments.forEach((segment) => {
+          const detailItem = document.createElement("div");
+          detailItem.textContent = segment;
+          detailsRow.appendChild(detailItem);
+        });
+
+        contentContainer.appendChild(detailsRow);
+      }
+
+      let hasActions = false;
+
+      const supportsBinaryToggle =
+        !entity.is_numeric &&
+        entity.actions.length >= 2 &&
+        entity.actions.every((action) => typeof action.state === "string");
+
+      if (supportsBinaryToggle) {
+        const onAction =
+          entity.actions.find(
+            (action) => action.state?.toLowerCase() === "on"
+          ) ?? entity.actions.find((action) => action.active);
+        const offAction = entity.actions.find((action) => action !== onAction);
+
+        const toggle = document.createElement("sl-switch");
+        toggle.textContent = onAction?.label ?? "Active";
+        toggle.checked = Boolean(onAction?.active);
+        toggle.disabled = !onAction || !offAction;
+
+        let lastKnownChecked = toggle.checked;
+
+        toggle.addEventListener("sl-change", async (event) => {
+          if (!onAction || !offAction) {
+            return;
           }
+
+          const control = event.currentTarget;
+          const isChecked = control.checked;
+          const targetAction = isChecked ? onAction : offAction;
+
+          control.disabled = true;
+
+          try {
+            const response = await apiFetch("/api/toggle", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                entity_id: entity.entity_id,
+                state: targetAction.state,
+              }),
+            });
+
+            const payload = await response.json();
+
+            if (!response.ok) {
+              throw new Error(payload.error || "Failed to toggle sensor");
+            }
+
+            state.simulationData = payload;
+            renderSimulation(payload);
+            lastKnownChecked = isChecked;
+          } catch (error) {
+            showError(error.message);
+            control.checked = lastKnownChecked;
+          } finally {
+            control.disabled = false;
+          }
+        });
+
+        actionsContainer.appendChild(toggle);
+        hasActions = true;
+      } else if (entity.is_numeric) {
+        const currentValueAction = entity.actions.find(
+          (action) => action.active
+        );
+        const input = document.createElement("sl-input");
+        input.type = "number";
+        input.size = "medium";
+        input.value =
+          currentValueAction?.value?.toString() ?? entity.state ?? "";
+        input.placeholder = "--";
+        input.step = "any";
+        input.inputMode = "decimal";
+        input.disabled = false;
+
+        let lastKnownValue = input.value;
+        let isUpdating = false;
+
+        const setLoadingState = (loading) => {
+          isUpdating = loading;
+          input.loading = loading;
+          input.disabled = loading;
+        };
+
+        const submitValue = async (rawValue) => {
+          const numericValue = Number.parseFloat(rawValue);
+          if (!Number.isFinite(numericValue)) {
+            showError(`Invalid numeric value: ${rawValue}`);
+            input.value = lastKnownValue;
+            return;
+          }
+
+          const lastNumeric = Number.parseFloat(lastKnownValue);
+          if (!Number.isNaN(lastNumeric) && lastNumeric === numericValue) {
+            input.value = lastKnownValue;
+            return;
+          }
+
+          setLoadingState(true);
+
+          try {
+            const response = await apiFetch("/api/update", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                entity_id: entity.entity_id,
+                value: numericValue,
+              }),
+            });
+
+            const payload = await response.json();
+
+            if (!response.ok) {
+              throw new Error(payload.error || "Failed to update sensor");
+            }
+
+            lastKnownValue = numericValue.toString();
+            input.value = lastKnownValue;
+            state.simulationData = payload;
+            renderSimulation(payload);
+            hideError();
+          } catch (error) {
+            showError(error.message ?? error);
+            input.value = lastKnownValue;
+          } finally {
+            setLoadingState(false);
+          }
+        };
+
+        input.addEventListener("sl-change", (event) => {
+          if (isUpdating) {
+            return;
+          }
+
+          const target = event.currentTarget;
+          submitValue(target.value);
+        });
+
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            input.blur();
+          }
+        });
+
+        actionsContainer.appendChild(input);
+        hasActions = true;
+      } else if (entity.actions.length > 0) {
+        entity.actions.forEach((action) => {
+          const button = document.createElement("sl-button");
+          button.variant = action.active ? "primary" : "default";
+          button.size = "small";
+          button.textContent = action.label;
 
           button.addEventListener("click", async () => {
             try {
@@ -364,13 +587,18 @@
             }
           });
 
-          buttonsContainer.appendChild(button);
+          actionsContainer.appendChild(button);
         });
 
-        card.appendChild(buttonsContainer);
+        hasActions = true;
       }
 
-      sensorsList.appendChild(card);
+      if (hasActions) {
+        card.appendChild(actionsContainer);
+      }
+
+      card.appendChild(contentContainer);
+      sensorsContainer.appendChild(card);
     });
   }
 
@@ -383,23 +611,28 @@
 
     data.breakdown.forEach((item) => {
       const breakdownItem = document.createElement("div");
-      breakdownItem.className = "sim-breakdown-item";
+      breakdownItem.className = "md-card sim-breakdown-card";
 
       const label = document.createElement("div");
-      label.className = "sim-breakdown-label";
-      label.innerHTML = `<strong>${item.name}</strong><span>${item.description}</span>`;
+      const labelStrong = document.createElement("strong");
+      labelStrong.textContent = item.name;
+      const labelSpan = document.createElement("span");
+      labelSpan.textContent = item.description;
+      label.append(labelStrong, labelSpan);
 
       const likelihood = document.createElement("div");
-      likelihood.className = "sim-breakdown-metric";
-      likelihood.innerHTML = `<strong>${(item.likelihood * 100).toFixed(
-        2
-      )}%</strong><span>Likelihood</span>`;
+      const likelihoodValue = document.createElement("strong");
+      setDisplayText(likelihoodValue, formatPercent(item.likelihood));
+      const likelihoodLabel = document.createElement("span");
+      likelihoodLabel.textContent = "Likelihood";
+      likelihood.append(likelihoodValue, likelihoodLabel);
 
       const contribution = document.createElement("div");
-      contribution.className = "sim-breakdown-metric";
-      contribution.innerHTML = `<strong>${(item.contribution * 100).toFixed(
-        2
-      )}%</strong><span>Contribution</span>`;
+      const contributionValue = document.createElement("strong");
+      setDisplayText(contributionValue, formatPercent(item.contribution));
+      const contributionLabel = document.createElement("span");
+      contributionLabel.textContent = "Contribution";
+      contribution.append(contributionValue, contributionLabel);
 
       breakdownItem.append(label, likelihood, contribution);
       breakdownList.appendChild(breakdownItem);
@@ -407,39 +640,30 @@
   }
 
   function syncPriorControls(data) {
+    const globalPriorValue = Number(data.global_prior.toFixed(2));
     if (globalPriorSlider) {
-      globalPriorSlider.value = data.global_prior.toFixed(2);
+      globalPriorSlider.value = globalPriorValue;
     }
-    if (globalPriorInput) {
-      globalPriorInput.value = data.global_prior.toFixed(2);
-    }
-    if (globalPriorDisplay) {
-      globalPriorDisplay.textContent = `${(data.global_prior * 100).toFixed(
-        2
-      )}%`;
-    }
+    setRangeLabelWithValue(globalPriorSlider, globalPriorValue, "Global Prior");
 
+    const timePriorValue = Number(data.time_prior.toFixed(2));
     if (timePriorSlider) {
-      timePriorSlider.value = data.time_prior.toFixed(2);
+      timePriorSlider.value = timePriorValue;
     }
-    if (timePriorInput) {
-      timePriorInput.value = data.time_prior.toFixed(2);
+    setRangeLabelWithValue(timePriorSlider, timePriorValue, "Time Prior");
+
+    const combinedPriorPercent = formatPercent(data.combined_prior);
+    const finalPriorPercent = formatPercent(data.final_prior);
+
+    if (combinedPriorInput) {
+      combinedPriorInput.value = combinedPriorPercent;
     }
-    if (timePriorDisplay) {
-      timePriorDisplay.textContent = `${(data.time_prior * 100).toFixed(2)}%`;
+    if (finalPriorInput) {
+      finalPriorInput.value = finalPriorPercent;
     }
 
-    if (combinedPriorDisplay) {
-      combinedPriorDisplay.textContent = `${(data.combined_prior * 100).toFixed(
-        2
-      )}%`;
-    }
-    if (finalPriorDisplay) {
-      finalPriorDisplay.textContent = `${(data.final_prior * 100).toFixed(2)}%`;
-    }
-
-    if (halfLifeDisplay) {
-      halfLifeDisplay.textContent = `Half-life: ${Math.round(data.half_life)}s`;
+    if (halfLifeInput) {
+      halfLifeInput.value = `${Math.round(data.half_life)}s`;
     }
 
     Object.entries(weightControls).forEach(([key, control]) => {
@@ -447,16 +671,16 @@
         return;
       }
 
-      const value = data.weights[key].toFixed(2);
+      const value = Number(data.weights[key].toFixed(2));
       if (control.slider) {
         control.slider.value = value;
       }
-      if (control.input) {
-        control.input.value = value;
-      }
-      if (control.display) {
-        control.display.textContent = value;
-      }
+      setRangeLabelWithValue(
+        control.slider,
+        data.weights[key],
+        control.baseLabel,
+        formatDecimal
+      );
     });
   }
 
@@ -475,6 +699,10 @@
     renderSensors(data);
     renderBreakdown(data);
     syncPriorControls(data);
+
+    if (purposeSelect && typeof data.purpose === "string") {
+      purposeSelect.value = data.purpose;
+    }
   }
 
   function startAutoUpdate() {
@@ -526,7 +754,7 @@
 
       purposeSelect.innerHTML = "";
       payload.purposes.forEach((purpose) => {
-        const option = document.createElement("option");
+        const option = document.createElement("sl-option");
         option.value = purpose.value;
         option.textContent = purpose.label;
         purposeSelect.appendChild(option);
@@ -578,19 +806,21 @@
 
   function addPriorListeners(control) {
     const slider = control.slider;
-    const input = control.input;
-    const display = control.display;
     const key = control.key;
+    const baseLabel = control.baseLabel;
 
-    if (!slider || !input || !display) {
+    if (!slider) {
       return;
     }
 
     const updateValue = (value) => {
-      const clamped = Math.min(Math.max(parseFloat(value) || 0, 0), 1);
-      slider.value = clamped.toFixed(2);
-      input.value = clamped.toFixed(2);
-      display.textContent = `${(clamped * 100).toFixed(2)}%`;
+      const numericValue = Number.parseFloat(value);
+      const clamped = Math.min(
+        Math.max(Number.isNaN(numericValue) ? 0 : numericValue, 0),
+        1
+      );
+      slider.value = clamped;
+      setRangeLabelWithValue(slider, clamped, baseLabel);
       return clamped;
     };
 
@@ -624,33 +854,33 @@
       }
     };
 
-    slider.addEventListener("input", (event) => {
-      updateValue(event.target.value);
+    slider.addEventListener("sl-input", (event) => {
+      updateValue(getEventValue(event));
     });
 
-    slider.addEventListener("change", (event) => {
-      handleUpdate(event.target.value);
+    slider.addEventListener("sl-change", (event) => {
+      handleUpdate(getEventValue(event));
     });
 
-    input.addEventListener("change", (event) => {
-      handleUpdate(event.target.value);
-    });
+    updateValue(slider.value);
   }
 
   function addWeightListeners(type, control) {
     const slider = control.slider;
-    const input = control.input;
-    const display = control.display;
+    const baseLabel = control.baseLabel;
 
-    if (!slider || !input || !display) {
+    if (!slider) {
       return;
     }
 
     const updateValue = (value) => {
-      const clamped = Math.min(Math.max(parseFloat(value) || 0.01, 0.01), 0.99);
-      slider.value = clamped.toFixed(2);
-      input.value = clamped.toFixed(2);
-      display.textContent = clamped.toFixed(2);
+      const numericValue = Number.parseFloat(value);
+      const clamped = Math.min(
+        Math.max(Number.isNaN(numericValue) ? 0.01 : numericValue, 0.01),
+        1
+      );
+      slider.value = clamped;
+      setRangeLabelWithValue(slider, clamped, baseLabel, formatDecimal);
       return clamped;
     };
 
@@ -684,21 +914,19 @@
       }
     };
 
-    slider.addEventListener("input", (event) => {
-      updateValue(event.target.value);
+    slider.addEventListener("sl-input", (event) => {
+      updateValue(getEventValue(event));
     });
 
-    slider.addEventListener("change", (event) => {
-      handleUpdate(event.target.value);
+    slider.addEventListener("sl-change", (event) => {
+      handleUpdate(getEventValue(event));
     });
 
-    input.addEventListener("change", (event) => {
-      handleUpdate(event.target.value);
-    });
+    updateValue(slider.value);
   }
 
   async function handlePurposeChange(event) {
-    const value = event.target.value;
+    const value = getEventValue(event) ?? "";
 
     if (!state.simulationData) {
       return;
@@ -730,16 +958,14 @@
   function initPriorControls() {
     addPriorListeners({
       slider: globalPriorSlider,
-      input: globalPriorInput,
-      display: globalPriorDisplay,
       key: "global_prior",
+      baseLabel: "Global Prior",
     });
 
     addPriorListeners({
       slider: timePriorSlider,
-      input: timePriorInput,
-      display: timePriorDisplay,
       key: "time_prior",
+      baseLabel: "Time Prior",
     });
   }
 
@@ -754,18 +980,30 @@
       return;
     }
 
+    const handleApiBaseUpdate = (value) => {
+      updateApiBaseUrl(value ?? apiBaseInput.value);
+    };
+
     apiBaseSave.addEventListener("click", () => {
-      updateApiBaseUrl(apiBaseInput.value);
+      handleApiBaseUpdate(apiBaseInput.value);
     });
 
     apiBaseReset.addEventListener("click", () => {
       updateApiBaseUrl(DEFAULT_API_BASE_URL);
     });
 
+    apiBaseInput.addEventListener("sl-change", (event) => {
+      handleApiBaseUpdate(getEventValue(event));
+    });
+
+    apiBaseInput.addEventListener("change", (event) => {
+      handleApiBaseUpdate(getEventValue(event));
+    });
+
     apiBaseInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        updateApiBaseUrl(apiBaseInput.value);
+        handleApiBaseUpdate(apiBaseInput.value);
       }
     });
   }
@@ -789,7 +1027,7 @@
     }
 
     if (purposeSelect) {
-      purposeSelect.addEventListener("change", handlePurposeChange);
+      purposeSelect.addEventListener("sl-change", handlePurposeChange);
     }
   }
 
