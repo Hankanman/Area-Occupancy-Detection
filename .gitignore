@@ -15,6 +15,7 @@ coverage.xml
 # Home Assistant configuration
 config/*
 !config/configuration.yaml
+!config/*backup*
 
 # Python Environment
 .venv
