@@ -1,600 +1,298 @@
-/* Simulator layout scoping */
-.aod-simulator * {
-  box-sizing: border-box;
+.md-content__inner {
+  margin: 0;
+}
+.md-content__inner {
+  padding: 0;
+}
+.md-content__inner:before {
+  display: none;
+}
+.md-content__button {
+  display: none;
+}
+p:first-of-type {
+  display: none;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  margin: 0;
+}
+
+sl-details.md-card {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.aod-simulator,
+.sim-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sim-sticky {
+  position: sticky;
+  top: calc(var(--md-header-height, 3.2rem) + 1.5rem);
+  z-index: 1;
+}
+
+.sim-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  width: 100%;
+  min-height: 160px;
+  padding: 0 1.25rem;
+  background-color: var(--md-primary-fg-color);
+  border-bottom: 1px solid var(--md-default-fg-color--lighter, #e0e0e0);
+}
+
+.sim-header h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sim-header-content {
+  display: flex;
+  align-items: stretch;
+  gap: 1.5rem;
+  flex: 1 1 auto;
+}
+
+.sim-prob-value {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--md-footer-bg-color, #ffffff);
+  flex: 0 0 25%;
+  min-width: 160px;
+}
+
+.sim-prob-value > h3 {
+  margin: 0;
+}
+
+.sim-prob-chart {
+  border-radius: 0.75rem;
+  padding: 0;
+  background: var(--md-footer-bg-color, #ffffff);
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.sim-prob-chart canvas {
+  width: 100% !important;
+  height: 125px;
+  max-height: 125px;
+}
+
+.md-content__button {
+  display: none;
+}
+.md-main__inner {
+  margin: 0;
+  max-width: unset;
+}
+h1:first-of-type {
+  display: none;
+}
+
+.hidden {
+  display: none !important;
 }
 
 body.aod-simulator-mode {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
 }
 
 .aod-simulator {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-    Ubuntu, Cantarell, sans-serif;
-  color: #333;
-  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
-.aod-simulator .sim-container {
-  max-width: 1400px;
-  margin: 0 auto;
+.aod-simulator sl-button,
+.aod-simulator sl-alert,
+.aod-simulator sl-details,
+.aod-simulator sl-input,
+.aod-simulator sl-select,
+.aod-simulator sl-switch,
+.aod-simulator sl-textarea,
+.aod-simulator sl-range {
+  font-size: inherit;
 }
 
-/* Header */
-.aod-simulator .sim-header {
-  text-align: center;
-  color: white;
-  margin-bottom: 30px;
+.aod-simulator sl-button::part(base),
+.aod-simulator sl-alert::part(base),
+.aod-simulator sl-alert::part(message),
+.aod-simulator sl-details::part(summary),
+.aod-simulator sl-details::part(content),
+.aod-simulator sl-input::part(base),
+.aod-simulator sl-input::part(input),
+.aod-simulator sl-input::part(form-control-label),
+.aod-simulator sl-input::part(form-control-help-text),
+.aod-simulator sl-select::part(form-control-label),
+.aod-simulator sl-select::part(form-control-help-text),
+.aod-simulator sl-select::part(combobox),
+.aod-simulator sl-select::part(display-input),
+.aod-simulator sl-select::part(tag),
+.aod-simulator sl-select::part(listbox),
+.aod-simulator sl-switch::part(base),
+.aod-simulator sl-switch::part(label),
+.aod-simulator sl-textarea::part(base),
+.aod-simulator sl-textarea::part(textarea),
+.aod-simulator sl-textarea::part(form-control-label),
+.aod-simulator sl-textarea::part(form-control-help-text),
+.aod-simulator sl-range::part(form-control-label),
+.aod-simulator sl-range::part(form-control-help-text),
+.aod-simulator sl-range::part(input) {
+  font-size: inherit;
 }
 
-.aod-simulator .sim-title {
-  font-size: 2.5em;
-  margin-bottom: 10px;
-  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+.sim-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
 }
 
-.aod-simulator .sim-subtitle {
-  font-size: 1.1em;
-  opacity: 0.9;
+.sim-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-/* Main Content */
-.aod-simulator .sim-main {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-  padding: 30px;
+.sim-controls {
+  display: grid;
+  gap: 1rem;
 }
 
-/* Input Section */
-.aod-simulator .sim-input-section {
-  margin-bottom: 30px;
+.sim-controls--autofit {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
-.aod-simulator .sim-input-section h2 {
-  margin-bottom: 15px;
-  color: #667eea;
-}
-
-.aod-simulator #yaml-input {
+.sim-controls sl-range,
+.sim-controls sl-input,
+.sim-controls sl-select,
+.sim-controls sl-switch,
+.aod-simulator sl-textarea,
+.sim-card-actions sl-switch {
   width: 100%;
-  min-height: 200px;
-  padding: 15px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
-  font-family: "Courier New", monospace;
-  font-size: 14px;
-  resize: vertical;
-  margin-bottom: 15px;
 }
 
-.aod-simulator #yaml-input:focus {
-  outline: none;
-  border-color: #667eea;
-}
-
-.aod-simulator .sim-btn {
-  padding: 12px 24px;
-  border: none;
-  border-radius: 6px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.aod-simulator .sim-btn-primary {
-  background: #667eea;
-  color: white;
-}
-
-.aod-simulator .sim-btn-primary:hover {
-  background: #5568d3;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-}
-
-.aod-simulator .sim-btn-secondary {
-  background: white;
-  color: #667eea;
-  border: 2px solid #667eea;
-}
-
-.aod-simulator .sim-btn-secondary:hover {
-  background: #667eea;
-  color: white;
-}
-
-.aod-simulator .sim-error {
-  margin-top: 15px;
-  padding: 12px;
-  background: #fee;
-  color: #c33;
-  border-radius: 6px;
-  display: none;
-}
-
-.aod-simulator .sim-error.show {
-  display: block;
-}
-
-/* Simulation Display */
-.aod-simulator .sim-display {
-  margin-top: 30px;
-}
-
-.aod-simulator .sim-display.hidden {
-  display: none;
-}
-
-/* Simulation Layout - Two Column */
-.aod-simulator .sim-layout {
-  display: flex;
-  gap: 30px;
-  align-items: flex-start;
-}
-
-/* Sidebar - Fixed/Sticky */
-.aod-simulator .sim-sidebar {
-  flex: 0 0 380px;
-  position: sticky;
-  top: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
-}
-
-/* Content Area */
-.aod-simulator .sim-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-  min-width: 0;
-}
-
-/* Area Info */
-.aod-simulator .sim-area-info {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  border-left: 4px solid #667eea;
-}
-
-.aod-simulator .sim-area-info h2 {
-  color: #667eea;
-  margin: 0;
-}
-
-/* Prior Controls Section */
-.aod-simulator .sim-prior-section {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  border-left: 4px solid #667eea;
-}
-
-.aod-simulator .sim-prior-section h2 {
-  color: #667eea;
-  margin-bottom: 20px;
-}
-
-.aod-simulator .sim-prior-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.aod-simulator .sim-prior-item {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.aod-simulator .sim-prior-item label {
-  font-size: 0.95em;
-  color: #333;
-  font-weight: 600;
-}
-
-.aod-simulator .sim-prior-inputs {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-}
-
-.aod-simulator .sim-prior-slider {
-  flex: 1;
-  height: 8px;
-  border-radius: 4px;
-  background: #e0e0e0;
-  outline: none;
-}
-
-.aod-simulator .sim-prior-input {
-  width: 80px;
-  padding: 8px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
-  font-size: 0.95em;
-}
-
-.aod-simulator .sim-prior-display {
-  font-weight: 700;
-  color: #667eea;
-}
-
-.aod-simulator .sim-prior-display.large {
-  font-size: 1.2em;
-}
-
-.aod-simulator .sim-prior-item.sim-combined {
-  border-top: 1px solid #eee;
-  padding-top: 10px;
-}
-
-.aod-simulator .sim-purpose-select {
-  padding: 8px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
-  font-size: 0.95em;
-}
-
-/* Weight Controls Section */
-.aod-simulator .sim-weight-section {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  border-left: 4px solid #667eea;
-}
-
-.aod-simulator .sim-weight-section h2 {
-  color: #667eea;
-  margin-bottom: 20px;
-}
-
-.aod-simulator .sim-weight-controls {
+.sim-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
+  gap: 1rem;
 }
 
-.aod-simulator .sim-weight-item {
-  background: white;
-  border-radius: 8px;
-  padding: 15px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+.sim-card {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--md-default-fg-color--lighter, #e0e0e0);
+}
+
+.sim-card-actions sl-switch,
+.sim-card-actions sl-input {
+  width: 120px;
+  min-width: 120px;
+}
+
+.sim-card-content {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.75rem;
 }
 
-.aod-simulator .sim-weight-item label {
-  font-size: 0.95em;
-  font-weight: 600;
-  color: #333;
-}
-
-.aod-simulator .sim-weight-inputs {
+.sim-card-header {
   display: flex;
-  gap: 15px;
-  align-items: center;
-}
-
-.aod-simulator .sim-weight-slider {
-  flex: 1;
-}
-
-.aod-simulator .sim-weight-input {
-  width: 80px;
-  padding: 8px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
-  font-size: 0.95em;
-}
-
-.aod-simulator .sim-weight-display {
-  font-weight: 700;
-  color: #667eea;
-}
-
-/* Sensors Grid */
-.aod-simulator .sim-sensors-section {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  border-left: 4px solid #667eea;
-}
-
-.aod-simulator .sim-sensors-section h2 {
-  color: #667eea;
-  margin-bottom: 20px;
-}
-
-.aod-simulator .sim-sensors-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-}
-
-.aod-simulator .sim-sensor-card {
-  background: white;
-  border-radius: 8px;
-  padding: 15px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.aod-simulator .sim-sensor-card h3 {
-  color: #667eea;
-  margin: 0;
-}
-
-.aod-simulator .sim-sensor-state {
-  font-weight: 600;
-}
-
-.aod-simulator .sim-sensor-buttons {
-  display: flex;
-  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
-.aod-simulator .sim-sensor-button {
-  background: #f1f4ff;
-  border: 1px solid #d4dcff;
-  border-radius: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+.sim-card h3 {
+  margin: 0;
 }
 
-.aod-simulator .sim-sensor-button:hover {
-  background: #e2e7ff;
-}
-
-.aod-simulator .sim-sensor-button.active {
-  background: #667eea;
-  color: white;
-  border-color: #667eea;
-}
-
-.aod-simulator .sim-sensor-details {
-  font-size: 0.9em;
-  color: #555;
-}
-
-/* Contribution Section */
-.aod-simulator .sim-breakdown-section {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  border-left: 4px solid #667eea;
-}
-
-.aod-simulator .sim-breakdown-section h2 {
-  color: #667eea;
-  margin-bottom: 20px;
-}
-
-.aod-simulator .sim-breakdown-list {
+.sim-card-row {
   display: flex;
-  flex-direction: column;
-  gap: 15px;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: baseline;
 }
 
-.aod-simulator .sim-breakdown-item {
-  background: white;
-  border-radius: 8px;
-  padding: 15px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  display: grid;
-  grid-template-columns: minmax(200px, 2fr) minmax(120px, 1fr) minmax(
-      120px,
-      1fr
-    );
-  gap: 15px;
+.sim-card-row > div {
+  flex: 0 1 auto;
+}
+
+.sim-card-actions {
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
-.aod-simulator .sim-breakdown-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.sim-card-actions sl-button::part(base) {
+  padding: 0.35rem 0.85rem;
 }
 
-.aod-simulator .sim-breakdown-label strong {
-  color: #333;
-  font-size: 1.05em;
+.sim-placeholder {
+  width: 100%;
 }
 
-.aod-simulator .sim-breakdown-label span {
-  color: #666;
-  font-size: 0.9em;
+.sim-breakdown-grid {
+  display: grid;
+  gap: 1rem;
 }
 
-.aod-simulator .sim-breakdown-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.sim-breakdown-card {
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 1rem;
+}
+
+.sim-breakdown-card > div:not(:first-child) {
   text-align: right;
 }
 
-.aod-simulator .sim-breakdown-metric strong {
-  color: #667eea;
-  font-size: 1.05em;
+.sim-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
-.aod-simulator .sim-breakdown-metric span {
-  color: #666;
-  font-size: 0.9em;
-}
-
-/* Probability Display */
-.aod-simulator .sim-probability {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+.sim-layout {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 1.5rem;
 }
 
-.aod-simulator .sim-probability-label {
-  font-weight: 600;
-  color: #666;
-}
-
-.aod-simulator .sim-probability-value {
-  font-size: 2.8em;
-  font-weight: 700;
-  color: #667eea;
-  text-align: center;
-}
-
-.aod-simulator .sim-probability-bar {
-  background: #f1f4ff;
-  border-radius: 999px;
-  height: 12px;
-  overflow: hidden;
-}
-
-.aod-simulator .sim-probability-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #667eea, #764ba2);
-  width: 0%;
-  transition: width 0.6s ease;
-  border-radius: 999px;
-}
-
-/* Chart Section */
-.aod-simulator .sim-chart {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-/* API Status */
-.aod-simulator .sim-api-status {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.aod-simulator .sim-api-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.aod-simulator .sim-api-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.85em;
-  font-weight: 600;
-  background: #f1f4ff;
-  color: #667eea;
-}
-
-.aod-simulator .sim-api-badge.online {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.aod-simulator .sim-api-badge.offline {
-  background: #ffebee;
-  color: #c62828;
-}
-
-.aod-simulator .sim-api-controls {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.aod-simulator .sim-api-input {
-  flex: 1 1 240px;
-  min-width: 200px;
-  display: flex;
-  gap: 8px;
-}
-
-.aod-simulator .sim-api-input input {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
-}
-
-.aod-simulator .sim-api-controls small {
-  color: #666;
-  font-size: 0.85em;
-}
-
-.aod-simulator .sim-api-help {
-  color: #555;
-  font-size: 0.9em;
-}
-
-/* Responsive */
-@media (max-width: 1200px) {
-  .aod-simulator .sim-layout {
+@media (max-width: 1220px) {
+  .sim-card-actions {
     flex-direction: column;
+    align-items: flex-start;
   }
 
-  .aod-simulator .sim-sidebar {
-    position: static;
-    width: 100%;
-    max-height: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .aod-simulator {
-    padding: 10px;
-  }
-
-  .aod-simulator .sim-main {
-    padding: 20px;
-  }
-
-  .aod-simulator .sim-weight-controls {
-    grid-template-columns: 1fr;
-  }
-
-  .aod-simulator .sim-breakdown-item {
-    grid-template-columns: 1fr;
-    text-align: left;
-  }
-
-  .aod-simulator .sim-prior-inputs,
-  .aod-simulator .sim-weight-inputs {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .aod-simulator .sim-prior-input,
-  .aod-simulator .sim-weight-input {
-    width: 100%;
+  .sim-sticky {
+    position: sticky;
+    top: var(--md-header-height, 2rem);
+    z-index: 1;
   }
 }

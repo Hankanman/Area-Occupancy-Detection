@@ -10,179 +10,195 @@ hide:
 ---
 
 <link rel="stylesheet" href="../assets/simulator/style.css">
-<style>
-  .md-content__button {
-    display: none;
-  }
-  h1:first-of-type {
-    display: none;
-  }
-</style>
-<div class="aod-simulator">
-  <div class="sim-container">
-    <div class="sim-main">
-      <section class="sim-api-status">
-        <div class="sim-api-heading">
-          <h2>API Connection</h2>
-          <span id="api-status-badge" class="sim-api-badge">Checking</span>
-        </div>
-        <div class="sim-api-controls">
-          <div class="sim-api-input">
-            <input id="api-base-input" type="url" placeholder="https://your-simulator-host (e.g. http://127.0.0.1:5000)" aria-label="API base URL" />
-            <button type="button" id="api-base-save" class="sim-btn sim-btn-secondary">Update</button>
-            <button type="button" id="api-base-reset" class="sim-btn sim-btn-secondary">Reset</button>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/light.css"
+  id="shoelace-theme-light"
+/>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/dark.css"
+  id="shoelace-theme-dark"
+  disabled
+/>
+<div class="aod-simulator sim-stack md-typeset">
+
+  <div id="simulation-display" class="sim-stack">
+    <div class="sim-layout">
+      <div class="sim-header sim-sticky">
+        <div class="sim-header-content">
+          <div class="sim-prob-value">
+            <h3 id="area-name">Area</h3>
+            <h3 id="probability-value">0.00%</h3>
+            <div id="probability-bar">
+              <div id="probability-fill"></div>
+            </div>
           </div>
-          <small>
-            Defaults to the hosted backend at https://aod-simulator.onrender.com.
-            When running MkDocs locally, the field auto-populates with http://127.0.0.1:5000 so it connects to the backend started via <code>python main.py</code>.
-          </small>
-        </div>
-        <p class="sim-api-help">Requests will be sent to <span id="api-base-display"></span>. Update this if you are running the backend locally.</p>
-      </section>
-      <section class="sim-input-section">
-        <h2>Analysis Output</h2>
-        <textarea id="yaml-input" placeholder="Paste your YAML analysis output here..."></textarea>
-        <button id="load-btn" class="sim-btn sim-btn-primary">Load Simulation</button>
-        <div id="error-message" class="sim-error"></div>
-      </section>
-      <div id="simulation-display" class="sim-display hidden">
-        <div class="sim-layout">
-          <aside class="sim-sidebar">
-            <section class="sim-probability">
-              <div class="sim-probability-label">Occupancy Probability</div>
-              <div id="probability-value" class="sim-probability-value">0.00%</div>
-              <div class="sim-probability-bar">
-                <div id="probability-fill" class="sim-probability-fill"></div>
-              </div>
-            </section>
-            <section class="sim-chart">
-              <h3>Probability Over Time</h3>
-              <canvas id="probability-chart"></canvas>
-            </section>
-          </aside>
-          <main class="sim-content">
-            <section class="sim-area-info">
-              <h2 id="area-name">Area Name</h2>
-            </section>
-            <section class="sim-prior-section">
-              <h2>Prior Probabilities</h2>
-              <div class="sim-prior-controls">
-                <div class="sim-prior-item">
-                  <label for="global-prior-slider">Global Prior:</label>
-                  <div class="sim-prior-inputs">
-                    <input type="range" id="global-prior-slider" min="0" max="1" step="0.01" value="0.5" class="sim-prior-slider">
-                    <input type="number" id="global-prior-input" min="0" max="1" step="0.01" value="0.5" class="sim-prior-input">
-                  </div>
-                  <span class="sim-prior-display" id="global-prior-display">50.00%</span>
-                </div>
-                <div class="sim-prior-item">
-                  <label for="time-prior-slider">Time Prior:</label>
-                  <div class="sim-prior-inputs">
-                    <input type="range" id="time-prior-slider" min="0" max="1" step="0.01" value="0.5" class="sim-prior-slider">
-                    <input type="number" id="time-prior-input" min="0" max="1" step="0.01" value="0.5" class="sim-prior-input">
-                  </div>
-                  <span class="sim-prior-display" id="time-prior-display">50.00%</span>
-                </div>
-                <div class="sim-prior-item sim-combined">
-                  <label>Combined Prior:</label>
-                  <span class="sim-prior-display large" id="combined-prior-display">50.00%</span>
-                </div>
-                <div class="sim-prior-item sim-combined">
-                  <label>Final Prior (after factor &amp; clamp):</label>
-                  <span class="sim-prior-display large" id="final-prior-display">50.00%</span>
-                </div>
-                <div class="sim-prior-item">
-                  <label for="purpose-select">Area Purpose:</label>
-                  <select id="purpose-select" class="sim-purpose-select">
-                    <option value="">Loading...</option>
-                  </select>
-                  <span class="sim-prior-display" id="half-life-display">Half-life: --</span>
-                </div>
-              </div>
-            </section>
-            <section class="sim-weight-section">
-              <h2>Entity Type Weights</h2>
-              <div class="sim-weight-controls">
-                <div class="sim-weight-item">
-                  <label for="weight-motion-slider">Motion:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-motion-slider" min="0.01" max="0.99" step="0.01" value="1.0" class="sim-weight-slider">
-                    <input type="number" id="weight-motion-input" min="0.01" max="0.99" step="0.01" value="1.0" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-motion-display">1.00</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-media-slider">Media:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-media-slider" min="0.01" max="0.99" step="0.01" value="0.85" class="sim-weight-slider">
-                    <input type="number" id="weight-media-input" min="0.01" max="0.99" step="0.01" value="0.85" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-media-display">0.85</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-appliance-slider">Appliance:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-appliance-slider" min="0.01" max="0.99" step="0.01" value="0.4" class="sim-weight-slider">
-                    <input type="number" id="weight-appliance-input" min="0.01" max="0.99" step="0.01" value="0.4" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-appliance-display">0.40</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-door-slider">Door:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-door-slider" min="0.01" max="0.99" step="0.01" value="0.3" class="sim-weight-slider">
-                    <input type="number" id="weight-door-input" min="0.01" max="0.99" step="0.01" value="0.3" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-door-display">0.30</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-window-slider">Window:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-window-slider" min="0.01" max="0.99" step="0.01" value="0.2" class="sim-weight-slider">
-                    <input type="number" id="weight-window-input" min="0.01" max="0.99" step="0.01" value="0.2" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-window-display">0.20</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-illuminance-slider">Illuminance:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-illuminance-slider" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-slider">
-                    <input type="number" id="weight-illuminance-input" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-illuminance-display">0.10</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-humidity-slider">Humidity:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-humidity-slider" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-slider">
-                    <input type="number" id="weight-humidity-input" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-humidity-display">0.10</span>
-                </div>
-                <div class="sim-weight-item">
-                  <label for="weight-temperature-slider">Temperature:</label>
-                  <div class="sim-weight-inputs">
-                    <input type="range" id="weight-temperature-slider" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-slider">
-                    <input type="number" id="weight-temperature-input" min="0.01" max="0.99" step="0.01" value="0.1" class="sim-weight-input">
-                  </div>
-                  <span class="sim-weight-display" id="weight-temperature-display">0.10</span>
-                </div>
-              </div>
-            </section>
-            <section class="sim-sensors-section">
-              <h2>Sensors</h2>
-              <div id="sensors-list" class="sim-sensors-grid"></div>
-            </section>
-            <section class="sim-breakdown-section">
-              <h2>Sensor Contributions</h2>
-              <div id="breakdown-list" class="sim-breakdown-list"></div>
-            </section>
-          </main>
+          <div class="sim-prob-chart">
+            <canvas id="probability-chart"></canvas>
+          </div>
         </div>
       </div>
+      <main class="sim-stack">
+        <sl-details class="md-card sim-section" summary="Sensors" open="true">
+          <sl-alert
+            id="sensors-placeholder"
+            variant="primary"
+            open
+            class="sim-placeholder"
+          >
+            <span slot="icon">📡</span>
+            Add output yaml from the "Run Analysis" service below to populate sensors.
+          </sl-alert>
+          <div id="sensors-container" class="sim-card-grid">
+          </div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Prior Probabilities">
+          <div class="sim-controls">
+            <sl-range
+              label="Global Prior"
+              data-label="Global Prior"
+              min="0"
+              max="1"
+              step="0.01"
+              value="0.5"
+              id="global-prior-slider"
+            ></sl-range>
+            <sl-range
+              label="Time Prior"
+              data-label="Time Prior"
+              min="0"
+              max="1"
+              step="0.01"
+              value="0.5"
+              id="time-prior-slider"
+            ></sl-range>
+            <sl-input
+              label="Combined Prior"
+              value="50.00%"
+              disabled
+              id="combined-prior-input"
+            ></sl-input>
+            <sl-input
+              label="Final Prior (after factor &amp; clamp)"
+              value="50.00%"
+              disabled
+              id="final-prior-input"
+            ></sl-input>
+            <sl-select
+              id="purpose-select"
+              label="Area Purpose"
+              clearable
+            >
+              <sl-option value="">Loading...</sl-option>
+            </sl-select>
+            <sl-input
+              id="half-life-display"
+              label="Half-life"
+              value="--"
+              disabled
+            ></sl-input>
+          </div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Entity Type Weights">
+          <div class="sim-controls sim-controls--autofit">
+            <sl-range
+              label="Motion"
+              data-label="Motion"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="1"
+              id="weight-motion-slider"
+            ></sl-range>
+            <sl-range
+              label="Media"
+              data-label="Media"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.85"
+              id="weight-media-slider"
+            ></sl-range>
+            <sl-range
+              label="Appliance"
+              data-label="Appliance"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.4"
+              id="weight-appliance-slider"
+            ></sl-range>
+            <sl-range
+              label="Door"
+              data-label="Door"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.3"
+              id="weight-door-slider"
+            ></sl-range>
+            <sl-range
+              label="Window"
+              data-label="Window"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.2"
+              id="weight-window-slider"
+            ></sl-range>
+            <sl-range
+              label="Illuminance"
+              data-label="Illuminance"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-illuminance-slider"
+            ></sl-range>
+            <sl-range
+              label="Humidity"
+              data-label="Humidity"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-humidity-slider"
+            ></sl-range>
+            <sl-range
+              label="Temperature"
+              data-label="Temperature"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-temperature-slider"
+            ></sl-range>
+          </div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Sensor Contributions">
+          <div id="breakdown-list" class="sim-breakdown-grid"></div>
+        </sl-details>
+      </main>
     </div>
+  </div>
+  <div class="md-card sim-section">
+    <div class="sim-section-header">
+    <h2>Analysis Output</h2>
+      <span id="api-status-badge">Checking</span>
+    </div>
+    <sl-textarea id="yaml-input" placeholder="Paste your YAML analysis output here..."></sl-textarea>
+    <div class="sim-actions">
+      <sl-button id="load-btn" variant="primary">Load Simulation</sl-button>
+    </div>
+    <div id="error-message" role="alert"></div>
   </div>
 </div>
 
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script defer src="../assets/simulator/themeDetector.js"></script>
+<script
+  type="module"
+  src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/shoelace.js"
+></script>
 <script defer src="../assets/simulator/app.js"></script>
