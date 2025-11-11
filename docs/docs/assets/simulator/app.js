@@ -9,10 +9,139 @@
     autoUpdateInterval: null,
     probabilityChart: null,
     probabilityHistory: [],
-    simulationData: null,
+    simulation: null,
+    purposes: [],
+    isAnalyzing: false,
   };
 
   document.body.classList.add("aod-simulator-mode");
+
+  function deepClone(value) {
+    if (value === undefined) {
+      return undefined;
+    }
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function hasSimulation() {
+    return Boolean(state.simulation?.request && state.simulation?.result);
+  }
+
+  function buildEntityLookup(entities = []) {
+    const lookup = {};
+    entities.forEach((entity, index) => {
+      lookup[entity.entity_id] = { entity, index };
+    });
+    return lookup;
+  }
+
+  function cloneSimulationInput(input) {
+    if (input === null || input === undefined) {
+      return {};
+    }
+    return deepClone(input);
+  }
+
+  function getEntityInput(entityId) {
+    if (!hasSimulation()) {
+      return undefined;
+    }
+    return state.simulation.entityLookup?.[entityId]?.entity;
+  }
+
+  function setSimulation(
+    simulationInput,
+    result,
+    { resetHistory = false } = {}
+  ) {
+    const simulationCopy = cloneSimulationInput(simulationInput);
+    simulationCopy.entities ??= [];
+    simulationCopy.area ??= {};
+    simulationCopy.weights ??= {};
+
+    state.simulation = {
+      request: simulationCopy,
+      result: null,
+      entityLookup: buildEntityLookup(simulationCopy.entities),
+    };
+
+    updateSimulationResult(result, { resetHistory });
+  }
+
+  function replaceEntityInputs(entityInputs = [], weights = {}) {
+    if (!hasSimulation()) {
+      return;
+    }
+    const nextEntities = deepClone(entityInputs ?? []);
+    state.simulation.request.entities = nextEntities;
+    state.simulation.entityLookup = buildEntityLookup(nextEntities);
+
+    if (weights && typeof weights === "object") {
+      // Merge weights instead of replacing to preserve manually set weights
+      state.simulation.request.weights = {
+        ...(state.simulation.request.weights ?? {}),
+        ...deepClone(weights),
+      };
+    }
+  }
+
+  function updateSimulationResult(result, { resetHistory = false } = {}) {
+    if (!state.simulation || !result) {
+      return;
+    }
+
+    if (Array.isArray(result.entity_inputs)) {
+      replaceEntityInputs(result.entity_inputs, result.weights ?? {});
+    }
+
+    if (result.area && state.simulation.request.area) {
+      const requestArea = state.simulation.request.area;
+      if (result.area.half_life !== undefined) {
+        requestArea.half_life = result.area.half_life;
+      }
+      if (result.area.purpose !== undefined) {
+        requestArea.purpose = result.area.purpose;
+      }
+    }
+
+    state.simulation.result = result;
+    applySimulationResult(result, { resetHistory });
+  }
+
+  function prepareAnalyzePayload() {
+    if (!hasSimulation()) {
+      return {};
+    }
+    return deepClone(state.simulation.request);
+  }
+
+  async function analyzeSimulation({
+    resetHistory = false,
+    silent = false,
+  } = {}) {
+    if (!hasSimulation() || state.isAnalyzing) {
+      return false;
+    }
+
+    state.isAnalyzing = true;
+    try {
+      const payload = prepareAnalyzePayload();
+      const result = await requestJson("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      updateSimulationResult(result, { resetHistory });
+      return true;
+    } catch (error) {
+      handleApiFailure(error, { silent });
+      return false;
+    } finally {
+      state.isAnalyzing = false;
+    }
+  }
 
   function formatPercent(value, digits = 1) {
     return `${(value * 100).toFixed(digits)}%`;
@@ -92,18 +221,12 @@
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
       if (!stored) {
-        if (isLocalDocsHost()) {
-          return LOCAL_API_BASE_URL;
-        }
-        return DEFAULT_API_BASE_URL;
+        return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
       }
 
       return normalizeBaseUrl(stored);
     } catch (error) {
-      if (isLocalDocsHost()) {
-        return LOCAL_API_BASE_URL;
-      }
-      return DEFAULT_API_BASE_URL;
+      return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
     }
   }
 
@@ -172,57 +295,6 @@
     return payload ?? {};
   }
 
-  function applySimulationPayload(payload, { resetHistory = false } = {}) {
-    if (resetHistory) {
-      state.probabilityHistory = [];
-      initChart();
-    }
-
-    state.simulationData = payload;
-    renderSimulation(payload);
-    hideError();
-  }
-
-  async function executeSimulationUpdate(
-    path,
-    options = {},
-    { resetHistory = false } = {}
-  ) {
-    const payload = await requestJson(path, options);
-    applySimulationPayload(payload, { resetHistory });
-    return payload;
-  }
-
-  function handleApiFailure(error, { silent = false } = {}) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!silent) {
-      showError(message);
-    }
-
-    updateApiStatus("offline", "API Offline");
-  }
-
-  function updateApiStatus(stateClass, label) {
-    if (!apiStatusBadge) {
-      return;
-    }
-
-    apiStatusBadge.textContent = label;
-    apiStatusBadge.classList.remove("online", "offline", "unknown");
-    if (stateClass) {
-      apiStatusBadge.classList.add(stateClass);
-    }
-  }
-
-  async function verifyApiOnline() {
-    try {
-      await requestJson("/api/get-purposes");
-      updateApiStatus("online", "API Online");
-    } catch (error) {
-      updateApiStatus("offline", "API Offline");
-    }
-  }
-
   // DOM references
   const rootEl = document.querySelector(".aod-simulator");
   const yamlInput = document.getElementById("yaml-input");
@@ -234,7 +306,6 @@
   const probabilityFill = document.getElementById("probability-fill");
   const sensorsPlaceholder = document.getElementById("sensors-placeholder");
   const sensorsContainer = document.getElementById("sensors-container");
-  const breakdownList = document.getElementById("breakdown-list");
   const globalPriorSlider = document.getElementById("global-prior-slider");
   const timePriorSlider = document.getElementById("time-prior-slider");
   const combinedPriorInput = document.getElementById("combined-prior-input");
@@ -392,29 +463,11 @@
     addChartPoint(probability);
   }
 
-  function renderSensors(data) {
-    if (!sensorsContainer) {
-      return;
-    }
-
-    sensorsContainer.innerHTML = "";
-    sensorsContainer.classList.toggle("empty", data.entities.length === 0);
-
-    if (sensorsPlaceholder) {
-      sensorsPlaceholder.classList.toggle("hidden", data.entities.length > 0);
-    }
-
-    data.entities.forEach((entity) => {
-      sensorsContainer.appendChild(createSensorCard(entity));
-    });
-  }
-
   function createElementWithClass(tagName, className) {
     const element = document.createElement(tagName);
     if (className) {
       element.className = className;
     }
-
     return element;
   }
 
@@ -431,6 +484,47 @@
       .split(/(?:\s*•\s*|\n+)/)
       .map((segment) => segment.trim())
       .filter(Boolean);
+  }
+
+  function createMetricChip(label, value) {
+    const chip = createElementWithClass("div", "sim-metric-chip");
+
+    const valueEl = document.createElement("strong");
+    setDisplayText(valueEl, value);
+
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+
+    chip.append(valueEl, labelEl);
+    return chip;
+  }
+
+  function createSensorMetricsRow(entity) {
+    const hasContribution = typeof entity.contribution === "number";
+    const hasLikelihood = typeof entity.likelihood === "number";
+
+    if (!hasContribution && !hasLikelihood) {
+      return null;
+    }
+
+    const row = createElementWithClass("div", "sim-card-metrics");
+
+    if (hasContribution) {
+      row.appendChild(
+        createMetricChip(
+          "Contribution",
+          formatPercent(entity.contribution ?? 0)
+        )
+      );
+    }
+
+    if (hasLikelihood) {
+      row.appendChild(
+        createMetricChip("Likelihood", formatPercent(entity.likelihood ?? 0))
+      );
+    }
+
+    return row;
   }
 
   function buildSensorContent(entity) {
@@ -458,6 +552,11 @@
       content.appendChild(row);
     }
 
+    const metricsRow = createSensorMetricsRow(entity);
+    if (metricsRow) {
+      content.appendChild(metricsRow);
+    }
+
     return content;
   }
 
@@ -477,6 +576,47 @@
     return { onAction, offAction };
   }
 
+  function applyEntityToggle(entity, targetAction) {
+    const entityInput = getEntityInput(entity.entity_id);
+    if (!entityInput) {
+      throw new Error(`Entity input not found for ${entity.entity_id}`);
+    }
+
+    entityInput.previous_evidence = entity.evidence;
+    entityInput.state = targetAction.state;
+
+    const decay = {
+      ...(entityInput.decay ?? {}),
+      decay_start: new Date().toISOString(),
+    };
+
+    if (typeof targetAction.label === "string") {
+      const label = targetAction.label.toLowerCase();
+      if (label === "active") {
+        decay.is_decaying = false;
+      } else if (label === "inactive") {
+        decay.is_decaying = true;
+      }
+    }
+
+    entityInput.decay = decay;
+  }
+
+  function applyNumericUpdate(entity, numericValue) {
+    const entityInput = getEntityInput(entity.entity_id);
+    if (!entityInput) {
+      throw new Error(`Entity input not found for ${entity.entity_id}`);
+    }
+
+    entityInput.previous_evidence = entity.evidence;
+    entityInput.state = numericValue;
+    entityInput.decay = {
+      ...(entityInput.decay ?? {}),
+      is_decaying: false,
+      decay_start: new Date().toISOString(),
+    };
+  }
+
   function createToggleControl(entity, onAction, offAction) {
     if (!onAction || !offAction) {
       return null;
@@ -490,6 +630,10 @@
     let lastKnownChecked = toggle.checked;
 
     toggle.addEventListener("sl-change", async (event) => {
+      if (!hasSimulation()) {
+        return;
+      }
+
       const control = event.currentTarget;
       const isChecked = control.checked;
       const targetAction = isChecked ? onAction : offAction;
@@ -497,17 +641,13 @@
       control.disabled = true;
 
       try {
-        await executeSimulationUpdate("/api/toggle", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            entity_id: entity.entity_id,
-            state: targetAction.state,
-          }),
-        });
-        lastKnownChecked = isChecked;
+        applyEntityToggle(entity, targetAction);
+        const success = await analyzeSimulation();
+        if (success) {
+          lastKnownChecked = isChecked;
+        } else {
+          control.checked = lastKnownChecked;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         showError(message);
@@ -552,21 +692,22 @@
         return;
       }
 
+      if (!hasSimulation()) {
+        input.value = lastKnownValue;
+        return;
+      }
+
       setLoadingState(true);
 
       try {
-        await executeSimulationUpdate("/api/update", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            entity_id: entity.entity_id,
-            value: numericValue,
-          }),
-        });
-        lastKnownValue = numericValue.toString();
-        input.value = lastKnownValue;
+        applyNumericUpdate(entity, numericValue);
+        const success = await analyzeSimulation();
+        if (success) {
+          lastKnownValue = numericValue.toString();
+          input.value = lastKnownValue;
+        } else {
+          input.value = lastKnownValue;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         showError(message);
@@ -580,7 +721,6 @@
       if (isUpdating) {
         return;
       }
-
       submitValue(event.currentTarget.value);
     });
 
@@ -601,17 +741,16 @@
     button.textContent = action.label;
 
     button.addEventListener("click", async () => {
+      if (!hasSimulation()) {
+        return;
+      }
+
       try {
-        await executeSimulationUpdate("/api/toggle", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            entity_id: entity.entity_id,
-            state: action.state,
-          }),
-        });
+        applyEntityToggle(entity, action);
+        const success = await analyzeSimulation();
+        if (!success) {
+          showError("Failed to update sensor state");
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         showError(message);
@@ -622,6 +761,10 @@
   }
 
   function buildSensorActions(entity) {
+    if (!hasSimulation()) {
+      return null;
+    }
+
     const actions = Array.isArray(entity.actions) ? entity.actions : [];
     const container = createElementWithClass("div", "sim-card-actions");
 
@@ -675,58 +818,56 @@
     return card;
   }
 
-  function renderBreakdown(data) {
-    if (!breakdownList) {
+  function renderSensors(result) {
+    if (!sensorsContainer) {
       return;
     }
 
-    breakdownList.innerHTML = "";
+    const entities = Array.isArray(result.entities) ? result.entities : [];
 
-    data.breakdown.forEach((item) => {
-      const breakdownItem = document.createElement("div");
-      breakdownItem.className = "md-card sim-breakdown-card";
+    sensorsContainer.innerHTML = "";
+    sensorsContainer.classList.toggle("empty", entities.length === 0);
 
-      const label = document.createElement("div");
-      const labelStrong = document.createElement("strong");
-      labelStrong.textContent = item.name;
-      const labelSpan = document.createElement("span");
-      labelSpan.textContent = item.description;
-      label.append(labelStrong, labelSpan);
+    if (sensorsPlaceholder) {
+      sensorsPlaceholder.classList.toggle("hidden", entities.length > 0);
+    }
 
-      const likelihood = document.createElement("div");
-      const likelihoodValue = document.createElement("strong");
-      setDisplayText(likelihoodValue, formatPercent(item.likelihood));
-      const likelihoodLabel = document.createElement("span");
-      likelihoodLabel.textContent = "Likelihood";
-      likelihood.append(likelihoodValue, likelihoodLabel);
+    const sorted = [...entities].sort((a, b) => {
+      const aId = a.entity_id ?? "";
+      const bId = b.entity_id ?? "";
+      return aId.localeCompare(bId);
+    });
 
-      const contribution = document.createElement("div");
-      const contributionValue = document.createElement("strong");
-      setDisplayText(contributionValue, formatPercent(item.contribution));
-      const contributionLabel = document.createElement("span");
-      contributionLabel.textContent = "Contribution";
-      contribution.append(contributionValue, contributionLabel);
-
-      breakdownItem.append(label, likelihood, contribution);
-      breakdownList.appendChild(breakdownItem);
+    sorted.forEach((entity) => {
+      sensorsContainer.appendChild(createSensorCard(entity));
     });
   }
 
-  function syncPriorControls(data) {
-    const globalPriorValue = Number(data.global_prior.toFixed(2));
+  function syncPriorControls(result) {
+    if (!hasSimulation()) {
+      return;
+    }
+
+    const requestArea = state.simulation.request.area ?? {};
+    const priors = result.area?.priors ?? {};
+    const weights = state.simulation.request.weights ?? {};
+
+    const globalPriorValue = Number(requestArea.global_prior ?? 0);
     if (globalPriorSlider) {
       globalPriorSlider.value = globalPriorValue;
     }
     setRangeLabelWithValue(globalPriorSlider, globalPriorValue, "Global Prior");
 
-    const timePriorValue = Number(data.time_prior.toFixed(2));
+    const timePriorValue = Number(requestArea.time_prior ?? 0);
     if (timePriorSlider) {
       timePriorSlider.value = timePriorValue;
     }
     setRangeLabelWithValue(timePriorSlider, timePriorValue, "Time Prior");
 
-    const combinedPriorPercent = formatPercent(data.combined_prior);
-    const finalPriorPercent = formatPercent(data.final_prior);
+    const combinedPriorPercent = formatPercent(
+      priors.combined ?? globalPriorValue
+    );
+    const finalPriorPercent = formatPercent(priors.final ?? globalPriorValue);
 
     if (combinedPriorInput) {
       combinedPriorInput.value = combinedPriorPercent;
@@ -735,121 +876,116 @@
       finalPriorInput.value = finalPriorPercent;
     }
 
+    const halfLifeValue = Math.round(
+      result.area?.half_life ?? requestArea.half_life ?? 0
+    );
     if (halfLifeInput) {
-      halfLifeInput.value = `${Math.round(data.half_life)}s`;
+      halfLifeInput.value = `${halfLifeValue}s`;
+    }
+
+    if (purposeSelect) {
+      purposeSelect.value = requestArea.purpose ?? "";
     }
 
     Object.entries(weightControls).forEach(([key, control]) => {
-      if (!data.weights || typeof data.weights[key] !== "number") {
-        return;
-      }
-
-      const value = Number(data.weights[key].toFixed(2));
-      if (control.slider) {
+      // Only update slider if weight exists in request weights
+      // This preserves manually set weights even if server doesn't return them
+      if (key in weights && control.slider) {
+        const value = Number(weights[key]);
         control.slider.value = value;
+        setRangeLabelWithValue(
+          control.slider,
+          value,
+          control.baseLabel,
+          formatDecimal
+        );
+      } else if (control.slider) {
+        // If weight not in request, just update label with current slider value
+        // Don't change the slider value itself to preserve user input
+        setRangeLabelWithValue(
+          control.slider,
+          Number(control.slider.value),
+          control.baseLabel,
+          formatDecimal
+        );
       }
-      setRangeLabelWithValue(
-        control.slider,
-        data.weights[key],
-        control.baseLabel,
-        formatDecimal
-      );
     });
   }
 
-  function renderSimulation(data) {
-    if (!simulationDisplay) {
+  function renderSimulationResult(result) {
+    if (!simulationDisplay || !result) {
       return;
     }
 
     simulationDisplay.classList.remove("hidden");
 
+    const area = result.area ?? {};
     if (areaName) {
-      areaName.textContent = data.area_name;
+      areaName.textContent = area.name ?? "Area";
     }
 
-    setProbability(data.probability);
-    renderSensors(data);
-    renderBreakdown(data);
-    syncPriorControls(data);
+    setProbability(result.probability ?? 0);
+    renderSensors(result);
+    syncPriorControls(result);
+  }
 
-    if (purposeSelect && typeof data.purpose === "string") {
-      purposeSelect.value = data.purpose;
+  function applySimulationResult(result, { resetHistory = false } = {}) {
+    if (resetHistory) {
+      state.probabilityHistory = [];
+      initChart();
+    }
+
+    renderSimulationResult(result);
+    hideError();
+  }
+
+  function handleApiFailure(error, { silent = false } = {}) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!silent) {
+      showError(message);
+    }
+
+    updateApiStatus("offline", "API Offline");
+  }
+
+  function updateApiStatus(stateClass, label) {
+    if (!apiStatusBadge) {
+      return;
+    }
+
+    apiStatusBadge.textContent = label;
+    apiStatusBadge.classList.remove("online", "offline", "unknown");
+    if (stateClass) {
+      apiStatusBadge.classList.add(stateClass);
+    }
+  }
+
+  async function verifyApiOnline() {
+    try {
+      await requestJson("/api/get-purposes");
+      updateApiStatus("online", "API Online");
+    } catch (error) {
+      updateApiStatus("offline", "API Offline");
+    }
+  }
+
+  function stopAutoUpdate() {
+    if (state.autoUpdateInterval) {
+      clearInterval(state.autoUpdateInterval);
+      state.autoUpdateInterval = null;
     }
   }
 
   function startAutoUpdate() {
-    if (state.autoUpdateInterval) {
-      clearInterval(state.autoUpdateInterval);
-    }
+    stopAutoUpdate();
 
     state.autoUpdateInterval = setInterval(async () => {
-      if (!state.simulationData) {
+      if (!hasSimulation()) {
         return;
       }
 
-      try {
-        const payload = await requestJson("/api/tick", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({}),
-        });
-
-        applySimulationPayload(payload);
-      } catch (error) {
-        handleApiFailure(error, { silent: true });
-      }
+      await analyzeSimulation({ silent: true });
     }, 1000);
-  }
-
-  function registerApiSlider({
-    slider,
-    clamp,
-    endpoint,
-    payloadBuilder,
-    baseLabel,
-    formatter = formatPercent,
-  }) {
-    if (!slider) {
-      return;
-    }
-
-    const applyValue = (value) => {
-      const numericValue = Number.parseFloat(value);
-      const normalized = Number.isFinite(numericValue) ? numericValue : 0;
-      const clampedValue = clamp(normalized);
-      slider.value = clampedValue;
-      setRangeLabelWithValue(slider, clampedValue, baseLabel, formatter);
-      return clampedValue;
-    };
-
-    slider.addEventListener("sl-input", (event) => {
-      applyValue(getEventValue(event));
-    });
-
-    slider.addEventListener("sl-change", async (event) => {
-      const clampedValue = applyValue(getEventValue(event));
-
-      if (!state.simulationData) {
-        return;
-      }
-
-      try {
-        await executeSimulationUpdate(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payloadBuilder(clampedValue)),
-        });
-      } catch (error) {
-        handleApiFailure(error);
-      }
-    });
-
-    applyValue(slider.value);
   }
 
   async function loadPurposes() {
@@ -859,8 +995,10 @@
 
     try {
       const payload = await requestJson("/api/get-purposes");
+      state.purposes = Array.isArray(payload.purposes) ? payload.purposes : [];
+
       purposeSelect.innerHTML = "";
-      payload.purposes.forEach((purpose) => {
+      state.purposes.forEach((purpose) => {
         const option = document.createElement("sl-option");
         option.value = purpose.value;
         option.textContent = purpose.label;
@@ -890,8 +1028,7 @@
         body: JSON.stringify({ yaml: yamlText }),
       });
 
-      applySimulationPayload(payload, { resetHistory: true });
-
+      setSimulation(payload.simulation, payload.result, { resetHistory: true });
       startAutoUpdate();
       updateApiStatus("online", "API Online");
     } catch (error) {
@@ -902,52 +1039,106 @@
   }
 
   async function handlePurposeChange(event) {
-    const value = getEventValue(event) ?? "";
-
-    if (!state.simulationData) {
+    if (!hasSimulation()) {
       return;
     }
 
-    try {
-      await executeSimulationUpdate("/api/update-purpose", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ purpose: value }),
-      });
-    } catch (error) {
-      handleApiFailure(error);
+    const value = getEventValue(event) ?? "";
+    const requestArea = state.simulation.request.area ?? {};
+    requestArea.purpose = value;
+
+    const matchedPurpose = state.purposes.find(
+      (purpose) => purpose.value === value
+    );
+    if (matchedPurpose?.half_life !== undefined) {
+      requestArea.half_life = matchedPurpose.half_life;
     }
+
+    await analyzeSimulation({ resetHistory: true });
   }
 
   function initPriorControls() {
-    registerApiSlider({
-      slider: globalPriorSlider,
-      clamp: (v) => Math.min(Math.max(v, 0), 1),
-      endpoint: "/api/update-priors",
-      payloadBuilder: (value) => ({ global_prior: value }),
-      baseLabel: "Global Prior",
-    });
+    if (globalPriorSlider) {
+      const clampPrior = (value) => Math.min(Math.max(value, 0), 1);
 
-    registerApiSlider({
-      slider: timePriorSlider,
-      clamp: (v) => Math.min(Math.max(v, 0), 1),
-      endpoint: "/api/update-priors",
-      payloadBuilder: (value) => ({ time_prior: value }),
-      baseLabel: "Time Prior",
-    });
+      const applyValue = (value, { runAnalysis = false } = {}) => {
+        const numericValue = clampPrior(Number.parseFloat(value ?? "0"));
+        if (hasSimulation()) {
+          state.simulation.request.area.global_prior = numericValue;
+        }
+        globalPriorSlider.value = numericValue;
+        setRangeLabelWithValue(globalPriorSlider, numericValue, "Global Prior");
+        if (runAnalysis) {
+          analyzeSimulation({ resetHistory: false });
+        }
+      };
+
+      globalPriorSlider.addEventListener("sl-input", (event) => {
+        applyValue(getEventValue(event));
+      });
+
+      globalPriorSlider.addEventListener("sl-change", (event) => {
+        applyValue(getEventValue(event), { runAnalysis: true });
+      });
+    }
+
+    if (timePriorSlider) {
+      const clampPrior = (value) => Math.min(Math.max(value, 0), 1);
+
+      const applyValue = (value, { runAnalysis = false } = {}) => {
+        const numericValue = clampPrior(Number.parseFloat(value ?? "0"));
+        if (hasSimulation()) {
+          state.simulation.request.area.time_prior = numericValue;
+        }
+        timePriorSlider.value = numericValue;
+        setRangeLabelWithValue(timePriorSlider, numericValue, "Time Prior");
+        if (runAnalysis) {
+          analyzeSimulation({ resetHistory: false });
+        }
+      };
+
+      timePriorSlider.addEventListener("sl-input", (event) => {
+        applyValue(getEventValue(event));
+      });
+
+      timePriorSlider.addEventListener("sl-change", (event) => {
+        applyValue(getEventValue(event), { runAnalysis: true });
+      });
+    }
   }
 
   function initWeightControls() {
     Object.entries(weightControls).forEach(([type, control]) => {
-      registerApiSlider({
-        slider: control.slider,
-        clamp: (v) => Math.min(Math.max(v, 0.01), 1),
-        endpoint: "/api/update-weights",
-        payloadBuilder: (value) => ({ weight_type: type, value: value }),
-        baseLabel: control.baseLabel,
-        formatter: formatDecimal,
+      if (!control.slider) {
+        return;
+      }
+
+      const clampWeight = (value) => Math.min(Math.max(value, 0.01), 1);
+
+      const applyValue = (value, { runAnalysis = false } = {}) => {
+        const numericValue = clampWeight(Number.parseFloat(value ?? "0"));
+        if (hasSimulation()) {
+          state.simulation.request.weights ??= {};
+          state.simulation.request.weights[type] = numericValue;
+        }
+        control.slider.value = numericValue;
+        setRangeLabelWithValue(
+          control.slider,
+          numericValue,
+          control.baseLabel,
+          formatDecimal
+        );
+        if (runAnalysis) {
+          analyzeSimulation({ resetHistory: false });
+        }
+      };
+
+      control.slider.addEventListener("sl-input", (event) => {
+        applyValue(getEventValue(event));
+      });
+
+      control.slider.addEventListener("sl-change", (event) => {
+        applyValue(getEventValue(event), { runAnalysis: true });
       });
     });
   }

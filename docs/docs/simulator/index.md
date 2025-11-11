@@ -176,9 +176,6 @@ hide:
             ></sl-range>
           </div>
         </sl-details>
-        <sl-details class="md-card sim-section" summary="Sensor Contributions">
-          <div id="breakdown-list" class="sim-breakdown-grid"></div>
-        </sl-details>
       </main>
     </div>
   </div>
