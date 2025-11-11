@@ -502,8 +502,10 @@
   function createSensorMetricsRow(entity) {
     const hasContribution = typeof entity.contribution === "number";
     const hasLikelihood = typeof entity.likelihood === "number";
+    const hasDecay =
+      entity.decay && typeof entity.decay.decay_factor === "number";
 
-    if (!hasContribution && !hasLikelihood) {
+    if (!hasContribution && !hasLikelihood && !hasDecay) {
       return null;
     }
 
@@ -522,6 +524,18 @@
       row.appendChild(
         createMetricChip("Likelihood", formatPercent(entity.likelihood ?? 0))
       );
+    }
+
+    if (hasDecay) {
+      const decayFactor = entity.decay.decay_factor ?? 1;
+      const isDecaying = entity.decay.is_decaying ?? false;
+      const decayLabel = isDecaying ? "Decay Factor" : "Active";
+      const decayValue = isDecaying ? formatPercent(decayFactor) : "100%";
+      const decayChip = createMetricChip(decayLabel, decayValue);
+      if (isDecaying) {
+        decayChip.classList.add("sim-metric-chip--decaying");
+      }
+      row.appendChild(decayChip);
     }
 
     return row;
@@ -824,6 +838,7 @@
     }
 
     const entities = Array.isArray(result.entities) ? result.entities : [];
+    const entityDecay = result.entity_decay ?? {};
 
     sensorsContainer.innerHTML = "";
     sensorsContainer.classList.toggle("empty", entities.length === 0);
@@ -839,7 +854,12 @@
     });
 
     sorted.forEach((entity) => {
-      sensorsContainer.appendChild(createSensorCard(entity));
+      // Attach decay data to entity for display
+      const entityWithDecay = {
+        ...entity,
+        decay: entityDecay[entity.entity_id] ?? null,
+      };
+      sensorsContainer.appendChild(createSensorCard(entityWithDecay));
     });
   }
 
