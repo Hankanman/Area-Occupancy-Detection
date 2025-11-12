@@ -1,0 +1,280 @@
+<link rel="stylesheet" href="../assets/simulator/style.css" />
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/light.css"
+  id="shoelace-theme-light"
+/>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/dark.css"
+  id="shoelace-theme-dark"
+  disabled
+/>
+<div class="aod-simulator sim-stack md-typeset">
+  <div id="simulation-display" class="sim-stack">
+    <div class="sim-layout">
+      <div class="sim-header sim-sticky">
+        <div class="sim-header-content">
+          <div class="sim-prob-value">
+            <h3 id="area-name">Area</h3>
+            <h3 id="probability-value">0.00%</h3>
+            <div id="probability-bar">
+              <div id="probability-fill"></div>
+            </div>
+          </div>
+          <div class="sim-prob-chart">
+            <canvas id="probability-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      <main class="sim-stack">
+        <sl-details class="md-card sim-section" summary="Sensors">
+          <div id="sensors-container" class="sim-card-grid"></div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Prior Probabilities">
+          <div class="sim-controls">
+            <sl-range
+              label="Global Prior"
+              data-label="Global Prior"
+              min="0"
+              max="1"
+              step="0.01"
+              value="0.5"
+              id="global-prior-slider"
+            ></sl-range>
+            <sl-range
+              label="Time Prior"
+              data-label="Time Prior"
+              min="0"
+              max="1"
+              step="0.01"
+              value="0.5"
+              id="time-prior-slider"
+            ></sl-range>
+            <sl-input
+              label="Combined Prior"
+              value="50.00%"
+              disabled
+              id="combined-prior-input"
+            ></sl-input>
+            <sl-input
+              label="Final Prior (after factor &amp; clamp)"
+              value="50.00%"
+              disabled
+              id="final-prior-input"
+            ></sl-input>
+            <sl-select id="purpose-select" label="Area Purpose" clearable>
+              <sl-option value="">Loading...</sl-option>
+            </sl-select>
+            <sl-input
+              id="half-life-display"
+              label="Half-life"
+              value="--"
+              disabled
+            ></sl-input>
+          </div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Entity Type Weights">
+          <div class="sim-controls sim-controls--autofit">
+            <sl-range
+              label="Motion"
+              data-label="Motion"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="1"
+              id="weight-motion-slider"
+            ></sl-range>
+            <sl-range
+              label="Media"
+              data-label="Media"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.85"
+              id="weight-media-slider"
+            ></sl-range>
+            <sl-range
+              label="Appliance"
+              data-label="Appliance"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.4"
+              id="weight-appliance-slider"
+            ></sl-range>
+            <sl-range
+              label="Door"
+              data-label="Door"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.3"
+              id="weight-door-slider"
+            ></sl-range>
+            <sl-range
+              label="Window"
+              data-label="Window"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.2"
+              id="weight-window-slider"
+            ></sl-range>
+            <sl-range
+              label="Illuminance"
+              data-label="Illuminance"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-illuminance-slider"
+            ></sl-range>
+            <sl-range
+              label="Humidity"
+              data-label="Humidity"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-humidity-slider"
+            ></sl-range>
+            <sl-range
+              label="Temperature"
+              data-label="Temperature"
+              min="0.01"
+              max="1"
+              step="0.01"
+              value="0.1"
+              id="weight-temperature-slider"
+            ></sl-range>
+          </div>
+        </sl-details>
+      </main>
+    </div>
+  </div>
+  <div class="md-card sim-section">
+    <div class="sim-section-header">
+      <h2>Analysis Output</h2>
+      <span id="api-status-badge">Checking</span>
+      <div class="sim-actions">
+        <sl-button id="help-dialog-btn" variant="default">
+          <sl-icon slot="prefix" name="question-circle"></sl-icon>
+          Help
+        </sl-button>
+        <sl-dialog
+          label="How to Use the Simulator"
+          id="help-dialog"
+          class="help-dialog"
+        >
+          <h1>Area Occupancy Detection Simulator</h1>
+
+          <p>
+            This simulator lets you interactively explore how sensor states
+            affect occupancy probability calculations. It uses the
+            <strong>exact same Python code</strong>
+            that runs in your Home Assistant integration, so you'll see
+            precisely how the integration will behave.
+          </p>
+
+          <h2>Getting Started</h2>
+
+          <p>
+            <strong>Step 1:</strong> In Home Assistant, run the
+            <a href="../features/services/#area_occupancyrun_analysis"
+              >"Run Analysis" service</a
+            >
+            for your area. This generates analysis output with all your sensors,
+            their states, and current probability calculations.
+          </p>
+
+          <p>
+            <strong>Step 2:</strong> Copy the YAML output from the service call
+            and paste it into the <strong>"Analysis Output"</strong> text box
+            below.
+          </p>
+
+          <p>
+            <strong>Step 3:</strong> Click <strong>"Load Simulation"</strong> to
+            send the data to our hosted server, which runs the real integration
+            code. The simulator will populate with your sensors and current
+            states.
+          </p>
+
+          <h2>What You Can Do</h2>
+
+          <ul>
+            <li>
+              <strong>Toggle Sensors:</strong> Change sensor states (motion,
+              doors, windows, etc.) and see how they affect occupancy
+              probability in real-time
+            </li>
+            <li>
+              <strong>Adjust Weights:</strong> Modify entity type weights to see
+              how different sensor types contribute to the calculation
+            </li>
+            <li>
+              <strong>Change Priors:</strong> Experiment with global and
+              time-based prior probabilities
+            </li>
+            <li>
+              <strong>Watch Decay:</strong> Observe how sensor evidence decays
+              over time when sensors become inactive
+            </li>
+            <li>
+              <strong>View Metrics:</strong> See likelihood, contribution, and
+              decay factors for each sensor
+            </li>
+          </ul>
+
+          <h2>How It Works</h2>
+
+          <p>
+            When you interact with the simulator, your changes are sent to a
+            hosted server that runs the <strong>actual Python code</strong> from
+            the Area Occupancy Detection integration. This means:
+          </p>
+
+          <ul>
+            <li>Calculations match exactly what happens in Home Assistant</li>
+            <li>You can test different scenarios before implementing them</li>
+            <li>
+              You can understand how each sensor affects the final probability
+            </li>
+            <li>The probability chart shows how values change over time</li>
+          </ul>
+
+          <p>
+            All calculations update instantly as you change sensor states,
+            weights, or priors, giving you immediate feedback on how your
+            configuration will behave.
+          </p>
+          <sl-button
+            slot="footer"
+            variant="primary"
+            onclick="document.getElementById('help-dialog').hide()"
+          >
+            Close
+          </sl-button>
+        </sl-dialog>
+        <sl-button id="load-btn" variant="primary">Load Simulation</sl-button>
+      </div>
+    </div>
+    <sl-textarea
+      id="yaml-input"
+      placeholder="Paste your YAML analysis output here..."
+    ></sl-textarea>
+    <div id="error-message" role="alert"></div>
+  </div>
+</div>
+
+<script
+  defer
+  src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+></script>
+<script defer src="../assets/simulator/themeDetector.js"></script>
+<script
+  type="module"
+  src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/shoelace.js"
+></script>
+<script defer src="../assets/simulator/app.js"></script>
