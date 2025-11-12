@@ -41,6 +41,7 @@
               step="0.01"
               value="0.5"
               id="global-prior-slider"
+              help-text="Base probability before accounting for sensor evidence."
             ></sl-range>
             <sl-range
               label="Time Prior"
@@ -50,20 +51,28 @@
               step="0.01"
               value="0.5"
               id="time-prior-slider"
+              help-text="Learned probability based on schedules or historical activity."
             ></sl-range>
             <sl-input
               label="Combined Prior"
               value="50.00%"
               disabled
               id="combined-prior-input"
+              help-text="Weighted result of global and time priors."
             ></sl-input>
             <sl-input
               label="Final Prior (after factor &amp; clamp)"
               value="50.00%"
               disabled
               id="final-prior-input"
+              help-text="Effective prior after Bayesian factor and clamping are applied."
             ></sl-input>
-            <sl-select id="purpose-select" label="Area Purpose" clearable>
+            <sl-select
+              id="purpose-select"
+              label="Area Purpose"
+              clearable
+              help-text="Choose a purpose to auto-populate decay settings."
+            >
               <sl-option value="">Loading...</sl-option>
             </sl-select>
             <sl-input
@@ -71,6 +80,7 @@
               label="Half-life"
               value="--"
               disabled
+              help-text="Half-life returned from analysis."
             ></sl-input>
           </div>
         </sl-details>
@@ -156,7 +166,9 @@
   <div class="md-card sim-section">
     <div class="sim-section-header">
       <h2>Analysis Output</h2>
-      <span id="api-status-badge">Checking</span>
+      <span id="api-status-badge" role="status" aria-live="polite"
+        >Checking</span
+      >
       <div class="sim-actions">
         <sl-button id="help-dialog-btn" variant="default">
           <sl-icon slot="prefix" name="question-circle"></sl-icon>
@@ -263,8 +275,16 @@
     <sl-textarea
       id="yaml-input"
       placeholder="Paste your YAML analysis output here..."
+      help-text="Paste the YAML returned from the run_analysis service."
     ></sl-textarea>
-    <div id="error-message" role="alert"></div>
+    <sl-alert id="error-alert" variant="danger" closable duration="0" hidden>
+      <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+      <strong>Something went wrong</strong>
+      <div id="error-message" aria-live="assertive"></div>
+      <sl-button slot="actions" variant="default" id="error-retry" hidden>
+        Retry
+      </sl-button>
+    </sl-alert>
   </div>
 </div>
 
