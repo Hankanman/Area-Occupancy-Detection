@@ -2,25 +2,37 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
 
 from homeassistant.util import dt as dt_util
 
 from ..utils import ensure_timezone_aware
 
-# Note: Actual half-life is purpose-driven via PurposeManager.
-# This fallback is used only when no purpose is configured.
-DEFAULT_HALF_LIFE = 30.0  # seconds
 
-
-@dataclass
 class Decay:
     """Decay model for Area Occupancy Detection."""
 
-    decay_start: datetime = field(default_factory=dt_util.utcnow)  # when decay began
-    half_life: float = DEFAULT_HALF_LIFE  # purpose-based half-life
-    is_decaying: bool = False
+    def __init__(
+        self,
+        half_life: float,
+        decay_start: datetime | None = None,
+        is_decaying: bool = False,
+    ) -> None:
+        """Initialize the decay model.
+
+        Args:
+            decay_start: When decay began. Defaults to current time if None.
+            half_life: Purpose-based half-life in seconds.
+            is_decaying: Whether decay is currently active.
+        """
+        # Ensure decay_start is timezone-aware
+        if decay_start is not None:
+            self.decay_start = ensure_timezone_aware(decay_start)
+        else:
+            self.decay_start = dt_util.utcnow()
+
+        self.half_life = half_life
+        self.is_decaying = is_decaying
 
     @property
     def decay_factor(self) -> float:
@@ -47,21 +59,3 @@ class Decay:
         """Stop decay **only if already running**."""
         if self.is_decaying:
             self.is_decaying = False
-
-    @classmethod
-    def create(
-        cls,
-        decay_start: datetime | None = None,
-        half_life: float | None = None,
-        is_decaying: bool | None = None,
-    ) -> Decay:
-        """Create a Decay instance with optional parameters."""
-        # Ensure decay_start is timezone-aware if provided
-        if decay_start is not None:
-            decay_start = ensure_timezone_aware(decay_start)
-
-        return cls(
-            decay_start=decay_start if decay_start is not None else dt_util.utcnow(),
-            half_life=half_life if half_life is not None else DEFAULT_HALF_LIFE,
-            is_decaying=is_decaying if is_decaying is not None else False,
-        )

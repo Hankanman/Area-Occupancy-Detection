@@ -459,7 +459,6 @@ class TestAreaOccupancyCoordinator:
         stored_data: dict[str, Any] = {"entities": {"binary_sensor.test": {}}}
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.entities, "cleanup", new=AsyncMock()),
             patch.object(
                 coordinator.db, "load_data", new=AsyncMock(return_value=stored_data)
@@ -487,7 +486,6 @@ class TestAreaOccupancyCoordinator:
         # Test setup failure
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.entities, "cleanup", new=AsyncMock()),
             patch.object(
                 coordinator.db,
@@ -1042,7 +1040,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data"),  # Now sync, no AsyncMock
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
@@ -1074,7 +1071,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
@@ -1128,7 +1124,6 @@ class TestAreaOccupancyCoordinator:
         )
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
@@ -1160,7 +1155,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(
                 coordinator.db, "save_area_data", side_effect=OSError("DB Error")
@@ -1192,7 +1186,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(
@@ -1228,7 +1221,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
@@ -1265,7 +1257,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(
                 coordinator.db,
                 "load_data",
@@ -1296,7 +1287,6 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
         with (
-            patch.object(coordinator.purpose, "async_initialize", new=AsyncMock()),
             patch.object(
                 coordinator.db,
                 "load_data",
@@ -1326,9 +1316,6 @@ class TestAreaOccupancyCoordinator:
                 coordinator.config, "update_config", new=AsyncMock()
             ) as mock_update_config,
             patch.object(
-                coordinator.purpose, "async_initialize", new=AsyncMock()
-            ) as mock_init,
-            patch.object(
                 coordinator.entities, "cleanup", new=AsyncMock()
             ) as mock_cleanup,
             patch.object(
@@ -1344,7 +1331,6 @@ class TestAreaOccupancyCoordinator:
             await coordinator.async_update_options(options)
 
             mock_update_config.assert_called_once_with(options)
-            mock_init.assert_called_once()
             mock_cleanup.assert_called_once()
             mock_track.assert_called_once()
             mock_save.assert_called_once()

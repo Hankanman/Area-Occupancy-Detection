@@ -262,7 +262,34 @@ def _create_entity_type(input_type_str: str, config=None) -> EntityType:
     if config is None:
         config = _create_simulator_config()
 
-    return EntityType.create(input_type, config)
+    # Extract overrides from config
+    weight = None
+    active_states = None
+    active_range = None
+
+    weights = getattr(config, "weights", None)
+    if weights:
+        weight_attr = getattr(weights, input_type.value, None)
+        if weight_attr is not None:
+            weight = weight_attr
+
+    sensor_states = getattr(config, "sensor_states", None)
+    if sensor_states:
+        states_attr = getattr(sensor_states, input_type.value, None)
+        if states_attr is not None:
+            active_states = states_attr
+
+    range_config_attr = f"{input_type.value}_active_range"
+    range_attr = getattr(config, range_config_attr, None)
+    if range_attr is not None:
+        active_range = range_attr
+
+    return EntityType(
+        input_type,
+        weight=weight,
+        active_states=active_states,
+        active_range=active_range,
+    )
 
 
 def _coerce_state(entity_type: EntityType, raw_state: Any) -> Any:
@@ -292,7 +319,7 @@ def _parse_decay_payload(
     decay_payload: dict[str, Any] | None, *, default_half_life: float
 ) -> Decay:
     if not decay_payload:
-        return Decay.create(half_life=default_half_life, is_decaying=False)
+        return Decay(half_life=default_half_life, is_decaying=False)
 
     is_decaying = bool(decay_payload.get("is_decaying", False))
 
@@ -301,7 +328,7 @@ def _parse_decay_payload(
     if decay_start is None:
         decay_start = dt_util.utcnow()
 
-    return Decay.create(
+    return Decay(
         decay_start=decay_start,
         half_life=default_half_life,
         is_decaying=is_decaying,

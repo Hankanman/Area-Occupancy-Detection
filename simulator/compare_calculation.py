@@ -102,7 +102,34 @@ def create_entity_type(input_type_str: str, config=None) -> EntityType:
     if config is None:
         config = create_simulator_config()
 
-    return EntityType.create(input_type, config)
+    # Extract overrides from config
+    weight = None
+    active_states = None
+    active_range = None
+
+    weights = getattr(config, "weights", None)
+    if weights:
+        weight_attr = getattr(weights, input_type.value, None)
+        if weight_attr is not None:
+            weight = weight_attr
+
+    sensor_states = getattr(config, "sensor_states", None)
+    if sensor_states:
+        states_attr = getattr(sensor_states, input_type.value, None)
+        if states_attr is not None:
+            active_states = states_attr
+
+    range_config_attr = f"{input_type.value}_active_range"
+    range_attr = getattr(config, range_config_attr, None)
+    if range_attr is not None:
+        active_range = range_attr
+
+    return EntityType(
+        input_type,
+        weight=weight,
+        active_states=active_states,
+        active_range=active_range,
+    )
 
 
 def create_simulator_entities(

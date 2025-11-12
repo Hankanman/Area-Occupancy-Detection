@@ -84,11 +84,7 @@ from custom_components.area_occupancy.data.config import (
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
-from custom_components.area_occupancy.data.purpose import (
-    AreaPurpose,
-    Purpose,
-    PurposeManager,
-)
+from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -509,19 +505,15 @@ def mock_entity_type_manager(mock_entity_type: Mock) -> Mock:
 
 @pytest.fixture
 def mock_purpose_manager() -> Mock:
-    """Create a mock PurposeManager."""
-    manager = Mock(spec=PurposeManager)
-    manager.async_initialize = AsyncMock()
+    """Create a mock Purpose (for backward compatibility with tests)."""
+    manager = Mock(spec=Purpose)
     manager.cleanup = Mock()
-    manager.current_purpose = Purpose(
-        purpose=AreaPurpose.SOCIAL,
-        name="Social",
-        description="Living room, family room, dining room. People linger here.",
-        half_life=720.0,
-    )
-    manager.get_purpose = Mock(return_value=manager.current_purpose)
+    manager.purpose = AreaPurpose.SOCIAL
+    manager.name = "Social"
+    manager.description = "Living room, family room, dining room. People linger here."
+    manager.half_life = 720.0
+    manager.get_purpose = Mock(return_value=manager)
     manager.get_all_purposes = Mock(return_value={})
-    manager.set_purpose = Mock()
     return manager
 
 
@@ -1580,14 +1572,14 @@ def mock_config() -> Mock:
         side_effect=lambda key, default=None: getattr(config, key, default)
     )
 
-    # Add purpose manager mock
-    config.purpose_manager = Mock(spec=PurposeManager)
-    config.purpose_manager.current_purpose = Purpose(
-        purpose=AreaPurpose.SOCIAL,
-        name="Social",
-        description="Living room, family room, dining room. People linger here.",
-        half_life=720.0,
+    # Add purpose manager mock (for backward compatibility)
+    config.purpose_manager = Mock(spec=Purpose)
+    config.purpose_manager.purpose = AreaPurpose.SOCIAL
+    config.purpose_manager.name = "Social"
+    config.purpose_manager.description = (
+        "Living room, family room, dining room. People linger here."
     )
+    config.purpose_manager.half_life = 720.0
 
     return config
 
