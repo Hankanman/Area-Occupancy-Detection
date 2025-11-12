@@ -112,9 +112,24 @@ class TestSensors:
         self, wasp_enabled: bool, wasp_entity_id: str | None, expected_result: list[str]
     ) -> None:
         """Test get_motion_sensors with different wasp configurations."""
-        sensors = Sensors(motion=["binary_sensor.motion1"])
+        # Create mock parent config with wasp_in_box
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = wasp_enabled
+        mock_parent_config.area_name = "Test Area"
+
+        # Create sensors with parent config
+        sensors = Sensors(
+            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
+        )
+
+        # Set up coordinator with multi-area architecture
         mock_coordinator = Mock()
-        mock_coordinator.config.wasp_in_box.enabled = wasp_enabled
+        mock_area_data = Mock()
+        mock_area_data.wasp_entity_id = wasp_entity_id
+        mock_coordinator.areas = {"Test Area": mock_area_data}
+
+        # Also set legacy wasp_entity_id for backward compatibility test
         mock_coordinator.wasp_entity_id = wasp_entity_id
 
         result = sensors.get_motion_sensors(mock_coordinator)
@@ -128,26 +143,82 @@ class TestSensors:
 
     def test_get_motion_sensors_with_empty_motion_list(self) -> None:
         """Test get_motion_sensors with empty motion list."""
-        sensors = Sensors(motion=[])
+        # Create mock parent config with wasp enabled
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.area_name = "Test Area"
+
+        sensors = Sensors(motion=[], _parent_config=mock_parent_config)
         mock_coordinator = Mock()
-        mock_coordinator.config.wasp_in_box.enabled = True
+        mock_area_data = Mock()
+        mock_area_data.wasp_entity_id = "binary_sensor.wasp"
+        mock_coordinator.areas = {"Test Area": mock_area_data}
         mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
 
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == ["binary_sensor.wasp"]
 
     def test_get_motion_sensors_without_wasp_config(self) -> None:
-        """Test get_motion_sensors when coordinator has no wasp_in_box config."""
-        sensors = Sensors(motion=["binary_sensor.motion1"])
+        """Test get_motion_sensors when wasp_in_box is disabled."""
+        # Create mock parent config with wasp disabled
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = False
+        mock_parent_config.area_name = "Test Area"
+
+        sensors = Sensors(
+            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
+        )
         mock_coordinator = Mock()
-        # Mock the config.wasp_in_box.enabled to be False
-        mock_coordinator.config = Mock()
-        mock_coordinator.config.wasp_in_box = Mock()
-        mock_coordinator.config.wasp_in_box.enabled = False
+        mock_area_data = Mock()
+        mock_area_data.wasp_entity_id = "binary_sensor.wasp"
+        mock_coordinator.areas = {"Test Area": mock_area_data}
         mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
 
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == ["binary_sensor.motion1"]
+
+    def test_get_motion_sensors_legacy_mode(self) -> None:
+        """Test get_motion_sensors with legacy coordinator.wasp_entity_id fallback."""
+        # Create mock parent config with wasp enabled but no area_name
+        # (simulating legacy single-area mode)
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.area_name = None  # Legacy mode - no area_name
+
+        sensors = Sensors(
+            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
+        )
+        mock_coordinator = Mock()
+        # Legacy mode: coordinator has wasp_entity_id directly
+        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
+        # No areas dict (legacy mode)
+        mock_coordinator.areas = {}
+
+        result = sensors.get_motion_sensors(mock_coordinator)
+        assert result == ["binary_sensor.motion1", "binary_sensor.wasp"]
+
+    def test_get_motion_sensors_multi_area_mode(self) -> None:
+        """Test get_motion_sensors with multi-area architecture."""
+        # Create mock parent config with wasp enabled and area_name
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.area_name = "Living Room"
+
+        sensors = Sensors(
+            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
+        )
+        mock_coordinator = Mock()
+        # Multi-area mode: wasp_entity_id stored per area
+        mock_area_data = Mock()
+        mock_area_data.wasp_entity_id = "binary_sensor.living_room_wasp"
+        mock_coordinator.areas = {"Living Room": mock_area_data}
+
+        result = sensors.get_motion_sensors(mock_coordinator)
+        assert result == ["binary_sensor.motion1", "binary_sensor.living_room_wasp"]
 
 
 class TestSensorStates:

@@ -1237,9 +1237,14 @@ class AreaOccupancyDB:
                     _LOGGER.error("threshold is None, cannot insert area")
                     continue
 
+                # Handle area_prior - use DEFAULT_AREA_PRIOR as fallback if None
                 if area_data["area_prior"] is None:
-                    _LOGGER.error("area_prior is None, cannot insert area")
-                    continue
+                    _LOGGER.warning(
+                        "area_prior is None for area '%s', using DEFAULT_AREA_PRIOR (%s) as fallback",
+                        area_name_item,
+                        DEFAULT_AREA_PRIOR,
+                    )
+                    area_data["area_prior"] = DEFAULT_AREA_PRIOR
 
                 # Handle area_id - use entry_id as fallback if area_id is None or empty
                 if not area_data.get("area_id"):
