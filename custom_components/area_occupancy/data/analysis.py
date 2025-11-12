@@ -970,6 +970,74 @@ class LikelihoodAnalyzer:
         return False
 
 
+def _update_area_prior_in_db(
+    db: Any, entry_id: str, area_name: str, global_prior: float
+) -> None:
+    """Update area prior in database (synchronous helper for executor).
+
+    Args:
+        db: Database instance
+        entry_id: Config entry ID
+        area_name: Area name
+        global_prior: Calculated global prior value to write
+    """
+    with db.get_session() as session:
+        area = (
+            session.query(db.Areas)
+            .filter_by(entry_id=entry_id, area_name=area_name)
+            .first()
+        )
+        if area:
+            area.area_prior = global_prior
+            area.updated_at = dt_util.utcnow()
+        else:
+            _LOGGER.warning(
+                "Area '%s' not found in database, cannot update area_prior",
+                area_name,
+            )
+        session.commit()
+
+
+def _update_likelihoods_in_db(
+    db: Any,
+    entry_id: str,
+    likelihoods: dict[str, tuple[float, float]],
+    now: datetime,
+) -> list[str]:
+    """Update likelihoods in database (synchronous helper for executor).
+
+    Args:
+        db: Database instance
+        entry_id: Config entry ID
+        likelihoods: Dictionary mapping entity_id to (prob_given_true, prob_given_false)
+        now: Current timestamp for last_updated field
+
+    Returns:
+        List of entity_ids that were successfully updated in the database
+    """
+    updated_entity_ids: list[str] = []
+    with db.get_session() as session:
+        for entity_id, (prob_given_true, prob_given_false) in likelihoods.items():
+            # Update database
+            entity_db = (
+                session.query(db.Entities)
+                .filter_by(entry_id=entry_id, entity_id=entity_id)
+                .first()
+            )
+            if entity_db:
+                entity_db.prob_given_true = prob_given_true
+                entity_db.prob_given_false = prob_given_false
+                entity_db.last_updated = now
+                updated_entity_ids.append(entity_id)
+            else:
+                _LOGGER.warning(
+                    "Entity '%s' not found in database, skipping likelihood update",
+                    entity_id,
+                )
+        session.commit()
+    return updated_entity_ids
+
+
 async def start_prior_analysis(
     coordinator: AreaOccupancyCoordinator,
     area_name: str,
@@ -1008,24 +1076,14 @@ async def start_prior_analysis(
         )
         _LOGGER.debug("Area prior calculated: %.2f", global_prior)
 
-        # Write global prior to database
-        db = coordinator.db
-        entry_id = coordinator.entry_id
-        with db.get_session() as session:
-            area = (
-                session.query(db.Areas)
-                .filter_by(entry_id=entry_id, area_name=area_name)
-                .first()
-            )
-            if area:
-                area.area_prior = global_prior
-                area.updated_at = dt_util.utcnow()
-            else:
-                _LOGGER.warning(
-                    "Area '%s' not found in database, cannot update area_prior",
-                    area_name,
-                )
-            session.commit()
+        # Write global prior to database (run in executor to avoid blocking event loop)
+        await coordinator.hass.async_add_executor_job(
+            _update_area_prior_in_db,
+            coordinator.db,
+            coordinator.entry_id,
+            area_name,
+            global_prior,
+        )
 
         # Calculate and write time priors
         await coordinator.hass.async_add_executor_job(analyzer.analyze_time_priors)
@@ -1097,45 +1155,34 @@ async def start_likelihood_analysis(
             _LOGGER.warning("No likelihoods calculated for area: %s", area_name)
             return
 
-        # Write likelihoods to database and update in-memory state
+        # Write likelihoods to database (run in executor to avoid blocking event loop)
         db = coordinator.db
         entry_id = coordinator.entry_id
         now = dt_util.utcnow()
 
-        with db.get_session() as session:
-            for entity_id, (prob_given_true, prob_given_false) in likelihoods.items():
-                # Update database
-                entity_db = (
-                    session.query(db.Entities)
-                    .filter_by(entry_id=entry_id, entity_id=entity_id)
-                    .first()
+        updated_entity_ids = await coordinator.hass.async_add_executor_job(
+            _update_likelihoods_in_db,
+            db,
+            entry_id,
+            likelihoods,
+            now,
+        )
+
+        # Update in-memory state for entities that were successfully updated in database
+        for entity_id in updated_entity_ids:
+            prob_given_true, prob_given_false = likelihoods[entity_id]
+            try:
+                entity_obj = entity_manager.get_entity(entity_id)
+                entity_obj.update_likelihood(prob_given_true, prob_given_false)
+            except ValueError as e:
+                _LOGGER.warning(
+                    "Entity '%s' not found in EntityManager: %s", entity_id, e
                 )
-                if entity_db:
-                    entity_db.prob_given_true = prob_given_true
-                    entity_db.prob_given_false = prob_given_false
-                    entity_db.last_updated = now
-                else:
-                    _LOGGER.warning(
-                        "Entity '%s' not found in database, skipping likelihood update",
-                        entity_id,
-                    )
-                    continue
-
-                # Update in-memory state
-                try:
-                    entity_obj = entity_manager.get_entity(entity_id)
-                    entity_obj.update_likelihood(prob_given_true, prob_given_false)
-                except ValueError as e:
-                    _LOGGER.warning(
-                        "Entity '%s' not found in EntityManager: %s", entity_id, e
-                    )
-                    continue
-
-            session.commit()
+                continue
 
         _LOGGER.debug(
             "Likelihoods updated for %d entities in area: %s",
-            len(likelihoods),
+            len(updated_entity_ids),
             area_name,
         )
 
