@@ -293,11 +293,6 @@
                 },
                 "data_description": {
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
-                },
-                "errors": {
-                    "base": {
-                        "cannot_remove_last": "Cannot remove the last area. At least one area must remain configured."
-                    }
                 }
             }
         }
