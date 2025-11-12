@@ -233,7 +233,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not entities:
             return MIN_PROBABILITY
 
-        prior_value = self.prior.value
         return bayesian_probability(
             entities=entities,
             prior=area.prior.value,
@@ -284,7 +283,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 prior=area.prior.value,
             ),
             InputType.HUMIDITY: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.HUMIDITY),
+                entities=area.entities.get_entities_by_input_type(InputType.HUMIDITY),
                 prior=area.prior.value,
             ),
             InputType.TEMPERATURE: bayesian_probability(
