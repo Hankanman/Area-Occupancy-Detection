@@ -7,10 +7,10 @@ from unittest.mock import Mock, patch
 import pytest
 from sqlalchemy.exc import DataError, OperationalError, ProgrammingError
 
+from custom_components.area_occupancy.const import MAX_PROBABILITY
 from custom_components.area_occupancy.data.analysis import (
     DEFAULT_OCCUPIED_SECONDS,
     DEFAULT_PRIOR,
-    MAX_PROBABILITY,
     LikelihoodAnalyzer,
     PriorAnalyzer,
 )

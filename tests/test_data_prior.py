@@ -9,21 +9,23 @@ import pytest
 from custom_components.area_occupancy.const import (
     DEFAULT_CACHE_TTL_SECONDS,
     MAX_PRIOR,
+    MAX_PROBABILITY,
     MIN_PRIOR,
     MIN_PROBABILITY,
 )
-from custom_components.area_occupancy.data.prior import (
+from custom_components.area_occupancy.data.analysis import (
     DAYS_PER_WEEK,
     DEFAULT_OCCUPIED_SECONDS,
-    DEFAULT_PRIOR,
     DEFAULT_SLOT_MINUTES,
     HOURS_PER_DAY,
-    MAX_PROBABILITY,
     MINUTES_PER_DAY,
     MINUTES_PER_HOUR,
+    SQLITE_TO_PYTHON_WEEKDAY_OFFSET,
+)
+from custom_components.area_occupancy.data.prior import (
+    DEFAULT_PRIOR,
     PRIOR_FACTOR,
     SIGNIFICANT_CHANGE_THRESHOLD,
-    SQLITE_TO_PYTHON_WEEKDAY_OFFSET,
     Prior,
 )
 from homeassistant.util import dt as dt_util
