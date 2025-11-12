@@ -15,8 +15,8 @@ class Decay:
     def __init__(
         self,
         half_life: float,
-        decay_start: datetime | None = None,
         is_decaying: bool = False,
+        decay_start: datetime | None = None,
     ) -> None:
         """Initialize the decay model.
 

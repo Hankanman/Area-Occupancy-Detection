@@ -264,8 +264,8 @@ class AreaConfig:
         )
 
         self.decay = Decay(
-            enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
             half_life=int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)),
+            enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
         )
 
         self.wasp_in_box = WaspInBox(
