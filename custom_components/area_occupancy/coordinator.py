@@ -430,9 +430,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Ensure areas exist in database and persist configuration/state
             for area_name in self.areas:
                 try:
-                    # Save area data to database
-                    # Note: This will need to be updated to save per-area
-                    await self.hass.async_add_executor_job(self.db.save_area_data)
+                    # Save area data to database for this specific area
+                    await self.hass.async_add_executor_job(
+                        self.db.save_area_data, area_name
+                    )
                 except (HomeAssistantError, OSError, RuntimeError) as e:
                     _LOGGER.warning(
                         "Failed to save area data for %s, continuing setup: %s",
@@ -869,8 +870,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Recalculate priors and likelihoods with new data for all areas
             for area in self.areas.values():
-                await area.prior.update()
-                await area.entities.update_likelihoods()
+                await area.run_prior_analysis()
+                await area.run_likelihood_analysis()
 
             # Refresh the coordinator
             await self.async_refresh()
