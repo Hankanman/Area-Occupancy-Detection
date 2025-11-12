@@ -1,0 +1,335 @@
+.md-content__inner {
+  margin: 0;
+}
+.md-content__inner {
+  padding: 0;
+}
+.md-content__inner:before {
+  display: none;
+}
+.md-content__button {
+  display: none;
+}
+p:first-of-type {
+  display: none;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  margin: 0;
+}
+
+sl-details.md-card {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.aod-simulator,
+.sim-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sim-sticky {
+  position: sticky;
+  top: calc(var(--md-header-height, 3.2rem) + 1.5rem);
+  z-index: 1;
+}
+
+.sim-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  width: 100%;
+  min-height: 160px;
+  padding: 0 1.25rem;
+  background-color: var(--md-primary-fg-color);
+  border-bottom: 1px solid var(--md-default-fg-color--lighter, #e0e0e0);
+}
+
+.sim-header h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sim-header-content {
+  display: flex;
+  align-items: stretch;
+  gap: 1.5rem;
+  flex: 1 1 auto;
+}
+
+.sim-prob-value {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--md-footer-bg-color, #ffffff);
+  flex: 0 0 25%;
+  min-width: 160px;
+}
+
+.sim-prob-value > h3 {
+  margin: 0;
+}
+
+.sim-prob-chart {
+  border-radius: 0.75rem;
+  padding: 0;
+  background: var(--md-footer-bg-color, #ffffff);
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.sim-prob-chart canvas {
+  width: 100% !important;
+  height: 125px;
+  max-height: 125px;
+}
+
+.md-content__button {
+  display: none;
+}
+.md-main__inner {
+  margin: 0;
+  max-width: unset;
+}
+h1:first-of-type {
+  display: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+body.aod-simulator-mode {
+  min-height: 100vh;
+}
+
+.aod-simulator {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.aod-simulator sl-button,
+.aod-simulator sl-alert,
+.aod-simulator sl-details,
+.aod-simulator sl-input,
+.aod-simulator sl-select,
+.aod-simulator sl-switch,
+.aod-simulator sl-textarea,
+.aod-simulator sl-range {
+  font-size: inherit;
+}
+
+.aod-simulator sl-button::part(base),
+.aod-simulator sl-alert::part(base),
+.aod-simulator sl-alert::part(message),
+.aod-simulator sl-details::part(summary),
+.aod-simulator sl-details::part(content),
+.aod-simulator sl-input::part(base),
+.aod-simulator sl-input::part(input),
+.aod-simulator sl-input::part(form-control-label),
+.aod-simulator sl-input::part(form-control-help-text),
+.aod-simulator sl-select::part(form-control-label),
+.aod-simulator sl-select::part(form-control-help-text),
+.aod-simulator sl-select::part(combobox),
+.aod-simulator sl-select::part(display-input),
+.aod-simulator sl-select::part(tag),
+.aod-simulator sl-select::part(listbox),
+.aod-simulator sl-switch::part(base),
+.aod-simulator sl-switch::part(label),
+.aod-simulator sl-textarea::part(base),
+.aod-simulator sl-textarea::part(textarea),
+.aod-simulator sl-textarea::part(form-control-label),
+.aod-simulator sl-textarea::part(form-control-help-text),
+.aod-simulator sl-range::part(form-control-label),
+.aod-simulator sl-range::part(form-control-help-text),
+.aod-simulator sl-range::part(input) {
+  font-size: inherit;
+}
+
+.sim-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.sim-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sim-controls {
+  display: grid;
+  gap: 1rem;
+}
+
+.sim-controls--autofit {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.sim-controls sl-range,
+.sim-controls sl-input,
+.sim-controls sl-select,
+.sim-controls sl-switch,
+.aod-simulator sl-textarea,
+.sim-card-actions sl-switch {
+  width: 100%;
+}
+
+.sim-card-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.sim-card {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--md-default-fg-color--lighter, #e0e0e0);
+}
+
+.sim-card-actions sl-switch,
+.sim-card-actions sl-input {
+  width: 120px;
+  min-width: 120px;
+}
+
+.sim-card-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sim-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sim-card h3 {
+  margin: 0;
+}
+
+.sim-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.sim-card-row > div {
+  flex: 0 1 auto;
+}
+
+.sim-card-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sim-card-actions sl-button::part(base) {
+  padding: 0.35rem 0.85rem;
+}
+
+.sim-placeholder {
+  width: 100%;
+}
+
+.sim-card-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.sim-metric-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--md-default-bg-color--lighter, rgba(0, 0, 0, 0.04));
+  min-width: 120px;
+}
+
+.sim-metric-chip strong {
+  font-size: 1.1em;
+}
+
+.help-dialog::part(body) {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.help-dialog h1 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.help-dialog h2 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.help-dialog p {
+  margin-bottom: 1rem;
+}
+
+.help-dialog ul,
+.help-dialog ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.help-dialog li {
+  margin-bottom: 0.5rem;
+}
+
+.sim-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.sim-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+@media (max-width: 1220px) {
+  .sim-card-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sim-sticky {
+    position: sticky;
+    top: var(--md-header-height, 2rem);
+    z-index: 1;
+  }
+
+  .sim-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# script/bootstrap: Install/update all dependencies required to run the project
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Checking for uv..."
+if ! command -v uv >/dev/null 2>&1; then
+  echo "UV not found, installing..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+
+echo "==> Creating virtual environment if needed..."
+if [ ! -d ".venv" ]; then
+    uv venv
+fi
+
+echo "==> Installing dependencies..."
+uv pip install --python .venv/bin/python --requirement requirements.txt
+
+echo "==> Installing test dependencies..."
+uv pip install --python .venv/bin/python --requirement requirements_test.txt
+
+echo "==> Installing pre-commit hooks..."
+uv run pre-commit install
+
+echo "==> Bootstrap completed!"

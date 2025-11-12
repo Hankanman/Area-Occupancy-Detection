@@ -2,14 +2,16 @@
 
 import bisect
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
+from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..db import AreaOccupancyDB as DB
 from ..utils import clamp_probability, ensure_timezone_aware
 from .decay import Decay
@@ -31,14 +33,29 @@ class Entity:
     prob_given_true: float
     prob_given_false: float
     decay: Decay
-    coordinator: "AreaOccupancyCoordinator"
-    last_updated: datetime
-    previous_evidence: bool | None
+    hass: HomeAssistant | None = None
+    state_provider: Callable[[str], Any] | None = None
+    last_updated: datetime = None
+    previous_evidence: bool | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that either hass or state_provider is provided."""
+        if self.hass is None and self.state_provider is None:
+            raise ValueError("Either hass or state_provider must be provided")
+        if self.hass is not None and self.state_provider is not None:
+            raise ValueError("Cannot provide both hass and state_provider")
+        if self.last_updated is None:
+            self.last_updated = dt_util.utcnow()
 
     @property
     def name(self) -> str | None:
-        """Get the entity name from Home Assistant state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity name from Home Assistant state or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "name"):
+                return state_obj.name
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
     @property
@@ -48,19 +65,32 @@ class Entity:
 
     @property
     def state(self) -> str | float | bool | None:
-        """Get the entity state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity state from Home Assistant or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj is None:
+                return None
+            # Handle both object with .state attribute and direct value
+            if hasattr(state_obj, "state"):
+                state_value = state_obj.state
+            else:
+                state_value = state_obj
+        else:
+            ha_state = self.hass.states.get(self.entity_id)
+            if ha_state is None:
+                return None
+            state_value = ha_state.state
 
-        # Check if HA state is valid
-        if ha_state and ha_state.state not in [
+        # Check if state is valid
+        if state_value in [
             "unknown",
             "unavailable",
             None,
             "",
             "NaN",
         ]:
-            return ha_state.state
-        return None
+            return None
+        return state_value
 
     @property
     def weight(self) -> float:
@@ -277,7 +307,7 @@ class EntityFactory:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=last_updated,
             previous_evidence=previous_evidence,
         )
@@ -301,7 +331,7 @@ class EntityFactory:
             prob_given_true=entity_type.prob_given_true,
             prob_given_false=entity_type.prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
         )
@@ -551,58 +581,6 @@ class EntityManager:
             if (true_empty + false_empty) > 0
             else 0.5
         )
-
-        # Special handling for motion sensors (ground truth)
-        if entity_obj.type.input_type == InputType.MOTION:
-            # Check data quality for motion sensors
-            total_occupied_time = true_occ + false_occ
-            total_unoccupied_time = true_empty + false_empty
-
-            if total_occupied_time < 3600:  # Less than 1 hour of occupied time
-                _LOGGER.warning(
-                    "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
-                    entity_id,
-                    total_occupied_time,
-                )
-                prob_given_true = entity_obj.type.prob_given_true
-                prob_given_false = entity_obj.type.prob_given_false
-            else:
-                # Trust calculated values when sufficient data exists
-                # Log info if values are outside typical ranges (for debugging)
-                if prob_given_true < 0.8:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_true (%.3f) below typical range (0.8), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_true,
-                        total_occupied_time,
-                    )
-
-                # Check if we have sufficient unoccupied data for prob_given_false
-                # If not, the calculated value is just a fallback (0.5), not real data
-                if total_unoccupied_time < 3600:  # Less than 1 hour of unoccupied time
-                    _LOGGER.info(
-                        "Motion sensor %s has insufficient unoccupied time data (%.1fs), "
-                        "using default for prob_given_false (%.3f)",
-                        entity_id,
-                        total_unoccupied_time,
-                        entity_obj.type.prob_given_false,
-                    )
-                    prob_given_false = entity_obj.type.prob_given_false
-                elif prob_given_false > 0.1:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_false (%.3f) above typical range (0.1), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_false,
-                        total_unoccupied_time,
-                    )
-        else:
-            # Fallback to defaults if too low for other sensors
-            if prob_given_true < MIN_PROBABILITY:
-                prob_given_true = entity_obj.type.prob_given_true
-            if prob_given_false < MIN_PROBABILITY:
-                prob_given_false = entity_obj.type.prob_given_false
 
         # Update entity
         entity_obj.update_likelihood(prob_given_true, prob_given_false)

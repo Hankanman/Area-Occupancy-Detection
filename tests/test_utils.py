@@ -331,7 +331,8 @@ class TestBayesianProbability:
         assert 0.0 <= result <= 1.0
 
         # Test with custom priors
-        result = bayesian_probability(entities, area_prior=0.3, time_prior=0.7)
+        combined_prior = combine_priors(0.3, 0.7)
+        result = bayesian_probability(entities, prior=combined_prior)
         assert 0.0 <= result <= 1.0
 
     def test_bayesian_with_decay(self) -> None:
@@ -367,10 +368,12 @@ class TestBayesianProbability:
         entities = {"entity1": entity}
 
         # Test with extreme priors
-        result = bayesian_probability(entities, area_prior=0.0, time_prior=0.0)
+        combined_prior_0 = combine_priors(0.0, 0.0)
+        result = bayesian_probability(entities, prior=combined_prior_0)
         assert 0.0 <= result <= 1.0
 
-        result = bayesian_probability(entities, area_prior=1.0, time_prior=1.0)
+        combined_prior_1 = combine_priors(1.0, 1.0)
+        result = bayesian_probability(entities, prior=combined_prior_1)
         assert 0.0 <= result <= 1.0
 
     def test_bayesian_numerical_stability(self) -> None:
@@ -543,9 +546,9 @@ class TestBayesianProbability:
         entities = {"entity1": entity1, "entity2": entity2}
 
         # Should return combined prior when all entities are invalid
-        result = bayesian_probability(entities, area_prior=0.3, time_prior=0.7)
-        expected = combine_priors(0.3, 0.7)
-        assert abs(result - expected) < 1e-6
+        combined_prior = combine_priors(0.3, 0.7)
+        result = bayesian_probability(entities, prior=combined_prior)
+        assert abs(result - combined_prior) < 1e-6
 
     def test_bayesian_decay_interpolation(self) -> None:
         """Test Bayesian probability with decay interpolation."""
@@ -580,6 +583,7 @@ class TestBayesianProbability:
 
         entities = {"entity1": entity}
 
-        result = bayesian_probability(entities, area_prior=0.5, time_prior=0.5)
+        combined_prior = combine_priors(0.5, 0.5)
+        result = bayesian_probability(entities, prior=combined_prior)
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))

@@ -3,18 +3,33 @@ version: 2
 updates:
   - package-ecosystem: "devcontainers"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "daily"
+    groups:
+      all-devcontainers:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "daily"
+    groups:
+      all-github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "daily"
+    groups:
+      all-pip-dependencies:
+        patterns:
+          - "*"
     ignore:
       # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
       - dependency-name: "homeassistant"
