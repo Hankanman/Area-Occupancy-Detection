@@ -201,10 +201,31 @@ class Entity:
 class EntityFactory:
     """Factory for creating entities from various sources."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the factory."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the factory.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Get config from areas dict if area_name provided
+        if (
+            area_name
+            and hasattr(coordinator, "areas")
+            and area_name in coordinator.areas
+        ):
+            self.config = coordinator.areas[area_name].config
+        else:
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data.
@@ -363,12 +384,33 @@ class EntityFactory:
 class EntityManager:
     """Manages entities with simplified creation and storage logic."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the entity manager."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the entity manager.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Get config from areas dict if area_name provided
+        if (
+            area_name
+            and hasattr(coordinator, "areas")
+            and area_name in coordinator.areas
+        ):
+            self.config = coordinator.areas[area_name].config
+        else:
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
         self.hass = coordinator.hass
-        self._factory = EntityFactory(coordinator)
+        self._factory = EntityFactory(coordinator, area_name=area_name)
         self._entities: dict[str, Entity] = self._factory.create_all_from_config()
 
     @property
@@ -440,12 +482,20 @@ class EntityManager:
         db = self.coordinator.db
         entry_id = self.coordinator.entry_id
 
+        # Get the area's prior for this EntityManager's area
+        area = self.coordinator.get_area_or_default(self.area_name)
+        if area is None:
+            _LOGGER.warning(
+                "Cannot update likelihoods: area '%s' not found", self.area_name
+            )
+            return
+
         with db.get_session() as session:
             sensors = self._get_sensors(session, entry_id)
             if not sensors:
                 return
 
-            occupied_times = self.coordinator.prior.get_occupied_intervals()
+            occupied_times = area.prior.get_occupied_intervals()
             intervals_by_entity = self._get_intervals_by_entity(session, sensors)
 
             for entity in sensors:

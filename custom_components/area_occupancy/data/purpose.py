@@ -36,10 +36,31 @@ class Purpose:
 class PurposeManager:
     """Purpose manager for area purposes."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the purpose manager."""
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the purpose manager.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Get config from areas dict if area_name provided
+        if (
+            area_name
+            and hasattr(coordinator, "areas")
+            and area_name in coordinator.areas
+        ):
+            self.config = coordinator.areas[area_name].config
+        else:
+            # No area_name provided - raise error as config is required
+            raise ValueError(
+                "Area name is required to access config in multi-area architecture"
+            )
         self._current_purpose: Purpose | None = None
 
     async def async_initialize(self) -> None:

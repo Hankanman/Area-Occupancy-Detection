@@ -22,6 +22,7 @@ from ..const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_NAME,
@@ -47,6 +48,7 @@ from ..const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -66,6 +68,7 @@ from ..const import (
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from .integration_config import IntegrationConfig
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,6 +88,9 @@ class Sensors:
     temperature: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
+    _parent_config: "AreaConfig | None" = field(
+        default=None, repr=False, compare=False
+    )
 
     def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
         """Get motion sensors including wasp sensor if enabled and available.
@@ -100,11 +106,14 @@ class Sensors:
         motion_sensors = self.motion.copy()
 
         # Add wasp sensor if enabled and entity_id is available
-        if (
-            coordinator
-            and coordinator.config.wasp_in_box.enabled
-            and getattr(coordinator, "wasp_entity_id", None)
-        ):
+        # Use parent config if available, otherwise fall back to checking coordinator
+        if self._parent_config and hasattr(self._parent_config, "wasp_in_box"):
+            wasp_enabled = self._parent_config.wasp_in_box.enabled
+        else:
+            # Fallback for cases where parent config isn't set
+            wasp_enabled = False
+
+        if wasp_enabled and getattr(coordinator, "wasp_entity_id", None):
             wasp_id = coordinator.wasp_entity_id
             if wasp_id is not None:
                 motion_sensors.append(wasp_id)
@@ -161,20 +170,35 @@ class WaspInBox:
     verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
-class Config:
+class AreaConfig:
     """Configuration for Area Occupancy Detection."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
-        """Initialize the config from a coordinator."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+        area_data: dict[str, Any] | None = None,
+    ):
+        """Initialize the config from a coordinator.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name identifier (for multi-area support)
+            area_data: Optional area-specific configuration data (if None, uses config_entry)
+        """
         self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self.hass = coordinator.hass
         self.db = coordinator.db
+        self.area_name = area_name  # Area identifier for multi-area support
 
-        # Load configuration from the merged entry data
-        if coordinator.config_entry is None:
-            raise ValueError("Coordinator config_entry cannot be None")
-        self._load_config(self._merge_entry(coordinator.config_entry))
+        # Load configuration from the merged entry data or provided area_data
+        if area_data is not None:
+            self._load_config(area_data)
+        else:
+            if coordinator.config_entry is None:
+                raise ValueError("Coordinator config_entry cannot be None")
+            self._load_config(self._merge_entry(coordinator.config_entry))
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -189,7 +213,10 @@ class Config:
         # Set all configuration attributes
         self.name = data.get(CONF_NAME, "Area Occupancy")
         self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        # For backward compatibility, try area_id first, then use area_name if set
         self.area_id = data.get(CONF_AREA_ID)
+        if self.area_name and not self.area_id:
+            self.area_id = self.area_name
         self.threshold = threshold
 
         self.sensors = Sensors(
@@ -203,6 +230,7 @@ class Config:
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
+            _parent_config=self,
         )
 
         self.sensor_states = SensorStates(
@@ -216,13 +244,15 @@ class Config:
         )
 
         self.weights = Weights(
-            motion=data[CONF_WEIGHT_MOTION],
-            media=data[CONF_WEIGHT_MEDIA],
-            appliance=data[CONF_WEIGHT_APPLIANCE],
-            door=data[CONF_WEIGHT_DOOR],
-            window=data[CONF_WEIGHT_WINDOW],
-            environmental=data[CONF_WEIGHT_ENVIRONMENTAL],
-            wasp=data[CONF_WASP_WEIGHT],
+            motion=data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            media=data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            appliance=data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            door=data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            window=data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            environmental=data.get(
+                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+            ),
+            wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
         )
 
         self.decay = Decay(
@@ -242,6 +272,10 @@ class Config:
             verification_delay=int(
                 data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
+        )
+
+        self.min_prior_override = float(
+            data.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE)
         )
 
     @property
