@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 import sys
 
-# ruff: noqa: INP001
 # Add parent directory to path to import custom_components
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
