@@ -42,7 +42,7 @@ from custom_components.area_occupancy.const import (
     HA_RECORDER_DAYS,
 )
 from custom_components.area_occupancy.data.config import (
-    Config,
+    AreaConfig,
     Decay,
     Sensors,
     SensorStates,
@@ -351,11 +351,11 @@ class TestWaspInBox:
 
 
 class TestConfig:
-    """Test Config class."""
+    """Test AreaConfig class."""
 
     def test_initialization_defaults(self, mock_coordinator: Mock) -> None:
-        """Test Config initialization with defaults."""
-        config = Config(mock_coordinator)
+        """Test AreaConfig initialization with defaults."""
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Test basic properties
         assert config.name == "Testing"
@@ -393,7 +393,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}  # Clear options to avoid conflicts
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Test key properties
         assert config.name == "Living Room"
@@ -414,7 +414,7 @@ class TestConfig:
 
         # This should raise KeyError due to missing weight values
         with pytest.raises(KeyError):
-            Config(mock_coordinator)
+            AreaConfig(mock_coordinator, area_name="Test Area")
 
     def test_initialization_with_string_threshold(self, mock_coordinator: Mock) -> None:
         """Test Config initialization with string threshold value."""
@@ -432,7 +432,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         assert config.threshold == 0.75  # Should convert string to float
 
     @pytest.mark.parametrize(
@@ -450,7 +450,7 @@ class TestConfig:
         time_tolerance: int,
     ) -> None:
         """Test time-related properties."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         time_value = getattr(config, property_name)
 
         assert time_value is not None
@@ -480,7 +480,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         entity_ids = config.entity_ids
 
         expected_entities = [
@@ -515,7 +515,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         entity_ids = config.entity_ids
 
         expected_entities = [
@@ -555,7 +555,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         entity_ids = config.entity_ids
 
         assert entity_ids == []
@@ -576,7 +576,7 @@ class TestConfig:
         expected_result: str | None,
     ) -> None:
         """Test get method with different parameters."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         if default is None:
             result = config.get(key)
@@ -587,7 +587,7 @@ class TestConfig:
 
     async def test_update_config(self, mock_coordinator: Mock) -> None:
         """Test update_config method."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         options = {CONF_NAME: "Updated Name", CONF_THRESHOLD: 70}
 
         # Mock all the required methods
@@ -607,7 +607,7 @@ class TestConfig:
 
     async def test_update_config_with_exception(self, mock_coordinator: Mock) -> None:
         """Test update_config method when an exception occurs."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         options = {CONF_NAME: "Updated Name"}
 
         # Mock the update_entry method to raise an exception
@@ -636,7 +636,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert errors == []
@@ -659,7 +659,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
@@ -683,7 +683,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
@@ -706,7 +706,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
@@ -729,7 +729,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
@@ -753,7 +753,7 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 2
@@ -762,7 +762,7 @@ class TestConfig:
 
     def test_update_from_entry(self, mock_coordinator: Mock) -> None:
         """Test update_from_entry method."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Create a new config entry with different data
         new_config_entry = Mock()
@@ -791,7 +791,7 @@ class TestConfig:
         config_entry.data = {"key1": "value1", "key2": "value2"}
         config_entry.options = {"key2": "new_value2", "key3": "value3"}
 
-        merged = Config._merge_entry(config_entry)
+        merged = AreaConfig._merge_entry(config_entry)
 
         expected = {"key1": "value1", "key2": "new_value2", "key3": "value3"}
         assert merged == expected
@@ -802,7 +802,7 @@ class TestConfig:
         config_entry.data = {"key1": "value1", "key2": "value2"}
         config_entry.options = {}
 
-        merged = Config._merge_entry(config_entry)
+        merged = AreaConfig._merge_entry(config_entry)
 
         assert merged == {"key1": "value1", "key2": "value2"}
 
@@ -812,7 +812,7 @@ class TestConfig:
         config_entry.data = {}
         config_entry.options = {"key1": "value1", "key2": "value2"}
 
-        merged = Config._merge_entry(config_entry)
+        merged = AreaConfig._merge_entry(config_entry)
 
         assert merged == {"key1": "value1", "key2": "value2"}
 
@@ -822,7 +822,7 @@ class TestConfig:
         config_entry.data = {}
         config_entry.options = {}
 
-        merged = Config._merge_entry(config_entry)
+        merged = AreaConfig._merge_entry(config_entry)
 
         assert merged == {}
 
@@ -832,7 +832,7 @@ class TestConfigIntegration:
 
     def test_config_manager_full_lifecycle(self, mock_coordinator: Mock) -> None:
         """Test full config lifecycle."""
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Test basic property access
         assert config.name is not None
@@ -877,7 +877,7 @@ class TestConfigIntegration:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Test validation passes
         errors = config.validate_entity_configuration()
@@ -918,7 +918,7 @@ class TestConfigIntegration:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Test with extreme threshold values
         assert config.threshold > 0
@@ -959,7 +959,7 @@ class TestConfigIntegration:
             CONF_THRESHOLD: 75,
         }
 
-        config = Config(mock_coordinator)
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
 
         # Options should override data
         assert config.name == "Options Name"

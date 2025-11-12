@@ -7,7 +7,12 @@ This represents a single device area in the multi-area architecture.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from ..data.analysis import start_likelihood_analysis, start_prior_analysis
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -20,6 +25,8 @@ else:
     from ..data.entity import EntityFactory, EntityManager
     from ..data.prior import Prior
     from ..data.purpose import Purpose
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class Area:
@@ -95,6 +102,63 @@ class Area:
         if self._entities is None:
             self._entities = EntityManager(self.coordinator, area_name=self.area_name)
         return self._entities
+
+    async def run_prior_analysis(self) -> None:
+        """Run prior analysis for this area.
+
+        This triggers the full prior analysis workflow:
+        - Calculates global prior from sensor data
+        - Writes global prior to database
+        - Updates in-memory state
+        - Calculates time priors and writes to database
+        - Invalidates caches
+
+        Raises:
+            ValueError: If analysis fails due to data error
+            SQLAlchemyError: If database operations fail
+            Exception: For any other unexpected errors
+        """
+        _LOGGER.debug("Running prior analysis for area: %s", self.area_name)
+        try:
+            await start_prior_analysis(self.coordinator, self.area_name, self.prior)
+        except (ValueError, TypeError, ZeroDivisionError):
+            _LOGGER.exception("Prior analysis failed due to data error")
+            raise
+        except SQLAlchemyError:
+            _LOGGER.exception("Prior analysis failed due to database error")
+            raise
+        except Exception:
+            _LOGGER.exception("Prior analysis failed due to unexpected error")
+            raise
+
+    async def run_likelihood_analysis(self) -> None:
+        """Run likelihood analysis for this area.
+
+        This triggers the full likelihood analysis workflow:
+        - Gets occupied intervals from Prior
+        - Calculates likelihoods for all entities
+        - Writes likelihoods to database
+        - Updates Entity objects in memory
+
+        Raises:
+            ValueError: If analysis fails due to data error
+            SQLAlchemyError: If database operations fail
+            Exception: For any other unexpected errors
+        """
+        _LOGGER.debug("Running likelihood analysis for area: %s", self.area_name)
+        try:
+            await start_likelihood_analysis(
+                self.coordinator, self.area_name, self.entities
+            )
+        except (ValueError, TypeError, ZeroDivisionError):
+            _LOGGER.exception("Likelihood analysis failed due to data error")
+            raise
+        except SQLAlchemyError:
+            _LOGGER.exception("Likelihood analysis failed due to database error")
+            raise
+        except Exception:
+            _LOGGER.exception("Likelihood analysis failed due to unexpected error")
+            raise
 
     async def async_cleanup(self) -> None:
         """Clean up the area's resources.
