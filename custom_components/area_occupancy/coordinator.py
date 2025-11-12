@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
+from .area import Area
 from .const import (
     CONF_AREAS,
     CONF_NAME,
@@ -35,7 +36,6 @@ from .const import (
     MIN_PROBABILITY,
     validate_and_sanitize_area_name,
 )
-from .data.area_data import AreaData
 from .data.entity_type import InputType
 from .data.integration_config import IntegrationConfig
 from .db import AreaOccupancyDB
@@ -64,8 +64,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Integration-level configuration (global settings for entire integration)
         self.integration_config = IntegrationConfig(self, config_entry)
 
-        # Multi-area architecture: dict[str, AreaData] keyed by area name
-        self.areas: dict[str, AreaData] = {}
+        # Multi-area architecture: dict[str, Area] keyed by area name
+        self.areas: dict[str, Area] = {}
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
@@ -130,8 +130,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                     continue
 
-                # Create AreaData for this area
-                self.areas[area_name] = AreaData(
+                # Create Area for this area
+                self.areas[area_name] = Area(
                     coordinator=self,
                     area_name=area_name,
                     area_data=area_data,
@@ -155,21 +155,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             # Create area for migration path
-            self.areas[area_name] = AreaData(
+            self.areas[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,
                 area_data=merged,
             )
             _LOGGER.debug("Created area from legacy config: %s", area_name)
 
-    def get_area_or_default(self, area_name: str | None = None) -> AreaData | None:
+    def get_area_or_default(self, area_name: str | None = None) -> Area | None:
         """Get area by name, or return first area if None.
 
         Args:
             area_name: Optional area name, None returns first area
 
         Returns:
-            AreaData instance or None if no areas exist
+            Area instance or None if no areas exist
         """
         if not self.areas:
             return None
@@ -413,11 +413,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             # Initialize each area
-            for area_name, area in self.areas.items():
+            for area_name in self.areas:
                 _LOGGER.debug("Initializing area: %s", area_name)
-
-                # Initialize purpose manager
-                await area.purpose.async_initialize()
 
                 # Load stored data from database for this area
                 # Note: Database load will restore priors and entities per area
@@ -619,13 +616,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._save_timer()
             self._save_timer = None
 
-        # Clean up entity managers for all areas
+        # Clean up all areas
         for area in self.areas.values():
-            await area.entities.cleanup()
-
-        # Clean up purpose managers for all areas
-        for area in self.areas.values():
-            area.purpose.cleanup()
+            await area.async_cleanup()
 
         await super().async_shutdown()
 
@@ -667,9 +660,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for area_name in removed_area_names:
                 area = self.areas.get(area_name)
                 if area:
-                    # Clean up entities and purpose managers for removed area
-                    await area.entities.cleanup()
-                    area.purpose.cleanup()
+                    # Clean up removed area
+                    await area.async_cleanup()
 
                     # Remove entities from entity registry
                     entities_removed = 0
@@ -742,11 +734,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name,
             )
 
-            # Update purpose with new configuration
-            await area.purpose.async_initialize()
-
-            # Clean up existing entity tracking and re-initialize
+            # Clean up existing entity tracking
             await area.entities.cleanup()
+
+            # Area components are now initialized synchronously in __init__
 
         # Re-establish entity state tracking with new entity lists
         all_entity_ids = []
