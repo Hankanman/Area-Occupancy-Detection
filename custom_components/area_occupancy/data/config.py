@@ -117,15 +117,11 @@ class Sensors:
                 self._parent_config
                 and hasattr(self._parent_config, "area_name")
                 and self._parent_config.area_name
-                and hasattr(coordinator, "areas")
                 and self._parent_config.area_name in coordinator.areas
             ):
-                # Multi-area mode: get wasp_entity_id from the area's data
+                # Get wasp_entity_id from the area's data
                 area_data = coordinator.areas[self._parent_config.area_name]
                 wasp_id = getattr(area_data, "wasp_entity_id", None)
-            elif hasattr(coordinator, "wasp_entity_id"):
-                # Legacy single-area mode: fallback to coordinator.wasp_entity_id
-                wasp_id = coordinator.wasp_entity_id
 
             if wasp_id is not None:
                 motion_sensors.append(wasp_id)

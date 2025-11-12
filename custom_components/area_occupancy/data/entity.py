@@ -204,28 +204,24 @@ class EntityFactory:
     def __init__(
         self,
         coordinator: "AreaOccupancyCoordinator",
-        area_name: str | None = None,
+        area_name: str,
     ) -> None:
         """Initialize the factory.
 
         Args:
             coordinator: The coordinator instance
-            area_name: Optional area name for multi-area support
+            area_name: Area name for multi-area support
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        # Get config from areas dict if area_name provided
-        if (
-            area_name
-            and hasattr(coordinator, "areas")
-            and area_name in coordinator.areas
-        ):
-            self.config = coordinator.areas[area_name].config
-        else:
-            # No area_name provided - raise error as config is required
+        # Validate area_name exists and retrieve config from coordinator.areas
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
             raise ValueError(
-                "Area name is required to access config in multi-area architecture"
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
             )
+        self.config = coordinator.areas[area_name].config
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data.
@@ -397,18 +393,16 @@ class EntityManager:
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        # Get config from areas dict if area_name provided
-        if (
-            area_name
-            and hasattr(coordinator, "areas")
-            and area_name in coordinator.areas
-        ):
-            self.config = coordinator.areas[area_name].config
-        else:
-            # No area_name provided - raise error as config is required
+        # Validate area_name and retrieve config from coordinator.areas
+        if not area_name:
+            raise ValueError("Area name is required in multi-area architecture")
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
             raise ValueError(
-                "Area name is required to access config in multi-area architecture"
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
             )
+        self.config = coordinator.areas[area_name].config
         self.hass = coordinator.hass
         self._factory = EntityFactory(coordinator, area_name=area_name)
         self._entities: dict[str, Entity] = self._factory.create_all_from_config()
