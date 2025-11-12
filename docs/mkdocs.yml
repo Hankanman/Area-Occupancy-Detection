@@ -84,6 +84,8 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - include-markdown:
+      preserve_includer_indent: false
   - minify:
       minify_html: true
 

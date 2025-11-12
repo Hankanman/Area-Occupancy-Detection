@@ -304,7 +304,6 @@
   const areaName = document.getElementById("area-name");
   const probabilityValue = document.getElementById("probability-value");
   const probabilityFill = document.getElementById("probability-fill");
-  const sensorsPlaceholder = document.getElementById("sensors-placeholder");
   const sensorsContainer = document.getElementById("sensors-container");
   const globalPriorSlider = document.getElementById("global-prior-slider");
   const timePriorSlider = document.getElementById("time-prior-slider");
@@ -843,10 +842,6 @@
     sensorsContainer.innerHTML = "";
     sensorsContainer.classList.toggle("empty", entities.length === 0);
 
-    if (sensorsPlaceholder) {
-      sensorsPlaceholder.classList.toggle("hidden", entities.length > 0);
-    }
-
     const sorted = [...entities].sort((a, b) => {
       const aId = a.entity_id ?? "";
       const bId = b.entity_id ?? "";
@@ -1196,6 +1191,17 @@
     });
   }
 
+  function initHelpDialog() {
+    const helpDialogBtn = document.getElementById("help-dialog-btn");
+    const helpDialog = document.getElementById("help-dialog");
+
+    if (helpDialogBtn && helpDialog) {
+      helpDialogBtn.addEventListener("click", () => {
+        helpDialog.show();
+      });
+    }
+  }
+
   function init() {
     if (!rootEl) {
       return;
@@ -1208,6 +1214,7 @@
     initPriorControls();
     initWeightControls();
     initApiControls();
+    initHelpDialog();
     loadPurposes();
 
     if (loadBtn) {
