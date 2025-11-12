@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+from collections.abc import Iterable
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
@@ -1186,13 +1187,14 @@ class AreaOccupancyDB:
 
         With single-instance architecture, no file lock is required.
         """
-        try:
-            # Determine which areas to save
-            if area_name:
-                areas_to_save = [area_name]
-            else:
-                areas_to_save = self.coordinator.get_area_names()
+        # Determine which areas to save
+        if area_name:
+            areas_to_save = [area_name]
+        else:
+            areas_to_save = self.coordinator.get_area_names()
 
+        def _attempt(session: Any) -> bool:
+            """Save area data for all configured areas."""
             for area_name_item in areas_to_save:
                 area_data_obj = self.coordinator.get_area_or_default(area_name_item)
                 if area_data_obj is None:
@@ -1206,47 +1208,53 @@ class AreaOccupancyDB:
                 # Call area_prior() method to get the actual value
                 area_prior_value = self.coordinator.area_prior(area_name_item)
 
-                with self.get_session() as session:
-                    area_data = {
-                        "entry_id": self.coordinator.entry_id,
-                        "area_name": area_name_item,
-                        "area_id": cfg.area_id,
-                        "purpose": cfg.purpose,
-                        "threshold": cfg.threshold,
-                        "area_prior": area_prior_value,
-                        "updated_at": dt_util.utcnow(),
-                    }
+                area_data = {
+                    "entry_id": self.coordinator.entry_id,
+                    "area_name": area_name_item,
+                    "area_id": cfg.area_id,
+                    "purpose": cfg.purpose,
+                    "threshold": cfg.threshold,
+                    "area_prior": area_prior_value,
+                    "updated_at": dt_util.utcnow(),
+                }
 
-                    _LOGGER.debug("Attempting to insert area data: %s", area_data)
+                _LOGGER.debug("Attempting to insert area data: %s", area_data)
 
-                    # Validate required fields
-                    if not area_data["entry_id"]:
-                        _LOGGER.error("entry_id is empty or None, cannot insert area")
-                        continue
+                # Validate required fields
+                if not area_data["entry_id"]:
+                    _LOGGER.error("entry_id is empty or None, cannot insert area")
+                    continue
 
-                    if not area_data["area_name"]:
-                        _LOGGER.error("area_name is empty or None, cannot insert area")
-                        continue
+                if not area_data["area_name"]:
+                    _LOGGER.error("area_name is empty or None, cannot insert area")
+                    continue
 
-                    if not area_data["purpose"]:
-                        _LOGGER.error("purpose is empty or None, cannot insert area")
-                        continue
+                if not area_data["purpose"]:
+                    _LOGGER.error("purpose is empty or None, cannot insert area")
+                    continue
 
-                    if area_data["threshold"] is None:
-                        _LOGGER.error("threshold is None, cannot insert area")
-                        continue
+                if area_data["threshold"] is None:
+                    _LOGGER.error("threshold is None, cannot insert area")
+                    continue
 
-                    if area_data["area_prior"] is None:
-                        _LOGGER.error("area_prior is None, cannot insert area")
-                        continue
+                if area_data["area_prior"] is None:
+                    _LOGGER.error("area_prior is None, cannot insert area")
+                    continue
 
-                    # Handle area_id - use entry_id as fallback if area_id is None or empty
-                    if not area_data.get("area_id"):
-                        _LOGGER.info(
-                            "area_id is None or empty, using entry_id as fallback: %s",
-                            area_data["entry_id"],
-                        )
-                        area_data["area_id"] = area_data["entry_id"]
+                # Handle area_id - use entry_id as fallback if area_id is None or empty
+                if not area_data.get("area_id"):
+                    _LOGGER.info(
+                        "area_id is None or empty, using entry_id as fallback: %s",
+                        area_data["entry_id"],
+                    )
+                    area_data["area_id"] = area_data["entry_id"]
+
+                # Use session.merge for upsert functionality
+                area_obj = self.Areas.from_dict(area_data)
+                session.merge(area_obj)
+
+            session.commit()
+            return True
 
         try:
             # Retry with backoff under a file lock
@@ -1281,106 +1289,97 @@ class AreaOccupancyDB:
 
         With single-instance architecture, no file lock is required.
         """
-        try:
-            with self.get_session() as session:
-                # Iterate over all areas and save their entities
-                for area_name in self.coordinator.get_area_names():
-                    area_data = self.coordinator.get_area_or_default(area_name)
-                    if area_data is None:
-                        continue
 
-                    entities = area_data.entities.entities.values()
-                    for entity in entities:
-                        # Skip entities with missing type information
-                        if not hasattr(entity, "type") or not entity.type:
-                            _LOGGER.warning(
-                                "Entity %s has no type information, skipping",
-                                entity.entity_id,
-                            )
-                            continue
+        def _iter_area_entities() -> Iterable[tuple[str, Any]]:
+            """Yield (area_name, entity) tuples for all configured areas."""
+            for area_name in self.coordinator.get_area_names():
+                area_data = self.coordinator.get_area_or_default(area_name)
+                if area_data is None:
+                    continue
 
-                    entity_type = getattr(entity.type, "input_type", None)
-                    if entity_type is None:
-                        _LOGGER.warning(
-                            "Entity %s has no input_type, skipping", entity.entity_id
-                        )
-                        continue
+                entities_container = getattr(area_data.entities, "entities", None)
+                if not entities_container:
+                    continue
+
+                try:
+                    entities_iter = entities_container.values()
+                except AttributeError:
+                    _LOGGER.debug(
+                        "Entities container for area %s does not provide values(), skipping",
+                        area_name,
+                    )
+                    continue
+
+                for entity in entities_iter:
+                    yield area_name, entity
+
+        def _prepare_entity_payload(
+            area_name: str, entity: Any
+        ) -> dict[str, Any] | None:
+            """Prepare normalized entity data for persistence."""
+            if not hasattr(entity, "type") or not entity.type:
+                _LOGGER.warning(
+                    "Entity %s has no type information, skipping",
+                    getattr(entity, "entity_id", "unknown"),
+                )
+                return None
+
+            entity_type = getattr(entity.type, "input_type", None)
+            if entity_type is None:
+                _LOGGER.warning(
+                    "Entity %s has no input_type, skipping", entity.entity_id
+                )
+                return None
+
+            # Normalize values before persisting
+            try:
+                weight = float(getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT))
+            except (TypeError, ValueError):
+                weight = DEFAULT_ENTITY_WEIGHT
+            weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
+
+            try:
+                prob_true = float(entity.prob_given_true)
+            except (TypeError, ValueError):
+                prob_true = DEFAULT_ENTITY_PROB_GIVEN_TRUE
+            prob_true = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_true))
+
+            try:
+                prob_false = float(entity.prob_given_false)
+            except (TypeError, ValueError):
+                prob_false = DEFAULT_ENTITY_PROB_GIVEN_FALSE
+            prob_false = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_false))
+
+            last_updated = getattr(entity, "last_updated", None) or dt_util.utcnow()
+
+            evidence_source = getattr(entity, "previous_evidence", None)
+            if evidence_source is None:
+                evidence_source = getattr(entity, "evidence", None)
+            evidence_val = (
+                bool(evidence_source) if evidence_source is not None else False
+            )
+
+            return {
+                "entry_id": self.coordinator.entry_id,
+                "area_name": area_name,
+                "entity_id": entity.entity_id,
+                "entity_type": entity_type,
+                "weight": weight,
+                "prob_given_true": prob_true,
+                "prob_given_false": prob_false,
+                "last_updated": last_updated,
+                "is_decaying": entity.decay.is_decaying,
+                "decay_start": entity.decay.decay_start,
+                "evidence": evidence_val,
+            }
 
         def _attempt(session: Any) -> int:
-            entities = self.coordinator.entities.entities.values()
             merges_count = 0
-            for entity in entities:
-                # Skip entities with missing type information
-                if not hasattr(entity, "type") or not entity.type:
-                    _LOGGER.warning(
-                        "Entity %s has no type information, skipping",
-                        entity.entity_id,
-                    )
+            for area_name, entity in _iter_area_entities():
+                entity_data = _prepare_entity_payload(area_name, entity)
+                if entity_data is None:
                     continue
 
-                entity_type = getattr(entity.type, "input_type", None)
-                if entity_type is None:
-                    _LOGGER.warning(
-                        "Entity %s has no input_type, skipping", entity.entity_id
-                    )
-                    continue
-
-                # Normalize values before persisting
-                try:
-                    weight = float(
-                        getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
-                    )
-                except (TypeError, ValueError):
-                    weight = DEFAULT_ENTITY_WEIGHT
-                # Clamp weight to bounds
-                weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
-
-                # Clamp likelihoods to valid probability bounds
-                prob_true = max(
-                    MIN_PROBABILITY,
-                    min(MAX_PROBABILITY, float(entity.prob_given_true)),
-                )
-                prob_false = max(
-                    MIN_PROBABILITY,
-                    min(MAX_PROBABILITY, float(entity.prob_given_false)),
-                )
-
-                    last_updated = entity.last_updated or dt_util.utcnow()
-
-                    entity_data = {
-                        "entry_id": self.coordinator.entry_id,
-                        "area_name": area_name,
-                        "entity_id": entity.entity_id,
-                        "entity_type": entity_type,
-                        "weight": weight,
-                        "prob_given_true": prob_true,
-                        "prob_given_false": prob_false,
-                        "last_updated": last_updated,
-                        "is_decaying": entity.decay.is_decaying,
-                        "decay_start": entity.decay.decay_start,
-                        "evidence": evidence_val,
-                    }
-
-                    # Use session.merge for upsert functionality
-                    entity_obj = self.Entities.from_dict(entity_data)
-                    session.merge(entity_obj)
-
-                last_updated = entity.last_updated or dt_util.utcnow()
-
-                entity_data = {
-                    "entry_id": self.coordinator.entry_id,
-                    "entity_id": entity.entity_id,
-                    "entity_type": entity_type,
-                    "weight": weight,
-                    "prob_given_true": prob_true,
-                    "prob_given_false": prob_false,
-                    "last_updated": last_updated,
-                    "is_decaying": entity.decay.is_decaying,
-                    "decay_start": entity.decay.decay_start,
-                    "evidence": evidence_val,
-                }
-
-                # Use session.merge for upsert functionality
                 entity_obj = self.Entities.from_dict(entity_data)
                 session.merge(entity_obj)
                 merges_count += 1
