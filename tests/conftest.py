@@ -439,6 +439,9 @@ def mock_coordinator(
     }
 
     # Mock entities manager with methods that actually exist in EntityManager
+    # Note: In multi-area architecture, entities are accessed via area.entities
+    # but we keep coordinator.entities for backward compatibility in tests
+    coordinator.entities = mock_entity_manager
     coordinator.entities.cleanup = AsyncMock()
     coordinator.entities.update_likelihoods = AsyncMock(return_value=1)
     coordinator.entities.get_entity = Mock(
