@@ -720,7 +720,7 @@ def _create_mock_entity(
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.coordinator = mock_coordinator
+    entity.hass = mock_coordinator.hass
     entity.last_updated = last_updated or dt_util.utcnow()
     entity.previous_evidence = previous_evidence
     entity.previous_probability = previous_probability
@@ -1128,7 +1128,7 @@ def mock_comprehensive_entity(
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.coordinator = mock_coordinator
+    entity.hass = mock_coordinator.hass
     entity.last_updated = dt_util.utcnow()
     entity.previous_evidence = False
     entity.previous_probability = 0.5
@@ -1265,7 +1265,7 @@ def mock_entity_for_likelihood_tests(
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.coordinator = mock_coordinator
+    entity.hass = mock_coordinator.hass
     entity.last_updated = dt_util.utcnow()
     entity.previous_evidence = False
     entity.previous_probability = 0.35

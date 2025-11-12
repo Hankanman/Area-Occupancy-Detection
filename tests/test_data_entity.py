@@ -30,6 +30,7 @@ def create_test_entity(
     prob_given_false: float = 0.05,
     decay: Mock | Decay = None,
     coordinator: Mock | None = None,
+    hass: Mock | None = None,
     **kwargs,
 ) -> Entity:
     """Create a test Entity instance with default values."""
@@ -43,8 +44,11 @@ def create_test_entity(
         )
     if decay is None:
         decay = Decay()
-    if coordinator is None:
-        coordinator = Mock()
+    if hass is None:
+        if coordinator is not None:
+            hass = coordinator.hass
+        else:
+            hass = Mock()
 
     return Entity(
         entity_id=entity_id,
@@ -52,7 +56,7 @@ def create_test_entity(
         prob_given_true=prob_given_true,
         prob_given_false=prob_given_false,
         decay=decay,
-        coordinator=coordinator,
+        hass=hass,
         last_updated=dt_util.utcnow(),
         previous_evidence=kwargs.get("previous_evidence"),
     )
@@ -120,7 +124,7 @@ class TestEntity:
         assert entity.prob_given_true == 0.25
         assert entity.prob_given_false == 0.05
         assert entity.decay == decay
-        assert entity.coordinator == mock_coordinator
+        assert entity.hass == mock_coordinator.hass
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
     @patch("custom_components.area_occupancy.data.entity.EntityType")
@@ -164,7 +168,7 @@ class TestEntity:
             == DEFAULT_TYPES[InputType.MOTION]["prob_given_false"]
         )
         assert entity.decay == mock_decay
-        assert entity.coordinator == mock_coordinator
+        assert entity.hass == mock_coordinator.hass
 
 
 class TestEntityManager:
@@ -964,7 +968,7 @@ class TestEntityFactory:
         assert entity.entity_id == "test_entity"
         assert entity.type == mock_entity_type
         assert entity.decay == mock_decay
-        assert entity.coordinator == mock_coordinator
+        assert entity.hass == mock_coordinator.hass
 
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     @patch("custom_components.area_occupancy.data.entity.Decay")
