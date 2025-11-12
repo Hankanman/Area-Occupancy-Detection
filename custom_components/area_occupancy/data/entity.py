@@ -251,7 +251,7 @@ class EntityFactory:
 
         # Convert numeric fields with validation
         try:
-            weight = float(entity_data["weight"])
+            db_weight = float(entity_data["weight"])
             prob_given_true = float(entity_data["prob_given_true"])
             prob_given_false = float(entity_data["prob_given_false"])
         except (TypeError, ValueError) as e:
@@ -277,21 +277,47 @@ class EntityFactory:
             previous_evidence = bool(previous_evidence)
 
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(entity_type_str),
-            self.config,
+        input_type = InputType(entity_type_str)
+
+        # Extract overrides from config
+        config_weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type.value, None)
+            if weight_attr is not None:
+                config_weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type,
+            weight=config_weight,
+            active_states=active_states,
+            active_range=active_range,
         )
 
         # DB weight should take priority over configured default
         try:
-            if MIN_WEIGHT <= weight <= MAX_WEIGHT:
-                entity_type.weight = weight
+            if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
+                entity_type.weight = db_weight
         except (TypeError, ValueError):
-            # Weight is invalid, keep the default from EntityType.create
+            # Weight is invalid, keep the default from EntityType initialization
             pass
 
         # Create decay object
-        decay = Decay.create(
+        decay = Decay(
             decay_start=decay_start,
             half_life=self.config.decay.half_life,
             is_decaying=is_decaying,
@@ -311,11 +337,37 @@ class EntityFactory:
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
         """Create entity from configuration specification."""
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(input_type),
-            self.config,
+        input_type_enum = InputType(input_type)
+
+        # Extract overrides from config
+        weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type_enum.value, None)
+            if weight_attr is not None:
+                weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type_enum.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type_enum.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type_enum,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
         )
-        decay = Decay.create(
+        decay = Decay(
             decay_start=dt_util.utcnow(),
             half_life=self.config.decay.half_life,
             is_decaying=False,

@@ -118,9 +118,11 @@ class TestDecay:
             ),
         ],
     )
-    def test_create_classmethod(self, kwargs: dict, expected_values: dict) -> None:
-        """Test the create classmethod."""
-        decay = Decay.create(**kwargs)
+    def test_initialization_with_kwargs(
+        self, kwargs: dict, expected_values: dict
+    ) -> None:
+        """Test initialization with various keyword arguments."""
+        decay = Decay(**kwargs)
         for key, expected_value in expected_values.items():
             assert getattr(decay, key) == expected_value
 
@@ -130,7 +132,7 @@ class TestDecay:
         naive_datetime = datetime(2023, 1, 1, 12, 0, 0)  # No timezone info
 
         # Create decay with naive datetime
-        decay = Decay.create(decay_start=naive_datetime, is_decaying=True)
+        decay = Decay(decay_start=naive_datetime, is_decaying=True)
 
         # Verify the datetime is now timezone-aware
         assert decay.decay_start.tzinfo is not None
