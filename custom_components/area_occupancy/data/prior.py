@@ -915,24 +915,55 @@ class Prior:
 
                 # Apply motion timeout only to motion sensor intervals
                 # For media/appliances, we use the raw intervals directly
+                # We need to split merged intervals at motion boundaries to avoid
+                # incorrectly applying timeout to media/appliance portions
                 extended_intervals = []
-                for _i, (start, end) in enumerate(merged_intervals):
-                    # Check if this interval overlaps with any motion interval
-                    overlaps_motion = any(
-                        not (end < m_start or start > m_end)
+                timeout_seconds = self.config.sensors.motion_timeout
+
+                for merged_start, merged_end in merged_intervals:
+                    # Find all motion intervals that overlap with this merged interval
+                    overlapping_motion = [
+                        (m_start, m_end)
                         for m_start, m_end in motion_raw
+                        if not (merged_end < m_start or merged_start > m_end)
+                    ]
+
+                    if not overlapping_motion:
+                        # No motion overlap, use interval as-is (media/appliance only)
+                        extended_intervals.append((merged_start, merged_end))
+                        continue
+
+                    # Calculate the union of motion coverage within this merged interval
+                    # Sort motion intervals by start time
+                    overlapping_motion.sort(key=lambda x: x[0])
+                    motion_union_start = min(
+                        m_start for m_start, _ in overlapping_motion
+                    )
+                    motion_union_end = max(m_end for _, m_end in overlapping_motion)
+                    # Clamp to merged interval boundaries
+                    motion_union_start = max(motion_union_start, merged_start)
+                    motion_union_end = min(motion_union_end, merged_end)
+
+                    # Split the merged interval into segments:
+                    # 1. Before motion (if any) - no timeout
+                    # 2. Motion portion - apply timeout
+                    # 3. After motion (if any) - no timeout
+
+                    if merged_start < motion_union_start:
+                        # Segment before motion: no timeout
+                        extended_intervals.append((merged_start, motion_union_start))
+
+                    # Motion segment: apply timeout
+                    extended_intervals.append(
+                        (
+                            motion_union_start,
+                            motion_union_end + timedelta(seconds=timeout_seconds),
+                        )
                     )
 
-                    if overlaps_motion:
-                        # Apply motion timeout to motion-based intervals
-                        timeout_seconds = self.config.sensors.motion_timeout
-                        # Extend end time by timeout
-                        extended_intervals.append(
-                            (start, end + timedelta(seconds=timeout_seconds))
-                        )
-                    else:
-                        # Media/appliance intervals, use as-is
-                        extended_intervals.append((start, end))
+                    if motion_union_end < merged_end:
+                        # Segment after motion: no timeout
+                        extended_intervals.append((motion_union_end, merged_end))
 
                 # Merge again after extending motion intervals
                 if extended_intervals:
