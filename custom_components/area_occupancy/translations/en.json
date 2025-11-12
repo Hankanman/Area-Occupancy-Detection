@@ -287,7 +287,6 @@
             },
             "remove_area": {
                 "title": "Remove Area",
-                "description": "Are you sure you want to remove the area '{area_name}'? This action cannot be undone.",
                 "data": {
                     "confirm": "Confirm Removal"
                 },

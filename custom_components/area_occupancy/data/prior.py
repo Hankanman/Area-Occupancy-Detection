@@ -76,18 +76,16 @@ class Prior:
         self.coordinator = coordinator
         self.db = coordinator.db
         self.area_name = area_name
-        # Get config from areas dict if area_name provided
-        if (
-            area_name
-            and hasattr(coordinator, "areas")
-            and area_name in coordinator.areas
-        ):
-            self.config = coordinator.areas[area_name].config
-        else:
-            # No area_name provided - raise error as config is required
+        # Validate area_name and retrieve config from coordinator.areas
+        if not area_name:
+            raise ValueError("Area name is required in multi-area architecture")
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
             raise ValueError(
-                "Area name is required to access config in multi-area architecture"
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
             )
+        self.config = coordinator.areas[area_name].config
         self.sensor_ids = self.config.sensors.motion
         self.media_sensor_ids = self.config.sensors.media
         self.appliance_sensor_ids = self.config.sensors.appliance
