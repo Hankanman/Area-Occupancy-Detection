@@ -316,9 +316,9 @@ class EntityFactory:
 
         # Create decay object
         decay = Decay(
-            decay_start=decay_start,
             half_life=self.config.decay.half_life,
             is_decaying=is_decaying,
+            decay_start=decay_start,
         )
 
         return Entity(
@@ -366,9 +366,9 @@ class EntityFactory:
             active_range=active_range,
         )
         decay = Decay(
-            decay_start=dt_util.utcnow(),
             half_life=self.config.decay.half_life,
             is_decaying=False,
+            decay_start=dt_util.utcnow(),
         )
 
         return Entity(
