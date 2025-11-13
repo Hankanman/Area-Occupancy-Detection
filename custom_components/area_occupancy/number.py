@@ -48,14 +48,20 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
-        self._attr_device_info = coordinator.device_info(area_name=area_name)
+        area = coordinator.get_area_or_default(area_name)
+        if area is None:
+            raise ValueError(f"Area {area_name} not found in coordinator")
+        self._attr_device_info = area.device_info()
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> float:
         """Return the current threshold value as a percentage."""
-        # Use the coordinator method for threshold (0.0-1.0) and convert to percentage
-        return self.coordinator.threshold(self._area_name) * 100.0
+        # Use the area method for threshold (0.0-1.0) and convert to percentage
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            return 50.0  # Default threshold
+        return area.threshold() * 100.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""

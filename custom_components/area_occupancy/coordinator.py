@@ -37,10 +37,8 @@ from .const import (
     MIN_PROBABILITY,
     validate_and_sanitize_area_name,
 )
-from .data.entity_type import InputType
 from .data.integration_config import IntegrationConfig
 from .db import AreaOccupancyDB
-from .utils import bayesian_probability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -220,15 +218,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 sw_version=DEVICE_SW_VERSION,
             )
 
-        # Use area name as device identifier for multi-device architecture
-        device_id = area_name if area_name else area.area_name
-        return DeviceInfo(
-            identifiers={(DOMAIN, device_id)},
-            name=area.config.name,
-            manufacturer=DEVICE_MANUFACTURER,
-            model=DEVICE_MODEL,
-            sw_version=DEVICE_SW_VERSION,
-        )
+        return area.device_info()
 
     def probability(self, area_name: str | None = None) -> float:
         """Calculate and return the current occupancy probability (0.0-1.0) for an area.
@@ -247,14 +237,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if area is None:
             return MIN_PROBABILITY
 
-        entities = area.entities.entities
-        if not entities:
-            return MIN_PROBABILITY
-
-        return bayesian_probability(
-            entities=entities,
-            prior=area.prior.value,
-        )
+        return area.probability()
 
     def type_probabilities(self, area_name: str | None = None) -> dict[str, float]:
         """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
@@ -278,48 +261,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if area is None:
             return {}
 
-        entities = area.entities.entities
-        if not entities:
-            return {}
-
-        return {
-            InputType.MOTION: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.MOTION),
-                prior=area.prior.value,
-            ),
-            InputType.MEDIA: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.MEDIA),
-                prior=area.prior.value,
-            ),
-            InputType.APPLIANCE: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.APPLIANCE),
-                prior=area.prior.value,
-            ),
-            InputType.DOOR: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.DOOR),
-                prior=area.prior.value,
-            ),
-            InputType.WINDOW: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.WINDOW),
-                prior=area.prior.value,
-            ),
-            InputType.ILLUMINANCE: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(
-                    InputType.ILLUMINANCE
-                ),
-                prior=area.prior.value,
-            ),
-            InputType.HUMIDITY: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(InputType.HUMIDITY),
-                prior=area.prior.value,
-            ),
-            InputType.TEMPERATURE: bayesian_probability(
-                entities=area.entities.get_entities_by_input_type(
-                    InputType.TEMPERATURE
-                ),
-                prior=area.prior.value,
-            ),
-        }
+        return area.type_probabilities()
 
     def area_prior(self, area_name: str | None = None) -> float:
         """Get the area's baseline occupancy prior from historical data.
@@ -339,7 +281,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         area = self.get_area_or_default(area_name)
         if area is None:
             return MIN_PROBABILITY
-        return area.prior.value
+        return area.area_prior()
 
     def decay(self, area_name: str | None = None) -> float:
         """Calculate the current decay probability (0.0-1.0) for an area.
@@ -358,12 +300,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if area is None:
             return 1.0
 
-        entities = area.entities.entities
-        if not entities:
-            return 1.0
-
-        decay_sum = sum(entity.decay.decay_factor for entity in entities.values())
-        return decay_sum / len(entities)
+        return area.decay()
 
     def occupied(self, area_name: str | None = None) -> bool:
         """Return the current occupancy state (True/False) for an area.
@@ -381,7 +318,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         area = self.get_area_or_default(area_name)
         if area is None:
             return False
-        return self.probability(area_name) >= area.config.threshold
+        return area.occupied()
 
     @property
     def setup_complete(self) -> bool:
@@ -400,7 +337,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         area = self.get_area_or_default(area_name)
         if area is None:
             return 0.5
-        return area.config.threshold
+        return area.threshold()
 
     def _verify_setup_complete(self) -> bool:
         """Verify that critical initialization components have started successfully.
@@ -564,13 +501,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         # Return current state data for all areas (all calculations are in-memory)
         result = {}
-        for area_name in self.areas:
+        for area_name, area in self.areas.items():
             result[area_name] = {
-                "probability": self.probability(area_name),
-                "occupied": self.occupied(area_name),
-                "threshold": self.threshold(area_name),
-                "prior": self.area_prior(area_name),
-                "decay": self.decay(area_name),
+                "probability": area.probability(),
+                "occupied": area.occupied(),
+                "threshold": area.threshold(),
+                "prior": area.area_prior(),
+                "decay": area.decay(),
                 "last_updated": dt_util.utcnow(),
             }
 
