@@ -9,9 +9,6 @@
                 },
                 "data_description": {
                     "selected_option": "Choose an area to edit or remove, add a new area, or finish setup"
-                },
-                "error": {
-                    "base": "At least one area must be configured before finishing setup"
                 }
             },
             "area_action": {
@@ -166,9 +163,6 @@
                 },
                 "data_description": {
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
-                },
-                "error": {
-                    "base": "Cannot remove the last area"
                 }
             }
         }
