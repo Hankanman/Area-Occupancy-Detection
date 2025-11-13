@@ -24,8 +24,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
-from .area import Area
+from .area import AllAreas, Area
 from .const import (
+    ALL_AREAS_IDENTIFIER,
     CONF_AREAS,
     CONF_NAME,
     DEFAULT_NAME,
@@ -66,6 +67,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Multi-area architecture: dict[str, Area] keyed by area name
         self.areas: dict[str, Area] = {}
+
+        # All Areas aggregator (lazy initialization)
+        self._all_areas: AllAreas | None = None
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
@@ -182,6 +186,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Get list of all configured area names."""
         return list(self.areas.keys())
 
+    def get_all_areas(self) -> AllAreas:
+        """Get or create the AllAreas aggregator instance.
+
+        Returns:
+            AllAreas instance for aggregating data across all areas
+        """
+        if self._all_areas is None:
+            self._all_areas = AllAreas(self)
+        return self._all_areas
+
     # --- Area Management ---
 
     # Master election code removed - no longer needed with single-instance architecture
@@ -225,6 +239,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Probability value (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().probability()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return MIN_PROBABILITY
@@ -246,7 +264,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Returns:
             Dictionary mapping input types to probabilities
+
+        Raises:
+            ValueError: If area_name is ALL_AREAS_IDENTIFIER (not supported for "All Areas")
         """
+        # "All Areas" does not support type_probabilities aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            raise ValueError(
+                "type_probabilities is not supported for 'All Areas' aggregation"
+            )
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return {}
@@ -305,6 +332,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Prior probability (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().area_prior()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return MIN_PROBABILITY
@@ -319,6 +350,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Decay probability (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().decay()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return 1.0
@@ -339,6 +374,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             True if occupied, False otherwise
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().occupied()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return False
