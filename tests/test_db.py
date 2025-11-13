@@ -1019,8 +1019,8 @@ class TestAreaOccupancyDBUtilities:
 
         # Set global_prior to None to simulate first run or failed load - use area-based access
         area.prior.global_prior = None
-        # Mock coordinator.area_prior to return MIN_PRIOR when global_prior is None
-        db.coordinator.area_prior = Mock(return_value=MIN_PRIOR)
+        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
+        area.area_prior = Mock(return_value=MIN_PRIOR)
 
         # Save will use MIN_PRIOR from coordinator.area_prior when global_prior is None
         db.save_area_data()
@@ -1061,8 +1061,8 @@ class TestAreaOccupancyDBUtilities:
 
         # Set global_prior to None - use area-based access
         area.prior.global_prior = None
-        # Mock coordinator.area_prior to return MIN_PRIOR when global_prior is None
-        db.coordinator.area_prior = Mock(return_value=MIN_PRIOR)
+        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
+        area.area_prior = Mock(return_value=MIN_PRIOR)
 
         # Save should use MIN_PRIOR (from Prior.value when global_prior is None)
         db.save_area_data()
@@ -1088,10 +1088,12 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
 
-        # Mock coordinator.area_prior to return None
+        # Mock area.area_prior to return None
         # This simulates an edge case where the method returns None
-        db.coordinator.area_prior = Mock(return_value=None)
+        if area:
+            area.area_prior = Mock(return_value=None)
 
         # Save should use DEFAULT_AREA_PRIOR as fallback (from db.py line 1241-1247)
         db.save_area_data()
