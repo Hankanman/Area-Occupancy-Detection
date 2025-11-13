@@ -110,3 +110,45 @@ class TestAllAreas:
             prob = all_areas.probability()
             # Should clamp to [MIN_PROBABILITY, 1.0]
             assert MIN_PROBABILITY <= prob <= 1.0
+
+    def test_probability_empty_areas(self, coordinator_with_areas) -> None:
+        """Test probability returns safe default when no areas exist."""
+        all_areas = AllAreas(coordinator_with_areas)
+
+        # Mock get_area_names to return empty list (should never happen due to root cause fix)
+        with patch.object(
+            coordinator_with_areas,
+            "get_area_names",
+            return_value=[],
+        ):
+            prob = all_areas.probability()
+            # Should return MIN_PROBABILITY as safe default
+            assert prob == MIN_PROBABILITY
+
+    def test_area_prior_empty_areas(self, coordinator_with_areas) -> None:
+        """Test area_prior returns safe default when no areas exist."""
+        all_areas = AllAreas(coordinator_with_areas)
+
+        # Mock get_area_names to return empty list (should never happen due to root cause fix)
+        with patch.object(
+            coordinator_with_areas,
+            "get_area_names",
+            return_value=[],
+        ):
+            prior = all_areas.area_prior()
+            # Should return MIN_PROBABILITY as safe default
+            assert prior == MIN_PROBABILITY
+
+    def test_decay_empty_areas(self, coordinator_with_areas) -> None:
+        """Test decay returns safe default when no areas exist."""
+        all_areas = AllAreas(coordinator_with_areas)
+
+        # Mock get_area_names to return empty list (should never happen due to root cause fix)
+        with patch.object(
+            coordinator_with_areas,
+            "get_area_names",
+            return_value=[],
+        ):
+            decay = all_areas.decay()
+            # Should return 1.0 as safe default (no decay = full probability)
+            assert decay == 1.0
