@@ -66,10 +66,10 @@ class TestThreshold:
         expected_percentage: float,
     ) -> None:
         """Test native_value property with various threshold values."""
-        # Mock coordinator.threshold as a method that takes area_name
-        threshold_entity.coordinator.threshold = Mock(
-            return_value=coordinator_threshold
-        )
+        # Mock area.threshold method
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area_or_default(area_name)
+        area.threshold = Mock(return_value=coordinator_threshold)
         assert threshold_entity.native_value == expected_percentage
 
     @pytest.mark.parametrize(
