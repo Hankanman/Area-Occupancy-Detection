@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +13,7 @@ from custom_components.area_occupancy.const import (
     MIN_PRIOR,
     MIN_PROBABILITY,
 )
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import (
     DAYS_PER_WEEK,
     DEFAULT_OCCUPIED_SECONDS,
@@ -32,33 +33,14 @@ from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001
-@pytest.fixture
-def mock_coordinator(mock_hass):
-    mock = Mock()
-    mock.config.sensors.motion = ["binary_sensor.motion1", "binary_sensor.motion2"]
-    mock.config.wasp_in_box.enabled = False
-    mock.hass = mock_hass  # Use the proper mock_hass fixture
-    mock.entry_id = "test_entry_id"
-
-    # Mock database
-    mock.db = Mock()
-    mock.db.get_session = Mock()
-    mock.db.Intervals = Mock()
-    mock.db.Entities = Mock()
-    mock.db.Priors = Mock()
-
-    # Mock multi-area architecture
-    mock_area = Mock()
-    mock_area.config = mock.config
-    mock.areas = {"Test Area": mock_area}
-
-    return mock
-
-
-def test_initialization(mock_coordinator):
-    prior = Prior(mock_coordinator, area_name="Test Area")
-    assert prior.sensor_ids == ["binary_sensor.motion1", "binary_sensor.motion2"]
-    assert prior.hass == mock_coordinator.hass
+def test_initialization(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test Prior initialization with real coordinator."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area_or_default(area_name)
+    prior = Prior(coordinator_with_areas, area_name=area_name)
+    # Check that sensor_ids matches the area config
+    assert prior.sensor_ids == area.config.sensors.motion
+    assert prior.hass == coordinator_with_areas.hass
     assert prior.global_prior is None
     assert prior._last_updated is None
 
@@ -84,10 +66,14 @@ def test_initialization(mock_coordinator):
     ],
 )
 def test_value_property_clamping(
-    mock_coordinator, global_prior, expected_value, description
+    coordinator_with_areas: AreaOccupancyCoordinator,
+    global_prior,
+    expected_value,
+    description,
 ):
     """Test value property handles various global_prior values correctly."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
     prior.global_prior = global_prior
     # Mock get_time_prior to return None to avoid database calls
     with patch.object(prior, "get_time_prior", return_value=None):
@@ -128,22 +114,25 @@ def test_weekday_conversion(sqlite_weekday, expected_python_weekday):
     assert result == expected_python_weekday
 
 
-def test_to_dict_and_from_dict(mock_coordinator):
-    prior = Prior(mock_coordinator, area_name="Test Area")
+def test_to_dict_and_from_dict(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test Prior serialization and deserialization."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
     now = dt_util.utcnow()
     prior.global_prior = 0.42
     prior._last_updated = now
     d = prior.to_dict()
     assert d["value"] == 0.42
     assert d["last_updated"] == now.isoformat()
-    restored = Prior.from_dict(d, mock_coordinator, area_name="Test Area")
+    restored = Prior.from_dict(d, coordinator_with_areas, area_name=area_name)
     assert restored.global_prior == 0.42
     assert restored._last_updated == now
 
 
-def test_set_global_prior(mock_coordinator):
+def test_set_global_prior(coordinator_with_areas: AreaOccupancyCoordinator):
     """Test set_global_prior method."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
     now = dt_util.utcnow()
 
     with patch(
@@ -154,9 +143,10 @@ def test_set_global_prior(mock_coordinator):
         assert prior._last_updated == now
 
 
-def test_last_updated_property(mock_coordinator):
+def test_last_updated_property(coordinator_with_areas: AreaOccupancyCoordinator):
     """Test last_updated property."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
     assert prior.last_updated is None
 
     now = dt_util.utcnow()
@@ -167,9 +157,12 @@ def test_last_updated_property(mock_coordinator):
 # New tests for performance optimization features
 
 
-def test_get_occupied_intervals_caching(mock_coordinator):
+def test_get_occupied_intervals_caching(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
     """Test caching behavior of get_occupied_intervals."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
 
     # Test cache invalidation method directly
     # Set up cache
@@ -189,9 +182,12 @@ def test_get_occupied_intervals_caching(mock_coordinator):
     assert prior._cached_intervals_timestamp is None
 
 
-def test_get_occupied_intervals_cache_expiry(mock_coordinator):
+def test_get_occupied_intervals_cache_expiry(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
     """Test cache expiry after DEFAULT_CACHE_TTL_SECONDS."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
 
     # Test cache expiry logic directly
     test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
@@ -208,9 +204,12 @@ def test_get_occupied_intervals_cache_expiry(mock_coordinator):
     assert cache_age > DEFAULT_CACHE_TTL_SECONDS
 
 
-def test_invalidate_occupied_intervals_cache(mock_coordinator):
+def test_invalidate_occupied_intervals_cache(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
     """Test cache invalidation method."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
 
     # Set up cache
     prior._cached_occupied_intervals = [(dt_util.utcnow(), dt_util.utcnow())]
@@ -228,9 +227,12 @@ def test_invalidate_occupied_intervals_cache(mock_coordinator):
     assert prior._cached_intervals_timestamp is None
 
 
-def test_get_occupied_intervals_cache_hit_logging(mock_coordinator, caplog):
+def test_get_occupied_intervals_cache_hit_logging(
+    coordinator_with_areas: AreaOccupancyCoordinator, caplog
+):
     """Test cache hit logging."""
-    prior = Prior(mock_coordinator, area_name="Test Area")
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prior = Prior(coordinator_with_areas, area_name=area_name)
 
     # Test cache hit logging by setting up cache and calling the actual method
     test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]

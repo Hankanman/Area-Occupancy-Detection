@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 
+# ruff: noqa: PLC0415
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
@@ -40,6 +41,12 @@ class TestAsyncSetupEntry:
         exception_message: str,
     ) -> None:
         """Test various setup failure scenarios."""
+        # Ensure hass.data[DOMAIN] doesn't exist initially
+        from custom_components.area_occupancy.const import DOMAIN as DOMAIN_CONST
+
+        if DOMAIN_CONST in mock_hass.data:
+            del mock_hass.data[DOMAIN_CONST]
+
         if failure_type == "coordinator_init":
             with (
                 patch(
@@ -58,6 +65,8 @@ class TestAsyncSetupEntry:
                 mock_coordinator.async_config_entry_first_refresh = AsyncMock(
                     side_effect=Exception(exception_message)
                 )
+                # Mock get_area_names to return a list (needed for logging at end of setup)
+                mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
                 mock_coordinator_class.return_value = mock_coordinator
 
                 with pytest.raises(ConfigEntryNotReady):
@@ -78,8 +87,16 @@ class TestAsyncSetupEntry:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test successful setup flow with real database initialization."""
+        # Ensure hass.data[DOMAIN] doesn't exist initially
+        from custom_components.area_occupancy.const import DOMAIN as DOMAIN_CONST
+
+        if DOMAIN_CONST in mock_hass.data:
+            del mock_hass.data[DOMAIN_CONST]
+
         # Use real coordinator to test actual database initialization
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
+        # Mock get_area_names to return a list
+        coordinator.get_area_names = Mock(return_value=["Test Area"])
 
         with (
             patch.object(
@@ -105,6 +122,9 @@ class TestAsyncSetupEntry:
 
         # Verify the database file exists and is accessible
         assert coordinator.db.db_path is not None
+
+        # Verify coordinator is stored in hass.data[DOMAIN]
+        assert mock_hass.data[DOMAIN_CONST] == coordinator
         assert coordinator.db.db_path.exists()
 
         # Verify we can create a session without errors (indicates tables exist)
@@ -121,7 +141,10 @@ class TestAsyncSetupEntry:
             pytest.fail(f"Database initialization failed - cannot query database: {e}")
 
         mock_services.assert_awaited_once()
-        assert mock_config_entry.runtime_data == coordinator
+        # Coordinator is now stored in hass.data[DOMAIN] instead of runtime_data
+        from custom_components.area_occupancy.const import DOMAIN
+
+        assert mock_hass.data[DOMAIN] == coordinator
 
 
 class TestAsyncSetup:
@@ -167,7 +190,8 @@ class TestAsyncUnloadEntry:
     ) -> None:
         """Test successful unload of config entry."""
         mock_coordinator = self._setup_coordinator_mock(mock_hass, mock_config_entry)
-        mock_hass.data[DOMAIN]["test_entry_id"] = mock_coordinator
+        # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
+        mock_hass.data[DOMAIN] = mock_coordinator
 
         result = await async_unload_entry(mock_hass, mock_config_entry)
 
@@ -180,7 +204,8 @@ class TestAsyncUnloadEntry:
     ) -> None:
         """Test unload when platform unload fails."""
         mock_coordinator = self._setup_coordinator_mock(mock_hass, mock_config_entry)
-        mock_hass.data[DOMAIN]["test_entry_id"] = mock_coordinator
+        # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
+        mock_hass.data[DOMAIN] = mock_coordinator
         mock_hass.config_entries.async_unload_platforms = AsyncMock(return_value=False)
 
         result = await async_unload_entry(mock_hass, mock_config_entry)
@@ -192,7 +217,10 @@ class TestAsyncUnloadEntry:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test unload when coordinator doesn't exist."""
-        mock_hass.data[DOMAIN] = {}
+        # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
+        # So we need to ensure it doesn't exist or is None
+        if DOMAIN in mock_hass.data:
+            del mock_hass.data[DOMAIN]
 
         result = await async_unload_entry(mock_hass, mock_config_entry)
 
@@ -217,7 +245,8 @@ class TestEntryUpdated:
     ) -> None:
         """Test successful entry update."""
         mock_coordinator = self._setup_coordinator_mock(mock_hass, mock_config_entry)
-        mock_hass.data[DOMAIN]["test_entry_id"] = mock_coordinator
+        # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
+        mock_hass.data[DOMAIN] = mock_coordinator
 
         await _async_entry_updated(mock_hass, mock_config_entry)
 
@@ -230,7 +259,10 @@ class TestEntryUpdated:
         self, mock_hass: Mock, mock_config_entry: Mock
     ) -> None:
         """Test entry update when coordinator doesn't exist."""
-        mock_hass.data[DOMAIN] = {}
+        # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
+        # Ensure it doesn't exist
+        if DOMAIN in mock_hass.data:
+            del mock_hass.data[DOMAIN]
         mock_coordinator = self._setup_coordinator_mock(mock_hass, mock_config_entry)
 
         # Should not raise an exception

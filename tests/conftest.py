@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Generator
 import contextlib
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 import os
 import tempfile
@@ -132,8 +133,9 @@ def mock_hass() -> Mock:
     hass.config_entries.async_reload = AsyncMock(return_value=True)
 
     # Data storage - use proper dict to avoid "argument of type 'Mock' is not iterable" errors
+    # Note: DOMAIN will be set to coordinator by tests that need it
     hass.data = {
-        DOMAIN: {},
+        DOMAIN: None,  # Will be set to coordinator in tests
         "area_occupancy": {},
         "area_occupancy_coordinators": {},
         "area_occupancy_db": {},
@@ -373,11 +375,12 @@ def mock_coordinator(
     coordinator.config_entry = mock_realistic_config_entry
     coordinator.entry_id = mock_realistic_config_entry.entry_id
     coordinator.available = True
-    coordinator.probability = 0.5
+    # These are now methods that take area_name
+    coordinator.probability = Mock(return_value=0.5)
     coordinator.is_occupied = False
-    coordinator.threshold = 0.5
-    coordinator.area_prior = 0.3
-    coordinator.decay = 1.0
+    coordinator.threshold = Mock(return_value=0.5)
+    coordinator.area_prior = Mock(return_value=0.3)
+    coordinator.decay = Mock(return_value=1.0)
     coordinator.occupancy_entity_id = None
     coordinator.wasp_entity_id = None
     coordinator.last_update_success = True
@@ -404,7 +407,11 @@ def mock_coordinator(
     coordinator.get_area_or_default = Mock(return_value=mock_area)
     coordinator.get_area_names = Mock(return_value=["Test Area"])
 
-    # For backward compatibility in tests: expose config from first area
+    # Set up areas dict
+    coordinator.areas = {"Test Area": mock_area}
+
+    # DEPRECATED: For backward compatibility in tests, expose config from first area
+    # New tests should use area.config instead
     coordinator.config = mock_config
 
     # Only mock real public methods
@@ -419,18 +426,22 @@ def mock_coordinator(
     coordinator.data = {"last_updated": dt_util.utcnow().isoformat()}
 
     # Device info
-    coordinator.device_info = {
-        "identifiers": {(coordinator.config_entry.domain, coordinator.entry_id)},
-        "name": mock_config.name,
-        "manufacturer": "Area Occupancy",
-        "model": "Area Occupancy Detection",
-        "sw_version": "1.0.0",
-    }
+    # device_info is now a method that takes area_name
+    coordinator.device_info = Mock(
+        return_value={
+            "identifiers": {(coordinator.config_entry.domain, coordinator.entry_id)},
+            "name": mock_config.name,
+            "manufacturer": "Area Occupancy",
+            "model": "Area Occupancy Detection",
+            "sw_version": "1.0.0",
+        }
+    )
 
     # Mock timers and trackers
     coordinator._global_prior_timer = None
     coordinator._global_decay_timer = None
-    coordinator._remove_state_listener = None
+    # _remove_state_listener doesn't exist in new architecture
+    # coordinator._remove_state_listener = None
 
     # Mock binary_sensor_entity_ids property to return a proper dictionary
     coordinator.binary_sensor_entity_ids = {
@@ -440,7 +451,20 @@ def mock_coordinator(
 
     # Mock entities manager with methods that actually exist in EntityManager
     # Note: In multi-area architecture, entities are accessed via area.entities
-    # but we keep coordinator.entities for backward compatibility in tests
+    # Set entities on the area, not directly on coordinator
+    mock_area.entities = mock_entity_manager
+    mock_area.entities.cleanup = AsyncMock()
+    mock_area.entities.update_likelihoods = AsyncMock(return_value=1)
+    mock_area.entities.get_entity = Mock(
+        return_value=mock_entity_manager.get_entity.return_value
+    )
+    mock_area.entities.add_entity = Mock()
+    mock_area.entities.entities = {}
+    mock_area.entities.active_entities = []
+    mock_area.entities.inactive_entities = []
+    mock_area.entities.decaying_entities = []
+
+    # For backward compatibility in tests, also set on coordinator (but prefer area.entities)
     coordinator.entities = mock_entity_manager
     coordinator.entities.cleanup = AsyncMock()
     coordinator.entities.update_likelihoods = AsyncMock(return_value=1)
@@ -456,6 +480,95 @@ def mock_coordinator(
     # Mock purpose manager (already set via fixture)
 
     return coordinator
+
+
+@pytest.fixture
+def coordinator_with_areas(
+    mock_hass: Mock, mock_realistic_config_entry: Mock
+) -> AreaOccupancyCoordinator:
+    """Create a real coordinator with areas already loaded from config.
+
+    This fixture creates a real AreaOccupancyCoordinator instance and loads
+    areas from the config entry. Use this for integration-style tests that
+    need real coordinator behavior.
+
+    Example:
+        def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
+            area_names = coordinator_with_areas.get_area_names()
+            assert len(area_names) > 0
+    """
+    coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+    coordinator._load_areas_from_config()
+    return coordinator
+
+
+@pytest.fixture
+def coordinator_with_db(
+    coordinator_with_areas: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
+) -> AreaOccupancyCoordinator:
+    """Create a real coordinator with real db attached.
+
+    This fixture combines a real AreaOccupancyCoordinator with a real
+    AreaOccupancyDB instance using an in-memory database. Use this for tests
+    that need both coordinator and database functionality.
+
+    Example:
+        def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
+            coordinator = coordinator_with_db
+            db = coordinator.db  # Real db attached to real coordinator
+            area = coordinator.get_area_or_default("Test Area")
+            # Use real area.prior.value instead of mocking
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from custom_components.area_occupancy.db import AreaOccupancyDB
+
+    coordinator = coordinator_with_areas
+
+    # Create real database instance attached to real coordinator
+    db = AreaOccupancyDB(coordinator=coordinator)
+
+    # Override the database with our test database
+    db.engine = db_engine
+
+    # Create a fresh session for each test
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+
+    # Clear any existing data
+    try:
+        session.query(db.Intervals).delete()
+        session.query(db.Entities).delete()
+        session.query(db.Areas).delete()
+        session.query(db.Priors).delete()
+        session.commit()
+    except (ValueError, OSError):
+        session.rollback()
+
+    setattr(db, "session", session)
+    setattr(db, "_session_maker", SessionLocal)
+
+    # Attach db to coordinator (it's already attached via AreaOccupancyDB.__init__)
+    # but ensure it's using our test engine
+    coordinator.db = db
+
+    return coordinator
+
+
+@pytest.fixture
+def default_area(coordinator_with_areas: AreaOccupancyCoordinator) -> Any:
+    """Get the default (first) area from coordinator.
+
+    This fixture provides easy access to the first area from coordinator_with_areas,
+    eliminating the need to call coordinator.get_area_or_default() in every test.
+
+    Example:
+        def test_something(default_area):
+            assert default_area.area_name is not None
+            assert default_area.config is not None
+    """
+
+    return coordinator_with_areas.get_area_or_default()
 
 
 @pytest.fixture
@@ -905,22 +1018,174 @@ def mock_entities_container() -> Mock:
 @pytest.fixture
 def mock_coordinator_with_threshold(mock_coordinator: Mock) -> Mock:
     """Create a coordinator mock with threshold-specific attributes."""
-    mock_coordinator.threshold = 0.6
-    mock_coordinator.config.threshold = 0.6
+    # threshold is now a method that takes area_name
+    mock_coordinator.threshold = Mock(return_value=0.6)
+    area = mock_coordinator.get_area_or_default.return_value
+    if area:
+        area.config.threshold = 0.6
+    else:
+        # Create area if it doesn't exist
+        area = Mock()
+        area.config = Mock()
+        area.config.threshold = 0.6
+        mock_coordinator.areas = {"Test Area": area}
+        mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
+        mock_coordinator.get_area_or_default = Mock(return_value=area)
     mock_coordinator.is_occupied = False  # 0.5 < 0.6
-    # Remove non-existent method mock
+    # Ensure device_info is callable
+    if not callable(mock_coordinator.device_info):
+        mock_coordinator.device_info = Mock(
+            return_value=mock_coordinator.device_info
+            if isinstance(mock_coordinator.device_info, dict)
+            else {}
+        )
     return mock_coordinator
 
 
 @pytest.fixture
-def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
-    """Create a coordinator mock with sensor-specific attributes."""
-    mock_coordinator.area_prior = 0.35
-    mock_coordinator.probability = 0.65
-    mock_coordinator.decay = 0.8
+def coordinator_with_areas_with_sensors(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+) -> AreaOccupancyCoordinator:
+    """Create a real coordinator with sensors set up for testing.
 
-    # Mock entity manager with comprehensive entities
-    mock_coordinator.entities.entities = {
+    This fixture extends coordinator_with_areas by setting up mock entities
+    on the area for sensor testing purposes.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from custom_components.area_occupancy.data.entity_type import InputType
+    from homeassistant.const import STATE_ON
+    from homeassistant.util import dt as dt_util
+
+    coordinator = coordinator_with_areas
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Set up mock entities on the area
+    mock_entities = {
+        "binary_sensor.motion": Mock(
+            entity_id="binary_sensor.motion",
+            available=True,
+            evidence=True,
+            probability=0.85,
+            type=Mock(input_type=InputType.MOTION, weight=0.85),
+            decay=Mock(is_decaying=False, decay_factor=1.0),
+            prob_given_true=0.9,
+            prob_given_false=0.05,
+            coordinator=coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=False,
+            previous_probability=0.35,
+            active=True,
+            active_states=[STATE_ON],
+            active_range=None,
+            decay_factor=1.0,
+            state=STATE_ON,
+        ),
+        "binary_sensor.motion2": Mock(
+            entity_id="binary_sensor.motion2",
+            available=True,
+            evidence=True,
+            probability=0.75,
+            type=Mock(input_type=InputType.MOTION, weight=0.85),
+            decay=Mock(is_decaying=False, decay_factor=1.0),
+            prob_given_true=0.85,
+            prob_given_false=0.1,
+            coordinator=coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=True,
+            previous_probability=0.6,
+            active=True,
+            active_states=[STATE_ON],
+            active_range=None,
+            decay_factor=1.0,
+            state=STATE_ON,
+        ),
+        "media_player.tv": Mock(
+            entity_id="media_player.tv",
+            available=True,
+            evidence=True,
+            probability=0.85,
+            type=Mock(input_type=InputType.MEDIA, weight=0.7),
+            decay=Mock(is_decaying=False, decay_factor=1.0),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            coordinator=coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=False,
+            previous_probability=0.35,
+            active=True,
+            active_states=["playing", "paused"],
+            active_range=None,
+            decay_factor=1.0,
+            state="playing",
+        ),
+        "binary_sensor.appliance": Mock(
+            entity_id="binary_sensor.appliance",
+            available=True,
+            evidence=True,
+            probability=0.6,
+            type=Mock(input_type=InputType.APPLIANCE, weight=0.3),
+            decay=Mock(is_decaying=True, decay_factor=0.8),
+            prob_given_true=0.6,
+            prob_given_false=0.05,
+            coordinator=coordinator,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=True,
+            previous_probability=0.5,
+            active=True,
+            active_states=["on", "standby"],
+            active_range=None,
+            decay_factor=0.8,
+            state="on",
+        ),
+    }
+
+    # Set up entities manager with mock entities
+    area._entities = SimpleNamespace(
+        entities=mock_entities,
+        active_entities=list(mock_entities.values()),
+        inactive_entities=[],
+        decaying_entities=[
+            entity
+            for entity in mock_entities.values()
+            if getattr(entity.decay, "is_decaying", False)
+        ],
+    )
+
+    # Mock coordinator methods
+    coordinator.area_prior = Mock(return_value=0.35)
+    coordinator.probability = Mock(return_value=0.65)
+    coordinator.decay = Mock(return_value=0.8)
+
+    return coordinator
+
+
+@pytest.fixture
+def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
+    """Create a coordinator mock with sensor-specific attributes.
+
+    DEPRECATED: Use coordinator_with_areas_with_sensors instead.
+    Kept for backward compatibility only.
+    """
+    # These are now methods that take area_name
+    mock_coordinator.area_prior = Mock(return_value=0.35)
+    mock_coordinator.probability = Mock(return_value=0.65)
+    mock_coordinator.decay = Mock(return_value=0.8)
+
+    # Mock entity manager with comprehensive entities - use area-based access
+    area = mock_coordinator.get_area_or_default.return_value
+    if not area:
+        # Create area if it doesn't exist
+        area = Mock()
+        area.entities = Mock()
+        mock_coordinator.areas = {"Test Area": area}
+        mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
+        mock_coordinator.get_area_or_default = Mock(return_value=area)
+
+    # Set entities on area
+    area.entities.entities = {
         "binary_sensor.motion1": Mock(
             entity_id="binary_sensor.motion1",
             available=True,
@@ -1001,14 +1266,139 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
 
     # Set up decaying entities based on is_decaying status
     decaying_entities = [
-        entity
-        for entity in mock_coordinator.entities.entities.values()
-        if entity.decay.is_decaying
+        entity for entity in area.entities.entities.values() if entity.decay.is_decaying
     ]
+    area.entities.decaying_entities = decaying_entities
+    # For backward compatibility, also set on coordinator.entities
     mock_coordinator.entities.decaying_entities = decaying_entities
     mock_coordinator.decaying_entities = decaying_entities  # Add both for compatibility
 
     return mock_coordinator
+
+
+def create_test_area(
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str = "Test Area",
+    entity_ids: list[str] | None = None,
+    **config_overrides: Any,
+) -> Any:
+    """Create a test area and add it to coordinator.
+
+    Helper function for standardized area creation in tests. Creates an Area
+    instance with the specified configuration and adds it to the coordinator's
+    areas dict.
+
+    Args:
+        coordinator: The coordinator instance to add the area to
+        area_name: Name for the area (default: "Test Area")
+        entity_ids: Optional list of entity IDs to configure in sensors
+        **config_overrides: Override any config values (e.g., threshold=0.7)
+
+    Returns:
+        Created Area instance
+
+    Example:
+        area = create_test_area(
+            coordinator,
+            area_name="Kitchen",
+            entity_ids=["binary_sensor.motion1"],
+            threshold=0.6
+        )
+    """
+    from custom_components.area_occupancy.area.area import Area
+
+    # Create area - it will load config from coordinator.config_entry
+    area = Area(coordinator, area_name=area_name)
+
+    # Override config values if provided
+    if entity_ids:
+        # Set up sensors with provided entity IDs
+        area.config.sensors = Sensors(
+            motion=entity_ids
+            if "motion" not in config_overrides
+            else config_overrides.get("motion", []),
+            primary_occupancy=None,
+            media=[],
+            appliance=[],
+            illuminance=[],
+            humidity=[],
+            temperature=[],
+            door=[],
+            window=[],
+            _parent_config=area.config,
+        )
+
+    # Apply any other config overrides
+    for key, value in config_overrides.items():
+        if hasattr(area.config, key) and key != "motion":
+            setattr(area.config, key, value)
+
+    # Add to coordinator
+    coordinator.areas[area_name] = area
+
+    # Update get_area_names and get_area_or_default mocks if they exist
+    if hasattr(coordinator, "get_area_names"):
+        area_names = list(coordinator.areas.keys())
+        coordinator.get_area_names = Mock(return_value=area_names)
+    if hasattr(coordinator, "get_area_or_default"):
+
+        def get_area_or_default(name: str | None = None):
+            if name is None:
+                return (
+                    next(iter(coordinator.areas.values()))
+                    if coordinator.areas
+                    else None
+                )
+            return coordinator.areas.get(name)
+
+        coordinator.get_area_or_default = Mock(side_effect=get_area_or_default)
+
+    return area
+
+
+@contextmanager
+def patch_area_method(area_class: type, method_name: str, return_value: Any):
+    """Patch an area method at class level so it works after area reloads.
+
+    This context manager patches an area method at the class level, making
+    it persist even when areas are cleared and reloaded (e.g., in async_update_options).
+
+    Args:
+        area_class: The Area class to patch
+        method_name: Name of the method to patch
+        return_value: Value to return from the patched method
+
+    Example:
+        with patch_area_method(Area, "async_cleanup", AsyncMock()) as mock_cleanup:
+            await coordinator.async_update_options(options)
+            mock_cleanup.assert_called()
+    """
+
+    with patch.object(
+        area_class, method_name, return_value=return_value
+    ) as mock_method:
+        yield mock_method
+
+
+@pytest.fixture
+def mock_area(mock_config: AreaConfig, mock_entity_manager: Mock) -> Mock:
+    """Create a mock area with standard attributes.
+
+    This fixture provides a reusable mock area for tests that don't need
+    a real coordinator. The area has standard attributes configured.
+
+    Example:
+        def test_something(mock_area: Mock):
+            assert mock_area.area_name == "Test Area"
+            assert mock_area.config is not None
+    """
+    area = Mock()
+    area.area_name = "Test Area"
+    area.config = mock_config
+    area.entities = mock_entity_manager
+    area.prior = Mock()
+    area.purpose = Mock()
+    return area
 
 
 @pytest.fixture
@@ -1854,8 +2244,54 @@ def mock_area_occupancy_db(db_engine: Any, db_session: Any, tmp_path: Any) -> An
 
 
 @pytest.fixture
+def db_with_engine(
+    coordinator_with_areas: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
+) -> Any:
+    """Create AreaOccupancyDB instance with in-memory database attached to real coordinator.
+
+    DEPRECATED: Prefer using coordinator_with_db fixture instead.
+    This fixture is kept for backward compatibility with existing tests.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from custom_components.area_occupancy.db import AreaOccupancyDB
+
+    coordinator = coordinator_with_areas
+
+    # Create real database instance attached to real coordinator
+    db = AreaOccupancyDB(coordinator=coordinator)
+
+    # Override the database with our test database
+    db.engine = db_engine
+
+    # Create a fresh session for each test
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+
+    # Clear any existing data
+    try:
+        session.query(db.Intervals).delete()
+        session.query(db.Entities).delete()
+        session.query(db.Areas).delete()
+        session.query(db.Priors).delete()
+        session.commit()
+    except (ValueError, OSError):
+        session.rollback()
+
+    setattr(db, "session", session)
+    setattr(db, "_session_maker", SessionLocal)
+
+    return db
+
+
+@pytest.fixture
 def mock_db_with_engine(mock_hass: Mock, db_engine: Any, tmp_path: Any) -> Any:
-    """Create AreaOccupancyDB instance with in-memory database."""
+    """Create AreaOccupancyDB instance with in-memory database.
+
+    DEPRECATED: Use coordinator_with_db or db_with_engine instead.
+    This fixture creates a mock coordinator which is not recommended.
+    Kept for backward compatibility only.
+    """
     from unittest.mock import Mock
 
     from sqlalchemy.orm import sessionmaker

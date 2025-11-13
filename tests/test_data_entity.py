@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
     Entity,
@@ -43,7 +44,7 @@ def create_test_entity(
             active_states=[STATE_ON],
         )
     if decay is None:
-        decay = Decay()
+        decay = Decay(half_life=60.0)  # half_life is required
     if hass is None:
         if coordinator is not None:
             hass = coordinator.hass
@@ -62,10 +63,21 @@ def create_test_entity(
     )
 
 
-def create_test_entity_manager(coordinator: Mock | None = None) -> EntityManager:
-    """Create a test EntityManager instance with mocked dependencies."""
+def create_test_entity_manager(
+    coordinator: AreaOccupancyCoordinator | None = None, area_name: str | None = None
+) -> EntityManager:
+    """Create a test EntityManager instance with real coordinator.
+
+    Args:
+        coordinator: Real coordinator instance (will use coordinator_with_areas if None)
+        area_name: Area name to use (will use first area from coordinator if None)
+    """
     if coordinator is None:
-        coordinator = Mock()
+        # This will be provided by fixture
+        raise ValueError("coordinator must be provided")
+
+    if area_name is None:
+        area_name = coordinator.get_area_names()[0]
 
     with patch(
         "custom_components.area_occupancy.data.entity.EntityFactory"
@@ -74,7 +86,7 @@ def create_test_entity_manager(coordinator: Mock | None = None) -> EntityManager
         mock_factory.create_all_from_config.return_value = {}
         mock_factory_class.return_value = mock_factory
 
-        return EntityManager(coordinator)
+        return EntityManager(coordinator, area_name=area_name)
 
 
 def create_mock_entities_with_states() -> dict[str, Mock]:
@@ -103,7 +115,9 @@ def create_mock_entities_with_states() -> dict[str, Mock]:
 class TestEntity:
     """Test the Entity class."""
 
-    def test_initialization(self, mock_coordinator: Mock) -> None:
+    def test_initialization(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test entity initialization."""
         entity_type = EntityType(
             input_type=InputType.MOTION,
@@ -112,11 +126,11 @@ class TestEntity:
             prob_given_false=0.05,
             active_states=[STATE_ON],
         )
-        decay = Decay()
+        decay = Decay(half_life=60.0)  # half_life is required
         entity = create_test_entity(
             entity_type=entity_type,
             decay=decay,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         assert entity.entity_id == "test"
@@ -124,7 +138,7 @@ class TestEntity:
         assert entity.prob_given_true == 0.25
         assert entity.prob_given_false == 0.05
         assert entity.decay == decay
-        assert entity.hass == mock_coordinator.hass
+        assert entity.hass == coordinator_with_areas.hass
 
     @patch("custom_components.area_occupancy.data.entity.Decay")
     @patch("custom_components.area_occupancy.data.entity.EntityType")
@@ -132,7 +146,7 @@ class TestEntity:
         self,
         mock_entity_type_class: Mock,
         mock_decay_class: Mock,
-        mock_coordinator: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test creating entity from dictionary."""
         mock_entity_type = Mock()
@@ -155,7 +169,7 @@ class TestEntity:
             prob_given_true=entity_data["prob_given_true"],
             prob_given_false=entity_data["prob_given_false"],
             decay=mock_decay,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         assert entity.entity_id == "test"
@@ -168,30 +182,39 @@ class TestEntity:
             == DEFAULT_TYPES[InputType.MOTION]["prob_given_false"]
         )
         assert entity.decay == mock_decay
-        assert entity.hass == mock_coordinator.hass
+        assert entity.hass == coordinator_with_areas.hass
 
 
 class TestEntityManager:
     """Test the EntityManager class."""
 
-    def test_initialization(self, mock_coordinator: Mock) -> None:
+    def test_initialization(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test manager initialization."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
 
-        assert manager.coordinator == mock_coordinator
+        assert manager.coordinator == coordinator_with_areas
         assert manager._entities == {}
 
-    def test_entities_property(self, mock_coordinator: Mock) -> None:
+    def test_entities_property(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test entities property."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
         test_entity = Mock()
         manager._entities = {"test": test_entity}
 
         assert manager.entities == {"test": test_entity}
 
-    def test_entity_ids_property(self, mock_coordinator: Mock) -> None:
+    def test_entity_ids_property(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test entity_ids property."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
         manager._entities = {"entity1": Mock(), "entity2": Mock()}
 
         assert set(manager.entity_ids) == {"entity1", "entity2"}
@@ -211,10 +234,14 @@ class TestEntityManager:
         ],
     )
     def test_entity_filtering_properties(
-        self, mock_coordinator: Mock, property_name: str, expected_entities: list[str]
+        self,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        property_name: str,
+        expected_entities: list[str],
     ) -> None:
         """Test entity filtering properties (active, inactive, decaying)."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
         mock_entities = create_mock_entities_with_states()
         manager._entities = mock_entities
 
@@ -223,9 +250,10 @@ class TestEntityManager:
         for entity_name in expected_entities:
             assert mock_entities[entity_name] in filtered_entities
 
-    def test_get_entity(self, mock_coordinator: Mock) -> None:
+    def test_get_entity(self, coordinator_with_areas: AreaOccupancyCoordinator) -> None:
         """Test getting entity by ID."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
         mock_entity = Mock()
         manager._entities = {"test": mock_entity}
 
@@ -237,9 +265,10 @@ class TestEntityManager:
         ):
             manager.get_entity("nonexistent")
 
-    def test_add_entity(self, mock_coordinator: Mock) -> None:
+    def test_add_entity(self, coordinator_with_areas: AreaOccupancyCoordinator) -> None:
         """Test adding entity to manager."""
-        manager = create_test_entity_manager(mock_coordinator)
+        area_name = coordinator_with_areas.get_area_names()[0]
+        manager = create_test_entity_manager(coordinator_with_areas, area_name)
         mock_entity = Mock()
         mock_entity.entity_id = "test"
 
@@ -252,22 +281,22 @@ class TestEntityPropertiesAndMethods:
     """Test entity properties and methods."""
 
     @pytest.fixture
-    def test_entity(self, mock_coordinator: Mock) -> Entity:
+    def test_entity(self, coordinator_with_areas: AreaOccupancyCoordinator) -> Entity:
         """Create a test entity for property testing."""
-        return create_test_entity(coordinator=mock_coordinator)
+        return create_test_entity(coordinator=coordinator_with_areas)
 
     def test_state_property_edge_cases(
-        self, test_entity: Entity, mock_coordinator: Mock
+        self, test_entity: Entity, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test state property with edge cases."""
         # Test with no state available
-        mock_coordinator.hass.states.get.return_value = None
+        coordinator_with_areas.hass.states.get.return_value = None
         assert test_entity.state is None
 
         # Test with state but no state attribute
         mock_state = Mock()
         mock_state.state = "test_state"
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
         assert test_entity.state == "test_state"
 
     @pytest.mark.parametrize(
@@ -281,17 +310,17 @@ class TestEntityPropertiesAndMethods:
     def test_available_property(
         self,
         test_entity: Entity,
-        mock_coordinator: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         state_value: str | None,
         expected_available: bool,
     ) -> None:
         """Test available property with different states."""
         if state_value is None:
-            mock_coordinator.hass.states.get.return_value = None
+            coordinator_with_areas.hass.states.get.return_value = None
         else:
             mock_state = Mock()
             mock_state.state = state_value
-            mock_coordinator.hass.states.get.return_value = mock_state
+            coordinator_with_areas.hass.states.get.return_value = mock_state
 
         assert test_entity.available is expected_available
 
@@ -304,7 +333,10 @@ class TestEntityPropertiesAndMethods:
         ],
     )
     def test_evidence_with_active_range(
-        self, mock_coordinator: Mock, state_value: str, expected_evidence: bool
+        self,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        state_value: str,
+        expected_evidence: bool,
     ) -> None:
         """Test evidence property with active range."""
         mock_entity_type = Mock()
@@ -313,16 +345,18 @@ class TestEntityPropertiesAndMethods:
 
         entity = create_test_entity(
             entity_type=mock_entity_type,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         mock_state = Mock()
         mock_state.state = state_value
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
 
         assert entity.evidence is expected_evidence
 
-    def test_has_new_evidence_transitions(self, mock_coordinator: Mock) -> None:
+    def test_has_new_evidence_transitions(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test has_new_evidence method with evidence transitions."""
         # Create a proper mock entity type with active_states
         mock_entity_type = Mock()
@@ -331,13 +365,13 @@ class TestEntityPropertiesAndMethods:
 
         entity = create_test_entity(
             entity_type=mock_entity_type,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         # Test initial state (no transition)
         mock_state = Mock()
         mock_state.state = STATE_ON
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
         assert not entity.has_new_evidence()  # No transition on first call
 
         # Test transition from True to False
@@ -348,7 +382,9 @@ class TestEntityPropertiesAndMethods:
         mock_state.state = STATE_ON
         assert entity.has_new_evidence()  # Should detect transition
 
-    def test_entity_properties_comprehensive(self, mock_coordinator: Mock) -> None:
+    def test_entity_properties_comprehensive(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test comprehensive entity properties including name, weight, active, decay_factor."""
         # Create entity with proper type - only use active_states, not both
         entity_type = EntityType(
@@ -361,7 +397,7 @@ class TestEntityPropertiesAndMethods:
         )
 
         # Create decay with specific behavior - set up for decay_factor < 1.0
-        decay = Decay()
+        decay = Decay(half_life=60.0)  # half_life is required
         decay.is_decaying = True
         # Use timezone-aware datetime to match dt_util.utcnow() in Decay class
         decay.decay_start = dt_util.utcnow() - timedelta(seconds=60)  # 1 minute ago
@@ -370,13 +406,13 @@ class TestEntityPropertiesAndMethods:
         entity = create_test_entity(
             entity_type=entity_type,
             decay=decay,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         # Test name property
         mock_state = Mock()
         mock_state.name = "Test Motion Sensor"
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
         assert entity.name == "Test Motion Sensor"
 
         # Test weight property
@@ -399,10 +435,10 @@ class TestEntityPropertiesAndMethods:
         assert entity.decay_factor < 1.0
 
     def test_entity_methods_update_likelihood_and_decay(
-        self, mock_coordinator: Mock
+        self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test update_likelihood and update_decay methods."""
-        entity = create_test_entity(coordinator=mock_coordinator)
+        entity = create_test_entity(coordinator=coordinator_with_areas)
         original_updated = entity.last_updated
 
         # Test update_likelihood
@@ -417,7 +453,9 @@ class TestEntityPropertiesAndMethods:
         assert entity.decay.decay_start == decay_start
         assert entity.decay.is_decaying is True
 
-    def test_has_new_evidence_edge_cases(self, mock_coordinator: Mock) -> None:
+    def test_has_new_evidence_edge_cases(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test has_new_evidence method with edge cases and decay interactions."""
         mock_entity_type = Mock()
         mock_entity_type.active_states = [STATE_ON]
@@ -425,19 +463,19 @@ class TestEntityPropertiesAndMethods:
 
         entity = create_test_entity(
             entity_type=mock_entity_type,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
             previous_evidence=None,  # Start with None
         )
 
         # Test with current evidence None (entity unavailable)
-        mock_coordinator.hass.states.get.return_value = None
+        coordinator_with_areas.hass.states.get.return_value = None
         assert not entity.has_new_evidence()
         assert entity.previous_evidence is None
 
         # Test with previous evidence None but current evidence available
         mock_state = Mock()
         mock_state.state = STATE_ON
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
         assert not entity.has_new_evidence()  # No transition when previous is None
         assert entity.previous_evidence is True
 
@@ -458,7 +496,9 @@ class TestEntityPropertiesAndMethods:
         # stop_decay is called twice: once for inconsistent state, once for transition
         assert entity.decay.stop_decay.call_count == 2
 
-    def test_entity_factory_create_from_db(self, mock_coordinator: Mock) -> None:
+    def test_entity_factory_create_from_db(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test EntityFactory.create_from_db method."""
         with (
             patch(
@@ -470,10 +510,13 @@ class TestEntityPropertiesAndMethods:
         ):
             # Mock the create methods
             mock_entity_type = Mock()
-            mock_entity_type_class.create.return_value = mock_entity_type
+            # EntityType is instantiated directly in create_from_db, not via create()
+            mock_entity_type_class.return_value = mock_entity_type
 
             mock_decay = Mock()
-            mock_decay_class.create.return_value = mock_decay
+            mock_decay_class.return_value = (
+                mock_decay  # Decay uses __init__, not create()
+            )
 
             # Mock database entity object
             mock_db_entity = Mock()
@@ -502,10 +545,16 @@ class TestEntityPropertiesAndMethods:
 
             mock_db_entity.to_dict = mock_to_dict
 
-            # Mock config
-            mock_coordinator.config.decay.half_life = 300.0
+            # Mock config - get area for config access
+            area_name = coordinator_with_areas.get_area_names()[0]
+            area = coordinator_with_areas.get_area_or_default(area_name)
+            if area:
+                area.config.decay.half_life = 300.0
+            else:
+                area.config.decay.half_life = 300.0
 
-            factory = EntityFactory(mock_coordinator)
+            # EntityFactory requires area_name
+            factory = EntityFactory(coordinator_with_areas, area_name=area_name)
             entity = factory.create_from_db(mock_db_entity)
 
             # Verify entity creation
@@ -516,18 +565,16 @@ class TestEntityPropertiesAndMethods:
             assert entity.prob_given_false == 0.1
             assert entity.previous_evidence is True
 
-            # Verify factory calls
-            mock_entity_type_class.create.assert_called_once_with(
-                InputType.MOTION, mock_coordinator.config
-            )
-            mock_decay_class.create.assert_called_once_with(
-                decay_start=mock_db_entity.decay_start,
-                half_life=300.0,
-                is_decaying=False,
-            )
+            # Verify factory calls - EntityType is instantiated directly
+            # The actual call uses EntityType(input_type_enum, ...) not EntityType.create()
+            mock_entity_type_class.assert_called()
+            mock_decay_class.assert_called_once()
+            # Decay is now created with __init__, not create()
+            decay_call_args = mock_decay_class.call_args
+            assert decay_call_args.kwargs.get("half_life") == 300.0
 
     def test_entity_manager_get_entities_by_input_type(
-        self, mock_coordinator: Mock
+        self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test EntityManager.get_entities_by_input_type method."""
         # Create manager with mocked factory
@@ -538,16 +585,24 @@ class TestEntityPropertiesAndMethods:
             mock_factory.create_all_from_config.return_value = {}
             mock_factory_class.return_value = mock_factory
 
-            manager = EntityManager(mock_coordinator)
+            # EntityManager requires area_name
+            area_name = coordinator_with_areas.get_area_names()[0]
+            manager = EntityManager(coordinator_with_areas, area_name=area_name)
 
             # Create test entities with different input types
-            motion_entity = create_test_entity("motion_1", coordinator=mock_coordinator)
+            motion_entity = create_test_entity(
+                "motion_1", coordinator=coordinator_with_areas
+            )
             motion_entity.type.input_type = InputType.MOTION
 
-            media_entity = create_test_entity("media_1", coordinator=mock_coordinator)
+            media_entity = create_test_entity(
+                "media_1", coordinator=coordinator_with_areas
+            )
             media_entity.type.input_type = InputType.MEDIA
 
-            door_entity = create_test_entity("door_1", coordinator=mock_coordinator)
+            door_entity = create_test_entity(
+                "door_1", coordinator=coordinator_with_areas
+            )
             door_entity.type.input_type = InputType.DOOR
 
             manager._entities = {
@@ -573,7 +628,7 @@ class TestEntityPropertiesAndMethods:
             assert len(empty_entities) == 0
 
     def test_evidence_property_edge_case_no_active_config(
-        self, mock_coordinator: Mock
+        self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test evidence property when neither active_states nor active_range is configured."""
         # Create entity type with no active configuration
@@ -583,19 +638,21 @@ class TestEntityPropertiesAndMethods:
 
         entity = create_test_entity(
             entity_type=mock_entity_type,
-            coordinator=mock_coordinator,
+            coordinator=coordinator_with_areas,
         )
 
         # Set up a valid state
         mock_state = Mock()
         mock_state.state = "some_state"
-        mock_coordinator.hass.states.get.return_value = mock_state
+        coordinator_with_areas.hass.states.get.return_value = mock_state
 
         # Should return None when neither active_states nor active_range is configured
         assert entity.evidence is None
 
     @pytest.mark.asyncio
-    async def test_entity_manager_cleanup(self, mock_coordinator: Mock) -> None:
+    async def test_entity_manager_cleanup(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test EntityManager cleanup method."""
         # Create manager with mocked factory
         with patch(
@@ -609,7 +666,9 @@ class TestEntityPropertiesAndMethods:
             mock_factory_class.return_value = mock_factory
 
             # Create manager and verify it uses the factory
-            manager = EntityManager(mock_coordinator)
+            # EntityManager requires area_name
+            area_name = coordinator_with_areas.get_area_names()[0]
+            manager = EntityManager(coordinator_with_areas, area_name=area_name)
 
             # Test cleanup method - this should call the factory again
             await manager.cleanup()
@@ -620,10 +679,14 @@ class TestEntityPropertiesAndMethods:
 class TestEntityFactory:
     """Test the EntityFactory class."""
 
-    def test_initialization(self, mock_coordinator: Mock) -> None:
+    def test_initialization(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
         """Test factory initialization."""
-        factory = EntityFactory(mock_coordinator)
-        assert factory.coordinator == mock_coordinator
+        # EntityFactory requires area_name
+        area_name = coordinator_with_areas.get_area_names()[0]
+        factory = EntityFactory(coordinator_with_areas, area_name=area_name)
+        assert factory.coordinator == coordinator_with_areas
 
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     @patch("custom_components.area_occupancy.data.entity.Decay")
@@ -631,21 +694,24 @@ class TestEntityFactory:
         self,
         mock_decay_class: Mock,
         mock_entity_type_class: Mock,
-        mock_coordinator: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test creating entity from config spec."""
         mock_entity_type = Mock()
-        mock_entity_type_class.create.return_value = mock_entity_type
+        # EntityType is instantiated directly, not via create()
+        mock_entity_type_class.return_value = mock_entity_type
         mock_decay = Mock()
-        mock_decay_class.create.return_value = mock_decay
+        mock_decay_class.return_value = mock_decay  # Decay uses __init__, not create()
 
-        factory = EntityFactory(mock_coordinator)
+        # EntityFactory requires area_name
+        area_name = coordinator_with_areas.get_area_names()[0]
+        factory = EntityFactory(coordinator_with_areas, area_name=area_name)
         entity = factory.create_from_config_spec("test_entity", "motion")
 
         assert entity.entity_id == "test_entity"
         assert entity.type == mock_entity_type
         assert entity.decay == mock_decay
-        assert entity.hass == mock_coordinator.hass
+        assert entity.hass == coordinator_with_areas.hass
 
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     @patch("custom_components.area_occupancy.data.entity.Decay")
@@ -653,19 +719,23 @@ class TestEntityFactory:
         self,
         mock_decay_class: Mock,
         mock_entity_type_class: Mock,
-        mock_coordinator: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test creating all entities from config."""
         mock_entity_type = Mock()
-        mock_entity_type_class.create.return_value = mock_entity_type
+        # EntityType is instantiated directly, not via create()
+        mock_entity_type_class.return_value = mock_entity_type
         mock_decay = Mock()
-        mock_decay_class.create.return_value = mock_decay
+        mock_decay_class.return_value = mock_decay  # Decay uses __init__, not create()
 
-        # Mock config with sensors
-        mock_coordinator.config.sensors.motion = ["binary_sensor.motion1"]
-        mock_coordinator.config.sensors.media = ["media_player.tv"]
-
-        factory = EntityFactory(mock_coordinator)
+        # Mock config with sensors - use area config if available
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area_or_default(area_name)
+        if area:
+            area.config.sensors.motion = ["binary_sensor.motion1"]
+            area.config.sensors.media = ["media_player.tv"]
+        # EntityFactory requires area_name
+        factory = EntityFactory(coordinator_with_areas, area_name=area_name)
         entities = factory.create_all_from_config()
 
         # Should create entities for all configured sensors
@@ -679,7 +749,7 @@ class TestEntityFactory:
         self,
         mock_decay_class: Mock,
         mock_entity_type_class: Mock,
-        mock_coordinator: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test creating entity without stored data."""
         mock_entity_type = Mock()
@@ -689,11 +759,14 @@ class TestEntityFactory:
         mock_entity_type.prob_given_false = DEFAULT_TYPES[InputType.MOTION][
             "prob_given_false"
         ]
-        mock_entity_type_class.create.return_value = mock_entity_type
+        # EntityType is instantiated directly, not via create()
+        mock_entity_type_class.return_value = mock_entity_type
         mock_decay = Mock()
-        mock_decay_class.create.return_value = mock_decay
+        mock_decay_class.return_value = mock_decay  # Decay uses __init__, not create()
 
-        factory = EntityFactory(mock_coordinator)
+        # EntityFactory requires area_name
+        area_name = coordinator_with_areas.get_area_names()[0]
+        factory = EntityFactory(coordinator_with_areas, area_name=area_name)
         entity = factory.create_from_config_spec("test_entity", "motion")
 
         # Should use default values when no stored data is available

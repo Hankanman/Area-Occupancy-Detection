@@ -9,13 +9,13 @@ import voluptuous as vol
 
 from custom_components.area_occupancy.config_flow import (
     AreaOccupancyConfigFlow,
-    AreaOccupancyOptionsFlow,
     BaseOccupancyFlow,
     _get_include_entities,
     _get_state_select_options,
     create_schema,
 )
 from custom_components.area_occupancy.const import (
+    CONF_AREAS,
     CONF_DECAY_HALF_LIFE,
     CONF_MOTION_SENSORS,
     CONF_NAME,
@@ -325,15 +325,19 @@ class TestAreaOccupancyConfigFlow:
             mock_abort.assert_called_once()
 
             assert result.get("type") == FlowResultType.CREATE_ENTRY
-            assert result.get("title") == "Test Area"
+            assert result.get("title") == "Area Occupancy Detection"
 
             expected_data = {
-                CONF_NAME: "Test Area",
-                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                CONF_PURPOSE: "social",
-                CONF_THRESHOLD: 60,
-                CONF_DECAY_HALF_LIFE: 720.0,
+                CONF_AREAS: [
+                    {
+                        CONF_NAME: "Test Area",
+                        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                        CONF_PURPOSE: "social",
+                        CONF_THRESHOLD: 60,
+                        CONF_DECAY_HALF_LIFE: 720.0,
+                    }
+                ]
             }
             assert result.get("data") == expected_data
 
@@ -415,150 +419,19 @@ class TestConfigFlowIntegration:
             result2 = await flow.async_step_user(valid_user_input)
 
             assert result2.get("type") == FlowResultType.CREATE_ENTRY
-            assert result2.get("title") == "Living Room"
+            assert result2.get("title") == "Area Occupancy Detection"
 
             result_data = result2.get("data", {})
-            assert result_data.get(CONF_NAME) == "Living Room"
-            assert result_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
+            # Data is now stored in CONF_AREAS list format
+            areas = result_data.get(CONF_AREAS, [])
+            assert len(areas) == 1
+            area_data = areas[0]
+            assert area_data.get(CONF_NAME) == "Living_Room"  # Sanitized
+            assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert (
-                result_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
-                == "binary_sensor.motion1"
+                area_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR) == "binary_sensor.motion1"
             )
-            assert result_data.get(CONF_THRESHOLD) == 60
-
-    async def test_complete_options_flow(self, mock_hass, mock_config_entry):
-        """Test complete options flow."""
-        # Setup mock hass
-        mock_hass.data = {}
-        mock_hass.config = Mock()
-        mock_hass.config.config_dir = "/config"
-        mock_hass.bus = Mock()
-        mock_hass.bus.async_listen = Mock()
-        mock_hass.states.async_entity_ids = Mock(return_value=[])
-        mock_hass.states.get = Mock(return_value=None)
-
-        # Create flow with bound methods
-        flow = Mock(spec=AreaOccupancyOptionsFlow)
-        flow.config_entry = mock_config_entry
-        flow._data = {}
-        flow.hass = mock_hass
-        flow.async_step_init = AreaOccupancyOptionsFlow.async_step_init.__get__(
-            flow, AreaOccupancyOptionsFlow
-        )
-        flow._validate_config = Mock()
-        flow.async_show_form = Mock(
-            return_value={"type": FlowResultType.FORM, "step_id": "init"}
-        )
-        flow.async_create_entry = Mock(
-            return_value={"type": FlowResultType.CREATE_ENTRY, "title": "", "data": {}}
-        )
-
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            mock_registry = Mock()
-            mock_registry.entities = Mock()
-            mock_registry.entities.values = Mock(return_value=[])
-            mock_er_get.return_value = mock_registry
-
-            # Step 1: Show form
-            with patch(
-                "custom_components.area_occupancy.config_flow.create_schema"
-            ) as mock_create_schema:
-                mock_create_schema.return_value = {"test": vol.Required("test")}
-                result1 = await flow.async_step_init()
-                assert result1.get("type") == FlowResultType.FORM
-
-            # Step 2: Submit updated data
-            user_input = {
-                "motion": {
-                    CONF_MOTION_SENSORS: [
-                        "binary_sensor.motion1",
-                        "binary_sensor.motion2",
-                    ],
-                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                },
-                "purpose": {},
-                "doors": {},
-                "windows": {},
-                "media": {},
-                "appliances": {},
-                "environmental": {},
-                "wasp_in_box": {},
-                "parameters": {CONF_THRESHOLD: 75},
-            }
-
-            flow.async_create_entry = Mock(
-                return_value={
-                    "type": FlowResultType.CREATE_ENTRY,
-                    "title": "",
-                    "data": user_input,
-                }
-            )
-
-            result2 = await flow.async_step_init(user_input)
-            assert result2.get("type") == FlowResultType.CREATE_ENTRY
-            assert result2.get("data") == user_input
-
-    async def test_options_flow_adds_name_for_validation(
-        self, mock_hass, mock_config_entry
-    ):
-        """Test that options flow adds name from config entry for validation."""
-        mock_config_entry.data = {CONF_NAME: "Test Area"}
-        mock_config_entry.options = {}
-
-        flow = Mock(spec=AreaOccupancyOptionsFlow)
-        flow.config_entry = mock_config_entry
-        flow._data = {}
-        flow.hass = mock_hass
-        flow.async_step_init = AreaOccupancyOptionsFlow.async_step_init.__get__(
-            flow, AreaOccupancyOptionsFlow
-        )
-        flow._validate_config = BaseOccupancyFlow._validate_config.__get__(
-            flow, BaseOccupancyFlow
-        )
-        flow.async_show_form = Mock(
-            return_value={"type": FlowResultType.FORM, "step_id": "init"}
-        )
-
-        with patch("homeassistant.helpers.entity_registry.async_get") as mock_er_get:
-            mock_registry = Mock()
-            mock_registry.entities = Mock()
-            mock_registry.entities.values = Mock(return_value=[])
-            mock_er_get.return_value = mock_registry
-
-            mock_hass.states = Mock()
-            mock_hass.states.async_entity_ids = Mock(return_value=[])
-            mock_hass.states.get = Mock(return_value=None)
-
-            user_input = {
-                "motion": {
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-                },
-                "purpose": {},
-                "doors": {},
-                "windows": {},
-                "media": {},
-                "appliances": {},
-                "environmental": {},
-                "wasp_in_box": {},
-                "parameters": {},
-            }
-
-            captured_data = {}
-
-            def capture_create_entry(title="", data=None):
-                captured_data.update(data or {})
-                return {
-                    "type": FlowResultType.CREATE_ENTRY,
-                    "title": title,
-                    "data": data,
-                }
-
-            flow.async_create_entry = capture_create_entry
-
-            result = await flow.async_step_init(user_input)
-            assert result.get("type") == FlowResultType.CREATE_ENTRY
-            assert captured_data.get(CONF_NAME) == "Test Area"
+            assert area_data.get(CONF_THRESHOLD) == 60
 
     async def test_config_flow_with_existing_entry(self, flow, mock_hass):
         """Test config flow when entry already exists."""
