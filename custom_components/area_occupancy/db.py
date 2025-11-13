@@ -1206,7 +1206,8 @@ class AreaOccupancyDB:
                 cfg = area_data_obj.config
 
                 # Call area_prior() method to get the actual value
-                area_prior_value = self.coordinator.area_prior(area_name_item)
+                area = self.coordinator.get_area_or_default(area_name_item)
+                area_prior_value = area.area_prior() if area else MIN_PROBABILITY
 
                 area_data = {
                     "entry_id": self.coordinator.entry_id,
