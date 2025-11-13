@@ -180,6 +180,8 @@ class EvidenceSensor(AreaOccupancySensorBase):
     def native_value(self) -> int | None:
         """Return the number of entities."""
         area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            return None
         return len(area.entities.entities)
 
     @property

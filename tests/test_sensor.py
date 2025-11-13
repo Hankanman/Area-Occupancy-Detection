@@ -204,6 +204,16 @@ class TestEvidenceSensor:
         sensor = EvidenceSensor(coordinator_with_areas, area_name)
         assert sensor.extra_state_attributes == {}
 
+    def test_native_value_nonexistent_area(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
+        """Test native_value when area doesn't exist (e.g., removed during runtime)."""
+        # Create sensor for a non-existent area
+        # This simulates the case where an area is removed but sensor entity hasn't been cleaned up
+        sensor = EvidenceSensor(coordinator_with_areas, "nonexistent_area")
+        # Should return None instead of raising AttributeError
+        assert sensor.native_value is None
+
 
 class TestDecaySensor:
     """Test DecaySensor class."""
