@@ -198,7 +198,9 @@ class TestSensors:
         mock_coordinator.areas = {}
 
         result = sensors.get_motion_sensors(mock_coordinator)
-        assert result == ["binary_sensor.motion1", "binary_sensor.wasp"]
+        # In legacy mode without area_name, wasp is not included
+        # because wasp_entity_id is stored per-area, not on coordinator
+        assert result == ["binary_sensor.motion1"]
 
     def test_get_motion_sensors_multi_area_mode(self) -> None:
         """Test get_motion_sensors with multi-area architecture."""
@@ -359,7 +361,8 @@ class TestConfig:
 
         # Test basic properties
         assert config.name == "Testing"
-        assert config.area_id is None  # Not set in the mock data
+        # area_id is now set to area_name if area_name is provided and area_id is not in data
+        assert config.area_id == "Test Area"
         assert config.threshold == 0.52  # 52.0 / 100.0 (from options)
 
         # Test component types
@@ -412,9 +415,11 @@ class TestConfig:
         mock_coordinator.config_entry.data = test_data
         mock_coordinator.config_entry.options = {}
 
-        # This should raise KeyError due to missing weight values
-        with pytest.raises(KeyError):
-            AreaConfig(mock_coordinator, area_name="Test Area")
+        # Weights now use defaults if not provided, so no KeyError is raised
+        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        # Verify that default weights are used
+        assert config.weights.motion == DEFAULT_WEIGHT_MOTION
+        assert config.weights.media == DEFAULT_WEIGHT_MEDIA
 
     def test_initialization_with_string_threshold(self, mock_coordinator: Mock) -> None:
         """Test Config initialization with string threshold value."""
