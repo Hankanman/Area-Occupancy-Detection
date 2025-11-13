@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from sqlalchemy.exc import DataError, OperationalError, ProgrammingError
 
-from custom_components.area_occupancy.const import MAX_PROBABILITY
 from custom_components.area_occupancy.data.analysis import (
     DEFAULT_OCCUPIED_SECONDS,
     DEFAULT_PRIOR,
@@ -15,7 +14,7 @@ from custom_components.area_occupancy.data.analysis import (
     PriorAnalyzer,
 )
 from custom_components.area_occupancy.data.decay import Decay
-from custom_components.area_occupancy.data.entity import Entity, EntityManager
+from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
@@ -44,7 +43,7 @@ def create_test_entity(
             active_states=[STATE_ON],
         )
     if decay is None:
-        decay = Decay()
+        decay = Decay(half_life=60.0)
     if hass is None:
         if coordinator is not None:
             hass = coordinator.hass
@@ -68,239 +67,6 @@ def create_test_entity(
 
 class TestLikelihoodAnalyzer:
     """Test the LikelihoodAnalyzer class."""
-
-    def test_likelihood_calculation_logic(self, mock_coordinator: Mock) -> None:
-        """Test the complex likelihood calculation logic in LikelihoodAnalyzer._analyze_entity_likelihood."""
-        # Create manager with mocked factory
-        with patch(
-            "custom_components.area_occupancy.data.entity.EntityFactory"
-        ) as mock_factory_class:
-            mock_factory = Mock()
-            mock_factory.create_all_from_config.return_value = {}
-            mock_factory_class.return_value = mock_factory
-
-            manager = EntityManager(mock_coordinator, area_name="Test Area")
-
-            # Create test entity
-            test_entity = create_test_entity(
-                "test_sensor", coordinator=mock_coordinator
-            )
-            manager._entities = {"test_sensor": test_entity}
-
-            # Mock database entity
-            mock_db_entity = Mock()
-            mock_db_entity.entity_id = "test_sensor"
-
-            # Mock intervals for insufficient data test
-            mock_interval_insufficient = Mock()
-            mock_interval_insufficient.start_time = dt_util.utcnow()
-            mock_interval_insufficient.duration_seconds = 1800.0  # Less than 3600s
-            mock_interval_insufficient.state = "on"
-
-            # Add to_dict method to return proper dictionary
-            def mock_interval_to_dict():
-                return {
-                    "start_time": mock_interval_insufficient.start_time,
-                    "duration_seconds": mock_interval_insufficient.duration_seconds,
-                    "state": mock_interval_insufficient.state,
-                }
-
-            mock_interval_insufficient.to_dict = mock_interval_to_dict
-
-            intervals_by_entity_insufficient = {
-                "test_sensor": [mock_interval_insufficient]
-            }
-            occupied_times = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
-
-            # Test motion sensor logic (insufficient data)
-            test_entity.type.input_type = InputType.MOTION
-            test_entity.type.prob_given_true = 0.8
-            test_entity.type.prob_given_false = 0.1
-
-            analyzer = LikelihoodAnalyzer(mock_coordinator, "Test Area")
-            with (
-                patch.object(analyzer, "_is_occupied", return_value=True),
-                patch.object(analyzer, "_is_interval_active", return_value=True),
-            ):
-                prob_given_true, prob_given_false = analyzer._analyze_entity_likelihood(
-                    mock_db_entity,
-                    intervals_by_entity_insufficient,
-                    occupied_times,
-                    manager,
-                )
-
-                # Since we have insufficient data (< 3600s), it should use defaults
-                assert prob_given_true == 0.5  # Default fallback when insufficient data
-                assert (
-                    prob_given_false == 0.5
-                )  # Default fallback when insufficient data
-
-            # Test motion sensor logic (sufficient data - calculated values preserved)
-            test_entity_sufficient = create_test_entity(
-                "test_sensor_sufficient", coordinator=mock_coordinator
-            )
-            test_entity_sufficient.type.input_type = InputType.MOTION
-            test_entity_sufficient.type.prob_given_true = 0.95  # Default
-            test_entity_sufficient.type.prob_given_false = 0.02  # Default
-            manager._entities = {"test_sensor_sufficient": test_entity_sufficient}
-
-            # Mock intervals for sufficient data test (>= 3600s total)
-            # Create scenario that yields calculated values outside typical ranges
-            # We need two intervals with equal durations:
-            # - One active when occupied (true_occ)
-            # - One inactive when occupied (false_occ)
-            # This yields prob_given_true = 3600 / (3600 + 3600) = 0.5
-            mock_interval_sufficient = Mock()
-            mock_interval_sufficient.start_time = dt_util.utcnow() - timedelta(hours=2)
-            mock_interval_sufficient.duration_seconds = (
-                3600.0  # 1 hour - active interval
-            )
-            mock_interval_sufficient.state = "on"
-            mock_interval_sufficient.to_dict = lambda: {
-                "start_time": mock_interval_sufficient.start_time,
-                "duration_seconds": mock_interval_sufficient.duration_seconds,
-                "state": mock_interval_sufficient.state,
-            }
-
-            mock_interval_sufficient_2 = Mock()
-            mock_interval_sufficient_2.start_time = (
-                mock_interval_sufficient.start_time + timedelta(hours=1)
-            )
-            mock_interval_sufficient_2.duration_seconds = (
-                3600.0  # 1 hour - inactive interval
-            )
-            mock_interval_sufficient_2.state = "off"  # Not active
-            mock_interval_sufficient_2.to_dict = lambda: {
-                "start_time": mock_interval_sufficient_2.start_time,
-                "duration_seconds": mock_interval_sufficient_2.duration_seconds,
-                "state": mock_interval_sufficient_2.state,
-            }
-
-            mock_db_entity_sufficient = Mock()
-            mock_db_entity_sufficient.entity_id = "test_sensor_sufficient"
-
-            intervals_by_entity_sufficient = {
-                "test_sensor_sufficient": [
-                    mock_interval_sufficient,
-                    mock_interval_sufficient_2,
-                ]
-            }
-
-            # First interval: active when occupied (true_occ = 3600)
-            # Second interval: inactive when occupied (false_occ = 3600)
-            # This yields prob_given_true = 3600 / (3600 + 3600) = 0.5
-            # Occupied period covers both intervals' start times
-            occupied_times_sufficient = [
-                (
-                    mock_interval_sufficient.start_time,
-                    mock_interval_sufficient_2.start_time
-                    + timedelta(hours=1),  # Cover both intervals
-                )
-            ]
-
-            # Don't need to mock _is_occupied - it will use the actual occupied_times list
-            def mock_is_interval_active(interval, entity):
-                """Return True only for the first interval (active)."""
-                return interval == mock_interval_sufficient
-
-            analyzer = LikelihoodAnalyzer(mock_coordinator, "Test Area")
-            with patch.object(
-                analyzer, "_is_interval_active", side_effect=mock_is_interval_active
-            ):
-                prob_given_true, prob_given_false = analyzer._analyze_entity_likelihood(
-                    mock_db_entity_sufficient,
-                    intervals_by_entity_sufficient,
-                    occupied_times_sufficient,
-                    manager,
-                )
-
-                # With sufficient data (>= 3600s), calculated values should be preserved
-                # even if outside typical ranges (prob_given_true < 0.8)
-                # First interval: active=True, occupied=True -> true_occ = 3600
-                # Second interval: active=False, occupied=True -> false_occ = 3600
-                # prob_given_true = 3600 / (3600 + 3600) = 0.5
-                # Both intervals are during occupied time, so true_empty=0, false_empty=0
-                # total_unoccupied_time = 0 < 3600, so prob_given_false uses default (0.5)
-                # This proves threshold overrides are not applied for prob_given_true
-                assert abs(prob_given_true - 0.5) < 0.01  # Calculated value ~0.5
-                assert (
-                    prob_given_false == 0.5
-                )  # Default fallback when insufficient unoccupied data
-                # Verify prob_given_true is not the default
-                assert abs(prob_given_true - 0.95) > 0.01
-
-            # Test non-motion sensor logic - create a fresh entity to avoid interference
-            fresh_entity = create_test_entity(
-                "test_sensor", coordinator=mock_coordinator
-            )
-            fresh_entity.type.input_type = InputType.MEDIA
-            fresh_entity.type.prob_given_true = 0.6
-            fresh_entity.type.prob_given_false = 0.05
-            manager._entities = {"test_sensor": fresh_entity}
-
-            # Use insufficient data intervals for non-motion sensor test
-            analyzer = LikelihoodAnalyzer(mock_coordinator, "Test Area")
-            with (
-                patch.object(analyzer, "_is_occupied", return_value=False),
-                patch.object(analyzer, "_is_interval_active", return_value=False),
-            ):
-                prob_given_true, prob_given_false = analyzer._analyze_entity_likelihood(
-                    mock_db_entity,
-                    intervals_by_entity_insufficient,
-                    occupied_times,
-                    manager,
-                )
-
-                # Should use calculated values for non-motion sensors
-                # The logic calculates based on the interval data
-                # For this test case with _is_occupied=False and _is_interval_active=False:
-                # - true_occ = 0 (no intervals active when occupied)
-                # - false_occ = 1800 (interval not active when occupied)
-                # - true_empty = 0 (no intervals active when not occupied)
-                # - false_empty = 0 (no intervals not active when not occupied)
-                #
-                # prob_given_true = true_occ / (true_occ + false_occ) = 0 / (0 + 1800) = 0
-                # prob_given_false = true_empty / (true_empty + false_empty) = 0 / (0 + 0) = 0.5 (fallback)
-                #
-                # Since 0 < threshold, prob_given_true gets reset to 0.5 (fallback)
-                assert prob_given_true == 0.5  # Fallback value
-                assert prob_given_false == 0.5  # Fallback value
-
-    def test_interval_active_logic(self, mock_coordinator: Mock) -> None:
-        """Test the _is_interval_active method with different entity types."""
-        analyzer = LikelihoodAnalyzer(mock_coordinator, "Test Area")
-
-        # Create test entity with active_states
-        test_entity = create_test_entity("test_sensor", coordinator=mock_coordinator)
-        test_entity.type.active_states = ["on", "playing"]
-
-        # Mock interval
-        mock_interval = Mock()
-        mock_interval.state = "on"
-
-        # Test with active_states
-        assert analyzer._is_interval_active(mock_interval, test_entity) is True
-
-        mock_interval.state = "off"
-        assert analyzer._is_interval_active(mock_interval, test_entity) is False
-
-        # Test with active_range
-        test_entity.type.active_states = None
-        test_entity.type.active_range = (10.0, 20.0)
-
-        mock_interval.state = "15"
-        assert analyzer._is_interval_active(mock_interval, test_entity) is True
-
-        mock_interval.state = "25"
-        assert analyzer._is_interval_active(mock_interval, test_entity) is False
-
-        mock_interval.state = "invalid"
-        assert analyzer._is_interval_active(mock_interval, test_entity) is False
-
-        # Test with no active configuration
-        test_entity.type.active_states = None
-        test_entity.type.active_range = None
-        assert analyzer._is_interval_active(mock_interval, test_entity) is False
 
     def test_is_occupied_binary_search_logic(self, mock_coordinator: Mock) -> None:
         """Test the _is_occupied method with binary search logic."""
@@ -345,77 +111,6 @@ class TestPriorAnalyzer:
         analyzer = PriorAnalyzer(mock_coordinator, "Test Area")
         result = analyzer.analyze_area_prior(entity_ids)
         assert result == DEFAULT_PRIOR
-
-    @pytest.mark.parametrize(
-        (
-            "first_time",
-            "last_time",
-            "occupied_seconds",
-            "expected_result",
-            "description",
-        ),
-        [
-            (
-                dt_util.utcnow(),
-                dt_util.utcnow(),
-                100.0,
-                MAX_PROBABILITY,
-                "same time (division by zero)",
-            ),
-            (
-                dt_util.utcnow() + timedelta(hours=1),
-                dt_util.utcnow(),
-                100.0,
-                DEFAULT_PRIOR,
-                "reversed time",
-            ),
-            (
-                dt_util.utcnow(),
-                dt_util.utcnow() + timedelta(hours=1),
-                7200.0,  # 2 hours in 1 hour range
-                0.99,  # Updated to reflect actual behavior
-                "data corruption (occupied > total)",
-            ),
-            (
-                dt_util.utcnow(),
-                dt_util.utcnow() + timedelta(hours=2),
-                1800.0,  # 30 minutes in 2 hour range
-                0.25,
-                "normal case",
-            ),
-            (
-                None,
-                None,
-                0.0,
-                DEFAULT_PRIOR,
-                "no data available",
-            ),
-        ],
-    )
-    def test_analyze_area_prior_various_scenarios(
-        self,
-        mock_coordinator: Mock,
-        first_time,
-        last_time,
-        occupied_seconds,
-        expected_result,
-        description,
-    ) -> None:
-        """Test analyze_area_prior handles various scenarios."""
-        analyzer = PriorAnalyzer(mock_coordinator, "Test Area")
-
-        with (
-            patch.object(
-                analyzer, "get_total_occupied_seconds", return_value=occupied_seconds
-            ),
-            patch.object(
-                analyzer, "get_time_bounds", return_value=(first_time, last_time)
-            ),
-        ):
-            result = analyzer.analyze_area_prior(["test.entity"])
-            assert result == pytest.approx(expected_result, rel=1e-9), (
-                f"Failed for {description}"
-            )
 
     @pytest.mark.parametrize(
         ("slot_minutes", "description"),

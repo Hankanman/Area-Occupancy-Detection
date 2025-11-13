@@ -1,0 +1,716 @@
+---
+alwaysApply: true
+---
+
+All tests are written using pytest.
+
+All tests are written in the `tests` directory.
+
+The conftest.py file is used to configure the tests and contains the fixtures for the tests.
+
+All fixtures should be defined in the conftest.py file.
+
+Each module has its own test file. e.g. `tests/test_coordinator.py`.
+
+Testing is done by running the command `pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing`.
+
+Test coverage is expected to be over 85%.
+
+# Testing Guide for Area Occupancy Detection
+
+This guide explains how to write and maintain tests for the Area Occupancy Detection component, with a focus on the multi-area architecture.
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Choosing the Right Fixtures](#choosing-the-right-fixtures)
+- [Common Patterns](#common-patterns)
+- [Area-Based Access](#area-based-access)
+- [Migration Guide](#migration-guide)
+- [Examples](#examples)
+
+## Architecture Overview
+
+The component uses a **multi-area architecture** where:
+
+- `AreaOccupancyCoordinator` manages multiple `Area` objects
+- Each `Area` has its own `config`, `entities`, `prior`, and `purpose`
+- Properties like `probability()`, `threshold()`, `device_info()` now take `area_name` parameter
+- Access patterns: `coordinator.get_area_or_default(area_name).entities` instead of `coordinator.entities`
+
+## Choosing the Right Fixtures
+
+### Real Coordinators vs Mock Coordinators
+
+**We now prefer using real coordinators and databases in tests.** This provides better integration testing and catches real-world issues.
+
+**Use `mock_coordinator` when:**
+
+- Testing component interactions without real coordinator behavior
+- Unit testing individual methods in isolation
+- You need to control all coordinator behavior via mocks
+- Testing error handling paths that are hard to trigger with real coordinators
+
+**Use `coordinator_with_areas` when:**
+
+- Integration-style tests that need real coordinator behavior
+- Testing area loading and initialization
+- You need areas to be automatically loaded from config
+- Testing coordinator methods that interact with areas
+- **This is the recommended default for most tests**
+
+**Use `coordinator_with_db` when:**
+
+- Testing database operations with a real coordinator
+- Testing data persistence and loading
+- Testing migration logic
+- Testing prior analysis and likelihood calculations
+- **Use this when you need both coordinator and database functionality**
+
+### Database Fixtures
+
+**`coordinator_with_db`** - Real coordinator + real database (in-memory):
+
+```python
+def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test with real coordinator and real database."""
+    coordinator = coordinator_with_db
+    db = coordinator.db  # Real AreaOccupancyDB instance
+    area_name = coordinator.get_area_names()[0]
+
+    # Save data to database
+    db.save_area_data(area_name)
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data persisted
+    area_data = db.get_area_data(coordinator.entry_id)
+    assert area_data is not None
+```
+
+**`db_engine`** - In-memory SQLite engine for database tests:
+
+```python
+def test_database_schema(db_engine):
+    """Test database schema operations."""
+    from sqlalchemy import inspect
+    inspector = inspect(db_engine)
+    tables = inspector.get_table_names()
+    assert "areas" in tables
+    assert "entities" in tables
+```
+
+**`mock_db_with_engine`** - DEPRECATED: Use `coordinator_with_db` instead. Kept for backward compatibility only.
+
+### Coordinator Fixtures
+
+**`coordinator_with_areas`** - Real coordinator with areas loaded:
+
+```python
+def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test coordinator with real areas."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area_or_default(area_name)
+
+    # Test coordinator methods that require area_name
+    prob = coordinator_with_areas.probability(area_name)
+    assert 0.0 <= prob <= 1.0
+```
+
+**`coordinator_with_areas_with_sensors`** - Real coordinator with mock entities set up:
+
+```python
+def test_sensor_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+    """Test sensor entities with pre-configured mock entities."""
+    coordinator = coordinator_with_areas_with_sensors
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Mock entities are already set up on the area
+    assert "binary_sensor.motion" in area.entities.entities
+    assert "media_player.tv" in area.entities.entities
+```
+
+### Area Fixtures
+
+**`default_area`** - Easy access to the first area:
+
+```python
+def test_something(default_area):
+    """Test using default area fixture."""
+    assert default_area.area_name is not None
+    assert default_area.config is not None
+    assert default_area.entities is not None
+```
+
+This eliminates boilerplate like `coordinator.get_area_or_default()`.
+
+**`mock_area`** - Standalone mock area (use sparingly):
+
+```python
+def test_area_behavior(mock_area):
+    """Test area-specific logic with mock."""
+    mock_area.config.threshold = 0.7
+    # Test area-specific logic
+```
+
+## Common Patterns
+
+### Pattern 1: Testing with Real Coordinator and Database
+
+**Recommended pattern for most tests:**
+
+```python
+def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test database operations with real coordinator and database."""
+    coordinator = coordinator_with_db
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Use real database
+    db = coordinator.db
+    db.save_area_data(area_name)
+
+    # Verify data persisted
+    area_data = db.get_area_data(coordinator.entry_id)
+    assert area_data is not None
+    assert area_data["area_name"] == area_name
+```
+
+### Pattern 2: Testing with Real Coordinator (No Database)
+
+```python
+def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test coordinator method with real areas loaded."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area_or_default(area_name)
+
+    # Test coordinator methods
+    prob = coordinator_with_areas.probability(area_name)
+    assert 0.0 <= prob <= 1.0
+
+    threshold = coordinator_with_areas.threshold(area_name)
+    assert threshold == area.config.threshold
+```
+
+### Pattern 3: Testing with Default Area
+
+```python
+def test_area_properties(default_area):
+    """Test area properties using default_area fixture."""
+    assert default_area.config.threshold == 0.5
+    assert default_area.entities is not None
+    assert default_area.prior is not None
+```
+
+### Pattern 4: Testing Sensor Entities
+
+```python
+def test_sensor_with_mock_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+    """Test sensors with pre-configured mock entities."""
+    coordinator = coordinator_with_areas_with_sensors
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Mock entities are already set up
+    assert "binary_sensor.motion" in area.entities.entities
+    motion_entity = area.entities.get_entity("binary_sensor.motion")
+    assert motion_entity.evidence is True
+```
+
+### Pattern 5: Testing Database Operations
+
+```python
+async def test_load_data(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test loading data from database."""
+    coordinator = coordinator_with_db
+    db = coordinator.db
+    area_name = coordinator.get_area_names()[0]
+
+    # Save some test data
+    db.save_area_data(area_name)
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data was loaded
+    area = coordinator.get_area_or_default(area_name)
+    assert area.prior.global_prior is not None
+```
+
+### Pattern 6: Creating Custom Areas
+
+```python
+def test_custom_area(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Create a custom area for testing."""
+    area = create_test_area(
+        coordinator_with_areas,
+        area_name="Kitchen",
+        entity_ids=["binary_sensor.motion1"],
+        threshold=0.6
+    )
+    assert area.area_name == "Kitchen"
+    assert area.config.threshold == 0.6
+```
+
+### Pattern 7: Patching Area Methods That Survive Reloads
+
+```python
+def test_async_update_options(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test async_update_options which reloads areas."""
+    from custom_components.area_occupancy.area.area import Area
+
+    with patch_area_method(Area, "async_cleanup", AsyncMock()) as mock_cleanup:
+        await coordinator_with_areas.async_update_options({"threshold": 0.7})
+        mock_cleanup.assert_called()
+```
+
+### Pattern 8: Mocking Coordinator Methods
+
+When using real coordinators, you can still mock specific methods:
+
+```python
+def test_with_mocked_method(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test with specific coordinator method mocked."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+
+    # Mock a specific method
+    with patch.object(
+        coordinator_with_areas,
+        "probability",
+        return_value=0.75
+    ) as mock_prob:
+        prob = coordinator_with_areas.probability(area_name)
+        assert prob == 0.75
+        mock_prob.assert_called_once_with(area_name)
+```
+
+## Area-Based Access
+
+### Always Use Area-Based Access
+
+**Correct:**
+
+```python
+area = coordinator.get_area_or_default("Test Area")
+entities = area.entities.entities
+config = area.config
+prior = area.prior
+```
+
+**Incorrect:**
+
+```python
+# DON'T: Direct coordinator access (deprecated)
+entities = coordinator.entities.entities  # May not work in all cases
+config = coordinator.config  # Deprecated, use area.config
+```
+
+### Accessing Multiple Areas
+
+```python
+def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test with multiple areas."""
+    area_names = coordinator_with_areas.get_area_names()
+    for area_name in area_names:
+        area = coordinator_with_areas.get_area_or_default(area_name)
+        assert area is not None
+        assert area.area_name == area_name
+```
+
+## Migration Guide
+
+### Migrating from Mock Coordinators to Real Coordinators
+
+**We now prefer real coordinators and databases in tests.** Here's how to migrate:
+
+### Step-by-Step Migration
+
+1. **Replace `mock_coordinator` with `coordinator_with_areas`:**
+
+   ```python
+   # Before
+   def test_something(mock_coordinator: Mock):
+       mock_coordinator.entities.entities = {...}
+       mock_coordinator.config.threshold = 0.5
+       # Test code
+
+   # After
+   def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
+       area_name = coordinator_with_areas.get_area_names()[0]
+       area = coordinator_with_areas.get_area_or_default(area_name)
+       area.entities.entities = {...}
+       area.config.threshold = 0.5
+       # Test code
+   ```
+
+2. **Replace coordinator property access with area-based access:**
+
+   ```python
+   # Before
+   coordinator.entities.entities
+   coordinator.config.threshold
+   coordinator.probability  # Direct property access
+
+   # After
+   area_name = coordinator.get_area_names()[0]
+   area = coordinator.get_area_or_default(area_name)
+   area.entities.entities
+   area.config.threshold
+   coordinator.probability(area_name)  # Method call with area_name
+   ```
+
+3. **Use `default_area` fixture to reduce boilerplate:**
+
+   ```python
+   # Before
+   def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
+       area_name = coordinator_with_areas.get_area_names()[0]
+       area = coordinator_with_areas.get_area_or_default(area_name)
+       # Test code
+
+   # After
+   def test_something(default_area):
+       # area is already available as default_area
+       # Test code
+   ```
+
+4. **Replace mock database with real database:**
+
+   ```python
+   # Before
+   def test_db_operation(mock_db: Mock):
+       mock_db.save_data.return_value = None
+       # Test code
+
+   # After
+   async def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
+       coordinator = coordinator_with_db
+       db = coordinator.db  # Real database
+       area_name = coordinator.get_area_names()[0]
+       db.save_area_data(area_name)
+       # Test code
+   ```
+
+5. **Update coordinator method calls to include `area_name`:**
+
+   ```python
+   # Before
+   prob = coordinator.probability  # Property access
+   threshold = coordinator.threshold  # Property access
+
+   # After
+   area_name = coordinator.get_area_names()[0]
+   prob = coordinator.probability(area_name)  # Method call
+   threshold = coordinator.threshold(area_name)  # Method call
+   ```
+
+6. **Update mocks for coordinator methods:**
+
+   ```python
+   # Before
+   mock_coordinator.probability = 0.5  # Direct assignment
+   mock_coordinator.threshold = 0.6  # Direct assignment
+
+   # After
+   area_name = coordinator_with_areas.get_area_names()[0]
+   coordinator_with_areas.probability = Mock(return_value=0.5)  # Mock callable
+   coordinator_with_areas.threshold = Mock(return_value=0.6)  # Mock callable
+   # Or use patch.object
+   with patch.object(coordinator_with_areas, "probability", return_value=0.5):
+       prob = coordinator_with_areas.probability(area_name)
+   ```
+
+### Common Migration Patterns
+
+**Pattern 1: Entity Access**
+
+```python
+# Before
+coordinator.entities.entities["binary_sensor.motion"] = mock_entity
+
+# After
+area_name = coordinator_with_areas.get_area_names()[0]
+area = coordinator_with_areas.get_area_or_default(area_name)
+area.entities.entities["binary_sensor.motion"] = mock_entity
+# Or use default_area fixture:
+# default_area.entities.entities["binary_sensor.motion"] = mock_entity
+```
+
+**Pattern 2: Config Access**
+
+```python
+# Before
+coordinator.config.threshold = 0.7
+
+# After
+area_name = coordinator_with_areas.get_area_names()[0]
+area = coordinator_with_areas.get_area_or_default(area_name)
+area.config.threshold = 0.7
+```
+
+**Pattern 3: Database Operations**
+
+```python
+# Before
+mock_db.save_data.return_value = None
+mock_db.load_data = AsyncMock(return_value=None)
+
+# After
+async def test_db(coordinator_with_db: AreaOccupancyCoordinator):
+    coordinator = coordinator_with_db
+    db = coordinator.db
+    area_name = coordinator.get_area_names()[0]
+    db.save_area_data(area_name)
+    await db.load_data()
+```
+
+## Examples
+
+### Example 1: Testing Coordinator Setup
+
+```python
+async def test_setup_loads_areas(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test that setup loads areas correctly."""
+    area_names = coordinator_with_areas.get_area_names()
+    assert len(area_names) > 0
+
+    for area_name in area_names:
+        area = coordinator_with_areas.get_area_or_default(area_name)
+        assert area is not None
+        assert area.config is not None
+        assert area.entities is not None
+```
+
+### Example 2: Testing Database Operations
+
+```python
+async def test_save_and_load_data(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test saving and loading data from database."""
+    coordinator = coordinator_with_db
+    db = coordinator.db
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Set some test data
+    area.prior.set_global_prior(0.75)
+
+    # Save to database
+    db.save_area_data(area_name)
+
+    # Clear area prior to simulate reload
+    area.prior.global_prior = None
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data was restored
+    assert area.prior.global_prior == 0.75
+```
+
+### Example 3: Testing Area-Specific Properties
+
+```python
+def test_area_threshold(default_area):
+    """Test area threshold property."""
+    default_area.config.threshold = 0.7
+    assert default_area.config.threshold == 0.7
+
+    # Test coordinator method reflects area config
+    area_name = default_area.area_name
+    coordinator = default_area.coordinator
+    assert coordinator.threshold(area_name) == 0.7
+```
+
+### Example 4: Testing Entity Management
+
+```python
+def test_entity_access(default_area):
+    """Test accessing entities through area."""
+    # Add a test entity
+    mock_entity = Mock()
+    mock_entity.entity_id = "binary_sensor.test"
+    default_area.entities.entities["binary_sensor.test"] = mock_entity
+
+    # Access via area
+    entity = default_area.entities.get_entity("binary_sensor.test")
+    assert entity is not None
+    assert entity.entity_id == "binary_sensor.test"
+```
+
+### Example 5: Testing Coordinator Methods
+
+```python
+def test_probability_method(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test probability method with area_name."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    prob = coordinator_with_areas.probability(area_name)
+    assert 0.0 <= prob <= 1.0
+
+    # Test device_info method
+    device_info = coordinator_with_areas.device_info(area_name)
+    assert device_info is not None
+    assert device_info["identifiers"] == {(DOMAIN, area_name)}
+```
+
+### Example 6: Testing Sensor Entities
+
+```python
+def test_sensor_with_mock_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+    """Test sensor entities with pre-configured mock entities."""
+    coordinator = coordinator_with_areas_with_sensors
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Mock entities are already set up
+    assert "binary_sensor.motion" in area.entities.entities
+    assert "media_player.tv" in area.entities.entities
+
+    # Test sensor calculations
+    prob = coordinator.probability(area_name)
+    assert prob > 0.0
+```
+
+### Example 7: Testing with Multiple Areas
+
+```python
+def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
+    """Test coordinator with multiple areas."""
+    # Create additional area
+    area2 = create_test_area(
+        coordinator_with_areas,
+        area_name="Kitchen",
+        entity_ids=["binary_sensor.kitchen_motion"]
+    )
+
+    # Verify both areas exist
+    area_names = coordinator_with_areas.get_area_names()
+    assert len(area_names) == 2
+    assert "Testing" in area_names  # Default area name
+    assert "Kitchen" in area_names
+```
+
+### Example 8: Testing Database Entity Operations
+
+```python
+async def test_save_entity_data(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test saving entity data to database."""
+    coordinator = coordinator_with_db
+    db = coordinator.db
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Set up entities on the area
+    area._entities = SimpleNamespace(
+        entities={
+            "binary_sensor.motion": Mock(entity_id="binary_sensor.motion", ...)
+        }
+    )
+
+    # Save entity data
+    db.save_entity_data()
+
+    # Verify entity was saved
+    with db.get_session() as session:
+        entity = session.query(db.Entities).filter_by(
+            area_name=area_name,
+            entity_id="binary_sensor.motion"
+        ).first()
+        assert entity is not None
+```
+
+## Best Practices
+
+1. **Prefer real coordinators and databases** - Use `coordinator_with_areas` and `coordinator_with_db` over mocks when possible
+2. **Always use area-based access** - Prefer `area.entities` over `coordinator.entities`
+3. **Use fixtures** - Leverage `coordinator_with_areas`, `coordinator_with_db`, and `default_area` to reduce boilerplate
+4. **Patch at class level** - Use `patch_area_method()` for methods that need to survive area reloads
+5. **Be explicit** - Use `area_name` parameter when calling coordinator methods
+6. **Test isolation** - Each test should set up its own areas if needed
+7. **Use real databases for DB tests** - Prefer `coordinator_with_db` over `mock_db` for database operation tests
+8. **Mock only when necessary** - Use mocks for error cases or when real behavior is too complex
+9. **Get area_name dynamically** - Always get `area_name` from `coordinator.get_area_names()[0]` rather than hardcoding
+10. **Use `coordinator_with_areas_with_sensors`** - For sensor tests that need pre-configured entities
+
+## Troubleshooting
+
+### Issue: "Area name is required in multi-area architecture"
+
+**Solution:** Ensure you're passing `area_name` to methods that require it, or use `coordinator.get_area_or_default()` first.
+
+### Issue: Patched methods don't work after area reload
+
+**Solution:** Use `patch_area_method()` context manager instead of `patch.object()` on instance.
+
+### Issue: `coordinator.entities` is None
+
+**Solution:** Access entities via area: `area = coordinator.get_area_or_default(); area.entities`
+
+### Issue: `TypeError: 'Mock' object is not callable`
+
+**Solution:** Coordinator methods are now callables that take `area_name`. Mock them as callables:
+
+```python
+coordinator.probability = Mock(return_value=0.5)
+prob = coordinator.probability(area_name)  # Must call with area_name
+```
+
+### Issue: `AttributeError: 'AreaOccupancyCoordinator' object has no attribute 'config'`
+
+**Solution:** Access config via area: `area = coordinator.get_area_or_default(); area.config`
+
+### Issue: Database tests failing with real coordinator
+
+**Solution:** Use `coordinator_with_db` fixture instead of `mock_db`. This provides a real coordinator with a real database.
+
+### Issue: Tests accessing `coordinator.entities` directly
+
+**Solution:** Update to use area-based access: `area = coordinator.get_area_or_default(); area.entities`
+
+### Issue: Hardcoded area names in tests
+
+**Solution:** Always get area name dynamically: `area_name = coordinator.get_area_names()[0]`
+
+## Fixture Reference
+
+### Core Fixtures
+
+- **`mock_hass`** - Mock Home Assistant instance
+- **`mock_config_entry`** - Mock config entry with default values
+- **`mock_realistic_config_entry`** - Mock config entry with realistic multi-area configuration
+- **`coordinator_with_areas`** - Real coordinator with areas loaded (recommended default)
+- **`coordinator_with_db`** - Real coordinator with real database (for DB tests)
+- **`coordinator_with_areas_with_sensors`** - Real coordinator with mock entities pre-configured
+- **`default_area`** - First area from `coordinator_with_areas` (convenience fixture)
+- **`mock_coordinator`** - Mock coordinator (use sparingly, prefer real coordinators)
+
+### Database Fixtures
+
+- **`db_engine`** - In-memory SQLite engine for database tests
+- **`mock_db_with_engine`** - DEPRECATED: Use `coordinator_with_db` instead
+
+### Entity Fixtures
+
+- **`mock_entity`** - Mock entity instance
+- **`mock_active_entity`** - Mock entity in active state
+- **`mock_inactive_entity`** - Mock entity in inactive state
+- **`mock_decay`** - Mock decay instance
+
+### Other Fixtures
+
+- **`mock_area`** - Standalone mock area
+- **`mock_entity_manager`** - Mock entity manager
+- **`mock_entity_registry`** - Mock entity registry
+- **`freeze_time`** - Freeze time for consistent testing
+
+## Additional Resources
+
+- See `tests/conftest.py` for all available fixtures and their implementations
+- See existing test files for examples of patterns:
+  - `tests/test_coordinator.py` - Coordinator tests with real coordinators
+  - `tests/test_db.py` - Database tests with `coordinator_with_db`
+  - `tests/test_sensor.py` - Sensor tests with `coordinator_with_areas_with_sensors`
+  - `tests/test_service.py` - Service tests with real coordinators
+- Check `custom_components/area_occupancy/coordinator.py` for coordinator API
+- Check `custom_components/area_occupancy/db.py` for database API

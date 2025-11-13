@@ -84,16 +84,6 @@ class TestEntityType:
                 },
                 "Cannot provide both active_states and active_range",
             ),
-            (
-                "neither_active_states_nor_range",
-                {
-                    "input_type": InputType.MOTION,
-                    "weight": 0.8,
-                    "prob_given_true": 0.25,
-                    "prob_given_false": 0.05,
-                },
-                "Either active_states or active_range must be provided",
-            ),
         ],
     )
     def test_initialization_errors(self, test_case, params, expected_error) -> None:

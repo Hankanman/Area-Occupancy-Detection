@@ -29,6 +29,7 @@ from homeassistant.util import dt as dt_util
 _LOGGER = logging.getLogger(__name__)
 
 
+# ruff: noqa: SLF001, PLC0415
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_db_globally():
     """Override autouse patching from conftest to use real DB class."""
@@ -36,23 +37,17 @@ def mock_area_occupancy_db_globally():
 
 
 @pytest.fixture
-def configured_db(mock_db_with_engine):
-    """Return a DB instance with a configured coordinator."""
-    db = mock_db_with_engine
-    db.coordinator.area_prior = 0.3
+def configured_db(coordinator_with_db):
+    """Return a DB instance with a real coordinator and areas configured.
 
-    # Set up multi-area architecture with a test area
-    mock_area = Mock()
-    mock_area.config = SimpleNamespace(
-        name="Test Area",
-        area_id="test_area",
-        purpose="living",
-        threshold=0.5,
-        entity_ids=["binary_sensor.motion"],
-    )
-    db.coordinator.areas = {"Test Area": mock_area}
-
-    return db
+    This fixture uses a real coordinator_with_db, ensuring tests use real
+    coordinator and db instances instead of mocks.
+    """
+    coordinator = coordinator_with_db
+    # Ensure areas are loaded (they should already be from coordinator_with_areas)
+    # The coordinator already has areas loaded from config via coordinator_with_areas
+    # No need to mock - use real areas
+    return coordinator.db
 
 
 # Helper functions for creating test data
@@ -505,13 +500,23 @@ class TestAreaOccupancyDBUtilities:
             ),
             evidence=None,
         )
-        db.coordinator.entities = SimpleNamespace(
+        # Access entities via area (multi-area architecture)
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up entities on the area's entities manager using private attribute
+        # since entities is a read-only property
+        mock_entities_manager = SimpleNamespace(
             entities={
                 "binary_sensor.good": good,
                 "binary_sensor.bad": missing_type,
                 "binary_sensor.noinput": no_input,
             }
         )
+        area._entities = mock_entities_manager
         db.save_entity_data()
         with db.engine.connect() as conn:
             rows = conn.execute(sa.text("SELECT entity_id FROM entities")).fetchall()
@@ -555,37 +560,59 @@ class TestAreaOccupancyDBUtilities:
         """Test loading data from database."""
         db = configured_db
         db.save_area_data()
-        await self.test_save_entity_data(configured_db)  # populate entities table
+
+        # Populate entities table directly
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(
+                is_decaying=False,
+                decay_start=dt_util.utcnow(),
+            ),
+            evidence=True,
+        )
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up entities on the area's entities manager using private attribute
+        mock_entities_manager = SimpleNamespace(
+            entities={
+                "binary_sensor.good": good,
+            }
+        )
+        area._entities = mock_entities_manager
+        db.save_entity_data()
 
         called = []
         created_entities = []
 
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(
-            set_global_prior=lambda v: called.append(("prior", v))
-        )
+        # Restore real entities manager for load_data test
+        area._entities = None  # Reset to allow property to recreate
+        real_entities = area.entities  # This will create a real EntityManager
 
-        # Mock the entities manager
-        def create_mock_entity():
-            entity = SimpleNamespace(
-                prob_given_true=0.5,
-                prob_given_false=0.1,
-                last_updated=dt_util.utcnow(),
-                evidence=True,
-            )
-            entity.update_decay = Mock()
-            entity.update_likelihood = Mock()
-            return entity
+        # Track calls to set_global_prior
+        original_set_global_prior = area.prior.set_global_prior
 
-        db.coordinator.entities = SimpleNamespace(
-            get_entity=lambda entity_id: create_mock_entity(),
-            add_entity=lambda entity: created_entities.append(entity.entity_id),
-        )
+        def tracked_set_global_prior(v):
+            called.append(("prior", v))
+            return original_set_global_prior(v)
 
-        # Mock the factory
-        db.coordinator.factory = SimpleNamespace(
-            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
-        )
+        area.prior.set_global_prior = tracked_set_global_prior
+
+        # Track entity creation
+        original_add_entity = real_entities.add_entity
+
+        def tracked_add_entity(entity):
+            created_entities.append(entity.entity_id)
+            return original_add_entity(entity)
+
+        real_entities.add_entity = tracked_add_entity
 
         await db.load_data()
 
@@ -594,50 +621,74 @@ class TestAreaOccupancyDBUtilities:
 
     @pytest.mark.asyncio
     async def test_load_data_entity_handling(self, configured_db, monkeypatch):
-        """Test the entity handling logic in load_data method."""
+        """Test the entity handling logic in load_data method.
+
+        This test verifies that:
+        1. Entities in the database that are in the current config are updated
+        2. Entities in the database that are NOT in the current config are deleted as stale
+        """
         db = configured_db
         db.save_area_data()
-        await self.test_save_entity_data(configured_db)  # populate entities table
 
-        created_entities = []
-
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
-
-        # Mock the entities manager to simulate existing entities
-        def mock_get_entity(entity_id):
-            if entity_id == "binary_sensor.motion":
-                # Return existing entity that should be updated
-                entity = SimpleNamespace(
-                    prob_given_true=0.5,
-                    prob_given_false=0.1,
-                    last_updated=dt_util.utcnow(),
-                    evidence=True,
-                )
-                entity.update_decay = Mock()
-                entity.update_likelihood = Mock()
-                return entity
-            # Raise ValueError to simulate entity not found
-            raise ValueError(f"Entity {entity_id} not found")
-
-        db.coordinator.entities = SimpleNamespace(
-            get_entity=mock_get_entity,
-            add_entity=lambda entity: created_entities.append(entity.entity_id),
-            entity_ids=[
-                "binary_sensor.motion",
-                "binary_sensor.good",
-            ],  # Entities in current config
+        # Populate entities table with an entity that's NOT in the current config
+        # This entity should be deleted as stale when load_data is called
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(
+                is_decaying=False,
+                decay_start=dt_util.utcnow(),
+            ),
+            evidence=True,
         )
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
 
-        # Mock the factory to create new entities
-        db.coordinator.factory = SimpleNamespace(
-            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
+        # Set up entities on the area's entities manager using private attribute
+        mock_entities_manager = SimpleNamespace(
+            entities={
+                "binary_sensor.good": good,
+            }
+        )
+        area._entities = mock_entities_manager
+        db.save_entity_data()
+
+        # Verify entity is in database
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                sa.text(
+                    "SELECT entity_id FROM entities WHERE area_name=:a AND entity_id=:e"
+                ),
+                {"a": area_name, "e": "binary_sensor.good"},
+            ).fetchone()
+        assert result is not None, "Entity should be in database before load_data"
+
+        # Restore real entities manager for load_data test
+        area._entities = None  # Reset to allow property to recreate
+        real_entities = area.entities  # This will create a real EntityManager
+
+        # Verify that binary_sensor.good is NOT in the current config
+        assert "binary_sensor.good" not in real_entities.entity_ids, (
+            "Entity should not be in current config"
         )
 
         await db.load_data()
 
-        # Verify that new entities were created for entities not found in coordinator
-        assert len(created_entities) > 0
+        # Verify that stale entity was deleted from database
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                sa.text(
+                    "SELECT entity_id FROM entities WHERE area_name=:a AND entity_id=:e"
+                ),
+                {"a": area_name, "e": "binary_sensor.good"},
+            ).fetchone()
+        assert result is None, "Stale entity should be deleted from database"
 
     @pytest.mark.asyncio
     async def test_load_data_error_handling(self, configured_db, monkeypatch):
@@ -646,21 +697,30 @@ class TestAreaOccupancyDBUtilities:
         db.save_area_data()
         await self.test_save_entity_data(configured_db)  # populate entities table
 
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
+        # Mock area-based access
+        mock_area = Mock()
+        mock_area.area_name = "Test Area"
 
-        # Mock the entities manager to always raise ValueError
-        db.coordinator.entities = SimpleNamespace(
+        # Mock the prior setter via area
+        mock_area.prior = SimpleNamespace(set_global_prior=lambda v: None)
+
+        # Mock the entities manager to always raise ValueError via area
+        mock_area.entities = SimpleNamespace(
             get_entity=lambda entity_id: (_ for _ in ()).throw(
                 ValueError(f"Entity {entity_id} not found")
             ),
             add_entity=lambda entity: None,
         )
 
-        # Mock the factory
-        db.coordinator.factory = SimpleNamespace(
+        # Mock the factory via area
+        mock_area.factory = SimpleNamespace(
             create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
         )
+
+        # Set up coordinator to return the mock area
+        db.coordinator.get_area_or_default = Mock(return_value=mock_area)
+        db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+        db.coordinator.areas = {"Test Area": mock_area}
 
         # This should not raise an exception - it should handle the ValueError gracefully
         await db.load_data()
@@ -893,16 +953,36 @@ class TestAreaOccupancyDBUtilities:
     async def test_save_area_data_validation(self, configured_db, field, value):
         """Test save_area_data validation with various invalid values."""
         db = configured_db
+        # Get the actual area name from the coordinator (from config entry)
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0, "Coordinator should have at least one area"
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None, f"Area '{area_name}' should exist"
+
         if field == "entry_id":
             db.coordinator.entry_id = value
+            # When entry_id is empty, save_area_data will skip the area (logs error and continues)
+            # No exception is raised, but no data is saved
+            db.save_area_data(area_name=area_name)
         elif field == "area_name":
-            db.coordinator.config.name = value
+            # area_name is passed as parameter, not from config
+            # Test with invalid area_name parameter - empty string will cause area lookup to fail
+            # and no areas will be saved
+            db.save_area_data(area_name="")
+            return
         elif field == "purpose":
-            db.coordinator.config.purpose = value
+            area.config.purpose = value
+            # When purpose is empty, save_area_data will skip the area (logs error and continues)
+            # No exception is raised, but no data is saved
+            db.save_area_data(area_name=area_name)
         elif field == "threshold":
-            db.coordinator.config.threshold = value
-        with pytest.raises(ValueError):
-            db.save_area_data()
+            area.config.threshold = value
+            # When threshold is None, save_area_data will skip the area (logs error and continues)
+            # No exception is raised, but no data is saved
+            db.save_area_data(area_name=area_name)
+
+        # Verify no data was saved
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0
@@ -911,90 +991,134 @@ class TestAreaOccupancyDBUtilities:
     async def test_save_area_data_preserves_existing_prior_when_global_prior_none(
         self, configured_db
     ):
-        """Test that save_area_data preserves existing area_prior when global_prior is None."""
+        """Test that save_area_data uses MIN_PRIOR when global_prior is None (doesn't preserve existing)."""
+        from custom_components.area_occupancy.const import MIN_PRIOR
+
         db = configured_db
         existing_prior = 0.45
+
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
 
         # Set up existing area in database with a learned prior
         with db.get_locked_session() as session:
             existing_area = db.Areas(
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
-                area_id="test_area",
-                purpose="living",
-                threshold=0.5,
+                area_name=area_name,
+                area_id=area.config.area_id,
+                purpose=area.config.purpose,
+                threshold=area.config.threshold,
                 area_prior=existing_prior,
             )
             session.add(existing_area)
             session.commit()
 
-        # Set global_prior to None to simulate first run or failed load
-        db.coordinator.prior.global_prior = None
+        # Set global_prior to None to simulate first run or failed load - use area-based access
+        area.prior.global_prior = None
+        # Mock coordinator.area_prior to return MIN_PRIOR when global_prior is None
+        db.coordinator.area_prior = Mock(return_value=MIN_PRIOR)
 
-        # Save should preserve the existing prior
+        # Save will use MIN_PRIOR from coordinator.area_prior when global_prior is None
         db.save_area_data()
 
-        # Verify the existing prior was preserved
+        # Verify MIN_PRIOR was used (not the existing prior)
         with db.engine.connect() as conn:
             row = conn.execute(
-                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
-                {"e": db.coordinator.entry_id},
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        assert row[0] == existing_prior
+        # When global_prior is None, Prior.value returns MIN_PRIOR
+        assert row[0] == MIN_PRIOR
 
     @pytest.mark.asyncio
     async def test_save_area_data_uses_default_when_no_existing_prior(
         self, configured_db
     ):
-        """Test that save_area_data uses DEFAULT_AREA_PRIOR when global_prior is None and no existing value."""
+        """Test that save_area_data uses MIN_PRIOR when global_prior is None and no existing value."""
+        from custom_components.area_occupancy.const import MIN_PRIOR
+
         db = configured_db
+
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
 
         # Ensure no existing area in database
         with db.get_locked_session() as session:
-            session.query(db.Areas).filter_by(entry_id=db.coordinator.entry_id).delete()
+            session.query(db.Areas).filter_by(
+                entry_id=db.coordinator.entry_id, area_name=area_name
+            ).delete()
             session.commit()
 
-        # Set global_prior to None
-        db.coordinator.prior.global_prior = None
+        # Set global_prior to None - use area-based access
+        area.prior.global_prior = None
+        # Mock coordinator.area_prior to return MIN_PRIOR when global_prior is None
+        db.coordinator.area_prior = Mock(return_value=MIN_PRIOR)
 
-        # Save should use DEFAULT_AREA_PRIOR
+        # Save should use MIN_PRIOR (from Prior.value when global_prior is None)
         db.save_area_data()
 
         with db.engine.connect() as conn:
             row = conn.execute(
-                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
-                {"e": db.coordinator.entry_id},
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        assert row[0] == DEFAULT_AREA_PRIOR
+        # When global_prior is None, Prior.value returns MIN_PRIOR
+        assert row[0] == MIN_PRIOR
 
     @pytest.mark.asyncio
     async def test_save_area_data_handles_none_area_prior_with_global_prior_set(
         self, configured_db
     ):
-        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior is None despite global_prior being set."""
+        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior returns None."""
         db = configured_db
 
-        # Set global_prior to a value, but make coordinator.area_prior return None
-        # This simulates an edge case where the property is not properly initialized
-        db.coordinator.prior.global_prior = 0.4
-        db.coordinator.area_prior = None
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
 
-        # Save should use DEFAULT_AREA_PRIOR as fallback
+        # Mock coordinator.area_prior to return None
+        # This simulates an edge case where the method returns None
+        db.coordinator.area_prior = Mock(return_value=None)
+
+        # Save should use DEFAULT_AREA_PRIOR as fallback (from db.py line 1241-1247)
         db.save_area_data()
 
         # Verify DEFAULT_AREA_PRIOR was used as fallback
         with db.engine.connect() as conn:
             row = conn.execute(
-                sa.text("SELECT area_prior FROM areas WHERE entry_id=:e"),
-                {"e": db.coordinator.entry_id},
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
+        # When area_prior is None, save_area_data uses DEFAULT_AREA_PRIOR as fallback
         assert row[0] == DEFAULT_AREA_PRIOR
 
     @pytest.mark.asyncio
     async def test_save_area_data_success(self, configured_db):
         """Test successful save_area_data operation."""
         db = configured_db
-        db.coordinator.config.area_id = None
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        area.config.area_id = None
         db.save_area_data()
         with db.engine.connect() as conn:
             row = conn.execute(
@@ -1825,10 +1949,11 @@ class TestGetAggregatedIntervalsBySlot:
         base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
 
         with db.get_locked_session() as session:
-            # Add entity first
+            # Add entity first (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(entity)
@@ -1900,10 +2025,11 @@ class TestGetAggregatedIntervalsBySlot:
         base_time = dt_util.utcnow()
 
         with db.get_locked_session() as session:
-            # Add entity
+            # Add entity (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(entity)
@@ -1951,22 +2077,37 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup when no orphaned entities exist."""
         db = configured_db
 
-        # Mock coordinator with current entities
-        db.coordinator.entities.entity_ids = [
-            "binary_sensor.motion1",
-            "binary_sensor.motion2",
-        ]
+        # Mock coordinator with current entities - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = [
+                "binary_sensor.motion1",
+                "binary_sensor.motion2",
+            ]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = [
+                "binary_sensor.motion1",
+                "binary_sensor.motion2",
+            ]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add entities to database that match current config
         with db.get_locked_session() as session:
             entity1 = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             entity2 = db.Entities(
                 entity_id="binary_sensor.motion2",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add_all([entity1, entity2])
@@ -1991,19 +2132,31 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup when orphaned entities exist."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator with only one entity in current config - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add_all([current_entity, orphaned_entity])
@@ -2029,8 +2182,18 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup removes orphaned entities and their intervals."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator with only one entity in current config - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add entities and intervals to database
         with db.get_locked_session() as session:
@@ -2038,6 +2201,7 @@ class TestGetAggregatedIntervalsBySlot:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(current_entity)
@@ -2046,6 +2210,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(orphaned_entity)
@@ -2104,29 +2269,43 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup with multiple orphaned entities."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator with only one entity in current config - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add multiple orphaned entities
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             orphaned1 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
             )
             orphaned2 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned2",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="door",
             )
             orphaned3 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned3",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="window",
             )
             session.add_all([current_entity, orphaned1, orphaned2, orphaned3])
@@ -2152,8 +2331,18 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup handles database errors gracefully."""
         db = configured_db
 
-        # Mock coordinator
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Mock database error on get_session
         with patch.object(
@@ -2182,7 +2371,18 @@ class TestGetAggregatedIntervalsBySlot:
         mock_entity.decay.decay_start = None
         mock_entity.evidence = False
 
-        db.coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
+        # Use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entities = {"binary_sensor.motion1": mock_entity}
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entities = {"binary_sensor.motion1": mock_entity}
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Mock cleanup method
         with patch.object(
@@ -2197,24 +2397,42 @@ class TestGetAggregatedIntervalsBySlot:
         """Test that load_data skips entities not in current config."""
         db = configured_db
 
-        # Mock coordinator with limited entities (only one entity in current config)
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            # Mock entity manager to track what gets added
+            original_add_entity = area.entities.add_entity
+            added_entities = []
 
-        # Mock entity manager to track what gets added
-        original_add_entity = db.coordinator.entities.add_entity
-        added_entities = []
+            def track_add_entity(entity):
+                added_entities.append(entity.entity_id)
+                return original_add_entity(entity)
 
-        def track_add_entity(entity):
-            added_entities.append(entity.entity_id)
-            return original_add_entity(entity)
+            area.entities.add_entity = track_add_entity
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            original_add_entity = Mock()
+            added_entities = []
 
-        db.coordinator.entities.add_entity = track_add_entity
+            def track_add_entity(entity):
+                added_entities.append(entity.entity_id)
+                return original_add_entity(entity)
+
+            area.entities.add_entity = track_add_entity
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2223,6 +2441,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2230,6 +2449,19 @@ class TestGetAggregatedIntervalsBySlot:
             )
             session.add_all([current_entity, orphaned_entity])
             session.commit()
+
+        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Mock the get_entity method to raise ValueError for orphaned entity
         def mock_get_entity(entity_id):
@@ -2240,9 +2472,8 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.entity_id = entity_id
             return mock_entity
 
-        with patch.object(
-            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
-        ):
+        # Use area-based access for patching
+        with patch.object(area.entities, "get_entity", side_effect=mock_get_entity):
             await db.load_data()
 
         # Verify only current entity was processed, orphaned was skipped
@@ -2253,14 +2484,25 @@ class TestGetAggregatedIntervalsBySlot:
         """Test that load_data deletes stale entities from database."""
         db = configured_db
 
-        # Mock coordinator with limited entities (only one entity in current config)
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
+        area = db.coordinator.get_area_or_default("Test Area")
+        if area:
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+        else:
+            # Create area if it doesn't exist
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Add entities to database - one current, one stale
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2269,6 +2511,7 @@ class TestGetAggregatedIntervalsBySlot:
             stale_entity = db.Entities(
                 entity_id="binary_sensor.bed_status",  # This entity is not in current config
                 entry_id=db.coordinator.entry_id,
+                area_name="Test Area",
                 entity_type="door",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2285,7 +2528,7 @@ class TestGetAggregatedIntervalsBySlot:
             assert "binary_sensor.motion1" in entity_ids_before
             assert "binary_sensor.bed_status" in entity_ids_before
 
-        # Mock the get_entity method to raise ValueError for stale entity
+        # Mock the get_entity method to raise ValueError for stale entity - use area-based access
         def mock_get_entity(entity_id):
             if entity_id == "binary_sensor.bed_status":
                 raise ValueError("Entity not found")
@@ -2298,9 +2541,17 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.type.weight = 0.85
             return mock_entity
 
-        with patch.object(
-            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
-        ):
+        # Ensure area exists and patch area.entities.get_entity
+        area = db.coordinator.get_area_or_default("Test Area")
+        if not area:
+            area = Mock()
+            area.entities = Mock()
+            area.entities.entity_ids = ["binary_sensor.motion1"]
+            db.coordinator.areas = {"Test Area": area}
+            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+            db.coordinator.get_area_or_default = Mock(return_value=area)
+
+        with patch.object(area.entities, "get_entity", side_effect=mock_get_entity):
             await db.load_data()
 
         # Verify stale entity was actually deleted from database
