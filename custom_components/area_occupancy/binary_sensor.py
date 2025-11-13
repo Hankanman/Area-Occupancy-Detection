@@ -75,9 +75,17 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info: DeviceInfo | None = coordinator.device_info(
-            area_name=ALL_AREAS_IDENTIFIER if is_all_areas else area_name
-        )
+        if is_all_areas:
+            # For "All Areas", use coordinator wrapper which handles the special case
+            self._attr_device_info: DeviceInfo | None = coordinator.device_info(
+                area_name=ALL_AREAS_IDENTIFIER
+            )
+        else:
+            # For specific area, get area and use its device_info method
+            area = coordinator.get_area_or_default(area_name)
+            self._attr_device_info: DeviceInfo | None = (
+                area.device_info() if area else None
+            )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -115,10 +123,11 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         if self._is_all_areas:
             # For "All Areas": occupied if ANY area is occupied
             return any(
-                self.coordinator.occupied(area_name)
+                self.coordinator.areas[area_name].occupied()
                 for area_name in self.coordinator.get_area_names()
             )
-        return self.coordinator.occupied(self._area_name)
+        area = self.coordinator.get_area_or_default(self._area_name)
+        return area.occupied() if area else False
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -129,11 +138,13 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
                 self.is_on,
             )
         else:
+            area = self.coordinator.get_area_or_default(self._area_name)
+            probability = area.probability() if area else 0.0
             _LOGGER.debug(
                 "Occupancy sensor updating for %s: occupied=%s, probability=%.3f",
                 self._area_name,
                 self.is_on,
-                self.coordinator.probability(self._area_name),
+                probability,
             )
         super()._handle_coordinator_update()
 
@@ -185,7 +196,10 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         )
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info = coordinator.device_info(area_name=area_name)
+        area = coordinator.get_area_or_default(area_name)
+        if area is None:
+            raise ValueError(f"Area {area_name} not found in coordinator")
+        self._attr_device_info = area.device_info()
         self._attr_available = True
         self._attr_is_on = False
 
