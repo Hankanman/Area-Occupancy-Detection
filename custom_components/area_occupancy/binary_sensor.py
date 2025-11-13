@@ -71,17 +71,9 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        if is_all_areas:
-            # For "All Areas", use coordinator wrapper which handles the special case
-            self._attr_device_info: DeviceInfo | None = coordinator.device_info(
-                area_name=ALL_AREAS_IDENTIFIER
-            )
-        else:
-            # For specific area, get area and use its device_info method
-            area = coordinator.get_area_or_default(area_name)
-            self._attr_device_info: DeviceInfo | None = (
-                area.device_info() if area else None
-            )
+        self._attr_device_info: DeviceInfo | None = coordinator.device_info(
+            area_name=area_name
+        )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -119,32 +111,11 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
                  False if no data is available or area is unoccupied.
 
         """
-        if self._is_all_areas:
-            # For "All Areas": occupied if ANY area is occupied
-            return any(
-                self.coordinator.areas[area_name].occupied()
-                for area_name in self.coordinator.get_area_names()
-            )
-        area = self.coordinator.get_area_or_default(self._area_name)
-        return area.occupied() if area else False
+        return self.coordinator.occupied(self._area_name)
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self._is_all_areas:
-            _LOGGER.debug(
-                "All Areas occupancy sensor updating: occupied=%s",
-                self.is_on,
-            )
-        else:
-            area = self.coordinator.get_area_or_default(self._area_name)
-            probability = area.probability() if area else 0.0
-            _LOGGER.debug(
-                "Occupancy sensor updating for %s: occupied=%s, probability=%.3f",
-                self._area_name,
-                self.is_on,
-                probability,
-            )
         super()._handle_coordinator_update()
 
 
