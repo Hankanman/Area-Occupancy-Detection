@@ -134,12 +134,13 @@ class TestPercentageSensors:
     ) -> None:
         """Test percentage conversion for different input values."""
         area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area_or_default(area_name)
         sensor = sensor_class(coordinator_with_areas, area_name)
-        # Mock coordinator methods that take area_name
+        # Mock area methods
         if coordinator_attr == "area_prior":
-            coordinator_with_areas.area_prior = Mock(return_value=input_value)
+            area.area_prior = Mock(return_value=input_value)
         elif coordinator_attr == "probability":
-            coordinator_with_areas.probability = Mock(return_value=input_value)
+            area.probability = Mock(return_value=input_value)
         assert sensor.native_value == expected_percentage
 
 
@@ -239,9 +240,10 @@ class TestDecaySensor:
     ) -> None:
         """Test native_value property with different decay values."""
         area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area_or_default(area_name)
         sensor = DecaySensor(coordinator_with_areas, area_name)
-        # Mock coordinator.decay as a method that takes area_name
-        coordinator_with_areas.decay = Mock(return_value=decay_value)
+        # Mock area.decay method
+        area.decay = Mock(return_value=decay_value)
         assert sensor.native_value == expected_percentage
 
     def test_extra_state_attributes_with_decaying_entities(
@@ -345,12 +347,13 @@ class TestSensorIntegration:
         self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test all sensors with comprehensive coordinator data."""
-        # Mock coordinator methods that take area_name
-        coordinator_with_areas_with_sensors.area_prior = Mock(return_value=0.35)
-        coordinator_with_areas_with_sensors.probability = Mock(return_value=0.65)
-        coordinator_with_areas_with_sensors.decay = Mock(return_value=0.15)
-
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
+        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        # Mock area methods
+        area.area_prior = Mock(return_value=0.35)
+        area.probability = Mock(return_value=0.65)
+        area.decay = Mock(return_value=0.15)
+
         sensors = [
             PriorsSensor(coordinator_with_areas_with_sensors, area_name),
             ProbabilitySensor(coordinator_with_areas_with_sensors, area_name),
@@ -387,25 +390,26 @@ class TestSensorIntegration:
     ) -> None:
         """Test sensor value updates when coordinator data changes."""
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
+        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
         probability_sensor = ProbabilitySensor(
             coordinator_with_areas_with_sensors, area_name
         )
         priors_sensor = PriorsSensor(coordinator_with_areas_with_sensors, area_name)
         decay_sensor = DecaySensor(coordinator_with_areas_with_sensors, area_name)
 
-        # Initial values - mock coordinator methods that take area_name
-        coordinator_with_areas_with_sensors.probability = Mock(return_value=0.65)
-        coordinator_with_areas_with_sensors.area_prior = Mock(return_value=0.35)
-        coordinator_with_areas_with_sensors.decay = Mock(return_value=0.15)
+        # Initial values - mock area methods
+        area.probability = Mock(return_value=0.65)
+        area.area_prior = Mock(return_value=0.35)
+        area.decay = Mock(return_value=0.15)
 
         assert probability_sensor.native_value == 65.0
         assert priors_sensor.native_value == 35.0
         assert decay_sensor.native_value == 85.0
 
-        # Update coordinator values
-        coordinator_with_areas_with_sensors.probability = Mock(return_value=0.8)
-        coordinator_with_areas_with_sensors.area_prior = Mock(return_value=0.4)
-        coordinator_with_areas_with_sensors.decay = Mock(return_value=0.3)
+        # Update area values
+        area.probability = Mock(return_value=0.8)
+        area.area_prior = Mock(return_value=0.4)
+        area.decay = Mock(return_value=0.3)
 
         assert probability_sensor.native_value == 80.0
         assert priors_sensor.native_value == 40.0

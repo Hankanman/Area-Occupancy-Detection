@@ -87,9 +87,10 @@ class TestOccupancy:
     ) -> None:
         """Test icon and is_on properties based on occupancy state."""
         area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area_or_default(area_name)
         entity = Occupancy(coordinator_with_areas, area_name)
-        # occupied is now a method that takes area_name
-        coordinator_with_areas.occupied = Mock(return_value=occupied)
+        # Mock area.occupied method
+        area.occupied = Mock(return_value=occupied)
 
         assert entity.icon == expected_icon
         assert entity.is_on is expected_is_on
