@@ -39,6 +39,11 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ACTION_ADD_AREA,
+    CONF_ACTION_CANCEL,
+    CONF_ACTION_EDIT,
+    CONF_ACTION_FINISH_SETUP,
+    CONF_ACTION_REMOVE,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREAS,
@@ -53,6 +58,7 @@ from .const import (
     CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
+    CONF_OPTION_PREFIX_AREA,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
@@ -688,12 +694,228 @@ def create_schema(
     return schema_dict
 
 
+def _sanitize_area_name_for_option(area_name: str) -> str:
+    """Sanitize area name for use in SelectOption value.
+
+    Args:
+        area_name: Original area name
+
+    Returns:
+        Sanitized name safe for use in option values
+    """
+    # Use existing validation function, then replace spaces/slashes
+    sanitized = validate_and_sanitize_area_name(area_name)
+    return sanitized.replace(" ", "_").replace("/", "_")
+
+
+def _get_purpose_display_name(purpose: str) -> str:
+    """Get display name for a purpose value.
+
+    Args:
+        purpose: Purpose enum value string
+
+    Returns:
+        Human-readable purpose name
+    """
+    try:
+        purpose_enum = AreaPurpose(purpose)
+        return PURPOSE_DEFINITIONS[purpose_enum].name
+    except (ValueError, KeyError):
+        return purpose.replace("_", " ").title()
+
+
+def _find_area_by_sanitized_name(
+    areas: list[dict[str, Any]], sanitized_name: str
+) -> dict[str, Any] | None:
+    """Find an area by matching sanitized name.
+
+    Args:
+        areas: List of area configurations
+        sanitized_name: Sanitized area name to find
+
+    Returns:
+        Area configuration dict if found, None otherwise
+    """
+    for area in areas:
+        area_name = area.get(CONF_NAME, "Unknown")
+        if not area_name or area_name == "Unknown":
+            continue
+        area_sanitized = _sanitize_area_name_for_option(area_name)
+        if area_sanitized == sanitized_name:
+            return area
+    return None
+
+
+def _build_area_description_placeholders(
+    area_config: dict[str, Any], area_name: str
+) -> dict[str, str]:
+    """Build description placeholders for area action form.
+
+    Args:
+        area_config: Area configuration dictionary
+        area_name: Name of the area
+
+    Returns:
+        Dictionary of placeholders for form description
+    """
+    purpose = area_config.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    purpose_name = _get_purpose_display_name(purpose)
+
+    return {
+        "area_name": area_name,
+        "purpose": purpose_name,
+        "motion_count": str(len(area_config.get(CONF_MOTION_SENSORS, []))),
+        "media_count": str(len(area_config.get(CONF_MEDIA_DEVICES, []))),
+        "door_count": str(len(area_config.get(CONF_DOOR_SENSORS, []))),
+        "window_count": str(len(area_config.get(CONF_WINDOW_SENSORS, []))),
+        "appliance_count": str(len(area_config.get(CONF_APPLIANCES, []))),
+        "threshold": str(area_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)),
+    }
+
+
+def _get_area_summary_info(area: dict[str, Any]) -> str:
+    """Get formatted summary information for an area.
+
+    Args:
+        area: Area configuration dictionary
+
+    Returns:
+        Formatted string with purpose, sensor count, and threshold
+    """
+    purpose = area.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    purpose_name = _get_purpose_display_name(purpose)
+
+    # Count sensors
+    motion_count = len(area.get(CONF_MOTION_SENSORS, []))
+    media_count = len(area.get(CONF_MEDIA_DEVICES, []))
+    door_count = len(area.get(CONF_DOOR_SENSORS, []))
+    window_count = len(area.get(CONF_WINDOW_SENSORS, []))
+    appliance_count = len(area.get(CONF_APPLIANCES, []))
+    total_sensors = (
+        motion_count + media_count + door_count + window_count + appliance_count
+    )
+
+    threshold = area.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+
+    return (
+        f"Purpose: {purpose_name} • {total_sensors} sensors • Threshold: {threshold}%"
+    )
+
+
+def _create_area_selection_schema(
+    areas: list[dict[str, Any]], is_initial: bool
+) -> vol.Schema:
+    """Create schema for area selection step.
+
+    Args:
+        areas: List of configured areas
+        is_initial: Whether this is the initial config flow (vs options flow)
+
+    Returns:
+        Schema with SelectSelector in DROPDOWN mode for area selection
+    """
+    # Ensure areas is a list
+    if not isinstance(areas, list):
+        areas = []
+
+    options: list[SelectOptionDict] = []
+
+    # Add each area as an option
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        area_name = area.get(CONF_NAME, "Unknown")
+        if not area_name or area_name == "Unknown":
+            continue
+        summary = _get_area_summary_info(area)
+        # Sanitize area name for use in option value
+        sanitized_name = _sanitize_area_name_for_option(area_name)
+        # Include summary in label for better UX
+        options.append(
+            {
+                "value": f"{CONF_OPTION_PREFIX_AREA}{sanitized_name}",
+                "label": f"{area_name} - {summary}",
+            }
+        )
+
+    # Always add "Add New Area" option
+    options.append(
+        {
+            "value": CONF_ACTION_ADD_AREA,
+            "label": "Add New Area",
+        }
+    )
+
+    # Add "Finish Setup" option only for initial config flow if areas exist
+    if is_initial and areas:
+        options.append(
+            {
+                "value": CONF_ACTION_FINISH_SETUP,
+                "label": "Finish Setup",
+            }
+        )
+
+    return vol.Schema(
+        {
+            vol.Required("selected_option"): SelectSelector(
+                SelectSelectorConfig(options=options)
+            )
+        }
+    )
+
+
+def _create_action_selection_schema() -> vol.Schema:
+    """Create schema for action selection step.
+
+    Returns:
+        Schema with SelectSelector in DROPDOWN mode for action selection
+    """
+    return vol.Schema(
+        {
+            vol.Required("action"): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        {"value": CONF_ACTION_EDIT, "label": "Edit"},
+                        {"value": CONF_ACTION_REMOVE, "label": "Remove"},
+                        {"value": CONF_ACTION_CANCEL, "label": "Cancel"},
+                    ]
+                )
+            )
+        }
+    )
+
+
 class BaseOccupancyFlow:
     """Base class for config and options flow.
 
     This class provides shared validation logic used by both the config flow
     and options flow. It ensures consistent validation across both flows.
     """
+
+    def _validate_duplicate_name_internal(
+        self,
+        flattened_input: dict[str, Any],
+        areas: list[dict[str, Any]],
+        area_being_edited: str | None = None,
+    ) -> None:
+        """Validate that area name is not a duplicate.
+
+        Args:
+            flattened_input: The flattened input configuration
+            areas: List of existing area configurations
+            area_being_edited: Optional name of area being edited (to exclude from duplicate check)
+
+        Raises:
+            vol.Invalid: If area name is a duplicate
+        """
+        area_name = flattened_input.get(CONF_NAME, "")
+        if area_name:
+            for area in areas:
+                if area.get(CONF_NAME) == area_name and (
+                    not area_being_edited or area.get(CONF_NAME) != area_being_edited
+                ):
+                    msg = f"An area named '{area_name}' already exists"
+                    raise vol.Invalid(msg)
 
     def _validate_config(self, data: dict[str, Any]) -> None:
         """Validate the configuration.
@@ -833,34 +1055,95 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         as it is built through the flow.
         """
         self._data: dict[str, Any] = {}
-
-    def _validate_duplicate_name_internal(
-        self, flattened_input: dict[str, Any], areas: list[dict[str, Any]]
-    ) -> None:
-        """Validate that area name is not a duplicate.
-
-        Args:
-            flattened_input: The flattened input configuration
-            areas: List of existing area configurations
-
-        Raises:
-            vol.Invalid: If area name is a duplicate
-        """
-        area_name = flattened_input.get(CONF_NAME, "")
-        if area_name:
-            for area in areas:
-                if area.get(CONF_NAME) == area_name and (
-                    not self._area_being_edited
-                    or area.get(CONF_NAME) != self._area_being_edited
-                ):
-                    msg = f"An area named '{area_name}' already exists"
-                    raise vol.Invalid(msg)
+        self._areas: list[
+            dict[str, Any]
+        ] = []  # Store areas being configured during initial setup
+        self._area_being_edited: str | None = None
+        self._area_to_remove: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Handle the initial step - show area selection form or auto-start first area."""
         errors: dict[str, str] = {}
+
+        # If no areas exist yet, automatically start configuring the first area
+        # This provides a smoother user experience - users don't need to click "Add New Area" first
+        if not self._areas and user_input is None:
+            self._area_being_edited = None
+            return await self.async_step_area_config()
+
+        if user_input is not None:
+            # Form step returns the selected option from the form field
+            selected_option = user_input.get("selected_option", "")
+
+            if selected_option == CONF_ACTION_ADD_AREA:
+                # User wants to add a new area
+                self._area_being_edited = None
+                return await self.async_step_area_config()
+            if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
+                # User selected an area - extract area name and go to action step
+                sanitized_name = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
+                # Find the actual area by matching sanitized names
+                area = _find_area_by_sanitized_name(self._areas, sanitized_name)
+                if area:
+                    self._area_being_edited = area.get(CONF_NAME)
+                    return await self.async_step_area_action()
+                # If we couldn't find the area, show error
+                errors["base"] = "Selected area could not be found"
+            if selected_option == CONF_ACTION_FINISH_SETUP:
+                # User wants to finish setup and create the entry
+                if not self._areas:
+                    errors["base"] = (
+                        "At least one area must be configured before finishing setup"
+                    )
+                else:
+                    try:
+                        # Validate all areas before creating entry
+                        for area in self._areas:
+                            self._validate_config(area)
+
+                        # Store in new multi-area format
+                        # Use a fixed title for the integration entry
+                        await self.async_set_unique_id(DOMAIN)
+                        self._abort_if_unique_id_configured()
+
+                        config_data = {CONF_AREAS: self._areas}
+                        return self.async_create_entry(
+                            title="Area Occupancy Detection", data=config_data
+                        )
+                    except HomeAssistantError as err:
+                        _LOGGER.error("Validation error: %s", err)
+                        errors["base"] = str(err)
+                    except vol.Invalid as err:
+                        _LOGGER.error("Validation error: %s", err)
+                        errors["base"] = str(err)
+                    except (ValueError, KeyError, TypeError) as err:
+                        _LOGGER.error("Unexpected error: %s", err)
+                        errors["base"] = "An unexpected error occurred"
+
+        # Show area selection form with selectable options
+        schema = _create_area_selection_schema(self._areas, is_initial=True)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_area_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure a single area (add or edit) during initial setup."""
+        errors: dict[str, str] = {}
+
+        # Get defaults for editing
+        defaults: dict[str, Any] = {}
+        if self._area_being_edited:
+            # Find the area being edited
+            for area in self._areas:
+                if area.get(CONF_NAME) == self._area_being_edited:
+                    defaults = area.copy()
+                    break
 
         if user_input is not None:
             try:
@@ -875,18 +1158,14 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                         primary_sensor,
                     )
                     motion_sensors.append(primary_sensor)
-                    # Update the motion section in the original user_input
                     user_input["motion"][CONF_MOTION_SENSORS] = motion_sensors
                 # < --- End Auto-add ---
 
                 # Flatten sectioned data
                 flattened_input = {}
                 for key, value in user_input.items():
-                    # Check if the key corresponds to a section dictionary
                     if isinstance(value, dict):
-                        # Check if it's the wasp_in_box section specifically
                         if key == "wasp_in_box":
-                            # Flatten wasp settings using const keys
                             flattened_input[CONF_WASP_ENABLED] = value.get(
                                 CONF_WASP_ENABLED, False
                             )
@@ -904,56 +1183,68 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                                 DEFAULT_WASP_VERIFICATION_DELAY,
                             )
                         elif key == "purpose":
-                            # Flatten purpose settings
                             flattened_input[CONF_PURPOSE] = value.get(
                                 CONF_PURPOSE, DEFAULT_PURPOSE
                             )
                         else:
-                            # Flatten other sections as before
                             flattened_input.update(value)
                     else:
-                        # Handle top-level keys like CONF_NAME
                         flattened_input[key] = value
 
-                # Auto-set decay half-life based on purpose selection
+                # Ensure name is preserved when editing (if not provided or empty, use original)
+                if self._area_being_edited and not flattened_input.get(CONF_NAME):
+                    flattened_input[CONF_NAME] = defaults.get(CONF_NAME, "")
+
+                # Auto-set decay half-life based on purpose
                 selected_purpose = flattened_input.get(CONF_PURPOSE)
                 if selected_purpose:
-                    # Check if user has explicitly set a decay half-life
                     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
                     purpose_default = _get_default_decay_half_life(selected_purpose)
-
-                    # Get all purpose-based half-life values to check if current value was auto-set
                     purpose_half_lives = {
                         purpose_def.half_life
                         for purpose_def in PURPOSE_DEFINITIONS.values()
                     }
                     purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
-
-                    # If no explicit decay half-life, or it matches any purpose default (indicating it was auto-set)
                     if (
                         user_set_decay is None
                         or user_set_decay == DEFAULT_DECAY_HALF_LIFE
                         or user_set_decay in purpose_half_lives
                     ):
                         flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
-                        _LOGGER.debug(
-                            "Auto-setting decay half-life to %s seconds for purpose %s",
-                            purpose_default,
-                            selected_purpose,
-                        )
 
+                # Validate the area configuration
                 self._validate_config(flattened_input)
 
-                # Store in new multi-area format
-                # Use a fixed title for the integration entry
-                await self.async_set_unique_id(DOMAIN)
-                self._abort_if_unique_id_configured()
-
-                # Store the first area in CONF_AREAS list format
-                config_data = {CONF_AREAS: [flattened_input]}
-                return self.async_create_entry(
-                    title="Area Occupancy Detection", data=config_data
+                # Check for duplicate names (if adding or renaming)
+                self._validate_duplicate_name_internal(
+                    flattened_input, self._areas, self._area_being_edited
                 )
+
+                # Update or add area
+                updated_areas = []
+                area_updated = False
+                for area in self._areas:
+                    if (
+                        self._area_being_edited
+                        and area.get(CONF_NAME) == self._area_being_edited
+                    ):
+                        # Update existing area
+                        updated_areas.append(flattened_input)
+                        area_updated = True
+                    else:
+                        # Keep other areas
+                        updated_areas.append(area)
+
+                if not area_updated:
+                    # Add new area
+                    updated_areas.append(flattened_input)
+
+                # Update the areas list
+                self._areas = updated_areas
+                self._area_being_edited = None
+
+                # Return to user step to show updated menu
+                return await self.async_step_user()
 
             except HomeAssistantError as err:
                 _LOGGER.error("Validation error: %s", err)
@@ -965,10 +1256,112 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 _LOGGER.error("Unexpected error: %s", err)
                 errors["base"] = "unknown"
 
+        # Ensure purpose field has a default
+        if CONF_PURPOSE not in defaults:
+            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
+
+        # Create schema with name field for new areas
+        schema_dict = create_schema(
+            self.hass, defaults, False
+        )  # False = initial config flow
+        # Name field is already included in create_schema for initial config flow
+
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(create_schema(self.hass, self._data)),
+            step_id="area_config",
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
+        )
+
+    async def async_step_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle action selection for a specific area."""
+        # Get area_name from instance variable
+        area_name = self._area_being_edited
+        if not area_name:
+            return await self.async_step_user()
+
+        # Find the area being managed
+        area_config: dict[str, Any] | None = None
+        for area in self._areas:
+            if area.get(CONF_NAME) == area_name:
+                area_config = area
+                break
+
+        if not area_config:
+            return await self.async_step_user()
+
+        if user_input is not None:
+            action = user_input.get("action", "")
+            if action == CONF_ACTION_EDIT:
+                # User wants to edit the area
+                return await self.async_step_area_config()
+            if action == CONF_ACTION_REMOVE:
+                # User wants to remove the area
+                self._area_to_remove = area_name
+                self._area_being_edited = None
+                return await self.async_step_remove_area()
+            if action == CONF_ACTION_CANCEL:
+                # User cancelled
+                self._area_being_edited = None
+                return await self.async_step_user()
+
+        # Show action selection form with area details
+        schema = _create_action_selection_schema()
+        description_placeholders = _build_area_description_placeholders(
+            area_config, area_name
+        )
+
+        return self.async_show_form(
+            step_id="area_action",
+            data_schema=schema,
+            description_placeholders=description_placeholders,
+        )
+
+    async def async_step_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm removal of an area during initial setup."""
+        # Get area_name from instance variable
+        area_name = self._area_to_remove
+        if not area_name:
+            return await self.async_step_user()
+
+        if user_input is not None:
+            if user_input.get("confirm"):
+                # Remove the area
+                updated_areas = [
+                    area for area in self._areas if area.get(CONF_NAME) != area_name
+                ]
+
+                if not updated_areas:
+                    return self.async_show_form(
+                        step_id="remove_area",
+                        data_schema=vol.Schema({}),
+                        errors={"base": "Cannot remove the last area"},
+                    )
+
+                self._areas = updated_areas
+                self._area_to_remove = None
+
+                # Return to user step to show updated menu
+                return await self.async_step_user()
+
+            # User cancelled
+            self._area_to_remove = None
+            return await self.async_step_user()
+
+        # Show confirmation
+        schema = vol.Schema(
+            {
+                vol.Required("confirm", default=False): BooleanSelector(),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="remove_area",
+            data_schema=schema,
+            description_placeholders={"area_name": area_name},
         )
 
     @staticmethod
@@ -1030,6 +1423,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show area management menu."""
+        errors: dict[str, str] = {}
+
         # If called from device registry, resolve device_id and set area being edited
         if self._device_id:
             device_registry = dr.async_get(self.hass)
@@ -1050,69 +1445,31 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         areas = self._get_areas_from_config()
 
         if user_input is not None:
-            action = user_input.get("action")
-            if action == "add_area":
+            # Form step returns the selected option from the form field
+            selected_option = user_input.get("selected_option", "")
+
+            if selected_option == CONF_ACTION_ADD_AREA:
                 # User wants to add a new area
                 self._area_being_edited = None
                 return await self.async_step_area_config()
-            if action and action.startswith("edit_"):
-                # User wants to edit an existing area
-                area_name = action.replace("edit_", "", 1)
-                self._area_being_edited = area_name
-                return await self.async_step_area_config()
-            if action and action.startswith("remove_"):
-                # User wants to remove an area
-                area_name = action.replace("remove_", "", 1)
-                self._area_to_remove = area_name
-                return await self.async_step_remove_area()
+            if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
+                # User selected an area - extract area name and go to action step
+                sanitized_name = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
+                # Find the actual area by matching sanitized names
+                area = _find_area_by_sanitized_name(areas, sanitized_name)
+                if area:
+                    self._area_being_edited = area.get(CONF_NAME)
+                    return await self.async_step_area_action()
+                # If we couldn't find the area, show error
+                errors["base"] = "Selected area could not be found"
 
-        # If only one area, show simplified view (backward compatibility)
-        if len(areas) == 1:
-            # Single area - redirect to edit that area directly
-            self._area_being_edited = areas[0].get(CONF_NAME, "Area")
-            return await self.async_step_area_config()
-
-        # Multiple areas - show menu
-        options_list = [
-            cast(SelectOptionDict, {"value": "add_area", "label": "Add New Area"})
-        ]
-        options_list.extend(
-            [
-                cast(
-                    SelectOptionDict,
-                    {
-                        "value": f"edit_{area.get(CONF_NAME, 'Unknown')}",
-                        "label": f"Edit {area.get(CONF_NAME, 'Unknown')}",
-                    },
-                )
-                for area in areas
-            ]
+        # Show area selection form with selectable options (no "Finish Setup" for options flow)
+        schema = _create_area_selection_schema(areas, is_initial=False)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,
+            errors=errors,
         )
-        options_list.extend(
-            [
-                cast(
-                    SelectOptionDict,
-                    {
-                        "value": f"remove_{area.get(CONF_NAME, 'Unknown')}",
-                        "label": f"Remove {area.get(CONF_NAME, 'Unknown')}",
-                    },
-                )
-                for area in areas
-            ]
-        )
-
-        schema = vol.Schema(
-            {
-                vol.Required("action"): SelectSelector(
-                    SelectSelectorConfig(
-                        options=options_list,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                )
-            }
-        )
-
-        return self.async_show_form(step_id="init", data_schema=schema)
 
     async def async_step_area_config(
         self, user_input: dict[str, Any] | None = None
@@ -1176,6 +1533,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                     else:
                         flattened_input[key] = value
 
+                # Ensure name is preserved when editing (if not provided or empty, use original)
+                if self._area_being_edited and not flattened_input.get(CONF_NAME):
+                    flattened_input[CONF_NAME] = defaults.get(CONF_NAME, "")
+
                 # Auto-set decay half-life based on purpose
                 selected_purpose = flattened_input.get(CONF_PURPOSE)
                 if selected_purpose:
@@ -1197,7 +1558,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 self._validate_config(flattened_input)
 
                 # Check for duplicate names (if adding or renaming)
-                self._validate_duplicate_name_internal(flattened_input, areas)
+                self._validate_duplicate_name_internal(
+                    flattened_input, areas, self._area_being_edited
+                )
 
                 # Handle area name changes - migrate entity registry if needed
                 if self._area_being_edited:
@@ -1293,6 +1656,55 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             step_id="area_config",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
+        )
+
+    async def async_step_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle action selection for a specific area."""
+        # Get area_name from instance variable
+        area_name = self._area_being_edited
+        if not area_name:
+            return await self.async_step_init()
+
+        # Get current areas
+        areas = self._get_areas_from_config()
+
+        # Find the area being managed
+        area_config: dict[str, Any] | None = None
+        for area in areas:
+            if area.get(CONF_NAME) == area_name:
+                area_config = area
+                break
+
+        if not area_config:
+            return await self.async_step_init()
+
+        if user_input is not None:
+            action = user_input.get("action", "")
+            if action == CONF_ACTION_EDIT:
+                # User wants to edit the area
+                return await self.async_step_area_config()
+            if action == CONF_ACTION_REMOVE:
+                # User wants to remove the area
+                self._area_to_remove = area_name
+                self._area_being_edited = None
+                return await self.async_step_remove_area()
+            if action == CONF_ACTION_CANCEL:
+                # User cancelled
+                self._area_being_edited = None
+                return await self.async_step_init()
+
+        # Show action selection form with area details
+        schema = _create_action_selection_schema()
+        description_placeholders = _build_area_description_placeholders(
+            area_config, area_name
+        )
+
+        return self.async_show_form(
+            step_id="area_action",
+            data_schema=schema,
+            description_placeholders=description_placeholders,
         )
 
     async def async_step_remove_area(
