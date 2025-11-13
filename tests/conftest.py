@@ -70,6 +70,9 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
     DOMAIN,
     HA_RECORDER_DAYS,
 )
@@ -375,12 +378,7 @@ def mock_coordinator(
     coordinator.config_entry = mock_realistic_config_entry
     coordinator.entry_id = mock_realistic_config_entry.entry_id
     coordinator.available = True
-    # These are now methods that take area_name
-    coordinator.probability = Mock(return_value=0.5)
     coordinator.is_occupied = False
-    coordinator.threshold = Mock(return_value=0.5)
-    coordinator.area_prior = Mock(return_value=0.3)
-    coordinator.decay = Mock(return_value=1.0)
     coordinator.occupancy_entity_id = None
     coordinator.wasp_entity_id = None
     coordinator.last_update_success = True
@@ -392,6 +390,22 @@ def mock_coordinator(
     mock_area.prior = mock_area_prior
     mock_area.purpose = mock_purpose_manager
     mock_area.area_name = "Test Area"
+    # Mock area methods (coordinator wrappers will delegate to these)
+    mock_area.probability = Mock(return_value=0.5)
+    mock_area.threshold = Mock(return_value=0.5)
+    mock_area.area_prior = Mock(return_value=0.3)
+    mock_area.decay = Mock(return_value=1.0)
+    mock_area.occupied = Mock(return_value=False)
+    mock_area.type_probabilities = Mock(return_value={})
+    mock_area.device_info = Mock(
+        return_value={
+            "identifiers": {(DOMAIN, "Test Area")},
+            "name": mock_config.name,
+            "manufacturer": DEVICE_MANUFACTURER,
+            "model": DEVICE_MODEL,
+            "sw_version": DEVICE_SW_VERSION,
+        }
+    )
     coordinator.areas = {"Test Area": mock_area}
 
     # Mock legacy attributes for backward compatibility in tests
@@ -1018,27 +1032,27 @@ def mock_entities_container() -> Mock:
 @pytest.fixture
 def mock_coordinator_with_threshold(mock_coordinator: Mock) -> Mock:
     """Create a coordinator mock with threshold-specific attributes."""
-    # threshold is now a method that takes area_name
-    mock_coordinator.threshold = Mock(return_value=0.6)
+    # threshold is now a method that delegates to area
     area = mock_coordinator.get_area_or_default.return_value
     if area:
         area.config.threshold = 0.6
+        area.threshold = Mock(return_value=0.6)
     else:
         # Create area if it doesn't exist
         area = Mock()
         area.config = Mock()
         area.config.threshold = 0.6
+        area.threshold = Mock(return_value=0.6)
+        area.probability = Mock(return_value=0.5)
+        area.occupied = Mock(return_value=False)
+        area.area_prior = Mock(return_value=0.3)
+        area.decay = Mock(return_value=1.0)
+        area.type_probabilities = Mock(return_value={})
+        area.device_info = Mock(return_value={})
         mock_coordinator.areas = {"Test Area": area}
         mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
         mock_coordinator.get_area_or_default = Mock(return_value=area)
     mock_coordinator.is_occupied = False  # 0.5 < 0.6
-    # Ensure device_info is callable
-    if not callable(mock_coordinator.device_info):
-        mock_coordinator.device_info = Mock(
-            return_value=mock_coordinator.device_info
-            if isinstance(mock_coordinator.device_info, dict)
-            else {}
-        )
     return mock_coordinator
 
 
@@ -1154,10 +1168,22 @@ def coordinator_with_areas_with_sensors(
         ],
     )
 
-    # Mock coordinator methods
-    coordinator.area_prior = Mock(return_value=0.35)
-    coordinator.probability = Mock(return_value=0.65)
-    coordinator.decay = Mock(return_value=0.8)
+    # Mock area methods (coordinator wrappers will delegate to these)
+    area.area_prior = Mock(return_value=0.35)
+    area.probability = Mock(return_value=0.65)
+    area.decay = Mock(return_value=0.8)
+    area.occupied = Mock(return_value=True)
+    area.threshold = Mock(return_value=0.5)
+    area.type_probabilities = Mock(return_value={})
+    area.device_info = Mock(
+        return_value={
+            "identifiers": {(DOMAIN, area.area_name)},
+            "name": area.config.name,
+            "manufacturer": DEVICE_MANUFACTURER,
+            "model": DEVICE_MODEL,
+            "sw_version": DEVICE_SW_VERSION,
+        }
+    )
 
     return coordinator
 
@@ -1169,11 +1195,6 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
     DEPRECATED: Use coordinator_with_areas_with_sensors instead.
     Kept for backward compatibility only.
     """
-    # These are now methods that take area_name
-    mock_coordinator.area_prior = Mock(return_value=0.35)
-    mock_coordinator.probability = Mock(return_value=0.65)
-    mock_coordinator.decay = Mock(return_value=0.8)
-
     # Mock entity manager with comprehensive entities - use area-based access
     area = mock_coordinator.get_area_or_default.return_value
     if not area:
