@@ -570,8 +570,12 @@ class TestAsyncSetupEntry:
     @pytest.mark.parametrize(
         ("wasp_enabled", "expected_entity_count", "expected_types"),
         [
-            (True, 2, [Occupancy, WaspInBoxSensor]),
-            (False, 1, [Occupancy]),
+            (
+                True,
+                3,
+                [Occupancy, WaspInBoxSensor, Occupancy],
+            ),  # Area + Wasp + All Areas
+            (False, 2, [Occupancy, Occupancy]),  # Area + All Areas
         ],
     )
     async def test_async_setup_entry(
@@ -582,7 +586,11 @@ class TestAsyncSetupEntry:
         expected_entity_count: int,
         expected_types: list,
     ) -> None:
-        """Test setup entry with wasp enabled and disabled."""
+        """Test setup entry with wasp enabled and disabled.
+
+        Note: "All Areas" occupancy sensor is now created automatically when
+        at least one area exists (changed from requiring 2+ areas).
+        """
         # Configure wasp setting on the area
         coordinator = setup_config_entry.runtime_data
         area_name = coordinator.get_area_names()[0]
@@ -598,8 +606,28 @@ class TestAsyncSetupEntry:
         entities = mock_async_add_entities.call_args[0][0]
         assert len(entities) == expected_entity_count
 
-        for i, expected_type in enumerate(expected_types):
-            assert isinstance(entities[i], expected_type)
+        # Check that we have the expected types (order may vary)
+        entity_types = [type(entity).__name__ for entity in entities]
+        expected_type_names = [t.__name__ for t in expected_types]
+        for expected_type_name in expected_type_names:
+            assert expected_type_name in entity_types, (
+                f"Expected {expected_type_name} in {entity_types}"
+            )
+
+        # Verify we have exactly the right number of each type
+        occupancy_count = sum(1 for e in entities if isinstance(e, Occupancy))
+        wasp_count = sum(1 for e in entities if isinstance(e, WaspInBoxSensor))
+
+        if wasp_enabled:
+            assert occupancy_count == 2, (
+                "Should have 2 Occupancy sensors (area + All Areas)"
+            )
+            assert wasp_count == 1, "Should have 1 WaspInBoxSensor"
+        else:
+            assert occupancy_count == 2, (
+                "Should have 2 Occupancy sensors (area + All Areas)"
+            )
+            assert wasp_count == 0, "Should have no WaspInBoxSensor"
 
 
 class TestWaspInBoxIntegration:

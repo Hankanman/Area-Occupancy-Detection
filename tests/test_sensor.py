@@ -296,7 +296,11 @@ class TestAsyncSetupEntry:
         mock_config_entry: Mock,
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
-        """Test successful setup entry."""
+        """Test successful setup entry.
+
+        Note: "All Areas" sensors are now created automatically when
+        at least one area exists (changed from requiring 2+ areas).
+        """
         mock_async_add_entities = Mock()
         # Use real coordinator
         mock_config_entry.runtime_data = coordinator_with_areas
@@ -305,7 +309,9 @@ class TestAsyncSetupEntry:
 
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
-        assert len(entities) == 4
+        # Should have 4 sensors per area + 3 All Areas sensors (no EvidenceSensor for All Areas)
+        # With 1 area: 4 (area) + 3 (All Areas) = 7 total
+        assert len(entities) == 7
 
         entity_types = [type(entity).__name__ for entity in entities]
         expected_types = [
@@ -314,8 +320,39 @@ class TestAsyncSetupEntry:
             "EvidenceSensor",
             "DecaySensor",
         ]
+        # All expected types should be present (from area sensors)
         for expected_type in expected_types:
             assert expected_type in entity_types
+
+        # Verify All Areas sensors are present (no EvidenceSensor for All Areas)
+        from custom_components.area_occupancy.const import ALL_AREAS_IDENTIFIER
+
+        all_areas_entities = [
+            e
+            for e in entities
+            if hasattr(e, "_area_name") and e._area_name == ALL_AREAS_IDENTIFIER
+        ]
+        area_entities = [
+            e
+            for e in entities
+            if hasattr(e, "_area_name") and e._area_name != ALL_AREAS_IDENTIFIER
+        ]
+
+        # Should have 3 All Areas sensors (PriorsSensor, ProbabilitySensor, DecaySensor)
+        assert len(all_areas_entities) == 3, (
+            f"Expected 3 All Areas sensors, got {len(all_areas_entities)}"
+        )
+        all_areas_types = [type(e).__name__ for e in all_areas_entities]
+        assert "PriorsSensor" in all_areas_types
+        assert "ProbabilitySensor" in all_areas_types
+        assert "DecaySensor" in all_areas_types
+        # EvidenceSensor should NOT be in All Areas
+        assert "EvidenceSensor" not in all_areas_types
+
+        # Should have 4 area sensors (one for each area)
+        assert len(area_entities) == 4, (
+            f"Expected 4 area sensors, got {len(area_entities)}"
+        )
 
     async def test_async_setup_entry_with_coordinator_data(
         self,
