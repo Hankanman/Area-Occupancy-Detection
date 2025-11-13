@@ -49,8 +49,6 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise ValueError(f"Area {area_name} not found in coordinator")
         self._attr_device_info = area.device_info()
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -59,8 +57,6 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         """Return the current threshold value as a percentage."""
         # Use the area method for threshold (0.0-1.0) and convert to percentage
         area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            return 50.0  # Default threshold
         return area.threshold() * 100.0
 
     async def async_set_native_value(self, value: float) -> None:
@@ -71,8 +67,6 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
             )
         # Update the area's config threshold
         area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            raise ValueError(f"Area {self._area_name} not found")
         await area.config.update_config({CONF_THRESHOLD: value})
 
 

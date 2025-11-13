@@ -1097,8 +1097,6 @@ class AreaOccupancyDB:
             # Load data for each configured area
             for area_name in self.coordinator.get_area_names():
                 area_data = self.coordinator.get_area_or_default(area_name)
-                if area_data is None:
-                    continue
 
                 # Phase 1: Read without lock (all instances in parallel)
                 area, entities, stale_ids = await self.hass.async_add_executor_job(
@@ -1197,17 +1195,11 @@ class AreaOccupancyDB:
             """Save area data for all configured areas."""
             for area_name_item in areas_to_save:
                 area_data_obj = self.coordinator.get_area_or_default(area_name_item)
-                if area_data_obj is None:
-                    _LOGGER.warning(
-                        "Cannot save area data: area '%s' not found", area_name_item
-                    )
-                    continue
-
                 cfg = area_data_obj.config
 
                 # Call area_prior() method to get the actual value
                 area = self.coordinator.get_area_or_default(area_name_item)
-                area_prior_value = area.area_prior() if area else MIN_PROBABILITY
+                area_prior_value = area.area_prior()
 
                 area_data = {
                     "entry_id": self.coordinator.entry_id,
@@ -1300,9 +1292,6 @@ class AreaOccupancyDB:
             """Yield (area_name, entity) tuples for all configured areas."""
             for area_name in self.coordinator.get_area_names():
                 area_data = self.coordinator.get_area_or_default(area_name)
-                if area_data is None:
-                    continue
-
                 entities_container = getattr(area_data.entities, "entities", None)
                 if not entities_container:
                     continue
@@ -1452,8 +1441,6 @@ class AreaOccupancyDB:
         try:
             for area_name in self.coordinator.get_area_names():
                 area_data = self.coordinator.get_area_or_default(area_name)
-                if area_data is None:
-                    continue
 
                 def _cleanup_operation(area_name: str, area_data: Any) -> int:
                     with self.get_session() as session:
@@ -1817,8 +1804,7 @@ class AreaOccupancyDB:
         all_entity_ids = []
         for area_name in self.coordinator.get_area_names():
             area_data = self.coordinator.get_area_or_default(area_name)
-            if area_data:
-                all_entity_ids.extend(area_data.entities.entity_ids)
+            all_entity_ids.extend(area_data.entities.entity_ids)
         entity_ids = list(set(all_entity_ids))  # Remove duplicates
 
         try:
