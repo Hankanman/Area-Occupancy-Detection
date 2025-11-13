@@ -62,6 +62,10 @@ class AllAreas:
             Average probability (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
+        # Safety check: return safe default if no areas exist
+        # (should never happen due to root cause fix, but provides safety net)
+        if not area_names:
+            return MIN_PROBABILITY
         probabilities = [
             self.coordinator.probability(area_name) for area_name in area_names
         ]
@@ -84,6 +88,10 @@ class AllAreas:
             Average prior (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
+        # Safety check: return safe default if no areas exist
+        # (should never happen due to root cause fix, but provides safety net)
+        if not area_names:
+            return MIN_PROBABILITY
         priors = [self.coordinator.area_prior(area_name) for area_name in area_names]
         avg_prior = sum(priors) / len(priors)
         return max(MIN_PROBABILITY, min(1.0, avg_prior))
@@ -95,6 +103,10 @@ class AllAreas:
             Average decay (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
+        # Safety check: return safe default if no areas exist
+        # (should never happen due to root cause fix, but provides safety net)
+        if not area_names:
+            return 1.0
         decays = [self.coordinator.decay(area_name) for area_name in area_names]
         avg_decay = sum(decays) / len(decays)
         return max(0.0, min(1.0, avg_decay))

@@ -97,15 +97,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             raise
 
-    def _load_areas_from_config(self) -> None:
+    def _load_areas_from_config(
+        self, target_dict: dict[str, Area] | None = None
+    ) -> None:
         """Load areas from config entry.
 
         Supports both legacy (single area) and new (multi-area) formats.
         For legacy format, creates a single area from the config_entry data.
         For new format, loads areas from CONF_AREAS list.
+
+        Args:
+            target_dict: Optional dict to load areas into. If None, loads into self.areas.
         """
         merged = dict(self.config_entry.data)
         merged.update(self.config_entry.options)
+
+        # Use target_dict if provided, otherwise use self.areas
+        areas_dict = target_dict if target_dict is not None else self.areas
 
         # Check if we have the new multi-area format
         if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
@@ -128,12 +136,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                     continue
 
-                if area_name in self.areas:
+                if area_name in areas_dict:
                     _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                     continue
 
                 # Create Area for this area
-                self.areas[area_name] = Area(
+                areas_dict[area_name] = Area(
                     coordinator=self,
                     area_name=area_name,
                     area_data=area_data,
@@ -157,7 +165,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             # Create area for migration path
-            self.areas[area_name] = Area(
+            areas_dict[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,
                 area_data=merged,
@@ -613,26 +621,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.config_entry is None:
             raise HomeAssistantError("Cannot update options: config_entry is None")
 
-        # Identify areas that will be removed by checking what's in new config
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
+        # Load new areas into a temporary dict first to avoid race condition
+        # where self.areas is empty while platform entities are still active
+        new_areas: dict[str, Area] = {}
+        self._load_areas_from_config(target_dict=new_areas)
 
-        # Get list of area names that will exist after reload
-        new_area_names = set()
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            new_area_names = {
-                area_data.get(CONF_NAME)
-                for area_data in merged[CONF_AREAS]
-                if area_data.get(CONF_NAME)
-            }
-        else:
-            # Legacy format - single area
-            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
-            if area_name:
-                new_area_names = {area_name}
-
-        # Clean up areas that will be removed
-        removed_area_names = set(self.areas.keys()) - new_area_names
+        # Identify areas that will be removed by comparing old and new area names
+        removed_area_names = set(self.areas.keys()) - set(new_areas.keys())
         if removed_area_names:
             _LOGGER.info("Cleaning up removed areas: %s", ", ".join(removed_area_names))
 
@@ -697,17 +692,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     _LOGGER.debug("Cleaned up area: %s", area_name)
 
-        # Clear existing areas before reloading (this ensures removed areas are gone
-        # and prevents _load_areas_from_config from skipping areas that should be updated)
-        self.areas.clear()
-
         # Cancel existing entity state listeners (will be recreated with new entity lists)
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
 
-        # Reload areas from updated config
-        self._load_areas_from_config()
+        # Atomically replace self.areas with new_areas
+        # This ensures self.areas is never empty when platform entities can access it
+        self.areas = new_areas
 
         # Update each area's configuration
         for area_name, area in self.areas.items():
