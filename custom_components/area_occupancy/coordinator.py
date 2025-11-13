@@ -171,12 +171,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             area_name: Optional area name, None returns first area
 
         Returns:
-            Area instance or None if no areas exist
+            Area instance (always returns first area when area_name is None),
+            or None if the specified area_name doesn't exist or no areas exist
         """
-        if not self.areas:
-            return None
         if area_name is None:
-            # Return first area
+            # Return first area (at least one area always exists in normal operation)
+            # Handle empty case for tests/edge cases
+            if not self.areas:
+                return None
             return next(iter(self.areas.values()))
         return self.areas.get(area_name)
 
@@ -207,9 +209,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             DeviceInfo for the specified area
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().device_info()
+
         area = self.get_area_or_default(area_name)
         if area is None:
-            # No areas configured - return default device info
             return DeviceInfo(
                 identifiers={(DOMAIN, self.entry_id)},
                 name=DEFAULT_NAME,

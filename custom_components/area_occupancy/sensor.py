@@ -109,8 +109,6 @@ class PriorsSensor(AreaOccupancySensorBase):
                     }
                 }
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             return {
                 "global_prior": area.area_prior(),
                 "time_prior": area.prior.time_prior,
@@ -182,8 +180,6 @@ class EvidenceSensor(AreaOccupancySensorBase):
     def native_value(self) -> int | None:
         """Return the number of entities."""
         area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            return None
         return len(area.entities.entities)
 
     @property
@@ -193,8 +189,6 @@ class EvidenceSensor(AreaOccupancySensorBase):
             return {}
         try:
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             active_entity_names = ", ".join(
                 [entity.name for entity in area.entities.active_entities if entity.name]
             )
@@ -265,8 +259,6 @@ class DecaySensor(AreaOccupancySensorBase):
                 all_decaying = []
                 for area_name in area_names:
                     area = self.coordinator.get_area_or_default(area_name)
-                    if area is None:
-                        continue
                     all_decaying.extend(
                         [
                             {
@@ -279,8 +271,6 @@ class DecaySensor(AreaOccupancySensorBase):
                     )
                 return {"decaying": all_decaying}
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             return {
                 "decaying": [
                     {

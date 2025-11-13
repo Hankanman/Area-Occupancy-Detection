@@ -6,7 +6,6 @@ which aggregates occupancy data from all individual areas.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.helpers.entity import DeviceInfo
@@ -22,8 +21,6 @@ from ..const import (
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class AllAreas:
@@ -62,18 +59,12 @@ class AllAreas:
         """Calculate average probability across all areas.
 
         Returns:
-            Average probability (0.0-1.0) across all areas, or MIN_PROBABILITY if no areas
+            Average probability (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
-        if not area_names:
-            return MIN_PROBABILITY
-
         probabilities = [
             self.coordinator.probability(area_name) for area_name in area_names
         ]
-        if not probabilities:
-            return MIN_PROBABILITY
-
         avg_prob = sum(probabilities) / len(probabilities)
         return max(MIN_PROBABILITY, min(1.0, avg_prob))
 
@@ -84,25 +75,16 @@ class AllAreas:
             True if any area is occupied, False otherwise
         """
         area_names = self.coordinator.get_area_names()
-        if not area_names:
-            return False
-
         return any(self.coordinator.occupied(area_name) for area_name in area_names)
 
     def area_prior(self) -> float:
         """Calculate average prior across all areas.
 
         Returns:
-            Average prior (0.0-1.0) across all areas, or MIN_PROBABILITY if no areas
+            Average prior (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
-        if not area_names:
-            return MIN_PROBABILITY
-
         priors = [self.coordinator.area_prior(area_name) for area_name in area_names]
-        if not priors:
-            return MIN_PROBABILITY
-
         avg_prior = sum(priors) / len(priors)
         return max(MIN_PROBABILITY, min(1.0, avg_prior))
 
@@ -110,15 +92,9 @@ class AllAreas:
         """Calculate average decay across all areas.
 
         Returns:
-            Average decay (0.0-1.0) across all areas, or 1.0 if no areas
+            Average decay (0.0-1.0) across all areas.
         """
         area_names = self.coordinator.get_area_names()
-        if not area_names:
-            return 1.0
-
         decays = [self.coordinator.decay(area_name) for area_name in area_names]
-        if not decays:
-            return 1.0
-
         avg_decay = sum(decays) / len(decays)
         return max(0.0, min(1.0, avg_decay))
