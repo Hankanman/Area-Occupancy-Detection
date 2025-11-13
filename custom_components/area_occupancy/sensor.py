@@ -47,7 +47,15 @@ class AreaOccupancySensorBase(
         self._area_name = area_name
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_device_info = coordinator.device_info(area_name=area_name)
+        if is_all_areas:
+            # For "All Areas", use coordinator wrapper which handles the special case
+            self._attr_device_info = coordinator.device_info(
+                area_name=ALL_AREAS_IDENTIFIER
+            )
+        else:
+            # For specific area, get area and use its device_info method
+            area = coordinator.get_area_or_default(area_name)
+            self._attr_device_info = area.device_info() if area else None
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1
 
@@ -78,7 +86,21 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        return format_float(self.coordinator.area_prior(self._area_name) * 100)
+        if self._is_all_areas:
+            # For "All Areas": average of all area priors
+            area_names = self.coordinator.get_area_names()
+            if not area_names:
+                return None
+            priors = [
+                self.coordinator.areas[area_name].area_prior()
+                for area_name in area_names
+            ]
+            avg_prior = sum(priors) / len(priors) if priors else 0.0
+            return format_float(avg_prior * 100)
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            return None
+        return format_float(area.area_prior() * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -92,7 +114,9 @@ class PriorsSensor(AreaOccupancySensorBase):
                 return {
                     "areas": {
                         area_name: {
-                            "global_prior": self.coordinator.area_prior(area_name),
+                            "global_prior": self.coordinator.areas[
+                                area_name
+                            ].area_prior(),
                             "time_prior": self.coordinator.areas[
                                 area_name
                             ].prior.time_prior,
@@ -110,7 +134,7 @@ class PriorsSensor(AreaOccupancySensorBase):
             if area is None:
                 return {}
             return {
-                "global_prior": self.coordinator.area_prior(self._area_name),
+                "global_prior": area.area_prior(),
                 "time_prior": area.prior.time_prior,
                 "day_of_week": area.prior.day_of_week,
                 "time_slot": area.prior.time_slot,
@@ -140,17 +164,40 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        return format_float(self.coordinator.probability(self._area_name) * 100)
+        if self._is_all_areas:
+            # For "All Areas": average of all area probabilities
+            area_names = self.coordinator.get_area_names()
+            if not area_names:
+                return None
+            probabilities = [
+                self.coordinator.areas[area_name].probability()
+                for area_name in area_names
+            ]
+            avg_prob = sum(probabilities) / len(probabilities) if probabilities else 0.0
+            return format_float(avg_prob * 100)
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            return None
+        return format_float(area.probability() * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         if not self.coordinator.data:
             return {}
-        # "All Areas" does not support type_probabilities aggregation
-        if self._area_name == ALL_AREAS_IDENTIFIER:
+        if self._is_all_areas:
+            # For "All Areas": aggregate type probabilities from all areas
+            area_names = self.coordinator.get_area_names()
+            return {
+                "areas": {
+                    area_name: self.coordinator.areas[area_name].type_probabilities()
+                    for area_name in area_names
+                }
+            }
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
             return {}
-        return self.coordinator.type_probabilities(self._area_name)
+        return area.type_probabilities()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -251,7 +298,20 @@ class DecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        return format_float((1 - self.coordinator.decay(self._area_name)) * 100)
+        if self._is_all_areas:
+            # For "All Areas": average of all area decays
+            area_names = self.coordinator.get_area_names()
+            if not area_names:
+                return None
+            decays = [
+                self.coordinator.areas[area_name].decay() for area_name in area_names
+            ]
+            avg_decay = sum(decays) / len(decays) if decays else 1.0
+            return format_float((1 - avg_decay) * 100)
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            return None
+        return format_float((1 - area.decay()) * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
