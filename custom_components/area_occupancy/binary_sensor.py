@@ -704,8 +704,8 @@ async def async_setup_entry(
                 wasp_sensor.unique_id,
             )
 
-    # Create "All Areas" aggregation occupancy sensor
-    if len(coordinator.get_area_names()) > 1:
+    # Create "All Areas" aggregation occupancy sensor when areas exist
+    if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
         entities.append(
             Occupancy(
