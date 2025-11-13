@@ -36,29 +36,18 @@ class AreaOccupancySensorBase(
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the sensor.
 
         Args:
             coordinator: The coordinator instance
-            area_name: Name of the area this sensor represents
-            is_all_areas: True if this is the "All Areas" aggregation sensor
+            area_name: Name of the area this sensor represents (or ALL_AREAS_IDENTIFIER for "All Areas")
         """
         super().__init__(coordinator)
         self._area_name = area_name
-        self._is_all_areas = is_all_areas
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        if is_all_areas:
-            # For "All Areas", use coordinator wrapper which handles the special case
-            self._attr_device_info = coordinator.device_info(
-                area_name=ALL_AREAS_IDENTIFIER
-            )
-        else:
-            # For specific area, get area and use its device_info method
-            area = coordinator.get_area_or_default(area_name)
-            self._attr_device_info = area.device_info() if area else None
+        self._attr_device_info = coordinator.device_info(area_name=area_name)
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1
 
@@ -74,14 +63,12 @@ class PriorsSensor(AreaOccupancySensorBase):
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the priors sensor."""
-        super().__init__(coordinator, area_name, is_all_areas)
+        super().__init__(coordinator, area_name)
         self._attr_name = NAME_PRIORS_SENSOR
-        unique_id_area = ALL_AREAS_IDENTIFIER if is_all_areas else area_name
         self._attr_unique_id = (
-            f"{unique_id_area}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
+            f"{area_name}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -91,21 +78,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        if self._is_all_areas:
-            # For "All Areas": average of all area priors
-            area_names = self.coordinator.get_area_names()
-            if not area_names:
-                return None
-            priors = [
-                self.coordinator.areas[area_name].area_prior()
-                for area_name in area_names
-            ]
-            avg_prior = sum(priors) / len(priors) if priors else 0.0
-            return format_float(avg_prior * 100)
-        area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            return None
-        return format_float(area.area_prior() * 100)
+        return format_float(self.coordinator.area_prior(self._area_name) * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -113,8 +86,8 @@ class PriorsSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            if self._is_all_areas:
-                # For "All Areas": aggregate priors from all areas
+            # For "All Areas", return aggregated priors from all areas
+            if self._area_name == ALL_AREAS_IDENTIFIER:
                 area_names = self.coordinator.get_area_names()
                 return {
                     "areas": {
@@ -136,8 +109,6 @@ class PriorsSensor(AreaOccupancySensorBase):
                     }
                 }
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             return {
                 "global_prior": area.area_prior(),
                 "time_prior": area.prior.time_prior,
@@ -155,14 +126,12 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the probability sensor."""
-        super().__init__(coordinator, area_name, is_all_areas)
+        super().__init__(coordinator, area_name)
         self._attr_name = NAME_PROBABILITY_SENSOR
-        unique_id_area = ALL_AREAS_IDENTIFIER if is_all_areas else area_name
         self._attr_unique_id = (
-            f"{unique_id_area}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+            f"{area_name}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -171,40 +140,17 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        if self._is_all_areas:
-            # For "All Areas": average of all area probabilities
-            area_names = self.coordinator.get_area_names()
-            if not area_names:
-                return None
-            probabilities = [
-                self.coordinator.areas[area_name].probability()
-                for area_name in area_names
-            ]
-            avg_prob = sum(probabilities) / len(probabilities) if probabilities else 0.0
-            return format_float(avg_prob * 100)
-        area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            return None
-        return format_float(area.probability() * 100)
+        return format_float(self.coordinator.probability(self._area_name) * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         if not self.coordinator.data:
             return {}
-        if self._is_all_areas:
-            # For "All Areas": aggregate type probabilities from all areas
-            area_names = self.coordinator.get_area_names()
-            return {
-                "areas": {
-                    area_name: self.coordinator.areas[area_name].type_probabilities()
-                    for area_name in area_names
-                }
-            }
-        area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
+        # "All Areas" does not support type_probabilities aggregation
+        if self._area_name == ALL_AREAS_IDENTIFIER:
             return {}
-        return area.type_probabilities()
+        return self.coordinator.type_probabilities(self._area_name)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -221,26 +167,18 @@ class EvidenceSensor(AreaOccupancySensorBase):
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the entities sensor."""
-        super().__init__(coordinator, area_name, is_all_areas)
+        super().__init__(coordinator, area_name)
         self._attr_name = NAME_EVIDENCE_SENSOR
-        unique_id_area = ALL_AREAS_IDENTIFIER if is_all_areas else area_name
         self._attr_unique_id = (
-            f"{unique_id_area}_{NAME_EVIDENCE_SENSOR.lower().replace(' ', '_')}"
+            f"{area_name}_{NAME_EVIDENCE_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self) -> int | None:
         """Return the number of entities."""
-        if self._is_all_areas:
-            # For "All Areas": sum of all entities across all areas
-            return sum(
-                len(self.coordinator.areas[area_name].entities.entities)
-                for area_name in self.coordinator.get_area_names()
-            )
         area = self.coordinator.get_area_or_default(self._area_name)
         if area is None:
             return None
@@ -252,41 +190,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            if self._is_all_areas:
-                # For "All Areas": aggregate evidence from all areas
-                area_names = self.coordinator.get_area_names()
-                all_details = []
-                for area_name in area_names:
-                    area = self.coordinator.get_area_or_default(area_name)
-                    if area is None:
-                        continue
-                    all_details.extend(
-                        [
-                            {
-                                "area": area_name,
-                                "id": entity.entity_id,
-                                "name": entity.name,
-                                "evidence": entity.evidence,
-                                "prob_given_true": entity.prob_given_true,
-                                "prob_given_false": entity.prob_given_false,
-                                "weight": entity.weight,
-                                "state": entity.state,
-                                "decaying": entity.decay.is_decaying,
-                                "decay_factor": entity.decay.decay_factor,
-                            }
-                            for entity in sorted(
-                                area.entities.entities.values(),
-                                key=lambda x: (not x.evidence, -x.type.weight),
-                            )
-                        ]
-                    )
-                return {
-                    "total": self.native_value,
-                    "details": all_details,
-                }
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             active_entity_names = ", ".join(
                 [entity.name for entity in area.entities.active_entities if entity.name]
             )
@@ -330,14 +234,12 @@ class DecaySensor(AreaOccupancySensorBase):
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the decay sensor."""
-        super().__init__(coordinator, area_name, is_all_areas)
+        super().__init__(coordinator, area_name)
         self._attr_name = NAME_DECAY_SENSOR
-        unique_id_area = ALL_AREAS_IDENTIFIER if is_all_areas else area_name
         self._attr_unique_id = (
-            f"{unique_id_area}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+            f"{area_name}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -347,33 +249,18 @@ class DecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        if self._is_all_areas:
-            # For "All Areas": average of all area decays
-            area_names = self.coordinator.get_area_names()
-            if not area_names:
-                return None
-            decays = [
-                self.coordinator.areas[area_name].decay() for area_name in area_names
-            ]
-            avg_decay = sum(decays) / len(decays) if decays else 1.0
-            return format_float((1 - avg_decay) * 100)
-        area = self.coordinator.get_area_or_default(self._area_name)
-        if area is None:
-            return None
-        return format_float((1 - area.decay()) * 100)
+        return format_float((1 - self.coordinator.decay(self._area_name)) * 100)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         try:
-            if self._is_all_areas:
-                # For "All Areas": aggregate decaying entities from all areas
+            # For "All Areas", aggregate decaying entities from all areas
+            if self._area_name == ALL_AREAS_IDENTIFIER:
                 area_names = self.coordinator.get_area_names()
                 all_decaying = []
                 for area_name in area_names:
                     area = self.coordinator.get_area_or_default(area_name)
-                    if area is None:
-                        continue
                     all_decaying.extend(
                         [
                             {
@@ -386,8 +273,6 @@ class DecaySensor(AreaOccupancySensorBase):
                     )
                 return {"decaying": all_decaying}
             area = self.coordinator.get_area_or_default(self._area_name)
-            if area is None:
-                return {}
             return {
                 "decaying": [
                     {
@@ -421,15 +306,15 @@ async def async_setup_entry(
             ]
         )
 
-    # Create "All Areas" aggregation sensors if multiple areas exist
-    if len(coordinator.get_area_names()) > 1:
+    # Create "All Areas" aggregation sensors when areas exist
+    # Note: EvidenceSensor is NOT created for "All Areas"
+    if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation sensors")
         entities.extend(
             [
-                ProbabilitySensor(coordinator, ALL_AREAS_IDENTIFIER, is_all_areas=True),
-                DecaySensor(coordinator, ALL_AREAS_IDENTIFIER, is_all_areas=True),
-                PriorsSensor(coordinator, ALL_AREAS_IDENTIFIER, is_all_areas=True),
-                EvidenceSensor(coordinator, ALL_AREAS_IDENTIFIER, is_all_areas=True),
+                ProbabilitySensor(coordinator, ALL_AREAS_IDENTIFIER),
+                DecaySensor(coordinator, ALL_AREAS_IDENTIFIER),
+                PriorsSensor(coordinator, ALL_AREAS_IDENTIFIER),
             ]
         )
 
