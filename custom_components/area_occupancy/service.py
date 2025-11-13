@@ -128,7 +128,7 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
                 all_areas_data[area_name_item] = {
                     "area_name": area_name_item,
-                    "current_prior": coordinator.area_prior(area_name_item),
+                    "current_prior": area.area_prior(),
                     "global_prior": area.prior.global_prior,
                     "time_prior": area.prior.time_prior,
                     "prior_entity_ids": area.prior.sensor_ids,
@@ -170,7 +170,7 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
         return {
             "area_name": area_name,
-            "current_prior": coordinator.area_prior(area_name),
+            "current_prior": area.area_prior(),
             "global_prior": area.prior.global_prior,
             "time_prior": area.prior.time_prior,
             "prior_entity_ids": area.prior.sensor_ids,
@@ -420,7 +420,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                 if area is None:
                     continue
 
-                occupancy_probability = coordinator.probability(area_name_item)
+                occupancy_probability = area.probability()
                 confidence_level, confidence_description = _format_confidence(
                     occupancy_probability
                 )
@@ -442,13 +442,11 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
                 all_status[area_name_item] = {
                     "area_name": area_name_item,
-                    "occupied": coordinator.occupied(area_name_item),
+                    "occupied": area.occupied(),
                     "occupancy_probability": round(occupancy_probability, 4)
                     if occupancy_probability is not None
                     else None,
-                    "area_baseline_prior": round(
-                        coordinator.area_prior(area_name_item), 4
-                    ),
+                    "area_baseline_prior": round(area.area_prior(), 4),
                     "confidence_level": confidence_level,
                     "confidence_description": confidence_description,
                     "entity_summary": {
@@ -458,7 +456,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                         "unavailable_entities": metrics["unavailable_entities"],
                         "decaying_entities": metrics["decaying_entities"],
                     },
-                    "status_summary": f"Area '{area_name_item}' is {'occupied' if coordinator.occupied(area_name_item) else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
+                    "status_summary": f"Area '{area_name_item}' is {'occupied' if area.occupied() else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
                 }
 
             _LOGGER.info("Retrieved area status for all areas")
@@ -468,7 +466,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         area = coordinator.get_area_or_default(area_name)
 
         # Get current occupancy state
-        occupancy_probability = coordinator.probability(area_name)
+        occupancy_probability = area.probability()
         confidence_level, confidence_description = _format_confidence(
             occupancy_probability
         )
@@ -489,11 +487,11 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
         status = {
             "area_name": area_name,
-            "occupied": coordinator.occupied(area_name),
+            "occupied": area.occupied(),
             "occupancy_probability": round(occupancy_probability, 4)
             if occupancy_probability is not None
             else None,
-            "area_baseline_prior": round(coordinator.area_prior(area_name), 4),
+            "area_baseline_prior": round(area.area_prior(), 4),
             "confidence_level": confidence_level,
             "confidence_description": confidence_description,
             "entity_summary": {
@@ -503,7 +501,7 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                 "unavailable_entities": metrics["unavailable_entities"],
                 "decaying_entities": metrics["decaying_entities"],
             },
-            "status_summary": f"Area '{area_name}' is {'occupied' if coordinator.occupied(area_name) else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
+            "status_summary": f"Area '{area_name}' is {'occupied' if area.occupied() else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
         }
 
         _LOGGER.info("Retrieved area status for area %s", area_name)

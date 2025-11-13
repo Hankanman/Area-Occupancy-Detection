@@ -12,7 +12,18 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from homeassistant.helpers.device_registry import DeviceInfo
+
+from ..const import (
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
+    DOMAIN,
+    MIN_PROBABILITY,
+)
 from ..data.analysis import start_likelihood_analysis, start_prior_analysis
+from ..data.entity_type import InputType
+from ..utils import bayesian_probability
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -168,3 +179,120 @@ class Area:
         """
         await self.entities.cleanup()
         self.purpose.cleanup()
+
+    def device_info(self) -> DeviceInfo:
+        """Return device info for this area.
+
+        Returns:
+            DeviceInfo for this area
+        """
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.area_name)},
+            name=self.config.name,
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            sw_version=DEVICE_SW_VERSION,
+        )
+
+    def probability(self) -> float:
+        """Calculate and return the current occupancy probability (0.0-1.0) for this area.
+
+        Returns:
+            Probability value (0.0-1.0)
+        """
+        entities = self.entities.entities
+        if not entities:
+            return MIN_PROBABILITY
+
+        return bayesian_probability(
+            entities=entities,
+            prior=self.prior.value,
+        )
+
+    def type_probabilities(self) -> dict[str, float]:
+        """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
+
+        Returns:
+            Dictionary mapping input types to probabilities
+        """
+        entities = self.entities.entities
+        if not entities:
+            return {}
+
+        return {
+            InputType.MOTION: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.MOTION),
+                prior=self.prior.value,
+            ),
+            InputType.MEDIA: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.MEDIA),
+                prior=self.prior.value,
+            ),
+            InputType.APPLIANCE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.APPLIANCE),
+                prior=self.prior.value,
+            ),
+            InputType.DOOR: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.DOOR),
+                prior=self.prior.value,
+            ),
+            InputType.WINDOW: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.WINDOW),
+                prior=self.prior.value,
+            ),
+            InputType.ILLUMINANCE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(
+                    InputType.ILLUMINANCE
+                ),
+                prior=self.prior.value,
+            ),
+            InputType.HUMIDITY: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(InputType.HUMIDITY),
+                prior=self.prior.value,
+            ),
+            InputType.TEMPERATURE: bayesian_probability(
+                entities=self.entities.get_entities_by_input_type(
+                    InputType.TEMPERATURE
+                ),
+                prior=self.prior.value,
+            ),
+        }
+
+    def area_prior(self) -> float:
+        """Get the area's baseline occupancy prior from historical data.
+
+        This returns the pure P(area occupied) without any sensor weighting.
+
+        Returns:
+            Prior probability (0.0-1.0)
+        """
+        return self.prior.value
+
+    def decay(self) -> float:
+        """Calculate the current decay probability (0.0-1.0) for this area.
+
+        Returns:
+            Decay probability (0.0-1.0)
+        """
+        entities = self.entities.entities
+        if not entities:
+            return 1.0
+
+        decay_sum = sum(entity.decay.decay_factor for entity in entities.values())
+        return decay_sum / len(entities)
+
+    def occupied(self) -> bool:
+        """Return the current occupancy state (True/False) for this area.
+
+        Returns:
+            True if occupied, False otherwise
+        """
+        return self.probability() >= self.config.threshold
+
+    def threshold(self) -> float:
+        """Return the current occupancy threshold (0.0-1.0) for this area.
+
+        Returns:
+            Threshold value (0.0-1.0)
+        """
+        return self.config.threshold

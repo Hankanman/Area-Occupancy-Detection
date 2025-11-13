@@ -386,10 +386,10 @@ class TestGetAreaStatus:
         area._entities = type("obj", (object,), {"entities": {}})()
         # Prior value is already set from coordinator
 
-        # Mock coordinator methods that service accesses
-        coordinator_with_areas.probability = Mock(return_value=0.9)
-        coordinator_with_areas.occupied = Mock(return_value=True)
-        coordinator_with_areas.area_prior = Mock(return_value=0.3)
+        # Mock area methods that service accesses
+        area.probability = Mock(return_value=0.9)
+        area.occupied = Mock(return_value=True)
+        area.area_prior = Mock(return_value=0.3)
 
         _setup_coordinator_test(mock_hass, mock_config_entry, coordinator_with_areas)
         area_name = coordinator_with_areas.get_area_names()[0]
@@ -419,10 +419,10 @@ class TestGetAreaStatus:
         area._entities = type("obj", (object,), {"entities": {}})()
         # Prior value is already set from coordinator
 
-        # Mock coordinator methods that service accesses
-        coordinator_with_areas.probability = Mock(return_value=None)
-        coordinator_with_areas.occupied = Mock(return_value=False)
-        coordinator_with_areas.area_prior = Mock(return_value=0.3)
+        # Mock area methods that service accesses
+        area.probability = Mock(return_value=None)
+        area.occupied = Mock(return_value=False)
+        area.area_prior = Mock(return_value=0.3)
 
         _setup_coordinator_test(mock_hass, mock_config_entry, coordinator_with_areas)
         area_name = coordinator_with_areas.get_area_names()[0]
