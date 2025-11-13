@@ -33,6 +33,14 @@ ALL_AREAS_IDENTIFIER: Final = (
     "all_areas"  # Identifier for "All Areas" aggregation device
 )
 
+# Config flow action constants
+CONF_ACTION_ADD_AREA: Final = "add_area"
+CONF_ACTION_FINISH_SETUP: Final = "finish_setup"
+CONF_ACTION_EDIT: Final = "edit"
+CONF_ACTION_REMOVE: Final = "remove"
+CONF_ACTION_CANCEL: Final = "cancel"
+CONF_OPTION_PREFIX_AREA: Final = "area_"
+
 # Configuration constants
 CONF_NAME: Final = "name"
 CONF_PURPOSE: Final = "purpose"

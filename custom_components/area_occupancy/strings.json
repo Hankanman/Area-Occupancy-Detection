@@ -3,7 +3,30 @@
         "step": {
             "user": {
                 "title": "Area Occupancy Detection",
-                "description": "Configure area occupancy detection with sensors and parameters",
+                "description": "Select an area to manage or choose an action. At least one area must be configured before finishing setup.",
+                "data": {
+                    "selected_option": "Select an area or action"
+                },
+                "data_description": {
+                    "selected_option": "Choose an area to edit or remove, add a new area, or finish setup"
+                },
+                "error": {
+                    "base": "At least one area must be configured before finishing setup"
+                }
+            },
+            "area_action": {
+                "title": "Manage {area_name}",
+                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
+                "data": {
+                    "action": "Action"
+                },
+                "data_description": {
+                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
+                }
+            },
+            "area_config": {
+                "title": "Configure Area",
+                "description": "Configure sensors and parameters for this area",
                 "data": {
                     "name": "Name of Detection Area"
                 },
@@ -135,6 +158,18 @@
                         }
                     }
                 }
+            },
+            "remove_area": {
+                "title": "Remove Area",
+                "data": {
+                    "confirm": "Confirm Removal"
+                },
+                "data_description": {
+                    "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
+                },
+                "error": {
+                    "base": "Cannot remove the last area"
+                }
             }
         }
     },
@@ -142,12 +177,22 @@
         "step": {
             "init": {
                 "title": "Area Occupancy Detection Options",
-                "description": "Manage areas: add new areas, edit existing areas, or remove areas",
+                "description": "Select an area to manage or add a new area",
+                "data": {
+                    "selected_option": "Select an area or action"
+                },
+                "data_description": {
+                    "selected_option": "Choose an area to edit or remove, or add a new area"
+                }
+            },
+            "area_action": {
+                "title": "Manage {area_name}",
+                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
                 "data": {
                     "action": "Action"
                 },
                 "data_description": {
-                    "action": "Choose an action: add a new area, edit an existing area, or remove an area"
+                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
                 }
             },
             "area_config": {
