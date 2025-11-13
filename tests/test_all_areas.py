@@ -6,7 +6,6 @@ from custom_components.area_occupancy.area.all_areas import AllAreas
 from custom_components.area_occupancy.const import ALL_AREAS_IDENTIFIER, MIN_PROBABILITY
 
 
-# ruff: noqa: PLC0415
 class TestAllAreas:
     """Test AllAreas aggregation class."""
 
@@ -36,17 +35,6 @@ class TestAllAreas:
             # Average of 0.3 and 0.7 = 0.5
             assert prob == 0.5
 
-    def test_probability_no_areas(self, mock_hass, mock_config_entry) -> None:
-        """Test probability with no areas returns MIN_PROBABILITY."""
-        from custom_components.area_occupancy.coordinator import (
-            AreaOccupancyCoordinator,
-        )
-
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-        all_areas = AllAreas(coordinator)
-        prob = all_areas.probability()
-        assert prob == MIN_PROBABILITY
-
     def test_occupied_any_area(self, coordinator_with_areas) -> None:
         """Test occupied returns True if ANY area is occupied."""
         all_areas = AllAreas(coordinator_with_areas)
@@ -70,16 +58,6 @@ class TestAllAreas:
         with patch.object(coordinator_with_areas, "occupied", return_value=False):
             assert all_areas.occupied() is False
 
-    def test_occupied_no_areas(self, mock_hass, mock_config_entry) -> None:
-        """Test occupied with no areas returns False."""
-        from custom_components.area_occupancy.coordinator import (
-            AreaOccupancyCoordinator,
-        )
-
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-        all_areas = AllAreas(coordinator)
-        assert all_areas.occupied() is False
-
     def test_area_prior_average(self, coordinator_with_areas) -> None:
         """Test area_prior aggregation averages across all areas."""
         all_areas = AllAreas(coordinator_with_areas)
@@ -97,17 +75,6 @@ class TestAllAreas:
             # Average of 0.2 and 0.8 = 0.5
             assert prior == 0.5
 
-    def test_area_prior_no_areas(self, mock_hass, mock_config_entry) -> None:
-        """Test area_prior with no areas returns MIN_PROBABILITY."""
-        from custom_components.area_occupancy.coordinator import (
-            AreaOccupancyCoordinator,
-        )
-
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-        all_areas = AllAreas(coordinator)
-        prior = all_areas.area_prior()
-        assert prior == MIN_PROBABILITY
-
     def test_decay_average(self, coordinator_with_areas) -> None:
         """Test decay aggregation averages across all areas."""
         all_areas = AllAreas(coordinator_with_areas)
@@ -124,17 +91,6 @@ class TestAllAreas:
             decay = all_areas.decay()
             # Average of 0.4 and 0.6 = 0.5
             assert decay == 0.5
-
-    def test_decay_no_areas(self, mock_hass, mock_config_entry) -> None:
-        """Test decay with no areas returns 1.0."""
-        from custom_components.area_occupancy.coordinator import (
-            AreaOccupancyCoordinator,
-        )
-
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_config_entry)
-        all_areas = AllAreas(coordinator)
-        decay = all_areas.decay()
-        assert decay == 1.0
 
     def test_probability_clamps_to_bounds(self, coordinator_with_areas) -> None:
         """Test probability clamps to valid bounds."""

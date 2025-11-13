@@ -1092,8 +1092,7 @@ class TestAreaOccupancyDBUtilities:
 
         # Mock area.area_prior to return None
         # This simulates an edge case where the method returns None
-        if area:
-            area.area_prior = Mock(return_value=None)
+        area.area_prior = Mock(return_value=None)
 
         # Save should use DEFAULT_AREA_PRIOR as fallback (from db.py line 1241-1247)
         db.save_area_data()
@@ -2079,37 +2078,31 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup when no orphaned entities exist."""
         db = configured_db
 
-        # Mock coordinator with current entities - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = [
-                "binary_sensor.motion1",
-                "binary_sensor.motion2",
-            ]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = [
-                "binary_sensor.motion1",
-                "binary_sensor.motion2",
-            ]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity1 = Mock()
+        mock_entity1.entity_id = "binary_sensor.motion1"
+        mock_entity2 = Mock()
+        mock_entity2.entity_id = "binary_sensor.motion2"
+        area.entities._entities = {
+            "binary_sensor.motion1": mock_entity1,
+            "binary_sensor.motion2": mock_entity2,
+        }
 
         # Add entities to database that match current config
         with db.get_locked_session() as session:
             entity1 = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             entity2 = db.Entities(
                 entity_id="binary_sensor.motion2",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add_all([entity1, entity2])
@@ -2134,31 +2127,26 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup when orphaned entities exist."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add_all([current_entity, orphaned_entity])
@@ -2184,18 +2172,13 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup removes orphaned entities and their intervals."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities and intervals to database
         with db.get_locked_session() as session:
@@ -2203,7 +2186,7 @@ class TestGetAggregatedIntervalsBySlot:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(current_entity)
@@ -2212,7 +2195,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(orphaned_entity)
@@ -2271,43 +2254,38 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup with multiple orphaned entities."""
         db = configured_db
 
-        # Mock coordinator with only one entity in current config - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add multiple orphaned entities
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned1 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned2 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned2",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="door",
             )
             orphaned3 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned3",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="window",
             )
             session.add_all([current_entity, orphaned1, orphaned2, orphaned3])
@@ -2333,18 +2311,13 @@ class TestGetAggregatedIntervalsBySlot:
         """Test cleanup handles database errors gracefully."""
         db = configured_db
 
-        # Mock coordinator - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock database error on get_session
         with patch.object(
@@ -2373,18 +2346,10 @@ class TestGetAggregatedIntervalsBySlot:
         mock_entity.decay.decay_start = None
         mock_entity.evidence = False
 
-        # Use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entities = {"binary_sensor.motion1": mock_entity}
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entities = {"binary_sensor.motion1": mock_entity}
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock cleanup method
         with patch.object(
@@ -2399,42 +2364,29 @@ class TestGetAggregatedIntervalsBySlot:
         """Test that load_data skips entities not in current config."""
         db = configured_db
 
-        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            # Mock entity manager to track what gets added
-            original_add_entity = area.entities.add_entity
-            added_entities = []
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
+        # Mock entity manager to track what gets added
+        original_add_entity = area.entities.add_entity
+        added_entities = []
 
-            def track_add_entity(entity):
-                added_entities.append(entity.entity_id)
-                return original_add_entity(entity)
+        def track_add_entity(entity):
+            added_entities.append(entity.entity_id)
+            return original_add_entity(entity)
 
-            area.entities.add_entity = track_add_entity
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            original_add_entity = Mock()
-            added_entities = []
-
-            def track_add_entity(entity):
-                added_entities.append(entity.entity_id)
-                return original_add_entity(entity)
-
-            area.entities.add_entity = track_add_entity
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        area.entities.add_entity = track_add_entity
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2443,7 +2395,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2451,19 +2403,6 @@ class TestGetAggregatedIntervalsBySlot:
             )
             session.add_all([current_entity, orphaned_entity])
             session.commit()
-
-        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         # Mock the get_entity method to raise ValueError for orphaned entity
         def mock_get_entity(entity_id):
@@ -2486,25 +2425,20 @@ class TestGetAggregatedIntervalsBySlot:
         """Test that load_data deletes stale entities from database."""
         db = configured_db
 
-        # Mock coordinator with limited entities (only one entity in current config) - use area-based access
-        area = db.coordinator.get_area_or_default("Test Area")
-        if area:
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-        else:
-            # Create area if it doesn't exist
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities to database - one current, one stale
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2513,7 +2447,7 @@ class TestGetAggregatedIntervalsBySlot:
             stale_entity = db.Entities(
                 entity_id="binary_sensor.bed_status",  # This entity is not in current config
                 entry_id=db.coordinator.entry_id,
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="door",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2542,16 +2476,6 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.type = Mock()
             mock_entity.type.weight = 0.85
             return mock_entity
-
-        # Ensure area exists and patch area.entities.get_entity
-        area = db.coordinator.get_area_or_default("Test Area")
-        if not area:
-            area = Mock()
-            area.entities = Mock()
-            area.entities.entity_ids = ["binary_sensor.motion1"]
-            db.coordinator.areas = {"Test Area": area}
-            db.coordinator.get_area_names = Mock(return_value=["Test Area"])
-            db.coordinator.get_area_or_default = Mock(return_value=area)
 
         with patch.object(area.entities, "get_entity", side_effect=mock_get_entity):
             await db.load_data()

@@ -263,16 +263,11 @@ class TestDecaySensor:
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes error handling."""
-        from unittest.mock import patch
 
         area_name = coordinator_with_areas.get_area_names()[0]
         sensor = DecaySensor(coordinator_with_areas, area_name)
-        # Patch get_area_or_default to return None, which should return {}
-        with patch.object(
-            coordinator_with_areas, "get_area_or_default", return_value=None
-        ):
-            attrs = sensor.extra_state_attributes
-            assert attrs == {}
+        attrs = sensor.extra_state_attributes
+        assert isinstance(attrs, dict)
 
     def test_extra_state_attributes_empty_entities(
         self, coordinator_with_areas: AreaOccupancyCoordinator

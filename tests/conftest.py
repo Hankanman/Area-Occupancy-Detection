@@ -1034,24 +1034,14 @@ def mock_coordinator_with_threshold(mock_coordinator: Mock) -> Mock:
     """Create a coordinator mock with threshold-specific attributes."""
     # threshold is now a method that delegates to area
     area = mock_coordinator.get_area_or_default.return_value
-    if area:
-        area.config.threshold = 0.6
-        area.threshold = Mock(return_value=0.6)
-    else:
-        # Create area if it doesn't exist
-        area = Mock()
-        area.config = Mock()
-        area.config.threshold = 0.6
-        area.threshold = Mock(return_value=0.6)
-        area.probability = Mock(return_value=0.5)
-        area.occupied = Mock(return_value=False)
-        area.area_prior = Mock(return_value=0.3)
-        area.decay = Mock(return_value=1.0)
-        area.type_probabilities = Mock(return_value={})
-        area.device_info = Mock(return_value={})
-        mock_coordinator.areas = {"Test Area": area}
-        mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
-        mock_coordinator.get_area_or_default = Mock(return_value=area)
+    area.config.threshold = 0.6
+    area.threshold = Mock(return_value=0.6)
+    area.probability = Mock(return_value=0.5)
+    area.occupied = Mock(return_value=False)
+    area.area_prior = Mock(return_value=0.3)
+    area.decay = Mock(return_value=1.0)
+    area.type_probabilities = Mock(return_value={})
+    area.device_info = Mock(return_value={})
     mock_coordinator.is_occupied = False  # 0.5 < 0.6
     return mock_coordinator
 
@@ -1197,8 +1187,8 @@ def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
     """
     # Mock entity manager with comprehensive entities - use area-based access
     area = mock_coordinator.get_area_or_default.return_value
-    if not area:
-        # Create area if it doesn't exist
+    if not hasattr(area, "entities"):
+        # Ensure area has entities attribute
         area = Mock()
         area.entities = Mock()
         mock_coordinator.areas = {"Test Area": area}
@@ -1365,11 +1355,8 @@ def create_test_area(
 
         def get_area_or_default(name: str | None = None):
             if name is None:
-                return (
-                    next(iter(coordinator.areas.values()))
-                    if coordinator.areas
-                    else None
-                )
+                # When name is None, always return first area (at least one area exists)
+                return next(iter(coordinator.areas.values()))
             return coordinator.areas.get(name)
 
         coordinator.get_area_or_default = Mock(side_effect=get_area_or_default)
