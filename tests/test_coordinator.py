@@ -7,6 +7,7 @@ import pytest
 
 from custom_components.area_occupancy.area.area import Area
 from custom_components.area_occupancy.const import (
+    ALL_AREAS_IDENTIFIER,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -96,21 +97,47 @@ class TestAreaOccupancyCoordinator:
             f"Expected {expected_identifier} in {identifiers}"
         )
 
+    def test_device_info_with_all_areas_identifier(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> None:
+        """Test device_info properly handles ALL_AREAS_IDENTIFIER."""
+        device_info = coordinator_with_areas.device_info(ALL_AREAS_IDENTIFIER)
+
+        assert device_info.get("manufacturer") == DEVICE_MANUFACTURER
+        assert device_info.get("model") == DEVICE_MODEL
+        assert device_info.get("sw_version") == DEVICE_SW_VERSION
+        assert device_info.get("name") == "All Areas"
+
+        identifiers = device_info.get("identifiers")
+        assert identifiers is not None
+        assert isinstance(identifiers, set)
+        # Should use ALL_AREAS_IDENTIFIER, not entry_id
+        expected_identifier = (DOMAIN, ALL_AREAS_IDENTIFIER)
+        assert expected_identifier in identifiers, (
+            f"Expected {expected_identifier} in {identifiers}, got {identifiers}"
+        )
+
     def test_device_info_with_missing_config(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
     ) -> None:
         """Test device info generation when config is missing."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
-        # Get first area or create a mock area for testing
+        # Get first area (always exists - at least one area is guaranteed)
         area = coordinator.get_area_or_default()
+        # Handle case where areas might not be loaded in test
         if area is None:
-            # If no areas exist, device_info should still work
-            device_info = coordinator.device_info(area_name=None)
-        else:
-            with patch.object(area, "config") as mock_config:
-                mock_config.name = None
-                device_info = coordinator.device_info(area_name=area.area_name)
+            # Use fallback device info test
+            device_info = coordinator.device_info(area_name="NonExistentArea")
+            assert "identifiers" in device_info
+            assert "manufacturer" in device_info
+            assert "model" in device_info
+            assert "sw_version" in device_info
+            return
+
+        with patch.object(area, "config") as mock_config:
+            mock_config.name = None
+            device_info = coordinator.device_info(area_name=area.area_name)
 
         assert "identifiers" in device_info
         assert "manufacturer" in device_info
@@ -150,9 +177,7 @@ class TestAreaOccupancyCoordinator:
         )
         # The wrapper should call area.threshold()
         area = mock_coordinator_with_threshold.get_area_or_default(area_name)
-        # For mock coordinators, verify area method is mocked correctly
-        if area:
-            assert area.threshold.return_value == 0.6
+        assert area.threshold.return_value == 0.6
 
     def test_is_occupied_property(self, mock_coordinator_with_threshold: Mock) -> None:
         """Test occupied method threshold comparison."""
@@ -278,15 +303,13 @@ class TestAreaOccupancyCoordinator:
         )
         area = coordinator.get_area_or_default(area_name)
         if entities_empty:
-            if area:
-                area.entities._entities = {}
+            area.entities._entities = {}
             # Mock area methods instead of coordinator methods
-            if area:
-                area.probability = Mock(return_value=expected_probability)
-                area.area_prior = Mock(return_value=expected_prior)
-                area.decay = Mock(return_value=expected_decay)
-        # For non-empty entities, also mock area methods
-        elif area:
+            area.probability = Mock(return_value=expected_probability)
+            area.area_prior = Mock(return_value=expected_prior)
+            area.decay = Mock(return_value=expected_decay)
+        else:
+            # For non-empty entities, also mock area methods
             area.probability = Mock(return_value=expected_probability)
             area.area_prior = Mock(return_value=expected_prior)
             area.decay = Mock(return_value=expected_decay)
@@ -294,11 +317,10 @@ class TestAreaOccupancyCoordinator:
         # Coordinator wrappers should delegate to area methods
         # Note: Mock coordinators don't actually call wrapper methods, they're just Mocks
         # So we verify area methods are set up correctly instead
-        if area:
-            # For mock coordinators, verify area methods are set up correctly
-            assert area.probability.return_value == expected_probability
-            assert area.area_prior.return_value == expected_prior
-            assert area.decay.return_value == expected_decay
+        # For mock coordinators, verify area methods are set up correctly
+        assert area.probability.return_value == expected_probability
+        assert area.area_prior.return_value == expected_prior
+        assert area.decay.return_value == expected_decay
 
     def test_probability_with_mixed_evidence_and_decay(
         self, mock_coordinator_with_sensors: Mock
@@ -373,15 +395,13 @@ class TestAreaOccupancyCoordinator:
         )
         # Mock area methods instead of coordinator methods
         area = coordinator.get_area_or_default(area_name)
-        if area:
-            area.probability = Mock(return_value=probability)
-            area.threshold = Mock(return_value=threshold)
-            area.occupied = Mock(return_value=expected_occupied)
+        area.probability = Mock(return_value=probability)
+        area.threshold = Mock(return_value=threshold)
+        area.occupied = Mock(return_value=expected_occupied)
 
         # Coordinator wrappers should delegate to area methods
         # For mock coordinators, verify area method is set up correctly
-        if area:
-            assert area.occupied.return_value == expected_occupied
+        assert area.occupied.return_value == expected_occupied
 
     @pytest.mark.parametrize(
         ("edge_value", "property_name"),
@@ -774,18 +794,12 @@ class TestAreaOccupancyCoordinator:
 
         # Access entities via area (multi-area architecture)
         area = mock_coordinator.get_area_or_default.return_value
-        if area:
-            area.entities._entities = entities
-        # Legacy fallback - shouldn't happen in multi-area architecture
-        elif hasattr(mock_coordinator, "entities"):
-            mock_coordinator.entities._entities = entities
+        area.entities._entities = entities
 
         # Mock area.probability to return a valid value since we're testing delegation
-        if area:
-            area.probability = Mock(return_value=0.5)
+        area.probability = Mock(return_value=0.5)
         # For mock coordinators, verify area method is mocked correctly
-        if area:
-            assert area.probability.return_value == 0.5
+        assert area.probability.return_value == 0.5
 
     async def test_state_tracking_with_many_entities(
         self, mock_coordinator: Mock
@@ -839,20 +853,21 @@ class TestAreaOccupancyCoordinator:
         """Test type_probabilities property with no entities."""
         coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
 
+        # Get area name - handle case where areas might not be loaded
+        area_names = coordinator.get_area_names()
+        if not area_names:
+            # Skip test if no areas are configured
+            pytest.skip("No areas configured in test coordinator")
+        area_name = area_names[0]
+
         entities_manager = Mock()
         entities_manager.entities = {}
         entities_manager.get_entities_by_input_type = Mock(return_value={})
         # Access entities via area
-        area_name = (
-            coordinator.get_area_names()[0]
-            if coordinator.get_area_names()
-            else "Test Area"
-        )
         area = coordinator.get_area_or_default(area_name)
-        if area:
-            area.entities = entities_manager
-        else:
-            coordinator.entities = entities_manager
+        if area is None:
+            pytest.skip("Area not found in test coordinator")
+        area.entities = entities_manager
 
         # type_probabilities is now a method that delegates to area
         # Coordinator wrapper should delegate to area method
@@ -868,13 +883,10 @@ class TestAreaOccupancyCoordinator:
             else "Test Area"
         )
         area = mock_coordinator.get_area_or_default(area_name)
-        if area:
-            # Mock area threshold method to return default when config is None
-            area.threshold = Mock(return_value=0.5)
+        area.threshold = Mock(return_value=0.5)
         # Coordinator wrapper should delegate to area method
         # For mock coordinators, verify area method is mocked correctly
-        if area:
-            assert area.threshold.return_value == 0.5
+        assert area.threshold.return_value == 0.5
 
     async def test_decay_timer_handling(
         self, mock_hass: Mock, mock_realistic_config_entry: Mock
@@ -1618,10 +1630,9 @@ class TestAreaOccupancyCoordinator:
         non_existent = coordinator_with_areas.get_area_or_default("NonExistentArea")
         assert non_existent is None
 
-        # Should return None when empty areas dict
-        coordinator_with_areas.areas = {}
         first_area = coordinator_with_areas.get_area_or_default()
-        assert first_area is None
+        assert first_area is not None
+        assert first_area.area_name in coordinator_with_areas.get_area_names()
 
 
 class TestRunAnalysisWithPruning:
