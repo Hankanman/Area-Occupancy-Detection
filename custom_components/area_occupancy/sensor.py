@@ -304,9 +304,9 @@ async def async_setup_entry(
             ]
         )
 
-    # Create "All Areas" aggregation sensors if multiple areas exist
+    # Create "All Areas" aggregation sensors when areas exist
     # Note: EvidenceSensor is NOT created for "All Areas"
-    if len(coordinator.get_area_names()) > 1:
+    if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation sensors")
         entities.extend(
             [
