@@ -1521,6 +1521,10 @@ class TestAreaOccupancyCoordinator:
         # Load areas from config (normally done during setup)
         coordinator._load_areas_from_config()
 
+        # Verify areas exist before update
+        initial_area_count = len(coordinator.areas)
+        assert initial_area_count > 0, "Areas should exist before update"
+
         # Update config entry options (simulating what config flow does)
         mock_realistic_config_entry.options = {"threshold": 0.7}
 
@@ -1546,6 +1550,13 @@ class TestAreaOccupancyCoordinator:
             # The options parameter is for compatibility but not used
             options = {"threshold": 0.7}
             await coordinator.async_update_options(options)
+
+            # Verify areas are never empty during/after update
+            # The root cause fix ensures self.areas is never cleared before new areas are loaded
+            # Instead, new areas are loaded into a temporary dict first, then atomically replaced
+            assert len(coordinator.areas) > 0, (
+                "Areas should never be empty after update"
+            )
 
             # cleanup is called on area.entities for each area (after reload)
             mock_cleanup.assert_called()
