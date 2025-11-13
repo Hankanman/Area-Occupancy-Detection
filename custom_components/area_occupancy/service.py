@@ -105,9 +105,6 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
             all_areas_data = {}
             for area_name_item in coordinator.get_area_names():
                 area = coordinator.get_area_or_default(area_name_item)
-                if area is None:
-                    continue
-
                 entity_ids = list(area.entities.entities.keys())
                 entity_states = {}
                 for entity_id in entity_ids:
@@ -203,8 +200,6 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
             _LOGGER.info("Resetting entities for all areas")
             for area_name_item in coordinator.get_area_names():
                 area = coordinator.get_area_or_default(area_name_item)
-                if area is None:
-                    continue
                 await area.entities.cleanup()
             await coordinator.async_refresh()
             _LOGGER.info("Entity reset completed successfully for all areas")
@@ -241,9 +236,6 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
             all_metrics = {}
             for area_name_item in coordinator.get_area_names():
                 area = coordinator.get_area_or_default(area_name_item)
-                if area is None:
-                    continue
-
                 entities = area.entities.entities
                 total_entities = len(entities)
                 active_entities = sum(1 for e in entities.values() if e.evidence)
@@ -335,9 +327,6 @@ async def _get_problematic_entities(
             all_problems = {}
             for area_name_item in coordinator.get_area_names():
                 area = coordinator.get_area_or_default(area_name_item)
-                if area is None:
-                    continue
-
                 entities = area.entities.entities
                 unavailable = [eid for eid, e in entities.items() if not e.available]
                 stale_updates = [
@@ -417,9 +406,6 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
             all_status = {}
             for area_name_item in coordinator.get_area_names():
                 area = coordinator.get_area_or_default(area_name_item)
-                if area is None:
-                    continue
-
                 occupancy_probability = area.probability()
                 confidence_level, confidence_description = _format_confidence(
                     occupancy_probability

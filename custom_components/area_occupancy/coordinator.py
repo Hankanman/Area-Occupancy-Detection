@@ -24,8 +24,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
-from .area import Area
+from .area import AllAreas, Area
 from .const import (
+    ALL_AREAS_IDENTIFIER,
     CONF_AREAS,
     CONF_NAME,
     DEFAULT_NAME,
@@ -65,6 +66,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Multi-area architecture: dict[str, Area] keyed by area name
         self.areas: dict[str, Area] = {}
 
+        # All Areas aggregator (lazy initialization)
+        self._all_areas: AllAreas | None = None
+
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
         self._global_decay_timer: CALLBACK_TYPE | None = None
@@ -93,15 +97,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             raise
 
-    def _load_areas_from_config(self) -> None:
+    def _load_areas_from_config(
+        self, target_dict: dict[str, Area] | None = None
+    ) -> None:
         """Load areas from config entry.
 
         Supports both legacy (single area) and new (multi-area) formats.
         For legacy format, creates a single area from the config_entry data.
         For new format, loads areas from CONF_AREAS list.
+
+        Args:
+            target_dict: Optional dict to load areas into. If None, loads into self.areas.
         """
         merged = dict(self.config_entry.data)
         merged.update(self.config_entry.options)
+
+        # Use target_dict if provided, otherwise use self.areas
+        areas_dict = target_dict if target_dict is not None else self.areas
 
         # Check if we have the new multi-area format
         if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
@@ -124,12 +136,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                     continue
 
-                if area_name in self.areas:
+                if area_name in areas_dict:
                     _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                     continue
 
                 # Create Area for this area
-                self.areas[area_name] = Area(
+                areas_dict[area_name] = Area(
                     coordinator=self,
                     area_name=area_name,
                     area_data=area_data,
@@ -153,7 +165,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             # Create area for migration path
-            self.areas[area_name] = Area(
+            areas_dict[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,
                 area_data=merged,
@@ -167,18 +179,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             area_name: Optional area name, None returns first area
 
         Returns:
-            Area instance or None if no areas exist
+            Area instance (always returns first area when area_name is None),
+            or None if the specified area_name doesn't exist or no areas exist
         """
-        if not self.areas:
-            return None
         if area_name is None:
-            # Return first area
+            # Return first area (at least one area always exists in normal operation)
+            # Handle empty case for tests/edge cases
+            if not self.areas:
+                return None
             return next(iter(self.areas.values()))
         return self.areas.get(area_name)
 
     def get_area_names(self) -> list[str]:
         """Get list of all configured area names."""
         return list(self.areas.keys())
+
+    def get_all_areas(self) -> AllAreas:
+        """Get or create the AllAreas aggregator instance.
+
+        Returns:
+            AllAreas instance for aggregating data across all areas
+        """
+        if self._all_areas is None:
+            self._all_areas = AllAreas(self)
+        return self._all_areas
 
     # --- Area Management ---
 
@@ -193,9 +217,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             DeviceInfo for the specified area
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().device_info()
+
         area = self.get_area_or_default(area_name)
         if area is None:
-            # No areas configured - return default device info
             return DeviceInfo(
                 identifiers={(DOMAIN, self.entry_id)},
                 name=DEFAULT_NAME,
@@ -215,6 +242,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Probability value (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().probability()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return MIN_PROBABILITY
@@ -229,7 +260,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Returns:
             Dictionary mapping input types to probabilities
+
+        Raises:
+            ValueError: If area_name is ALL_AREAS_IDENTIFIER (not supported for "All Areas")
         """
+        # "All Areas" does not support type_probabilities aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            raise ValueError(
+                "type_probabilities is not supported for 'All Areas' aggregation"
+            )
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return {}
@@ -247,6 +287,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Prior probability (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().area_prior()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return MIN_PROBABILITY
@@ -261,6 +305,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Decay probability (0.0-1.0)
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().decay()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return 1.0
@@ -276,6 +324,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             True if occupied, False otherwise
         """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            return self.get_all_areas().occupied()
+
         area = self.get_area_or_default(area_name)
         if area is None:
             return False
@@ -569,26 +621,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.config_entry is None:
             raise HomeAssistantError("Cannot update options: config_entry is None")
 
-        # Identify areas that will be removed by checking what's in new config
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
+        # Load new areas into a temporary dict first to avoid race condition
+        # where self.areas is empty while platform entities are still active
+        new_areas: dict[str, Area] = {}
+        self._load_areas_from_config(target_dict=new_areas)
 
-        # Get list of area names that will exist after reload
-        new_area_names = set()
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            new_area_names = {
-                area_data.get(CONF_NAME)
-                for area_data in merged[CONF_AREAS]
-                if area_data.get(CONF_NAME)
-            }
-        else:
-            # Legacy format - single area
-            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
-            if area_name:
-                new_area_names = {area_name}
-
-        # Clean up areas that will be removed
-        removed_area_names = set(self.areas.keys()) - new_area_names
+        # Identify areas that will be removed by comparing old and new area names
+        removed_area_names = set(self.areas.keys()) - set(new_areas.keys())
         if removed_area_names:
             _LOGGER.info("Cleaning up removed areas: %s", ", ".join(removed_area_names))
 
@@ -653,17 +692,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     _LOGGER.debug("Cleaned up area: %s", area_name)
 
-        # Clear existing areas before reloading (this ensures removed areas are gone
-        # and prevents _load_areas_from_config from skipping areas that should be updated)
-        self.areas.clear()
-
         # Cancel existing entity state listeners (will be recreated with new entity lists)
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
 
-        # Reload areas from updated config
-        self._load_areas_from_config()
+        # Atomically replace self.areas with new_areas
+        # This ensures self.areas is never empty when platform entities can access it
+        self.areas = new_areas
 
         # Update each area's configuration
         for area_name, area in self.areas.items():

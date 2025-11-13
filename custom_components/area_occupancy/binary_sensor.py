@@ -54,51 +54,42 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        is_all_areas: bool = False,
     ) -> None:
         """Initialize the sensor.
 
         Args:
             coordinator: The coordinator instance
-            area_name: Name of the area this sensor represents
-            is_all_areas: True if this is the "All Areas" aggregation sensor
+            area_name: Name of the area this sensor represents (or ALL_AREAS_IDENTIFIER for "All Areas")
         """
         super().__init__(coordinator)
         self._area_name = area_name
-        self._is_all_areas = is_all_areas
         self._attr_has_entity_name = True
 
-        # Unique ID: use area_name or ALL_AREAS_IDENTIFIER
-        unique_id_area = ALL_AREAS_IDENTIFIER if is_all_areas else area_name
+        # Unique ID: use area_name directly (may be ALL_AREAS_IDENTIFIER)
         self._attr_unique_id = (
-            f"{unique_id_area}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+            f"{area_name}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
         )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        if is_all_areas:
-            # For "All Areas", use coordinator wrapper which handles the special case
-            self._attr_device_info: DeviceInfo | None = coordinator.device_info(
-                area_name=ALL_AREAS_IDENTIFIER
-            )
-        else:
-            # For specific area, get area and use its device_info method
-            area = coordinator.get_area_or_default(area_name)
-            self._attr_device_info: DeviceInfo | None = (
-                area.device_info() if area else None
-            )
+        self._attr_device_info: DeviceInfo | None = coordinator.device_info(
+            area_name=area_name
+        )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
         # Let the coordinator know our entity_id (only for specific areas, not All Areas)
-        if not self._is_all_areas and self._area_name in self.coordinator.areas:
+        if (
+            self._area_name != ALL_AREAS_IDENTIFIER
+            and self._area_name in self.coordinator.areas
+        ):
             self.coordinator.areas[self._area_name].occupancy_entity_id = self.entity_id
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
         # Clear the entity_id from coordinator (only for specific areas, not All Areas)
         if (
-            not self._is_all_areas
+            self._area_name != ALL_AREAS_IDENTIFIER
             and self._area_name in self.coordinator.areas
             and self.coordinator.areas[self._area_name].occupancy_entity_id
             == self.entity_id
@@ -120,32 +111,11 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
                  False if no data is available or area is unoccupied.
 
         """
-        if self._is_all_areas:
-            # For "All Areas": occupied if ANY area is occupied
-            return any(
-                self.coordinator.areas[area_name].occupied()
-                for area_name in self.coordinator.get_area_names()
-            )
-        area = self.coordinator.get_area_or_default(self._area_name)
-        return area.occupied() if area else False
+        return self.coordinator.occupied(self._area_name)
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self._is_all_areas:
-            _LOGGER.debug(
-                "All Areas occupancy sensor updating: occupied=%s",
-                self.is_on,
-            )
-        else:
-            area = self.coordinator.get_area_or_default(self._area_name)
-            probability = area.probability() if area else 0.0
-            _LOGGER.debug(
-                "Occupancy sensor updating for %s: occupied=%s, probability=%.3f",
-                self._area_name,
-                self.is_on,
-                probability,
-            )
         super()._handle_coordinator_update()
 
 
@@ -181,8 +151,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._coordinator = coordinator
         self._area_name = area_name
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise ValueError(f"Area {area_name} not found in coordinator")
         self._config = area.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
         self._weight = self._config.wasp_in_box.weight
@@ -197,8 +165,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         area = coordinator.get_area_or_default(area_name)
-        if area is None:
-            raise ValueError(f"Area {area_name} not found in coordinator")
         self._attr_device_info = area.device_info()
         self._attr_available = True
         self._attr_is_on = False
@@ -738,14 +704,13 @@ async def async_setup_entry(
                 wasp_sensor.unique_id,
             )
 
-    # Create "All Areas" aggregation occupancy sensor
-    if len(coordinator.get_area_names()) > 1:
+    # Create "All Areas" aggregation occupancy sensor when areas exist
+    if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
         entities.append(
             Occupancy(
                 coordinator=coordinator,
                 area_name=ALL_AREAS_IDENTIFIER,
-                is_all_areas=True,
             )
         )
 
