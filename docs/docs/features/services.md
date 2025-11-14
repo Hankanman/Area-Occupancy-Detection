@@ -7,13 +7,20 @@ Runs the historical analysis process for an Area Occupancy instance. This import
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `area_name` | Yes | The name of the area to run analysis for, or "all" for all areas. | `"Living Room"` or `"all"` |
 
 **Example:**
 ```yaml
 service: area_occupancy.run_analysis
 data:
-  entry_id: your_config_entry_id_here
+  area_name: "Living Room"
+```
+
+**Example for all areas:**
+```yaml
+service: area_occupancy.run_analysis
+data:
+  area_name: "all"
 ```
 
 **Returns:**
@@ -29,32 +36,46 @@ data:
 
 ## `area_occupancy.reset_entities`
 
-Resets all entity probabilities and learned data for a specific Area Occupancy instance.
+Resets all entity probabilities and learned data for a specific area.
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `area_name` | Yes | The name of the area to reset, or "all" for all areas. | `"Kitchen"` or `"all"` |
 
 **Example:**
 ```yaml
 service: area_occupancy.reset_entities
 data:
-  entry_id: your_config_entry_id_here
+  area_name: "Kitchen"
+```
+
+**Example for all areas:**
+```yaml
+service: area_occupancy.reset_entities
+data:
+  area_name: "all"
 ```
 
 ## `area_occupancy.get_entity_metrics`
 
-Returns basic metrics about entities in the Area Occupancy instance. This service returns data and can be used for monitoring and diagnostics.
+Returns basic metrics about entities in the specified area. This service returns data and can be used for monitoring and diagnostics.
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `area_name` | Yes | The name of the area to get metrics for, or "all" for all areas. | `"Bedroom"` or `"all"` |
 
 **Example:**
 ```yaml
 service: area_occupancy.get_entity_metrics
 data:
-  entry_id: your_config_entry_id_here
+  area_name: "Bedroom"
+```
+
+**Example for all areas:**
+```yaml
+service: area_occupancy.get_entity_metrics
+data:
+  area_name: "all"
 ```
 
 **Returns:**
@@ -74,13 +95,20 @@ Identifies entities that may need attention, such as unavailable entities or tho
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `area_name` | Yes | The name of the area to check for problems, or "all" for all areas. | `"Office"` or `"all"` |
 
 **Example:**
 ```yaml
 service: area_occupancy.get_problematic_entities
 data:
-  entry_id: your_config_entry_id_here
+  area_name: "Office"
+```
+
+**Example for all areas:**
+```yaml
+service: area_occupancy.get_problematic_entities
+data:
+  area_name: "all"
 ```
 
 **Returns:**
@@ -96,13 +124,20 @@ Returns the current occupancy status and confidence level for the area, along wi
 
 | Parameter | Required | Description | Example Value |
 |-----------|---------|-------------|---------------|
-| `entry_id` | Yes | The configuration entry ID for the Area Occupancy instance. | `a1b2c3d4e5f6...` |
+| `area_name` | Yes | The name of the area to get status for, or "all" for all areas. | `"Living Room"` or `"all"` |
 
 **Example:**
 ```yaml
 service: area_occupancy.get_area_status
 data:
-  entry_id: your_config_entry_id_here
+  area_name: "Living Room"
+```
+
+**Example for all areas:**
+```yaml
+service: area_occupancy.get_area_status
+data:
+  area_name: "all"
 ```
 
 **Returns:**
@@ -120,4 +155,6 @@ data:
 - Services that return response data: `run_analysis`, `get_entity_metrics`, `get_problematic_entities`, and `get_area_status` all return nested objects (see Returns sections above for structure).
 - The `reset_entities` service does not return response data.
 - Services that query historical data (`run_analysis`) can be resource-intensive.
-- The `entry_id` can be found in Home Assistant under Settings → Devices & Services → Area Occupancy Detection → (click on an instance).
+- When `area_name` is set to `"all"`, the service operates on all configured areas and returns aggregated data.
+- The area names available in the dropdown are automatically populated from your configured areas.
+- The deprecated `entry_id` parameter is still supported for backward compatibility but will be removed in a future version.
