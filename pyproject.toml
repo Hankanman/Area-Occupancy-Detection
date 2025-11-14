@@ -83,6 +83,11 @@ dependencies = [
   "zeroconf==0.148.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pre-commit==4.3.0",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/hankanman/Area-Occupancy-Detection" # Add your repo URL
 "Source Code" = "https://github.com/hankanman/Area-Occupancy-Detection" # Add your repo URL
@@ -453,6 +458,16 @@ markers = [
 filterwarnings = [
   "error::sqlalchemy.exc.SAWarning",
   "error:usefixtures\\(\\) in .* without arguments has no effect:UserWarning",  # pytest
+
+  # -- SQLite connection warnings in tests
+  # Python 3.13 is very strict about unclosed resources. SQLite connections
+  # created during test setup/teardown may not be immediately closed, but
+  # they are properly cleaned up by SQLAlchemy's connection pooling.
+  # These warnings come from Python's internal modules (threading, unittest.mock, etc.)
+  # when connections are created during test execution.
+  "ignore::ResourceWarning:.*sqlite3.Connection",
+  "ignore:unclosed.*database.*sqlite3.Connection:ResourceWarning",
+  "ignore:unclosed database:ResourceWarning",
 
   # -- Asyncio warnings in CI environments
   "ignore:coroutine .* was never awaited:RuntimeWarning",
