@@ -294,11 +294,16 @@ class PriorAnalyzer:
         occupied_seconds = {}
         for day, slot, total_seconds in interval_aggregates:
             try:
-                # Convert SQLite day_of_week (0=Sunday) to Python weekday (0=Monday)
-                # Use modulo to handle any integer value safely
-                python_weekday = (
-                    int(day) + SQLITE_TO_PYTHON_WEEKDAY_OFFSET
-                ) % DAYS_PER_WEEK
+                # Day is already in Python weekday format (0=Monday, 6=Sunday)
+                # from both SQL and Python aggregation paths
+                python_weekday = int(day)
+
+                # Validate weekday is within valid range
+                if not (0 <= python_weekday < DAYS_PER_WEEK):
+                    _LOGGER.warning(
+                        "Invalid weekday: %d (must be 0-6), skipping", python_weekday
+                    )
+                    continue
 
                 # Validate slot number
                 if 0 <= int(slot) < slots_per_day:
