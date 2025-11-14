@@ -621,9 +621,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
 
         # For backward compatibility, also include first area at root level
+        # Only copy keys that won't overwrite area entries (i.e., keys that don't
+        # already exist in result as a dict, which would indicate an area entry)
         if self.areas:
             first_area = next(iter(self.areas.keys()))
-            result.update(result[first_area])
+            first_area_data = result[first_area]
+            for key, value in first_area_data.items():
+                # Only copy if key doesn't already exist as an area entry (dict)
+                # This prevents overwriting area dicts when area name equals a reserved key
+                if not (key in result and isinstance(result[key], dict)):
+                    result[key] = value
 
         result["last_updated"] = dt_util.utcnow()
         return result
