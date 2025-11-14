@@ -212,6 +212,11 @@ class AreaConfig:
 
             # Check if we have CONF_AREAS format (multi-area)
             if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+                # Validate area_name is provided for multi-area config
+                if area_name is None:
+                    raise ValueError(
+                        "area_name is required when using multi-area configuration format"
+                    )
                 # Extract area data for this specific area
                 area_data = self._extract_area_data_from_areas_list(
                     merged[CONF_AREAS], area_name, coordinator.hass
@@ -219,8 +224,13 @@ class AreaConfig:
                 if area_data:
                     self._load_config(area_data)
                 else:
-                    # Fallback to legacy format or empty config
-                    self._load_config(merged)
+                    # Area not found in config - log warning and load empty/default config
+                    # to avoid silently ingesting top-level CONF_AREAS structure
+                    _LOGGER.warning(
+                        "Area '%s' not found in configuration. Loading default config.",
+                        area_name,
+                    )
+                    self._load_config({})
             else:
                 # Legacy single-area format
                 self._load_config(merged)
@@ -427,6 +437,11 @@ class AreaConfig:
 
         # Check if we have CONF_AREAS format (multi-area)
         if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+            # Validate area_name is provided for multi-area config
+            if self.area_name is None:
+                raise ValueError(
+                    "area_name is required when using multi-area configuration format"
+                )
             # Extract area data for this specific area
             area_data = self._extract_area_data_from_areas_list(
                 merged[CONF_AREAS], self.area_name, self.hass
@@ -434,8 +449,13 @@ class AreaConfig:
             if area_data:
                 self._load_config(area_data)
             else:
-                # Fallback to legacy format or empty config
-                self._load_config(merged)
+                # Area not found in config - log warning and load empty/default config
+                # to avoid silently ingesting top-level CONF_AREAS structure
+                _LOGGER.warning(
+                    "Area '%s' not found in configuration. Loading default config.",
+                    self.area_name,
+                )
+                self._load_config({})
         else:
             # Legacy single-area format
             self._load_config(merged)
@@ -460,6 +480,14 @@ class AreaConfig:
             if self.config_entry is None:
                 raise ValueError("Config entry is None")
 
+        def _validate_area_name_for_multi_area(data: dict[str, Any]) -> None:
+            """Validate area_name is provided when using multi-area configuration format."""
+            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
+                if self.area_name is None:
+                    raise ValueError(
+                        "area_name is required when using multi-area configuration format"
+                    )
+
         try:
             _validate_config_entry()
             # Create new options dict by merging existing with new options
@@ -476,6 +504,9 @@ class AreaConfig:
             data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
             data.update(options)
 
+            # Validate area_name for multi-area config before processing
+            _validate_area_name_for_multi_area(data)
+
             # Check if we have CONF_AREAS format (multi-area)
             if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
                 # Extract area data for this specific area
@@ -486,8 +517,13 @@ class AreaConfig:
                     # Reload configuration with extracted area data
                     self._load_config(area_data)
                 else:
-                    # Fallback to legacy format or empty config
-                    self._load_config(data)
+                    # Area not found in config - log warning and load empty/default config
+                    # to avoid silently ingesting top-level CONF_AREAS structure
+                    _LOGGER.warning(
+                        "Area '%s' not found in configuration. Loading default config.",
+                        self.area_name,
+                    )
+                    self._load_config({})
             else:
                 # Legacy single-area format
                 self._load_config(data)
