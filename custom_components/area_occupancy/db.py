@@ -593,17 +593,20 @@ class AreaOccupancyDB:
     def _verify_all_tables_exist(self) -> bool:
         """Verify all required tables exist in the database.
 
+        Uses SQLAlchemy's inspector to ensure consistent connection handling,
+        avoiding race conditions with in-memory databases where different
+        connections might not see tables created by other connections.
+
         Returns:
             bool: True if all required tables exist, False otherwise
         """
         required_tables = {"areas", "entities", "intervals", "priors", "metadata"}
         try:
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
-                existing_tables = {row[0] for row in result}
-                return required_tables.issubset(existing_tables)
+            # Use inspector instead of raw connection to ensure consistent
+            # connection pool usage (same as init_db uses Base.metadata.create_all)
+            inspector = sa.inspect(self.engine)
+            existing_tables = set(inspector.get_table_names())
+            return required_tables.issubset(existing_tables)
         except sa.exc.SQLAlchemyError:
             return False
 
@@ -1037,6 +1040,10 @@ class AreaOccupancyDB:
             area_name: str,
         ) -> tuple[Any, list[Any], list[str]]:
             """Read data WITHOUT lock (parallel-safe) for a specific area."""
+            # Ensure tables exist (important for in-memory databases where
+            # each connection gets its own database)
+            if not self._verify_all_tables_exist():
+                self.init_db()
             stale_entity_ids = []
             with self.get_session() as session:
                 # Query by area_name instead of entry_id
@@ -1105,7 +1112,19 @@ class AreaOccupancyDB:
 
                 # Update prior from area data
                 if area and area.area_prior is not None:
+                    _LOGGER.debug(
+                        "Loading area_prior %s for area %s",
+                        area.area_prior,
+                        area_name,
+                    )
                     area_data.prior.set_global_prior(area.area_prior)
+                else:
+                    _LOGGER.debug(
+                        "No area_prior found for area %s (area=%s, area_prior=%s)",
+                        area_name,
+                        area,
+                        area.area_prior if area else None,
+                    )
 
                 # Process entities
                 if entities:

@@ -28,9 +28,11 @@ from custom_components.area_occupancy.migrations import (
     validate_threshold,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 
+# ruff: noqa: PLC0415
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
 
@@ -49,7 +51,11 @@ class TestAsyncMigrateUniqueIds:
         ],
     )
     async def test_async_migrate_unique_ids(
-        self, mock_hass: Mock, mock_config_entry: Mock, entities: dict, platform: str
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        entities: dict,
+        platform: str,
     ) -> None:
         """Test unique ID migration with various scenarios."""
         with patch(
@@ -60,7 +66,7 @@ class TestAsyncMigrateUniqueIds:
             mock_registry.async_update_entity = AsyncMock()
             mock_get_registry.return_value = mock_registry
 
-            await async_migrate_unique_ids(mock_hass, mock_config_entry, platform)
+            await async_migrate_unique_ids(hass, mock_config_entry, platform)
 
             # Should complete without error
             assert mock_registry.async_update_entity.call_count >= 0
@@ -202,7 +208,7 @@ class TestAsyncMigrateStorage:
         [None, HomeAssistantError("Storage error")],
     )
     async def test_async_migrate_storage(
-        self, mock_hass: Mock, load_side_effect: Exception | None
+        self, hass: HomeAssistant, load_side_effect: Exception | None
     ) -> None:
         """Test storage migration with various scenarios."""
         with patch(
@@ -210,7 +216,7 @@ class TestAsyncMigrateStorage:
             new_callable=AsyncMock,
             side_effect=load_side_effect,
         ):
-            await async_migrate_storage(mock_hass, "test_entry_id", 1)
+            await async_migrate_storage(hass, "test_entry_id", 1)
             # Should complete without error
 
 
@@ -220,10 +226,13 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_v1_0(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at version 1.0."""
+        from homeassistant.config_entries import ConfigEntryState
+
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
         entry.entry_id = mock_config_entry.entry_id
+        entry.state = ConfigEntryState.LOADED
         entry.data = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
         entry.options = {}
         return entry
@@ -231,10 +240,13 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_current(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at current version."""
+        from homeassistant.config_entries import ConfigEntryState
+
         entry = Mock(spec=ConfigEntry)
         entry.version = CONF_VERSION
         entry.minor_version = CONF_VERSION_MINOR
         entry.entry_id = mock_config_entry.entry_id
+        entry.state = ConfigEntryState.LOADED
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -243,13 +255,17 @@ class TestAsyncMigrateEntry:
         return entry
 
     async def test_async_migrate_entry_v1_0_to_current(
-        self, mock_hass: Mock, mock_config_entry_v1_0: Mock
+        self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration from version 1.0 to current."""
+
         # Ensure the entry exists in config_entries so it's not considered consolidated
-        mock_hass.config_entries.async_entries = Mock(
-            return_value=[mock_config_entry_v1_0]
-        )
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        # Make it return the entry for both calls: with DOMAIN argument and without (during teardown)
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
 
         with (
             patch(
@@ -266,45 +282,53 @@ class TestAsyncMigrateEntry:
             ),
         ):
             mock_migrate_ids.return_value = None
-            mock_hass.config_entries.async_update_entry = Mock()
+            hass.config_entries.async_update_entry = Mock()
 
-            result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+            result = await async_migrate_entry(hass, mock_config_entry_v1_0)
 
             assert result is True
-            mock_hass.config_entries.async_update_entry.assert_called_once()
+            hass.config_entries.async_update_entry.assert_called_once()
 
-            call_args = mock_hass.config_entries.async_update_entry.call_args
+            call_args = hass.config_entries.async_update_entry.call_args
             assert call_args[0][0] == mock_config_entry_v1_0
             updated_data = call_args[1]["data"]
             assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
 
     async def test_async_migrate_entry_already_current(
-        self, mock_hass: Mock, mock_config_entry_current: Mock
+        self, hass: HomeAssistant, mock_config_entry_current: Mock
     ) -> None:
         """Test migration when already at current version."""
-        result = await async_migrate_entry(mock_hass, mock_config_entry_current)
+        result = await async_migrate_entry(hass, mock_config_entry_current)
         assert result is True
 
-    async def test_async_migrate_entry_future_version(self, mock_hass: Mock) -> None:
+    async def test_async_migrate_entry_future_version(
+        self, hass: HomeAssistant
+    ) -> None:
         """Test migration from future version."""
+        from homeassistant.config_entries import ConfigEntryState
+
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = CONF_VERSION + 1
         mock_entry.minor_version = 0
         mock_entry.entry_id = "test_entry_id"
+        mock_entry.state = ConfigEntryState.LOADED
         mock_entry.data = {}
         mock_entry.options = {}
 
-        result = await async_migrate_entry(mock_hass, mock_entry)
+        result = await async_migrate_entry(hass, mock_entry)
         assert result is True
 
     async def test_async_migrate_entry_migration_error(
-        self, mock_hass: Mock, mock_config_entry_v1_0: Mock
+        self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with error during migration."""
+
         # Mock async_entries to return the entry so it's not considered consolidated
-        mock_hass.config_entries.async_entries = Mock(
-            return_value=[mock_config_entry_v1_0]
-        )
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
         with (
             patch(
                 "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
@@ -324,22 +348,25 @@ class TestAsyncMigrateEntry:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_hass.config_entries.async_update_entry = Mock()
+            hass.config_entries.async_update_entry = Mock()
 
             # The migration code catches HomeAssistantError but not generic Exception
             # So a generic Exception should propagate
             with pytest.raises(Exception, match="Migration error"):
-                await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+                await async_migrate_entry(hass, mock_config_entry_v1_0)
 
     async def test_async_migrate_entry_invalid_threshold(
-        self, mock_hass: Mock, mock_config_entry_v1_0: Mock
+        self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with invalid threshold value."""
         mock_config_entry_v1_0.options = {CONF_THRESHOLD: 150}
+
         # Mock async_entries to return the entry so it's not considered consolidated
-        mock_hass.config_entries.async_entries = Mock(
-            return_value=[mock_config_entry_v1_0]
-        )
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
 
         with (
             patch(
@@ -360,14 +387,14 @@ class TestAsyncMigrateEntry:
             ),
         ):
             mock_migrate_ids.return_value = None
-            mock_hass.config_entries.async_update_entry = Mock()
+            hass.config_entries.async_update_entry = Mock()
 
-            result = await async_migrate_entry(mock_hass, mock_config_entry_v1_0)
+            result = await async_migrate_entry(hass, mock_config_entry_v1_0)
             assert result is True
 
             # Check that async_update_entry was called
-            assert mock_hass.config_entries.async_update_entry.called
-            call_args = mock_hass.config_entries.async_update_entry.call_args
+            assert hass.config_entries.async_update_entry.called
+            call_args = hass.config_entries.async_update_entry.call_args
             if call_args:
                 updated_options = call_args[1].get("options", {})
                 # Threshold should be normalized to valid range (0-100)

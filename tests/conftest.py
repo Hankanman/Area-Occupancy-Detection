@@ -8,7 +8,6 @@ import contextlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import os
-import tempfile
 import time
 import types
 from typing import Any
@@ -23,6 +22,7 @@ os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
+    CONF_AREAS,
     # Import all config constants for comprehensive config entry
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
@@ -96,127 +96,55 @@ from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+# Note: Event loop management is handled by pytest-asyncio
+# We removed the enable_event_loop_debug fixture as it was interfering
+# with pytest-asyncio's event loop management and causing RuntimeError
+# issues when tests run together. pytest-asyncio handles event loop
+# creation and cleanup automatically.
 
-# Ensure an event loop exists for fixtures that rely on it
+
+# Ensure all config entries have state attribute for hass fixture teardown
 @pytest.fixture(autouse=True)
-def enable_event_loop_debug() -> None:
-    """Ensure an event loop exists and enable debug mode."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    loop.set_debug(True)
+def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
+    """Ensure all config entries returned by async_entries() have state attribute.
+
+    The hass fixture from pytest-homeassistant-custom-component checks entry.state
+    during teardown. This fixture ensures all entries have state set to prevent
+    AttributeError during teardown.
+    """
+    from homeassistant.config_entries import ConfigEntryState
+
+    original_async_entries = hass.config_entries.async_entries
+
+    def async_entries_with_state(domain=None):
+        """Wrapper that ensures all returned entries have state attribute."""
+        # Call original async_entries (could be real method or a mock)
+        if callable(original_async_entries):
+            entries = original_async_entries(domain)
+        else:
+            # If it's not callable, try to get entries from _entries dict
+            entries = (
+                list(hass.config_entries._entries.values())
+                if hasattr(hass.config_entries, "_entries")
+                else []
+            )
+
+        # Ensure all entries have state attribute
+        for entry in entries:
+            if not hasattr(entry, "state") or entry.state is None:
+                entry.state = ConfigEntryState.LOADED
+        return entries
+
+    # Patch async_entries to ensure state is set
+    hass.config_entries.async_entries = async_entries_with_state
+
+    yield
+
+    # Restore original (though it may not matter after test)
+    hass.config_entries.async_entries = original_async_entries
 
 
-@pytest.fixture
-def mock_hass() -> Mock:
-    """Create a comprehensive mock Home Assistant instance."""
-    hass = Mock(spec=HomeAssistant)
-
-    # Basic configuration
-    hass.config = Mock()
-    hass.config.path = Mock(return_value="/config")
-    hass.config.config_dir = tempfile.gettempdir()
-
-    # Add state attribute for database operations
-    hass.state = Mock()
-
-    # States and entities
-    hass.states = Mock()
-    hass.states.async_all = Mock(return_value=[])
-    hass.states.async_entity_ids = Mock(return_value=[])
-    hass.states.get = Mock(return_value=Mock(attributes={"device_class": None}))
-
-    # Config entries
-    hass.config_entries = Mock()
-    hass.config_entries.async_entries = Mock(return_value=[])
-    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
-    hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
-    hass.config_entries.async_reload = AsyncMock(return_value=True)
-
-    # Data storage - use proper dict to avoid "argument of type 'Mock' is not iterable" errors
-    # Note: DOMAIN will be set to coordinator by tests that need it
-    hass.data = {
-        DOMAIN: None,  # Will be set to coordinator in tests
-        "area_occupancy": {},
-        "area_occupancy_coordinators": {},
-        "area_occupancy_db": {},
-        "entity_registry": Mock(),
-        "recorder_instance": Mock(),  # Add recorder instance
-    }
-
-    # Event system
-    hass.bus = Mock()
-    hass.bus.async_listen = Mock()
-    hass.services = Mock()
-    hass.services.async_register = Mock()
-
-    # Use pytest-asyncio's event loop instead of creating our own
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    hass.loop = loop
-
-    # Async methods
-    hass.async_create_task = Mock(side_effect=lambda coro: asyncio.create_task(coro))
-
-    # Make async_add_executor_job actually execute the function
-    async def async_add_executor_job(func: Any, *args: Any, **kwargs: Any) -> Any:
-        return func(*args, **kwargs)
-
-    hass.async_add_executor_job = async_add_executor_job
-
-    hass.async_add_job = AsyncMock()
-    hass.async_run_job = AsyncMock()
-
-    # Create cancellable mocks for timer functions
-    def create_cancellable_timer() -> Mock:
-        mock_timer = Mock()
-        mock_timer.cancel = Mock()
-        mock_timer.cancelled = Mock(return_value=True)
-        return mock_timer
-
-    hass.async_call_later = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.async_track_time_interval = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.async_track_point_in_time = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-
-    # Database system
-    hass.helpers = Mock()
-    hass.helpers.db = Mock()
-    hass.helpers.db.AreaOccupancyDB = Mock()
-    hass.helpers.db.AreaOccupancyDB.async_load = AsyncMock(return_value=None)
-    hass.helpers.db.AreaOccupancyDB.async_save = AsyncMock()
-
-    # Add database manager mock to fix async_invalidate errors
-    mock_db_manager = Mock()
-    mock_db_manager.async_invalidate = Mock()
-    hass.data["area_occupancy_db"] = mock_db_manager
-
-    # Entity registry
-    hass.helpers.entity_registry = Mock()
-    hass.helpers.entity_registry.async_get = AsyncMock(return_value=Mock())
-    hass.helpers.entity_registry.async_get_entity_id = AsyncMock(return_value=None)
-    hass.helpers.entity_registry.async_update_entity = AsyncMock()
-
-    # Event helpers
-    hass.helpers.event = Mock()
-    hass.helpers.event.async_track_point_in_time = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-    hass.helpers.event.async_track_time_interval = Mock(
-        side_effect=lambda *args, **kwargs: create_cancellable_timer()
-    )
-
-    return hass
+# mock_hass fixture removed - using pytest-homeassistant-custom-component's hass fixture instead
 
 
 @pytest.fixture
@@ -267,7 +195,14 @@ def mock_config_entry() -> Mock:
     # Options and runtime data
     entry.options = {}
     entry.runtime_data = None
-    entry.state = None
+    # Set state attribute explicitly so it can be accessed during teardown
+    # Use ConfigEntryState if available, otherwise use None
+    try:
+        from homeassistant.config_entries import ConfigEntryState
+
+        entry.state = ConfigEntryState.LOADED
+    except ImportError:
+        entry.state = None
 
     # Config entry methods
     entry.add_update_listener = Mock()
@@ -363,7 +298,7 @@ def mock_entity_manager() -> Mock:
 
 @pytest.fixture
 def mock_coordinator(
-    mock_hass: Mock,
+    hass: HomeAssistant,
     mock_realistic_config_entry: Mock,
     mock_config: AreaConfig,
     mock_entity_manager: Mock,
@@ -374,7 +309,7 @@ def mock_coordinator(
     """Create a comprehensive mock coordinator using realistic fixtures."""
 
     coordinator = Mock(spec=AreaOccupancyCoordinator)
-    coordinator.hass = mock_hass
+    coordinator.hass = hass
     coordinator.config_entry = mock_realistic_config_entry
     coordinator.entry_id = mock_realistic_config_entry.entry_id
     coordinator.available = True
@@ -498,7 +433,7 @@ def mock_coordinator(
 
 @pytest.fixture
 def coordinator_with_areas(
-    mock_hass: Mock, mock_realistic_config_entry: Mock
+    hass: HomeAssistant, mock_realistic_config_entry: Mock
 ) -> AreaOccupancyCoordinator:
     """Create a real coordinator with areas already loaded from config.
 
@@ -511,7 +446,7 @@ def coordinator_with_areas(
             area_names = coordinator_with_areas.get_area_names()
             assert len(area_names) > 0
     """
-    coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+    coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
     coordinator._load_areas_from_config()
     return coordinator
 
@@ -751,18 +686,18 @@ def freeze_time() -> Generator[datetime]:
 
 
 @pytest.fixture(autouse=True)
-def mock_frame_helper() -> Generator[Mock]:
+def mock_frame_helper(hass: HomeAssistant) -> Generator[Mock]:
     """Mock the Home Assistant frame helper for all tests."""
     with (
-        patch("homeassistant.helpers.frame._hass") as mock_hass,
+        patch("homeassistant.helpers.frame._hass") as mock_frame_hass,
         patch("homeassistant.helpers.frame.get_integration_frame") as mock_get_frame,
         patch("homeassistant.helpers.frame.report_usage") as mock_report_usage,
         patch(
             "homeassistant.helpers.frame.report_non_thread_safe_operation"
         ) as mock_report_thread,
     ):
-        mock_hass.hass = Mock()
-        mock_hass.hass.loop = asyncio.get_event_loop()
+        mock_frame_hass.hass = hass
+        mock_frame_hass.hass.loop = hass.loop
 
         # Mock the get_integration_frame function to return a valid frame
         mock_frame = Mock()
@@ -775,7 +710,7 @@ def mock_frame_helper() -> Generator[Mock]:
         mock_report_usage.return_value = None
         mock_report_thread.return_value = None
 
-        yield mock_hass
+        yield mock_frame_hass
 
 
 # Utility functions for common test patterns
@@ -1988,6 +1923,8 @@ def mock_config() -> Mock:
 @pytest.fixture
 def mock_realistic_config_entry() -> Mock:
     """Return a realistic ConfigEntry for Area Occupancy Detection."""
+    from homeassistant.config_entries import ConfigEntryState
+
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
     entry.domain = "area_occupancy"
@@ -1996,7 +1933,7 @@ def mock_realistic_config_entry() -> Mock:
     entry.version = 9
     entry.minor_version = 2
     entry.unique_id = None
-    entry.state = None
+    entry.state = ConfigEntryState.LOADED
     entry.runtime_data = None
     entry.pref_disable_new_entities = False
     entry.pref_disable_polling = False
@@ -2102,26 +2039,46 @@ def mock_realistic_config_entry() -> Mock:
 
 @pytest.fixture(autouse=True)
 def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
-    """Automatically track and cancel all timers created during a test."""
-    loop = asyncio.get_event_loop()
-    original_call_later = loop.call_later
-    original_call_at = loop.call_at
+    """Automatically track and cancel all timers created during a test.
+
+    Note: This fixture only activates if an event loop exists to avoid
+    RuntimeError when event loops are closed between tests.
+    """
     timer_handles: list[Any] = []
+    loop = None
 
-    def tracking_call_later(
-        delay: float, callback: Any, *args: Any, **kwargs: Any
-    ) -> Any:
-        handle = original_call_later(delay, callback, *args, **kwargs)
-        timer_handles.append(handle)
-        return handle
+    # Try to get the event loop, but don't fail if it doesn't exist
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = None
+        except RuntimeError:
+            # No event loop available - skip timer tracking
+            loop = None
 
-    def tracking_call_at(when: float, callback: Any, *args: Any, **kwargs: Any) -> Any:
-        handle = original_call_at(when, callback, *args, **kwargs)
-        timer_handles.append(handle)
-        return handle
+    if loop is not None:
+        original_call_later = loop.call_later
+        original_call_at = loop.call_at
 
-    monkeypatch.setattr(loop, "call_later", tracking_call_later)
-    monkeypatch.setattr(loop, "call_at", tracking_call_at)
+        def tracking_call_later(
+            delay: float, callback: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            handle = original_call_later(delay, callback, *args, **kwargs)
+            timer_handles.append(handle)
+            return handle
+
+        def tracking_call_at(
+            when: float, callback: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            handle = original_call_at(when, callback, *args, **kwargs)
+            timer_handles.append(handle)
+            return handle
+
+        monkeypatch.setattr(loop, "call_later", tracking_call_later)
+        monkeypatch.setattr(loop, "call_at", tracking_call_at)
 
     # Patch async_track_point_in_time if used directly
     try:
@@ -2144,9 +2101,11 @@ def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
 
     yield
 
-    for handle in timer_handles:
-        with contextlib.suppress(Exception):
-            handle.cancel()
+    # Clean up timers if loop is still available
+    if loop is not None and not loop.is_closed():
+        for handle in timer_handles:
+            with contextlib.suppress(Exception):
+                handle.cancel()
 
 
 # SQLAlchemy Database Testing Fixtures
@@ -2155,16 +2114,23 @@ def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
 
 @pytest.fixture
 def db_engine() -> Generator[Any]:
-    """Create an in-memory SQLite engine for testing."""
+    """Create an in-memory SQLite engine for testing.
+
+    Uses shared cache mode so data saved in one connection is visible
+    to other connections in the same process (important for executor threads).
+    """
+    import sqlalchemy as sa
     from sqlalchemy import create_engine
 
     from custom_components.area_occupancy.db import Base
 
-    # Create in-memory SQLite engine
+    # Create in-memory SQLite engine with shared cache
+    # This allows multiple connections to see the same data
     engine = create_engine(
-        "sqlite:///:memory:",
+        "sqlite:///:memory:?cache=shared",
         echo=False,
         pool_pre_ping=True,
+        poolclass=sa.pool.StaticPool,  # Use StaticPool to reuse connections
         connect_args={"check_same_thread": False},
     )
 
@@ -2293,7 +2259,7 @@ def db_with_engine(
 
 
 @pytest.fixture
-def mock_db_with_engine(mock_hass: Mock, db_engine: Any, tmp_path: Any) -> Any:
+def mock_db_with_engine(hass: HomeAssistant, db_engine: Any, tmp_path: Any) -> Any:
     """Create AreaOccupancyDB instance with in-memory database.
 
     DEPRECATED: Use coordinator_with_db or db_with_engine instead.
@@ -2308,7 +2274,7 @@ def mock_db_with_engine(mock_hass: Mock, db_engine: Any, tmp_path: Any) -> Any:
 
     # Create mock coordinator
     mock_coordinator = Mock()
-    mock_coordinator.hass = mock_hass
+    mock_coordinator.hass = hass
     mock_coordinator.entry_id = "test_entry_001"
     mock_coordinator.config_entry = Mock()
     mock_coordinator.config_entry.data = {"version": 9}
@@ -2416,3 +2382,294 @@ def sample_prior_data() -> dict[str, Any]:
     """Provide sample prior data for testing."""
     data = _create_sample_data()["prior"]
     return dict(data) if isinstance(data, dict) else {}
+
+
+# Config Flow Test Fixtures
+# These fixtures are shared across config flow tests to reduce duplication
+
+
+@pytest.fixture
+def config_flow_flow(hass: HomeAssistant) -> Any:
+    """Create an AreaOccupancyConfigFlow instance for testing."""
+    from custom_components.area_occupancy.config_flow import AreaOccupancyConfigFlow
+
+    flow = AreaOccupancyConfigFlow()
+    flow.hass = hass
+    return flow
+
+
+@pytest.fixture
+def config_flow_options_flow(
+    hass: HomeAssistant, config_flow_mock_config_entry_with_areas: Mock
+) -> Any:
+    """Create an AreaOccupancyOptionsFlow instance for testing."""
+    from custom_components.area_occupancy.config_flow import AreaOccupancyOptionsFlow
+
+    flow = AreaOccupancyOptionsFlow()
+    flow.hass = hass
+
+    # Patch frame reporting to avoid issues with Mock config entries
+    # The patch needs to stay active, so we patch it at module level
+    with (
+        patch("homeassistant.helpers.frame.report_usage", return_value=None),
+        patch(
+            "homeassistant.helpers.frame.async_suggest_report_issue", return_value=None
+        ),
+        patch("homeassistant.loader.async_get_issue_tracker", return_value=None),
+    ):
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+        yield flow
+
+
+@pytest.fixture
+def config_flow_base_config() -> dict[str, Any]:
+    """Create a base valid configuration for testing."""
+    return {
+        CONF_NAME: "Test Area",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+        CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
+        CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
+        CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
+        CONF_WEIGHT_DOOR: DEFAULT_WEIGHT_DOOR,
+        CONF_WEIGHT_WINDOW: DEFAULT_WEIGHT_WINDOW,
+        CONF_WEIGHT_ENVIRONMENTAL: DEFAULT_WEIGHT_ENVIRONMENTAL,
+    }
+
+
+@pytest.fixture
+def config_flow_sample_area() -> dict[str, Any]:
+    """Create a minimal sample area configuration."""
+    return {
+        CONF_NAME: "Living Room",
+        CONF_PURPOSE: "social",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+    }
+
+
+@pytest.fixture
+def config_flow_sample_area_full() -> dict[str, Any]:
+    """Create a sample area configuration with all fields."""
+    return {
+        CONF_NAME: "Living Room",
+        CONF_PURPOSE: "social",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+        CONF_MEDIA_DEVICES: ["media_player.tv"],
+        CONF_DOOR_SENSORS: ["binary_sensor.door1"],
+        CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
+        CONF_APPLIANCES: ["switch.light"],
+        CONF_THRESHOLD: 60.0,
+    }
+
+
+@pytest.fixture
+def config_flow_valid_user_input() -> dict[str, Any]:
+    """Create valid user input for testing."""
+    return {
+        CONF_NAME: "Living Room",
+        "motion": {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+        },
+        "purpose": {},
+        "doors": {},
+        "windows": {},
+        "media": {},
+        "appliances": {},
+        "environmental": {},
+        "wasp_in_box": {},
+        "parameters": {CONF_THRESHOLD: 60},
+    }
+
+
+@pytest.fixture
+def config_flow_mock_config_entry_with_areas() -> Mock:
+    """Create a mock config entry with multi-area format."""
+    from asyncio import Lock
+
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+
+    entry = Mock(spec=ConfigEntry)
+    entry.entry_id = "test_entry_id"
+    entry.unique_id = "test_unique_id"
+    entry.domain = DOMAIN
+    entry.state = ConfigEntryState.LOADED
+    entry.disabled_by = None
+    entry.setup_lock = Lock()
+    entry.data = {
+        CONF_AREAS: [
+            {
+                CONF_NAME: "Living Room",
+                CONF_PURPOSE: "social",
+                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+                CONF_THRESHOLD: 60.0,
+            }
+        ]
+    }
+    entry.options = {}
+    return entry
+
+
+@pytest.fixture
+def config_flow_mock_config_entry_legacy() -> Mock:
+    """Create a mock config entry with legacy single-area format."""
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+
+    entry = Mock(spec=ConfigEntry)
+    entry.entry_id = "test_entry_id"
+    entry.state = ConfigEntryState.LOADED
+    entry.data = {
+        CONF_NAME: "Legacy Area",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+    }
+    entry.options = {}
+    return entry
+
+
+@pytest.fixture
+def config_flow_mock_config_entry_legacy_no_name() -> Mock:
+    """Create a mock config entry with legacy format but no name."""
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+
+    entry = Mock(spec=ConfigEntry)
+    entry.entry_id = "test_entry_id"
+    entry.state = ConfigEntryState.LOADED
+    entry.data = {
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+    }
+    entry.options = {}
+    return entry
+
+
+@pytest.fixture
+def config_flow_mock_hass_for_schema(hass: HomeAssistant) -> HomeAssistant:
+    """Set up hass for schema tests - no longer needed as hass fixture provides real states."""
+    # Real hass fixture already has states, no mocking needed
+    return hass
+
+
+@pytest.fixture
+def config_flow_mock_entity_registry_for_schema() -> Mock:
+    """Create mock entity registry for schema tests."""
+    from homeassistant.helpers.entity_registry import EntityRegistry
+
+    mock_registry = Mock(spec=EntityRegistry)
+    mock_registry.entities = {}
+    return mock_registry
+
+
+# Config Flow Helper Functions
+# These helper functions reduce code duplication in config flow tests
+
+
+@contextmanager
+def patch_create_schema_context(return_value: dict[str, Any] | None = None):
+    """Context manager to patch create_schema for tests."""
+    import voluptuous as vol
+
+    with patch(
+        "custom_components.area_occupancy.config_flow.create_schema",
+        return_value=return_value or {"test": vol.Required("test")},
+    ):
+        yield
+
+
+@contextmanager
+def patch_validate_methods_context(
+    flow: Any,
+    validate_config: Any | None = None,
+    validate_duplicate: Any | None = None,
+):
+    """Context manager to patch validation methods.
+
+    Args:
+        flow: The flow instance to patch methods on
+        validate_config: If None, patches _validate_config. If False, doesn't patch.
+            Otherwise, uses as side_effect.
+        validate_duplicate: If None, patches _validate_duplicate_name_internal.
+            If False, doesn't patch. Otherwise, uses as side_effect.
+    """
+    from contextlib import ExitStack
+
+    patches = []
+    if validate_config is not None:
+        if validate_config is False:
+            pass  # Don't patch
+        else:
+            patches.append(
+                patch.object(flow, "_validate_config", side_effect=validate_config)
+            )
+    else:
+        patches.append(patch.object(flow, "_validate_config"))
+
+    if validate_duplicate is not None:
+        if validate_duplicate is False:
+            pass  # Don't patch
+        else:
+            patches.append(
+                patch.object(
+                    flow,
+                    "_validate_duplicate_name_internal",
+                    side_effect=validate_duplicate,
+                )
+            )
+    else:
+        patches.append(patch.object(flow, "_validate_duplicate_name_internal"))
+
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        yield
+
+
+def create_area_config(name: str = "Test Area", **overrides: Any) -> dict[str, Any]:
+    """Create area config dict with sensible defaults.
+
+    Args:
+        name: Area name
+        **overrides: Any config keys to override
+
+    Returns:
+        Area configuration dictionary
+    """
+    config = {
+        CONF_NAME: name,
+        CONF_PURPOSE: "social",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+    }
+    config.update(overrides)
+    return config
+
+
+def create_user_input(name: str = "Test Area", **overrides: Any) -> dict[str, Any]:
+    """Create user input dict with sensible defaults.
+
+    Args:
+        name: Area name
+        **overrides: Any input keys to override
+
+    Returns:
+        User input dictionary
+    """
+    input_dict = {
+        CONF_NAME: name,
+        "motion": {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
+        },
+        "purpose": {},
+        "doors": {},
+        "windows": {},
+        "media": {},
+        "appliances": {},
+        "environmental": {},
+        "wasp_in_box": {},
+        "parameters": {CONF_THRESHOLD: 60},
+    }
+    input_dict.update(overrides)
+    return input_dict
