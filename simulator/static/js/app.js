@@ -532,15 +532,25 @@ async function handleToggle(entityId, isOn) {
 // Handle numeric update
 async function handleNumericUpdate(entityId, value) {
   try {
+    // Parse and validate the numeric value
+    const parsed = parseFloat(value);
+    if (!Number.isFinite(parsed)) {
+      showError("Invalid numeric value. Please enter a valid number.");
+      return;
+    }
+
+    // Build request body with only valid numeric value
+    const body = {
+      entity_id: entityId,
+      value: parsed,
+    };
+
     const response = await fetch("/api/update", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        entity_id: entityId,
-        value: parseFloat(value),
-      }),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json();
@@ -549,6 +559,9 @@ async function handleNumericUpdate(entityId, value) {
       showError(data.error || "Failed to update sensor");
       return;
     }
+
+    // Clear any previous error on successful response
+    hideError();
 
     updateProbability(data.probability);
     renderBreakdown(data.breakdown);
