@@ -15,7 +15,11 @@ from sqlalchemy.orm import sessionmaker
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry as ar, entity_registry as er
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
@@ -575,6 +579,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
     # Track which steps completed successfully
     migration_steps_completed = {
         "entity_registry": False,
+        "device_registry": False,
         "database": False,
         "config_update": False,
         "entry_removal": [],
@@ -669,10 +674,13 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
             len(entries),
         )
 
+        # Determine base entry (first entry becomes the consolidated entry)
+        base_entry = filtered_entries[0]
+
         # Step 2: Migrate entity registry entries
         try:
             await _migrate_entity_registry_for_consolidation(
-                hass, filtered_entries, entry_id_to_area_name
+                hass, filtered_entries, entry_id_to_area_name, base_entry.entry_id
             )
             migration_steps_completed["entity_registry"] = True
             _LOGGER.debug("Step 2 completed: Entity registry migration")
@@ -699,9 +707,6 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 
         # Step 4: Create new consolidated config entry
         consolidated_data = {CONF_AREAS: areas_list}
-
-        # Use the first successfully resolved entry as the base for the consolidated entry
-        base_entry = filtered_entries[0]
 
         _LOGGER.info(
             "Creating consolidated config entry with %d areas", len(areas_list)
@@ -739,7 +744,23 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 _LOGGER.error("Failed to restore config entry state: %s", restore_err)
             raise
 
-        # Step 5: Remove other entries (only those that were successfully resolved)
+        # Step 5: Migrate device registry entries
+        # Must be done after consolidated config entry is updated, but before removing old entries
+        try:
+            await _migrate_device_registry_for_consolidation(
+                hass, filtered_entries, base_entry.entry_id
+            )
+            migration_steps_completed["device_registry"] = True
+            _LOGGER.debug("Step 5 completed: Device registry migration")
+        except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+            _LOGGER.error("Step 5 failed: Device registry migration - %s", err)
+            # Device registry migration failure is not critical, continue
+            _LOGGER.warning(
+                "Device registry migration failed, but continuing with migration. "
+                "Devices may need manual cleanup."
+            )
+
+        # Step 6: Remove other entries (only those that were successfully resolved)
         removal_errors: list[tuple[str, Exception]] = []
         for entry in filtered_entries[1:]:
             try:
@@ -881,12 +902,20 @@ async def _migrate_entity_registry_for_consolidation(
     hass: HomeAssistant,
     entries: list[ConfigEntry],
     entry_id_to_area_name: dict[str, str],
+    new_entry_id: str,
 ) -> None:
     """Migrate entity registry entries for consolidation.
 
     Updates unique IDs from {entry_id}_{entity_type} or {DOMAIN}_{entry_id}_{entity_type}
-    to {area_name}_{entity_type}. Handles both new format (after unique ID migration)
+    to {area_name}_{entity_type}. Also updates config_entry_id to point to the new
+    consolidated config entry. Handles both new format (after unique ID migration)
     and legacy format (in case unique ID migration didn't run).
+
+    Args:
+        hass: Home Assistant instance
+        entries: List of old config entries being consolidated
+        entry_id_to_area_name: Mapping of old entry IDs to area names
+        new_entry_id: The entry ID of the new consolidated config entry
     """
     _LOGGER.info("Migrating entity registry entries for consolidation")
     entity_registry = er.async_get(hass)
@@ -924,24 +953,12 @@ async def _migrate_entity_registry_for_consolidation(
             entity_suffix = old_unique_id_str[len(new_prefix) :]
             new_unique_id = f"{area_name}_{entity_suffix}"
 
-            # Update with conflict checking
-            success, conflict_entity_id = _update_entity_unique_id(
-                entity_registry,
-                entity_id,
-                old_unique_id_str,
-                new_unique_id,
-                check_conflicts=True,
+            # Check for conflicts before updating
+            has_conflict, conflict_entity_id = _check_unique_id_conflict(
+                entity_registry, new_unique_id, entity_id
             )
 
-            if success:
-                _LOGGER.info(
-                    "Migrating entity unique_id: %s -> %s (entity: %s)",
-                    old_unique_id_str,
-                    new_unique_id,
-                    entity_id,
-                )
-                updated_count += 1
-            else:
+            if has_conflict:
                 conflicts.append((entity_id, old_unique_id_str, new_unique_id))
                 _LOGGER.warning(
                     "Unique ID conflict: %s already exists for entity %s. "
@@ -952,6 +969,25 @@ async def _migrate_entity_registry_for_consolidation(
                     old_unique_id_str,
                 )
                 skipped_count += 1
+                continue
+
+            # Update both unique_id and config_entry_id in a single call
+            # This ensures entities are linked to the correct config entry
+            old_config_entry_id = entity_entry.config_entry_id
+            entity_registry.async_update_entity(
+                entity_id,
+                new_unique_id=new_unique_id,
+                config_entry_id=new_entry_id,
+            )
+            _LOGGER.info(
+                "Migrating entity unique_id: %s -> %s, config_entry_id: %s -> %s (entity: %s)",
+                old_unique_id_str,
+                new_unique_id,
+                old_config_entry_id,
+                new_entry_id,
+                entity_id,
+            )
+            updated_count += 1
 
         # Process entities found with legacy format
         for entity_id, entity_entry in legacy_format_entities:
@@ -969,24 +1005,12 @@ async def _migrate_entity_registry_for_consolidation(
             entity_suffix = old_unique_id_str[len(legacy_prefix) :]
             new_unique_id = f"{area_name}_{entity_suffix}"
 
-            # Update with conflict checking
-            success, conflict_entity_id = _update_entity_unique_id(
-                entity_registry,
-                entity_id,
-                old_unique_id_str,
-                new_unique_id,
-                check_conflicts=True,
+            # Check for conflicts before updating
+            has_conflict, conflict_entity_id = _check_unique_id_conflict(
+                entity_registry, new_unique_id, entity_id
             )
 
-            if success:
-                _LOGGER.info(
-                    "Migrating entity unique_id: %s -> %s (entity: %s)",
-                    old_unique_id_str,
-                    new_unique_id,
-                    entity_id,
-                )
-                updated_count += 1
-            else:
+            if has_conflict:
                 conflicts.append((entity_id, old_unique_id_str, new_unique_id))
                 _LOGGER.warning(
                     "Unique ID conflict: %s already exists for entity %s. "
@@ -997,6 +1021,25 @@ async def _migrate_entity_registry_for_consolidation(
                     old_unique_id_str,
                 )
                 skipped_count += 1
+                continue
+
+            # Update both unique_id and config_entry_id in a single call
+            # This ensures entities are linked to the correct config entry
+            old_config_entry_id = entity_entry.config_entry_id
+            entity_registry.async_update_entity(
+                entity_id,
+                new_unique_id=new_unique_id,
+                config_entry_id=new_entry_id,
+            )
+            _LOGGER.info(
+                "Migrating entity unique_id: %s -> %s, config_entry_id: %s -> %s (entity: %s)",
+                old_unique_id_str,
+                new_unique_id,
+                old_config_entry_id,
+                new_entry_id,
+                entity_id,
+            )
+            updated_count += 1
 
     _LOGGER.info(
         "Migrated %d entity registry entries, skipped %d due to conflicts",
@@ -1008,6 +1051,127 @@ async def _migrate_entity_registry_for_consolidation(
             "The following entities could not be migrated due to unique ID conflicts: %s",
             conflicts,
         )
+
+
+async def _migrate_device_registry_for_consolidation(
+    hass: HomeAssistant,
+    entries: list[ConfigEntry],
+    new_entry_id: str,
+) -> None:
+    """Migrate device registry entries for consolidation.
+
+    Updates device registry entries to link to the new consolidated config entry
+    instead of the old entries. This ensures that when entities are created after
+    consolidation, devices are properly linked and don't cause errors.
+
+    Args:
+        hass: Home Assistant instance
+        entries: List of old config entries that are being consolidated
+        new_entry_id: The entry ID of the new consolidated config entry
+    """
+    _LOGGER.info("Migrating device registry entries for consolidation")
+    device_registry = dr.async_get(hass)
+    old_entry_ids = {entry.entry_id for entry in entries}
+    updated_count = 0
+    skipped_count = 0
+
+    # Find all devices linked to old entry IDs for this domain
+    # Devices are identified by (DOMAIN, area_id or area_name)
+    for device_id, device_entry in device_registry.devices.items():
+        # Check if device belongs to this domain by checking identifiers
+        # Devices for this integration use identifiers like (DOMAIN, area_id)
+        device_identifiers = device_entry.identifiers
+        is_domain_device = any(
+            identifier[0] == DOMAIN for identifier in device_identifiers
+        )
+
+        if not is_domain_device:
+            # Device doesn't belong to this domain, skip it
+            continue
+
+        # Check if device is linked to any of the old entry IDs
+        device_config_entries = device_entry.config_entries
+        old_entry_ids_in_device = device_config_entries & old_entry_ids
+
+        if not old_entry_ids_in_device:
+            # Device is not linked to any old entries, skip it
+            continue
+
+        # Check if device is already linked to the new entry
+        if new_entry_id in device_config_entries:
+            # Device is already linked to new entry, just remove old entry links
+            for old_entry_id in old_entry_ids_in_device:
+                try:
+                    device_registry.async_update_device(
+                        device_id, remove_config_entry_id=old_entry_id
+                    )
+                    _LOGGER.debug(
+                        "Removed old entry %s from device %s (already linked to new entry)",
+                        old_entry_id,
+                        device_id,
+                    )
+                except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+                    _LOGGER.warning(
+                        "Failed to remove old entry %s from device %s: %s",
+                        old_entry_id,
+                        device_id,
+                        err,
+                    )
+            updated_count += 1
+        else:
+            # Device is only linked to old entries, need to migrate it
+            try:
+                # First, add the new entry link (while old entries still exist)
+                device_registry.async_update_device(
+                    device_id, add_config_entry_id=new_entry_id
+                )
+                _LOGGER.debug(
+                    "Added new entry %s to device %s", new_entry_id, device_id
+                )
+                # Then, remove old entry links
+                for old_entry_id in old_entry_ids_in_device:
+                    try:
+                        device_registry.async_update_device(
+                            device_id, remove_config_entry_id=old_entry_id
+                        )
+                        _LOGGER.debug(
+                            "Removed old entry %s from device %s",
+                            old_entry_id,
+                            device_id,
+                        )
+                    except (
+                        ValueError,
+                        KeyError,
+                        RuntimeError,
+                        HomeAssistantError,
+                    ) as err:
+                        _LOGGER.warning(
+                            "Failed to remove old entry %s from device %s: %s",
+                            old_entry_id,
+                            device_id,
+                            err,
+                        )
+                _LOGGER.info(
+                    "Migrated device %s from entries %s to entry %s",
+                    device_id,
+                    old_entry_ids_in_device,
+                    new_entry_id,
+                )
+                updated_count += 1
+            except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+                _LOGGER.warning(
+                    "Failed to migrate device %s: %s. Device may need manual cleanup.",
+                    device_id,
+                    err,
+                )
+                skipped_count += 1
+
+    _LOGGER.info(
+        "Migrated %d device registry entries for domain %s, skipped %d due to errors",
+        updated_count,
+        DOMAIN,
+        skipped_count,
+    )
 
 
 async def _migrate_database_for_consolidation(
