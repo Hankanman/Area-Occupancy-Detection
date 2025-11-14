@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -51,6 +52,20 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         area = coordinator.get_area_or_default(area_name)
         self._attr_device_info = area.device_info()
         self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        # Assign device to Home Assistant area if area_id is configured
+        area = self.coordinator.get_area_or_default(self._area_name)
+        if area and area.config.area_id and self.device_info:
+            device_registry = dr.async_get(self.hass)
+            identifiers = self.device_info.get("identifiers", set())
+            device = device_registry.async_get_device(identifiers=identifiers)
+            if device and device.area_id != area.config.area_id:
+                device_registry.async_update_device(
+                    device.id, area_id=area.config.area_id
+                )
 
     @property
     def native_value(self) -> float:

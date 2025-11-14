@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
 # Dispatcher imports removed - no longer needed without master election
@@ -28,14 +28,13 @@ from .area import AllAreas, Area
 from .const import (
     ALL_AREAS_IDENTIFIER,
     CONF_AREAS,
-    CONF_NAME,
+    CONF_AREA_ID,
     DEFAULT_NAME,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
     DOMAIN,
     MIN_PROBABILITY,
-    validate_and_sanitize_area_name,
 )
 from .data.integration_config import IntegrationConfig
 from .db import AreaOccupancyDB
@@ -51,7 +50,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             hass,
             _LOGGER,
-            name=config_entry.data.get(CONF_NAME, DEFAULT_NAME),
+            name=DEFAULT_NAME,
             update_interval=None,
             setup_method=self.setup,
             update_method=self.update,
@@ -115,27 +114,67 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
 
+        area_reg = area_registry.async_get(self.hass)
+        areas_to_remove: list[str] = []  # Track areas to remove (deleted or invalid)
+        config_updated = False  # Track if config needs updating
+
         # Check if we have the new multi-area format
         if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
             # New multi-area format
             areas_list = merged[CONF_AREAS]
             for area_data in areas_list:
-                area_name = area_data.get(CONF_NAME)
-                if not area_name:
-                    _LOGGER.warning("Skipping area without name: %s", area_data)
-                    continue
+                area_id = area_data.get(CONF_AREA_ID)
 
-                # Validate and sanitize area name
-                try:
-                    area_name = validate_and_sanitize_area_name(area_name)
-                    # Update area_data with sanitized name
-                    area_data[CONF_NAME] = area_name
-                except ValueError as err:
+                # Legacy migration: if CONF_NAME exists but CONF_AREA_ID doesn't, migrate
+                if not area_id:
+                    legacy_name = area_data.get("name")  # Use string literal for legacy
+                    if legacy_name:
+                        _LOGGER.info(
+                            "Migrating legacy area '%s' to area ID format", legacy_name
+                        )
+                        # Try to resolve name to ID
+                        area_id = None
+                        for area_entry in area_reg.async_list_areas():
+                            if area_entry.name == legacy_name:
+                                area_id = area_entry.id
+                                break
+
+                        if area_id:
+                            # Migration successful
+                            area_data[CONF_AREA_ID] = area_id
+                            # Remove CONF_NAME
+                            area_data.pop("name", None)
+                            config_updated = True
+                            _LOGGER.info(
+                                "Migrated area '%s' to area ID '%s'", legacy_name, area_id
+                            )
+                        else:
+                            _LOGGER.warning(
+                                "Could not resolve legacy area name '%s' to area ID. "
+                                "Area may have been deleted. Skipping area.",
+                                legacy_name,
+                            )
+                            areas_to_remove.append(legacy_name)
+                            continue
+                    else:
+                        _LOGGER.warning("Skipping area without area ID or name: %s", area_data)
+                        continue
+
+                # Validate that area ID exists in Home Assistant
+                area_entry = area_reg.async_get_area(area_id)
+                if not area_entry:
                     _LOGGER.warning(
-                        "Invalid area name '%s': %s. Skipping area.", area_name, err
+                        "Area ID '%s' not found in Home Assistant registry. "
+                        "Area may have been deleted. Removing from configuration.",
+                        area_id,
                     )
+                    areas_to_remove.append(area_id)
                     continue
 
+                # Resolve area name from ID
+                area_name = area_entry.name
+
+                # Check for duplicate area IDs
                 if area_name in areas_dict:
                     _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                     continue
@@ -146,23 +185,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     area_name=area_name,
                     area_data=area_data,
                 )
-                _LOGGER.debug("Loaded area: %s", area_name)
+                _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
         else:
-            # Legacy single-area format - create area from entry data
-            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
-
-            # Validate and sanitize area name
-            try:
-                area_name = validate_and_sanitize_area_name(area_name)
-            except ValueError as err:
-                _LOGGER.warning(
-                    "Invalid area name '%s': %s. Using default name.", area_name, err
-                )
-                area_name = DEFAULT_NAME
+            # Legacy single-area format - migrate to new format
+            legacy_name = merged.get("name", DEFAULT_NAME)  # Use string literal for legacy
 
             _LOGGER.info(
-                "Legacy config format detected, creating single area: %s", area_name
+                "Legacy single-area config format detected, migrating area '%s'", legacy_name
             )
+
+            # Try to resolve name to ID
+            area_id = None
+            for area_entry in area_reg.async_list_areas():
+                if area_entry.name == legacy_name:
+                    area_id = area_entry.id
+                    break
+
+            if area_id:
+                # Migration successful
+                merged[CONF_AREA_ID] = area_id
+                merged.pop("name", None)  # Remove CONF_NAME
+                area_name = legacy_name  # Use resolved name
+                config_updated = True
+                _LOGGER.info(
+                    "Migrated legacy area '%s' to area ID '%s'", legacy_name, area_id
+                )
+            else:
+                _LOGGER.warning(
+                    "Could not resolve legacy area name '%s' to area ID. "
+                    "Area may have been deleted. Using default.",
+                    legacy_name,
+                )
+                # Try to use first available area as fallback
+                available_areas = area_reg.async_list_areas()
+                if available_areas:
+                    area_entry = available_areas[0]
+                    area_id = area_entry.id
+                    area_name = area_entry.name
+                    merged[CONF_AREA_ID] = area_id
+                    config_updated = True
+                    _LOGGER.info(
+                        "Using first available area '%s' (ID: %s) as fallback",
+                        area_name,
+                        area_id,
+                    )
+                else:
+                    _LOGGER.error("No areas available in Home Assistant. Cannot create area.")
+                    return
 
             # Create area for migration path
             areas_dict[area_name] = Area(
@@ -170,7 +239,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name=area_name,
                 area_data=merged,
             )
-            _LOGGER.debug("Created area from legacy config: %s", area_name)
+            _LOGGER.debug("Created area from legacy config: %s (ID: %s)", area_name, area_id)
+
+        # Log warnings for deleted/invalid areas
+        # Note: We don't update the config entry here as setup() is called during initialization
+        # Users will need to reconfigure via options flow if areas are deleted
+        if areas_to_remove:
+            _LOGGER.warning(
+                "Found %d deleted or invalid area(s) in configuration. "
+                "These areas will be skipped. Please reconfigure via options flow if needed.",
+                len(areas_to_remove),
+            )
+
+        if config_updated:
+            _LOGGER.info(
+                "Migrated legacy area configuration to area ID format. "
+                "Config will be updated on next options flow save."
+            )
 
     def get_area_or_default(self, area_name: str | None = None) -> Area | None:
         """Get area by name, or return first area if None.

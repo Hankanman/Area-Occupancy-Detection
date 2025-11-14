@@ -25,7 +25,6 @@ from ..const import (
     CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
-    CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
@@ -219,12 +218,19 @@ class AreaConfig:
         threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)) / 100.0
 
         # Set all configuration attributes
-        self.name = data.get(CONF_NAME, "Area Occupancy")
+        # Area name is resolved from area_id when needed (via coordinator)
         self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
-        # For backward compatibility, try area_id first, then use area_name if set
+        # Get area_id from data
         self.area_id = data.get(CONF_AREA_ID)
-        if self.area_name and not self.area_id:
-            self.area_id = self.area_name
+        if not self.area_id:
+            # Legacy support: try to get from area_name (will be migrated)
+            # This should not happen in new configs
+            _LOGGER.warning(
+                "Area config missing area_id for area '%s'. This is a legacy config.",
+                self.area_name,
+            )
+        # Name is resolved from area_id via coordinator, so we don't store it here
+        self.name = self.area_name  # Use area_name passed to constructor
         self.threshold = threshold
 
         self.sensors = Sensors(

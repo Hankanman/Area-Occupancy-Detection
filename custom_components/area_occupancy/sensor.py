@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ALL_AREAS_IDENTIFIER
@@ -50,6 +51,25 @@ class AreaOccupancySensorBase(
         self._attr_device_info = coordinator.device_info(area_name=area_name)
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        # Assign device to Home Assistant area if area_id is configured
+        # Only for specific areas, not "All Areas"
+        if (
+            self._area_name != ALL_AREAS_IDENTIFIER
+            and self._area_name in self.coordinator.areas
+        ):
+            area = self.coordinator.areas[self._area_name]
+            if area.config.area_id and self.device_info:
+                device_registry = dr.async_get(self.hass)
+                identifiers = self.device_info.get("identifiers", set())
+                device = device_registry.async_get_device(identifiers=identifiers)
+                if device and device.area_id != area.config.area_id:
+                    device_registry.async_update_device(
+                        device.id, area_id=area.config.area_id
+                    )
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""

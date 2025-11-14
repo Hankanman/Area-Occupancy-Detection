@@ -1,5 +1,8 @@
 {
     "config": {
+        "abort": {
+            "already_configured": "A configuration for {title} already exists. {hint}"
+        },
         "step": {
             "user": {
                 "title": "Area Occupancy Detection",
@@ -25,9 +28,11 @@
                 "title": "Configure Area",
                 "description": "Configure sensors and parameters for this area",
                 "data": {
+                    "area_id": "Home Assistant Area",
                     "name": "Name of Detection Area"
                 },
                 "data_description": {
+                    "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
@@ -193,9 +198,11 @@
                 "title": "Configure Area",
                 "description": "Configure sensors and parameters for this area",
                 "data": {
+                    "area_id": "Home Assistant Area",
                     "name": "Name of Detection Area"
                 },
                 "data_description": {
+                    "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
