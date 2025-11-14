@@ -7,4 +7,5 @@ from simulator.app import app
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     debug = os.getenv("FLASK_DEBUG", "1") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    host = os.getenv("FLASK_HOST", "0.0.0.0").strip()
+    app.run(host=host, port=port, debug=debug)

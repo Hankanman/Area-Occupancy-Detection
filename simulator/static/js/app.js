@@ -851,10 +851,19 @@ function updateSensorDecayStates(entityDecay) {
       // Update decay indicator if we add one
       // For now, we can add a visual indicator
       const stateSpan = sensorItem.querySelector(".sensor-state");
-      if (stateSpan && decayInfo.is_decaying) {
-        // Add decay indicator
-        if (!stateSpan.textContent.includes("(decaying)")) {
-          stateSpan.textContent += " (decaying)";
+      if (stateSpan) {
+        if (decayInfo.is_decaying) {
+          // Add decay indicator
+          if (!stateSpan.textContent.includes("(decaying)")) {
+            stateSpan.textContent += " (decaying)";
+          }
+        } else {
+          // Remove decay indicator if present
+          const text = stateSpan.textContent;
+          const decaySuffix = " (decaying)";
+          if (text.endsWith(decaySuffix)) {
+            stateSpan.textContent = text.slice(0, -decaySuffix.length).trim();
+          }
         }
       }
     }
