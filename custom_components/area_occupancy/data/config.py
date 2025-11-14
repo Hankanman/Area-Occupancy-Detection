@@ -476,8 +476,21 @@ class AreaConfig:
             data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
             data.update(options)
 
-            # Reload configuration with updated data
-            self._load_config(data)
+            # Check if we have CONF_AREAS format (multi-area)
+            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
+                # Extract area data for this specific area
+                area_data = self._extract_area_data_from_areas_list(
+                    data[CONF_AREAS], self.area_name, self.hass
+                )
+                if area_data:
+                    # Reload configuration with extracted area data
+                    self._load_config(area_data)
+                else:
+                    # Fallback to legacy format or empty config
+                    self._load_config(data)
+            else:
+                # Legacy single-area format
+                self._load_config(data)
 
             # Request update since threshold affects occupied calculation
             # Only request refresh if setup is complete to avoid debouncer conflicts

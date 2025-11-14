@@ -1535,6 +1535,11 @@ class AreaOccupancyDB:
                 )
                 return None
 
+            # Normalize entity_type to plain string (handle Enum instances)
+            entity_type_value = (
+                entity_type.value if hasattr(entity_type, "value") else str(entity_type)
+            )
+
             # Normalize values before persisting
             try:
                 weight = float(getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT))
@@ -1567,7 +1572,7 @@ class AreaOccupancyDB:
                 "entry_id": self.coordinator.entry_id,
                 "area_name": area_name,
                 "entity_id": entity.entity_id,
-                "entity_type": entity_type,
+                "entity_type": entity_type_value,
                 "weight": weight,
                 "prob_given_true": prob_true,
                 "prob_given_false": prob_false,
