@@ -247,7 +247,9 @@ class AreaConfig:
                 "Area config missing area_id for area '%s'. This is a legacy config.",
                 self.area_name,
             )
-        # Name is resolved from area_id via coordinator, so we don't store it here
+        # The canonical name is normally resolved from area_id via the coordinator,
+        # but we store the provided area_name from the constructor as the local
+        # name/fallback (for legacy or initial display) rather than resolving it here.
         self.name = self.area_name  # Use area_name passed to constructor
         self.threshold = threshold
 
