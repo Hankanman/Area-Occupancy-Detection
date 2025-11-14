@@ -760,6 +760,23 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 "Devices may need manual cleanup."
             )
 
+        # Step 5a: Cleanup orphaned entity registry entries
+        # Must be done after device registry migration, but before removing old entries
+        # This catches any entities that were created during consolidation or missed by earlier steps
+        try:
+            await _cleanup_orphaned_entity_registry_entries(
+                hass, filtered_entries, base_entry.entry_id
+            )
+            migration_steps_completed["orphaned_entities"] = True
+            _LOGGER.debug("Step 5a completed: Orphaned entity registry cleanup")
+        except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+            _LOGGER.error("Step 5a failed: Orphaned entity cleanup - %s", err)
+            # Orphaned entity cleanup failure is not critical, continue
+            _LOGGER.warning(
+                "Orphaned entity cleanup failed, but continuing with migration. "
+                "Some entities may need manual cleanup."
+            )
+
         # Step 6: Remove other entries (only those that were successfully resolved)
         removal_errors: list[tuple[str, Exception]] = []
         for entry in filtered_entries[1:]:
@@ -1171,6 +1188,107 @@ async def _migrate_device_registry_for_consolidation(
         updated_count,
         DOMAIN,
         skipped_count,
+    )
+
+
+async def _cleanup_orphaned_entity_registry_entries(
+    hass: HomeAssistant,
+    entries: list[ConfigEntry],
+    new_entry_id: str,
+) -> None:
+    """Clean up orphaned entity registry entries after consolidation.
+
+    Finds all entity registry entries for this domain that reference removed config
+    entry IDs and updates them to reference the consolidated entry ID. This ensures
+    that entities created during or after consolidation are properly linked.
+
+    Args:
+        hass: Home Assistant instance
+        entries: List of old config entries that are being consolidated
+        new_entry_id: The entry ID of the new consolidated config entry
+    """
+    _LOGGER.info("Cleaning up orphaned entity registry entries for consolidation")
+    entity_registry = er.async_get(hass)
+    old_entry_ids = {entry.entry_id for entry in entries}
+    updated_count = 0
+    skipped_count = 0
+    removed_count = 0
+
+    # Find all entity registry entries for this domain that reference old entry IDs
+    # Check entities from our platforms: binary_sensor, sensor, number
+    for entity_id, entity_entry in entity_registry.entities.items():
+        # Only process entries for this domain (check entity_id domain part)
+        entity_domain = entity_id.split(".", 1)[0] if "." in entity_id else None
+        if entity_domain not in ["binary_sensor", "sensor", "number"]:
+            # Only process entities from our platforms
+            continue
+
+        # Check if entity references an old entry ID that will be removed
+        if entity_entry.config_entry_id not in old_entry_ids:
+            # Entity doesn't reference an old entry, skip it
+            continue
+
+        # Entity references an old entry ID - update it to the new consolidated entry
+        old_config_entry_id = entity_entry.config_entry_id
+
+        # Check if there would be a unique ID conflict
+        # (entity with same unique_id already exists for new entry)
+        # Note: We check against new_entry_id to see if an entity with the same
+        # unique_id already exists linked to the consolidated entry
+        has_conflict, conflict_entity_id = _check_unique_id_conflict(
+            entity_registry,
+            entity_entry.unique_id,
+            entity_id,  # exclude_entity_id - the entity we're checking
+        )
+
+        if has_conflict:
+            _LOGGER.warning(
+                "Unique ID conflict: %s already exists for entity %s (new entry %s). "
+                "Removing orphaned entity %s (old entry: %s)",
+                entity_entry.unique_id,
+                conflict_entity_id,
+                new_entry_id,
+                entity_id,
+                old_config_entry_id,
+            )
+            try:
+                entity_registry.async_remove(entity_id)
+                removed_count += 1
+            except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+                _LOGGER.warning(
+                    "Failed to remove orphaned entity %s: %s", entity_id, err
+                )
+                skipped_count += 1
+            continue
+
+        # Update entity to reference the new consolidated entry
+        try:
+            entity_registry.async_update_entity(
+                entity_id,
+                config_entry_id=new_entry_id,
+            )
+            _LOGGER.info(
+                "Updated orphaned entity %s: config_entry_id %s -> %s (unique_id: %s)",
+                entity_id,
+                old_config_entry_id,
+                new_entry_id,
+                entity_entry.unique_id,
+            )
+            updated_count += 1
+        except (ValueError, KeyError, RuntimeError, HomeAssistantError) as err:
+            _LOGGER.warning(
+                "Failed to update orphaned entity %s: %s. Entity may need manual cleanup.",
+                entity_id,
+                err,
+            )
+            skipped_count += 1
+
+    _LOGGER.info(
+        "Cleaned up orphaned entity registry entries: %d updated, %d removed, %d skipped (errors) for domain %s",
+        updated_count,
+        removed_count,
+        skipped_count,
+        DOMAIN,
     )
 
 
