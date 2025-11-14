@@ -748,8 +748,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Find which area(s) this entity belongs to
                 affected_areas = []
                 for area_name, area in self.areas.items():
-                    entity = area.entities.get_entity(entity_id)
-                    if entity and entity.has_new_evidence():
+                    try:
+                        entity = area.entities.get_entity(entity_id)
+                    except ValueError:
+                        # Entity doesn't belong to this area, skip it
+                        continue
+                    if entity.has_new_evidence():
                         affected_areas.append(area_name)
 
                 # If entity affects any area and setup is complete, refresh
