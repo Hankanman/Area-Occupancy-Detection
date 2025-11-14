@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 
 from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
@@ -414,7 +414,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         areas_list: list[dict[str, Any]] = []
         entry_id_to_area_name: dict[str, str] = {}  # Map for entity registry migration
 
-        area_reg = area_registry.async_get(hass)
+        area_reg = ar.async_get(hass)
 
         for entry in entries:
             # Get area name from config (legacy format)
@@ -439,7 +439,9 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                     continue
             else:
                 # Legacy format - try to resolve name to ID
-                legacy_name = merged.get("name", DEFAULT_NAME)  # Use string literal for legacy
+                legacy_name = merged.get(
+                    "name", DEFAULT_NAME
+                )  # Use string literal for legacy
 
                 # Try to find area by name
                 for area_entry in area_reg.async_list_areas():

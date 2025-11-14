@@ -7,13 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AREAS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -205,7 +208,22 @@ class AreaConfig:
         else:
             if coordinator.config_entry is None:
                 raise ValueError("Coordinator config_entry cannot be None")
-            self._load_config(self._merge_entry(coordinator.config_entry))
+            merged = self._merge_entry(coordinator.config_entry)
+
+            # Check if we have CONF_AREAS format (multi-area)
+            if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+                # Extract area data for this specific area
+                area_data = self._extract_area_data_from_areas_list(
+                    merged[CONF_AREAS], area_name, coordinator.hass
+                )
+                if area_data:
+                    self._load_config(area_data)
+                else:
+                    # Fallback to legacy format or empty config
+                    self._load_config(merged)
+            else:
+                # Legacy single-area format
+                self._load_config(merged)
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -364,13 +382,61 @@ class AreaConfig:
         merged.update(config_entry.options)
         return merged
 
+    @staticmethod
+    def _extract_area_data_from_areas_list(
+        areas_list: list[dict[str, Any]],
+        area_name: str | None,
+        hass: HomeAssistant,
+    ) -> dict[str, Any] | None:
+        """Extract area data from CONF_AREAS list for a specific area.
+
+        Args:
+            areas_list: List of area configuration dictionaries
+            area_name: Area name to find (resolved from area_id)
+            hass: Home Assistant instance for resolving area names
+
+        Returns:
+            Area configuration dictionary if found, None otherwise
+        """
+        if not area_name:
+            return None
+
+        area_reg = ar.async_get(hass)
+
+        # Try to find area by matching area_name with resolved area names
+        for area_data in areas_list:
+            area_id = area_data.get(CONF_AREA_ID)
+            if area_id:
+                # Resolve area name from ID
+                area_entry = area_reg.async_get_area(area_id)
+                if area_entry and area_entry.name == area_name:
+                    return area_data
+
+        # Fallback: if no match found, return first area or None
+        return areas_list[0] if areas_list else None
+
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry."""
         # Update the config entry reference
         self.config_entry = config_entry
 
         # Reload configuration from the merged entry data
-        self._load_config(self._merge_entry(config_entry))
+        merged = self._merge_entry(config_entry)
+
+        # Check if we have CONF_AREAS format (multi-area)
+        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+            # Extract area data for this specific area
+            area_data = self._extract_area_data_from_areas_list(
+                merged[CONF_AREAS], self.area_name, self.hass
+            )
+            if area_data:
+                self._load_config(area_data)
+            else:
+                # Fallback to legacy format or empty config
+                self._load_config(merged)
+        else:
+            # Legacy single-area format
+            self._load_config(merged)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value by key."""

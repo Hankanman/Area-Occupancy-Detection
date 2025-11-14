@@ -8,7 +8,7 @@ This represents a single device area in the multi-area architecture.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 

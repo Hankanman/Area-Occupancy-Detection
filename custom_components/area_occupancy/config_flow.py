@@ -7,6 +7,7 @@ validation of all inputs to ensure a valid configuration.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any, cast
 
@@ -20,13 +21,12 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import section
+from homeassistant.data_entry_flow import AbortFlow, section
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
-    area_registry,
+    area_registry as ar,
     device_registry as dr,
     entity_registry as er,
 )
@@ -53,8 +53,8 @@ from .const import (
     CONF_ACTION_REMOVE,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
-    CONF_AREAS,
     CONF_AREA_ID,
+    CONF_AREAS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -107,7 +107,6 @@ from .const import (
     DOMAIN,
 )
 from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
-from .migrations import _migrate_area_name_in_entity_registry
 from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -753,7 +752,7 @@ def _resolve_area_id_to_name(hass: HomeAssistant, area_id: str) -> str:
     Raises:
         ValueError: If area ID doesn't exist in registry
     """
-    registry = area_registry.async_get(hass)
+    registry = ar.async_get(hass)
     area_entry = registry.async_get_area(area_id)
     if not area_entry:
         raise ValueError(
@@ -772,7 +771,7 @@ def _resolve_area_name_to_id(hass: HomeAssistant, area_name: str) -> str | None:
     Returns:
         Area ID if found, None otherwise
     """
-    registry = area_registry.async_get(hass)
+    registry = ar.async_get(hass)
     for area_entry in registry.async_list_areas():
         if area_entry.name == area_name:
             return area_entry.id
@@ -1140,7 +1139,7 @@ def _create_area_selection_schema(
                             legacy_name,
                         )
                         continue
-                except Exception as err:
+                except (AttributeError, TypeError, KeyError) as err:
                     _LOGGER.warning(
                         "Error resolving legacy area name '%s': %s, skipping",
                         legacy_name,
@@ -1264,10 +1263,8 @@ class BaseOccupancyFlow:
                     # Resolve area name for better error message
                     area_name = area_id
                     if hass:
-                        try:
+                        with contextlib.suppress(ValueError):
                             area_name = _resolve_area_id_to_name(hass, area_id)
-                        except ValueError:
-                            pass
                     msg = f"Area '{area_name}' is already configured"
                     raise vol.Invalid(msg)
 
@@ -1300,9 +1297,7 @@ class BaseOccupancyFlow:
             try:
                 _resolve_area_id_to_name(hass, area_id)
             except ValueError as err:
-                raise vol.Invalid(
-                    f"Selected area no longer exists: {str(err)}"
-                ) from err
+                raise vol.Invalid(f"Selected area no longer exists: {err!s}") from err
 
         # Validate purpose
         purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
@@ -1661,10 +1656,8 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
         # Resolve area name for display
         area_name = area_id
-        try:
+        with contextlib.suppress(ValueError):
             area_name = _resolve_area_id_to_name(self.hass, area_id)
-        except ValueError:
-            pass
 
         if user_input is not None:
             if user_input.get("confirm"):
@@ -1965,10 +1958,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
 
         # Resolve area name for display
         area_name = area_id
-        try:
+        with contextlib.suppress(ValueError):
             area_name = _resolve_area_id_to_name(self.hass, area_id)
-        except ValueError:
-            pass
 
         areas = self._get_areas_from_config()
 

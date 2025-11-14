@@ -21,6 +21,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import voluptuous as vol
 
+from homeassistant.helpers import area_registry as ar
+
 # Set environment variable for auto database initialization in tests
 os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"
 
@@ -33,6 +35,7 @@ from custom_components.area_occupancy.config_flow import (
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
+    CONF_AREA_ID,
     CONF_AREAS,
     # Import all config constants for comprehensive config entry
     CONF_DECAY_ENABLED,
@@ -44,7 +47,6 @@ from custom_components.area_occupancy.const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
-    CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
@@ -170,7 +172,7 @@ def mock_config_entry() -> Mock:
 
     # Comprehensive configuration data
     entry.data = {
-        CONF_NAME: "Test Area",
+        CONF_AREA_ID: "test_area",
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.test_motion",
         CONF_MOTION_SENSORS: ["binary_sensor.test_motion"],
         CONF_PURPOSE: DEFAULT_PURPOSE,
@@ -304,8 +306,43 @@ def mock_entity_manager() -> Mock:
 
 
 @pytest.fixture
+def setup_area_registry(hass: HomeAssistant) -> dict[str, str]:
+    """Set up Home Assistant area registry with test areas.
+
+    This fixture ensures that test areas exist in the Home Assistant
+    area registry before coordinators try to load them.
+
+    Returns:
+        Dictionary mapping area names to area IDs
+
+    Areas created:
+    - "Testing" - for default test area
+    - "Living Room" - for config flow tests
+    - "Kitchen" - for multi-area tests
+    """
+    area_reg = ar.async_get(hass)
+
+    # Create test areas if they don't exist and collect their IDs
+    test_area_names = ["Testing", "Living Room", "Kitchen"]
+    area_id_map: dict[str, str] = {}
+
+    for area_name in test_area_names:
+        # Check if area already exists
+        existing_area = area_reg.async_get_area_by_name(area_name)
+        if existing_area:
+            area_id_map[area_name] = existing_area.id
+        else:
+            # Create area and get its ID
+            created_area = area_reg.async_create(area_name)
+            area_id_map[area_name] = created_area.id
+
+    return area_id_map
+
+
+@pytest.fixture
 def coordinator(
-    hass: HomeAssistant, mock_realistic_config_entry: Mock
+    hass: HomeAssistant,
+    mock_realistic_config_entry: Mock,
 ) -> AreaOccupancyCoordinator:
     """Primary fixture for coordinator testing.
 
@@ -1684,7 +1721,9 @@ def mock_config() -> Mock:
 
 
 @pytest.fixture
-def mock_realistic_config_entry() -> Mock:
+def mock_realistic_config_entry(
+    hass: HomeAssistant, setup_area_registry: dict[str, str]
+) -> Mock:
     """Return a realistic ConfigEntry for Area Occupancy Detection."""
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
@@ -1703,46 +1742,56 @@ def mock_realistic_config_entry() -> Mock:
     entry.discovery_keys = {}
     entry.created_at = "2025-04-01T10:14:38.590998+00:00"
     entry.modified_at = "2025-06-19T07:10:40.167187+00:00"
+    # Use new multi-area format with CONF_AREAS
+    # Get actual area ID from registry
+    testing_area_id = setup_area_registry.get("Testing", "test_area_1")
     entry.data = {
-        "appliance_active_states": ["on", "standby"],
-        "appliances": [
-            "binary_sensor.computer_power_sensor",
-            "binary_sensor.game_console_power_sensor",
-            "binary_sensor.tv_power_sensor",
-        ],
-        "decay_enabled": True,
-        "decay_half_life": 600.0,
-        "door_active_state": "open",
-        "door_sensors": ["binary_sensor.door_sensor"],
-        "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
-        "illuminance_sensors": [
-            "sensor.illuminance_sensor_1",
-            "sensor.illuminance_sensor_2",
-        ],
-        "media_active_states": ["playing", "paused"],
-        "media_devices": ["media_player.mock_tv_player"],
-        "motion_sensors": [
-            "binary_sensor.motion_sensor_1",
-            "binary_sensor.motion_sensor_2",
-            "binary_sensor.motion_sensor_3",
-        ],
-        "name": "Testing",
-        "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
-        "purpose": "social",
-        "temperature_sensors": [
-            "sensor.temperature_sensor_1",
-            "sensor.temperature_sensor_2",
-        ],
-        "threshold": 50.0,
-        "weight_appliance": 0.3,
-        "weight_door": 0.3,
-        "weight_environmental": 0.1,
-        "weight_media": 0.7,
-        "weight_motion": 0.85,
-        "weight_wasp": 0.8,
-        "weight_window": 0.2,
-        "window_active_state": "open",
-        "window_sensors": ["binary_sensor.window_sensor"],
+        CONF_AREAS: [
+            {
+                CONF_AREA_ID: testing_area_id,  # Use actual area ID from registry
+                "appliance_active_states": ["on", "standby"],
+                "appliances": [
+                    "binary_sensor.computer_power_sensor",
+                    "binary_sensor.game_console_power_sensor",
+                    "binary_sensor.tv_power_sensor",
+                ],
+                "decay_enabled": True,
+                "decay_half_life": 600.0,
+                "door_active_state": "open",
+                "door_sensors": ["binary_sensor.door_sensor"],
+                "humidity_sensors": [
+                    "sensor.humidity_sensor_1",
+                    "sensor.humidity_sensor_2",
+                ],
+                "illuminance_sensors": [
+                    "sensor.illuminance_sensor_1",
+                    "sensor.illuminance_sensor_2",
+                ],
+                "media_active_states": ["playing", "paused"],
+                "media_devices": ["media_player.mock_tv_player"],
+                "motion_sensors": [
+                    "binary_sensor.motion_sensor_1",
+                    "binary_sensor.motion_sensor_2",
+                    "binary_sensor.motion_sensor_3",
+                ],
+                "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
+                "purpose": "social",
+                "temperature_sensors": [
+                    "sensor.temperature_sensor_1",
+                    "sensor.temperature_sensor_2",
+                ],
+                "threshold": 50.0,
+                "weight_appliance": 0.3,
+                "weight_door": 0.3,
+                "weight_environmental": 0.1,
+                "weight_media": 0.7,
+                "weight_motion": 0.85,
+                "weight_wasp": 0.8,
+                "weight_window": 0.2,
+                "window_active_state": "open",
+                "window_sensors": ["binary_sensor.window_sensor"],
+            }
+        ]
     }
     entry.options = {
         "appliance_active_states": ["on", "standby"],
@@ -2179,10 +2228,14 @@ def config_flow_options_flow(
 
 
 @pytest.fixture
-def config_flow_base_config() -> dict[str, Any]:
+def config_flow_base_config(
+    hass: HomeAssistant, setup_area_registry: dict[str, str]
+) -> dict[str, Any]:
     """Create a base valid configuration for testing."""
+    # Use actual area ID from registry (Testing area)
+    testing_area_id = setup_area_registry.get("Testing", "testing")
     return {
-        CONF_NAME: "Test Area",
+        CONF_AREA_ID: testing_area_id,
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
@@ -2195,20 +2248,28 @@ def config_flow_base_config() -> dict[str, Any]:
 
 
 @pytest.fixture
-def config_flow_sample_area() -> dict[str, Any]:
+def config_flow_sample_area(
+    hass: HomeAssistant, setup_area_registry: dict[str, str]
+) -> dict[str, Any]:
     """Create a minimal sample area configuration."""
+    # Use actual area ID from registry (Living Room area)
+    living_room_area_id = setup_area_registry.get("Living Room", "living_room")
     return {
-        CONF_NAME: "Living Room",
+        CONF_AREA_ID: living_room_area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
     }
 
 
 @pytest.fixture
-def config_flow_sample_area_full() -> dict[str, Any]:
+def config_flow_sample_area_full(
+    hass: HomeAssistant, setup_area_registry: dict[str, str]
+) -> dict[str, Any]:
     """Create a sample area configuration with all fields."""
+    # Use actual area ID from registry (Living Room area)
+    living_room_area_id = setup_area_registry.get("Living Room", "living_room")
     return {
-        CONF_NAME: "Living Room",
+        CONF_AREA_ID: living_room_area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -2221,10 +2282,14 @@ def config_flow_sample_area_full() -> dict[str, Any]:
 
 
 @pytest.fixture
-def config_flow_valid_user_input() -> dict[str, Any]:
+def config_flow_valid_user_input(
+    hass: HomeAssistant, setup_area_registry: dict[str, str]
+) -> dict[str, Any]:
     """Create valid user input for testing."""
+    # Use actual area ID from registry (Living Room area)
+    living_room_area_id = setup_area_registry.get("Living Room", "living_room")
     return {
-        CONF_NAME: "Living Room",
+        CONF_AREA_ID: living_room_area_id,
         "motion": {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -2241,7 +2306,9 @@ def config_flow_valid_user_input() -> dict[str, Any]:
 
 
 @pytest.fixture
-def config_flow_mock_config_entry_with_areas() -> Mock:
+def config_flow_mock_config_entry_with_areas(
+    setup_area_registry: dict[str, str],
+) -> Mock:
     """Create a mock config entry with multi-area format."""
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
@@ -2250,10 +2317,12 @@ def config_flow_mock_config_entry_with_areas() -> Mock:
     entry.state = ConfigEntryState.LOADED
     entry.disabled_by = None
     entry.setup_lock = Lock()
+    # Use actual area ID from registry
+    living_room_area_id = setup_area_registry.get("Living Room", "living_room")
     entry.data = {
         CONF_AREAS: [
             {
-                CONF_NAME: "Living Room",
+                CONF_AREA_ID: living_room_area_id,
                 CONF_PURPOSE: "social",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -2272,7 +2341,7 @@ def config_flow_mock_config_entry_legacy() -> Mock:
     entry.entry_id = "test_entry_id"
     entry.state = ConfigEntryState.LOADED
     entry.data = {
-        CONF_NAME: "Legacy Area",
+        CONF_AREA_ID: "legacy_area",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
     }
@@ -2374,14 +2443,16 @@ def create_area_config(name: str = "Test Area", **overrides: Any) -> dict[str, A
     """Create area config dict with sensible defaults.
 
     Args:
-        name: Area name
+        name: Area name (will be converted to area_id)
         **overrides: Any config keys to override
 
     Returns:
         Area configuration dictionary
     """
+    # Convert name to area_id (lowercase, replace spaces with underscores)
+    area_id = name.lower().replace(" ", "_")
     config = {
-        CONF_NAME: name,
+        CONF_AREA_ID: area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -2394,14 +2465,16 @@ def create_user_input(name: str = "Test Area", **overrides: Any) -> dict[str, An
     """Create user input dict with sensible defaults.
 
     Args:
-        name: Area name
+        name: Area name (will be converted to area_id)
         **overrides: Any input keys to override
 
     Returns:
         User input dictionary
     """
+    # Convert name to area_id (lowercase, replace spaces with underscores)
+    area_id = name.lower().replace(" ", "_")
     input_dict = {
-        CONF_NAME: name,
+        CONF_AREA_ID: area_id,
         "motion": {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
