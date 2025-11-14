@@ -193,6 +193,7 @@ class Prior:
                     session.query(db.Priors)
                     .filter_by(
                         entry_id=self.coordinator.entry_id,
+                        area_name=self.area_name,
                         day_of_week=self.day_of_week,
                         time_slot=self.time_slot,
                     )
