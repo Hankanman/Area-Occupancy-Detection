@@ -27,12 +27,11 @@ from custom_components.area_occupancy.migrations import (
     migrate_purpose_field,
     validate_threshold,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 
-# ruff: noqa: PLC0415
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
 
@@ -226,8 +225,6 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_v1_0(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at version 1.0."""
-        from homeassistant.config_entries import ConfigEntryState
-
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
@@ -240,8 +237,6 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_current(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at current version."""
-        from homeassistant.config_entries import ConfigEntryState
-
         entry = Mock(spec=ConfigEntry)
         entry.version = CONF_VERSION
         entry.minor_version = CONF_VERSION_MINOR
@@ -305,8 +300,6 @@ class TestAsyncMigrateEntry:
         self, hass: HomeAssistant
     ) -> None:
         """Test migration from future version."""
-        from homeassistant.config_entries import ConfigEntryState
-
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = CONF_VERSION + 1
         mock_entry.minor_version = 0

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import math
 from unittest.mock import Mock
 
+from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
 from custom_components.area_occupancy.utils import (
     apply_motion_timeout,
     bayesian_probability,
@@ -14,7 +15,6 @@ from custom_components.area_occupancy.utils import (
 )
 
 
-# ruff: noqa: PLC0415
 class TestUtils:
     """Test utility functions."""
 
@@ -58,8 +58,6 @@ class TestUtils:
         assert format_float(0.0001) == 0.0
 
         # Infinity and NaN - these are handled by float() conversion
-        import math
-
         # float('inf') and float('nan') are valid inputs
         assert format_float(float("inf")) == float("inf")
         assert math.isnan(format_float(float("nan")))
@@ -82,11 +80,6 @@ class TestUtils:
 
     def test_clamp_probability(self) -> None:
         """Test clamp_probability function."""
-        from custom_components.area_occupancy.const import (
-            MAX_PROBABILITY,
-            MIN_PROBABILITY,
-        )
-
         # Test values within range
         assert clamp_probability(0.5) == 0.5
         assert clamp_probability(0.0) == MIN_PROBABILITY
@@ -130,11 +123,6 @@ class TestCombinePriors:
 
     def test_combine_priors_edge_cases(self) -> None:
         """Test combine_priors with edge cases."""
-        from custom_components.area_occupancy.const import (
-            MAX_PROBABILITY,
-            MIN_PROBABILITY,
-        )
-
         # Test with zero time_weight
         result = combine_priors(0.3, 0.7, time_weight=0.0)
         assert result == clamp_probability(0.3)

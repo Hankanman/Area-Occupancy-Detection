@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 
-# ruff: noqa: PLC0415
 class TestThreshold:
     """Test Threshold number entity."""
 
@@ -84,8 +83,6 @@ class TestThreshold:
         percentage_value: float,
     ) -> None:
         """Test setting valid native values."""
-        from unittest.mock import patch
-
         # Access config via area
         area_name = threshold_entity.coordinator.get_area_names()[0]
         area = threshold_entity.coordinator.get_area_or_default(area_name)
@@ -109,8 +106,6 @@ class TestThreshold:
         expected_error: str,
     ) -> None:
         """Test setting invalid native values."""
-        from unittest.mock import patch
-
         area_name = threshold_entity.coordinator.get_area_names()[0]
         area = threshold_entity.coordinator.get_area_or_default(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
@@ -124,8 +119,6 @@ class TestThreshold:
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test handling coordinator errors."""
-        from unittest.mock import patch
-
         area_name = threshold_entity.coordinator.get_area_names()[0]
         area = threshold_entity.coordinator.get_area_or_default(area_name)
         with (
@@ -173,8 +166,6 @@ class TestThreshold:
         percentage_value: float,
     ) -> None:
         """Test value conversion precision."""
-        from unittest.mock import patch
-
         area_name = threshold_entity.coordinator.get_area_names()[0]
         area = threshold_entity.coordinator.get_area_or_default(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
@@ -188,8 +179,6 @@ class TestThreshold:
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test multiple threshold updates in sequence."""
-        from unittest.mock import patch
-
         updates = [25.0, 50.0, 75.0, 90.0]
 
         area_name = threshold_entity.coordinator.get_area_names()[0]
@@ -206,8 +195,6 @@ class TestThreshold:
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test error recovery scenarios."""
-        from unittest.mock import patch
-
         # Test coordinator error followed by successful update
         area_name = threshold_entity.coordinator.get_area_names()[0]
         area = threshold_entity.coordinator.get_area_or_default(area_name)

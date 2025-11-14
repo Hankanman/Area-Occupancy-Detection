@@ -1,9 +1,10 @@
 """Tests for sensor module."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import ALL_AREAS_IDENTIFIER
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.sensor import (
     AreaOccupancySensorBase,
@@ -17,7 +18,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: SLF001
 class TestAreaOccupancySensorBase:
     """Test AreaOccupancySensorBase class."""
 
@@ -284,8 +285,6 @@ class TestDecaySensor:
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes with empty entities."""
-        from unittest.mock import PropertyMock, patch
-
         area_name = coordinator_with_areas.get_area_names()[0]
         area = coordinator_with_areas.get_area_or_default(area_name)
         # Patch decaying_entities property to return empty list
@@ -336,8 +335,6 @@ class TestAsyncSetupEntry:
             assert expected_type in entity_types
 
         # Verify All Areas sensors are present (no EvidenceSensor for All Areas)
-        from custom_components.area_occupancy.const import ALL_AREAS_IDENTIFIER
-
         all_areas_entities = [
             e
             for e in entities

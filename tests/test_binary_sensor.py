@@ -11,6 +11,7 @@ from custom_components.area_occupancy.binary_sensor import (
     async_setup_entry,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.config import Sensors
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -19,7 +20,7 @@ from homeassistant.util import dt as dt_util
 pytestmark = [pytest.mark.parametrize("expected_lingering_timers", [True])]
 
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: SLF001
 class TestOccupancy:
     """Test Occupancy binary sensor entity."""
 
@@ -102,10 +103,6 @@ def wasp_coordinator(
     coordinator_with_areas: AreaOccupancyCoordinator,
 ) -> AreaOccupancyCoordinator:
     """Create a coordinator with wasp-specific configuration."""
-    from unittest.mock import Mock
-
-    from custom_components.area_occupancy.data.config import Sensors
-
     # Customize the coordinator for wasp tests - use area-based access
     area_name = coordinator_with_areas.get_area_names()[0]
     area = coordinator_with_areas.get_area_or_default(area_name)
@@ -558,8 +555,6 @@ class TestAsyncSetupEntry:
         # Configure wasp setting on the area
         area_name = coordinator_with_areas.get_area_names()[0]
         area = coordinator_with_areas.get_area_or_default(area_name)
-        from unittest.mock import Mock
-
         area.config.wasp_in_box = Mock()
         area.config.wasp_in_box.enabled = True
         return mock_config_entry
@@ -760,10 +755,6 @@ class TestWaspMultiSensorAggregation:
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> AreaOccupancyCoordinator:
         """Create a coordinator with multiple door and motion sensors."""
-        from unittest.mock import Mock
-
-        from custom_components.area_occupancy.data.config import Sensors
-
         # Use area-based access
         area_name = coordinator_with_areas.get_area_names()[0]
         area = coordinator_with_areas.get_area_or_default(area_name)
