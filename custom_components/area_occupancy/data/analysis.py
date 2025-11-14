@@ -509,11 +509,14 @@ class PriorAnalyzer:
                     # Filter by specific entity IDs
                     query = query.filter(db.Intervals.entity_id.in_(entity_ids))
                 else:
-                    # Filter by area entry_id
+                    # Filter by area entry_id and area_name
                     query = query.join(
                         db.Entities,
                         db.Intervals.entity_id == db.Entities.entity_id,
-                    ).filter(db.Entities.entry_id == self.entry_id)
+                    ).filter(
+                        db.Entities.entry_id == self.entry_id,
+                        db.Entities.area_name == self.area_name,
+                    )
 
                 time_bounds = query.first()
                 return (
