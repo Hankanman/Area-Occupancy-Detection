@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 import voluptuous as vol
 
@@ -1946,19 +1947,20 @@ def db_engine() -> Generator[Any]:
     try:
         yield engine
     finally:
-        # Clean up - explicitly close all connections before disposing
+        # Clean up - use public disposal APIs to close connections
         # This prevents ResourceWarnings from unclosed connections
-        pool = engine.pool
-        if pool and hasattr(pool, "_conn"):
-            # Close all connections in StaticPool
-            with suppress(Exception):
-                # StaticPool stores connection in _conn
-                if hasattr(pool, "_conn") and pool._conn:
-                    pool._conn.close()
-        # Dispose engine to close any remaining connections
-        engine.dispose(close=True)
+        # Dispose pool connections if pool has dispose method
+        with suppress(SQLAlchemyError, OSError):
+            pool = engine.pool
+            if pool:
+                pool_dispose = getattr(pool, "dispose", None)
+                if pool_dispose:
+                    pool_dispose()
+            # Dispose engine to close any remaining connections
+            engine.dispose(close=True)
         # Drop tables
-        Base.metadata.drop_all(engine)
+        with suppress(SQLAlchemyError, OSError):
+            Base.metadata.drop_all(engine)
 
 
 @pytest.fixture
