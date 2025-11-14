@@ -439,7 +439,8 @@ class EntityManager:
 
         Args:
             coordinator: The coordinator instance
-            area_name: Optional area name for multi-area support
+            area_name: Required area name for multi-area support. Used to look up
+                the area configuration from coordinator.areas.
         """
         self.coordinator = coordinator
         self.area_name = area_name

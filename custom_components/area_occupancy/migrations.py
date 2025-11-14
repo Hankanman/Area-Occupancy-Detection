@@ -52,13 +52,17 @@ from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENS
 _LOGGER = logging.getLogger(__name__)
 
 
+# ============================================================================
+# Entity Registry Migrations
+# ============================================================================
+
+
 async def async_migrate_unique_ids(
     hass: HomeAssistant, config_entry: ConfigEntry, platform: str
 ) -> None:
     """Migrate unique IDs of entities in the entity registry."""
     _LOGGER.debug("Starting unique ID migration for platform %s", platform)
     entity_registry = er.async_get(hass)
-    updated_entries = 0
     entry_id = config_entry.entry_id
 
     # Define which entity types to look for based on platform
@@ -76,22 +80,32 @@ async def async_migrate_unique_ids(
     old_prefix = f"{DOMAIN}_{entry_id}_"
     _LOGGER.debug("Looking for entities with old prefix: %s", old_prefix)
 
-    for entity_id, entity_entry in entity_registry.entities.items():
-        old_unique_id = entity_entry.unique_id
-        # Convert to string to avoid AttributeError
-        if old_unique_id is not None and str(old_unique_id).startswith(old_prefix):
-            # Simply remove the domain prefix to get the new ID
-            new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_")
+    # Find entities matching the old prefix
+    matching_entities = _find_entities_by_prefix(
+        entity_registry, old_prefix, config_entry.entry_id
+    )
+    updated_entries = 0
 
-            # Update the unique ID in the registry
-            _LOGGER.info(
-                "Migrating unique ID for %s: %s -> %s",
-                entity_id,
-                old_unique_id,
-                new_unique_id,
-            )
-            entity_registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
-            updated_entries += 1
+    for entity_id, entity_entry in matching_entities:
+        old_unique_id = entity_entry.unique_id
+        # Simply remove the domain prefix to get the new ID
+        new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_")
+
+        # Update the unique ID in the registry (no conflict checking needed here)
+        _LOGGER.info(
+            "Migrating unique ID for %s: %s -> %s",
+            entity_id,
+            old_unique_id,
+            new_unique_id,
+        )
+        _update_entity_unique_id(
+            entity_registry,
+            entity_id,
+            str(old_unique_id),
+            new_unique_id,
+            check_conflicts=False,
+        )
+        updated_entries += 1
 
     if updated_entries > 0:
         _LOGGER.info(
@@ -103,61 +117,199 @@ async def async_migrate_unique_ids(
         _LOGGER.debug("No unique IDs to migrate for platform %s", platform)
 
 
+# Entity Registry Helper Functions
+# ==========================================
+
+
+def _find_entities_by_prefix(
+    entity_registry: er.EntityRegistry,
+    prefix: str,
+    config_entry_id: str | None = None,
+) -> list[tuple[str, er.RegistryEntry]]:
+    """Find entities matching a prefix pattern.
+
+    Args:
+        entity_registry: The entity registry to search
+        prefix: The prefix to match against unique IDs
+        config_entry_id: Optional config entry ID to filter by
+
+    Returns:
+        List of (entity_id, entity_entry) tuples matching the prefix
+    """
+    matches = []
+    for entity_id, entity_entry in entity_registry.entities.items():
+        # Filter by config_entry_id if provided
+        if config_entry_id and entity_entry.config_entry_id != config_entry_id:
+            continue
+
+        old_unique_id = entity_entry.unique_id
+        if old_unique_id is not None and str(old_unique_id).startswith(prefix):
+            matches.append((entity_id, entity_entry))
+    return matches
+
+
+def _check_unique_id_conflict(
+    entity_registry: er.EntityRegistry,
+    new_unique_id: str,
+    exclude_entity_id: str,
+) -> tuple[bool, str | None]:
+    """Check if a unique ID already exists in the registry.
+
+    Args:
+        entity_registry: The entity registry to check
+        new_unique_id: The unique ID to check for conflicts
+        exclude_entity_id: Entity ID to exclude from conflict check (the entity being migrated)
+
+    Returns:
+        Tuple of (has_conflict: bool, conflicting_entity_id: str | None)
+    """
+    for other_entity_id, other_entity_entry in entity_registry.entities.items():
+        if (
+            other_entity_id != exclude_entity_id
+            and other_entity_entry.unique_id == new_unique_id
+        ):
+            return True, other_entity_id
+    return False, None
+
+
+def _update_entity_unique_id(
+    entity_registry: er.EntityRegistry,
+    entity_id: str,
+    old_unique_id: str,
+    new_unique_id: str,
+    check_conflicts: bool = True,
+) -> tuple[bool, str | None]:
+    """Update entity unique ID with optional conflict checking.
+
+    Args:
+        entity_registry: The entity registry to update
+        entity_id: The entity ID to update
+        old_unique_id: The current unique ID (for logging)
+        new_unique_id: The new unique ID to set
+        check_conflicts: Whether to check for conflicts before updating
+
+    Returns:
+        Tuple of (success: bool, conflict_entity_id: str | None)
+        If check_conflicts is True and a conflict exists, returns (False, conflict_entity_id)
+        Otherwise returns (True, None)
+    """
+    if check_conflicts:
+        has_conflict, conflict_entity_id = _check_unique_id_conflict(
+            entity_registry, new_unique_id, entity_id
+        )
+        if has_conflict:
+            return False, conflict_entity_id
+
+    entity_registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+    return True, None
+
+
+# ============================================================================
+# Configuration Migration Constants and Helpers
+# ============================================================================
+
 DECAY_MIN_DELAY_KEY = "decay_min_delay"
-
-
-def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay delay option from config."""
-    if DECAY_MIN_DELAY_KEY in config:
-        config.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from config")
-    return config
-
-
 CONF_LIGHTS_KEY = "lights"
-
-
-def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated lights key from config."""
-    if CONF_LIGHTS_KEY in config:
-        config.pop(CONF_LIGHTS_KEY)
-        _LOGGER.debug("Removed deprecated lights key from config")
-    return config
-
-
 CONF_DECAY_WINDOW_KEY = "decay_window"
-
-
-def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay window key from config."""
-    if CONF_DECAY_WINDOW_KEY in config:
-        config.pop(CONF_DECAY_WINDOW_KEY)
-        _LOGGER.debug("Removed deprecated decay window key from config")
-    return config
-
-
 CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
 CONF_HISTORY_PERIOD = "history_period"
 
 
+# Configuration Migration Helper Functions
+# ==========================================
+
+
+def _remove_deprecated_keys(
+    config: dict[str, Any], keys: list[str], description: str = ""
+) -> dict[str, Any]:
+    """Remove deprecated keys from config.
+
+    Args:
+        config: The configuration dictionary to modify
+        keys: List of keys to remove
+        description: Optional description for logging (if empty, uses key names)
+
+    Returns:
+        The modified configuration dictionary
+    """
+    removed_keys = []
+    for key in keys:
+        if key in config:
+            config.pop(key)
+            removed_keys.append(key)
+            log_description = description or f"deprecated {key}"
+            _LOGGER.debug("Removed %s from config", log_description)
+    return config
+
+
+# Configuration Migration Functions
+# ==========================================
+
+
+def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay delay option from config."""
+    return _remove_deprecated_keys(
+        config, [DECAY_MIN_DELAY_KEY], "deprecated decay_min_delay"
+    )
+
+
+def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated lights key from config."""
+    return _remove_deprecated_keys(config, [CONF_LIGHTS_KEY], "deprecated lights key")
+
+
+def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated decay window key from config."""
+    return _remove_deprecated_keys(
+        config, [CONF_DECAY_WINDOW_KEY], "deprecated decay window key"
+    )
+
+
 def remove_history_keys(config: dict[str, Any]) -> dict[str, Any]:
     """Remove deprecated history period key from config."""
-    if CONF_HISTORY_PERIOD in config:
-        config.pop(CONF_HISTORY_PERIOD)
-        _LOGGER.debug("Removed deprecated history period key from config")
-    if CONF_HISTORICAL_ANALYSIS_ENABLED in config:
-        config.pop(CONF_HISTORICAL_ANALYSIS_ENABLED)
-        _LOGGER.debug("Removed deprecated historical analysis enabled key from config")
+    return _remove_deprecated_keys(
+        config,
+        [CONF_HISTORY_PERIOD, CONF_HISTORICAL_ANALYSIS_ENABLED],
+        "deprecated history keys",
+    )
+
+
+def _add_default_if_missing(
+    config: dict[str, Any],
+    key: str,
+    default_value: Any,
+    log_message: str | None = None,
+) -> dict[str, Any]:
+    """Add a default value to config if key is missing.
+
+    Args:
+        config: The configuration dictionary to modify
+        key: The configuration key to check/add
+        default_value: The default value to use if key is missing
+        log_message: Optional custom log message (if None, uses default format)
+
+    Returns:
+        The modified configuration dictionary
+    """
+    if key not in config:
+        config[key] = default_value
+        if log_message:
+            _LOGGER.debug(log_message)
+        else:
+            _LOGGER.debug(
+                "Added %s to config with default value: %s", key, default_value
+            )
     return config
 
 
 def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add decay half life."""
-    if CONF_DECAY_HALF_LIFE not in config:
-        config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
-        _LOGGER.debug("Added decay half life to config")
-
-    return config
+    return _add_default_if_missing(
+        config,
+        CONF_DECAY_HALF_LIFE,
+        DEFAULT_DECAY_HALF_LIFE,
+        "Added decay half life to config",
+    )
 
 
 def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
@@ -206,21 +358,26 @@ def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
         The migrated configuration
 
     """
-
-    if CONF_PURPOSE not in config:
-        config[CONF_PURPOSE] = DEFAULT_PURPOSE
-        _LOGGER.debug("Migrated purpose field to default value: %s", DEFAULT_PURPOSE)
-
-    return config
+    return _add_default_if_missing(
+        config,
+        CONF_PURPOSE,
+        DEFAULT_PURPOSE,
+        f"Migrated purpose field to default value: {DEFAULT_PURPOSE}",
+    )
 
 
 def migrate_motion_timeout(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate configuration to add motion timeout."""
-    if CONF_MOTION_TIMEOUT not in config:
-        config[CONF_MOTION_TIMEOUT] = DEFAULT_MOTION_TIMEOUT
-        _LOGGER.debug("Added motion timeout to config: %s", DEFAULT_MOTION_TIMEOUT)
+    return _add_default_if_missing(
+        config,
+        CONF_MOTION_TIMEOUT,
+        DEFAULT_MOTION_TIMEOUT,
+        f"Added motion timeout to config: {DEFAULT_MOTION_TIMEOUT}",
+    )
 
-    return config
+
+# Configuration Migration Orchestration
+# ==========================================
 
 
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -243,6 +400,10 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     config = migrate_purpose_field(config)
     return migrate_motion_timeout(config)
 
+
+# ============================================================================
+# Storage Migrations
+# ============================================================================
 
 LEGACY_STORAGE_KEY = "area_occupancy.storage"
 
@@ -277,6 +438,11 @@ async def async_migrate_storage(
         _LOGGER.debug("Storage migration completed for entry %s", entry_id)
     except (HomeAssistantError, OSError, ValueError) as err:
         _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
+
+
+# ============================================================================
+# Database Migrations
+# ============================================================================
 
 
 def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
@@ -361,6 +527,11 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
     """Drop tables for schema migration if needed in an async-friendly manner."""
     storage_dir = Path(hass.config.config_dir) / ".storage"
     await hass.async_add_executor_job(_drop_tables_locked, storage_dir, entry_major)
+
+
+# ============================================================================
+# Single Instance Migration
+# ============================================================================
 
 
 async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
@@ -616,6 +787,10 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         return True
 
 
+# Single Instance Migration Helper Functions
+# ==========================================
+
+
 async def _migrate_area_name_in_entity_registry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -650,53 +825,45 @@ async def _migrate_area_name_in_entity_registry(
     old_prefix = f"{old_area_name}_"
     new_prefix = f"{new_area_name}_"
 
-    # Find all entities for this config entry
-    for entity_id, entity_entry in entity_registry.entities.items():
-        if entity_entry.config_entry_id != config_entry.entry_id:
-            continue
+    # Find all entities for this config entry matching the old prefix
+    matching_entities = _find_entities_by_prefix(
+        entity_registry, old_prefix, config_entry.entry_id
+    )
 
-        old_unique_id = entity_entry.unique_id
-        if not old_unique_id or not str(old_unique_id).startswith(old_prefix):
-            continue
+    for entity_id, entity_entry in matching_entities:
+        old_unique_id = str(entity_entry.unique_id)
 
         # Extract entity type suffix
-        entity_suffix = str(old_unique_id)[len(old_prefix) :]
+        entity_suffix = old_unique_id[len(old_prefix) :]
         new_unique_id = f"{new_prefix}{entity_suffix}"
 
-        # Check for conflicts
-        conflict_found = False
-        for other_entity_id, other_entity_entry in entity_registry.entities.items():
-            if (
-                other_entity_id != entity_id
-                and other_entity_entry.unique_id == new_unique_id
-            ):
-                conflict_found = True
-                conflicts.append((entity_id, str(old_unique_id), new_unique_id))
-                _LOGGER.warning(
-                    "Unique ID conflict: %s already exists for entity %s. "
-                    "Skipping migration for %s",
-                    new_unique_id,
-                    other_entity_id,
-                    entity_id,
-                )
-                skipped_count += 1
-                break
-
-        if conflict_found:
-            continue
-
-        _LOGGER.info(
-            "Migrating entity unique_id: %s -> %s (entity: %s)",
+        # Update with conflict checking
+        success, conflict_entity_id = _update_entity_unique_id(
+            entity_registry,
+            entity_id,
             old_unique_id,
             new_unique_id,
-            entity_id,
+            check_conflicts=True,
         )
 
-        entity_registry.async_update_entity(
-            entity_id,
-            new_unique_id=new_unique_id,
-        )
-        updated_count += 1
+        if success:
+            _LOGGER.info(
+                "Migrating entity unique_id: %s -> %s (entity: %s)",
+                old_unique_id,
+                new_unique_id,
+                entity_id,
+            )
+            updated_count += 1
+        else:
+            conflicts.append((entity_id, old_unique_id, new_unique_id))
+            _LOGGER.warning(
+                "Unique ID conflict: %s already exists for entity %s. "
+                "Skipping migration for %s",
+                new_unique_id,
+                conflict_entity_id,
+                entity_id,
+            )
+            skipped_count += 1
 
     _LOGGER.info(
         "Migrated %d entity registry entries for area rename, skipped %d due to conflicts",
@@ -717,7 +884,9 @@ async def _migrate_entity_registry_for_consolidation(
 ) -> None:
     """Migrate entity registry entries for consolidation.
 
-    Updates unique IDs from {entry_id}_{entity_type} to {area_name}_{entity_type}
+    Updates unique IDs from {entry_id}_{entity_type} or {DOMAIN}_{entry_id}_{entity_type}
+    to {area_name}_{entity_type}. Handles both new format (after unique ID migration)
+    and legacy format (in case unique ID migration didn't run).
     """
     _LOGGER.info("Migrating entity registry entries for consolidation")
     entity_registry = er.async_get(hass)
@@ -737,58 +906,97 @@ async def _migrate_entity_registry_for_consolidation(
             continue
 
         area_name = entry_id_to_area_name[entry.entry_id]
-        old_prefix = f"{entry.entry_id}_"
+        # Handle both new format (f"{entry.entry_id}_") and legacy format (f"{DOMAIN}_{entry.entry_id}_")
+        new_prefix = f"{entry.entry_id}_"
+        legacy_prefix = f"{DOMAIN}_{entry.entry_id}_"
 
-        # Find all entities for this entry
-        for entity_id, entity_entry in entity_registry.entities.items():
-            if entity_entry.config_entry_id != entry.entry_id:
-                continue
+        # Find entities matching either prefix format
+        new_format_entities = _find_entities_by_prefix(
+            entity_registry, new_prefix, entry.entry_id
+        )
+        legacy_format_entities = _find_entities_by_prefix(
+            entity_registry, legacy_prefix, entry.entry_id
+        )
 
-            old_unique_id = entity_entry.unique_id
-            if not old_unique_id or not str(old_unique_id).startswith(old_prefix):
-                continue
-
-            # Extract entity type suffix
-            entity_suffix = str(old_unique_id)[len(old_prefix) :]
-
-            # Update to new format: {area_name}_{entity_type}
+        # Process entities found with new format
+        for entity_id, entity_entry in new_format_entities:
+            old_unique_id_str = str(entity_entry.unique_id)
+            entity_suffix = old_unique_id_str[len(new_prefix) :]
             new_unique_id = f"{area_name}_{entity_suffix}"
 
-            # Check for conflicts: see if another entity already has this unique_id
-            conflict_found = False
-            for other_entity_id, other_entity_entry in entity_registry.entities.items():
-                if (
-                    other_entity_id != entity_id
-                    and other_entity_entry.unique_id == new_unique_id
-                ):
-                    conflict_found = True
-                    conflicts.append((entity_id, str(old_unique_id), new_unique_id))
-                    _LOGGER.warning(
-                        "Unique ID conflict: %s already exists for entity %s. "
-                        "Skipping migration for %s (old unique_id: %s)",
-                        new_unique_id,
-                        other_entity_id,
-                        entity_id,
-                        old_unique_id,
-                    )
-                    skipped_count += 1
-                    break
+            # Update with conflict checking
+            success, conflict_entity_id = _update_entity_unique_id(
+                entity_registry,
+                entity_id,
+                old_unique_id_str,
+                new_unique_id,
+                check_conflicts=True,
+            )
 
-            if conflict_found:
+            if success:
+                _LOGGER.info(
+                    "Migrating entity unique_id: %s -> %s (entity: %s)",
+                    old_unique_id_str,
+                    new_unique_id,
+                    entity_id,
+                )
+                updated_count += 1
+            else:
+                conflicts.append((entity_id, old_unique_id_str, new_unique_id))
+                _LOGGER.warning(
+                    "Unique ID conflict: %s already exists for entity %s. "
+                    "Skipping migration for %s (old unique_id: %s)",
+                    new_unique_id,
+                    conflict_entity_id,
+                    entity_id,
+                    old_unique_id_str,
+                )
+                skipped_count += 1
+
+        # Process entities found with legacy format
+        for entity_id, entity_entry in legacy_format_entities:
+            # Skip if already processed as new format
+            if any(eid == entity_id for eid, _ in new_format_entities):
                 continue
 
-            _LOGGER.info(
-                "Migrating entity unique_id: %s -> %s (entity: %s)",
-                old_unique_id,
-                new_unique_id,
+            old_unique_id_str = str(entity_entry.unique_id)
+            _LOGGER.debug(
+                "Found entity with legacy unique ID format: %s (entry: %s). "
+                "This should have been migrated earlier, but handling it now.",
+                old_unique_id_str,
+                entry.entry_id,
+            )
+            entity_suffix = old_unique_id_str[len(legacy_prefix) :]
+            new_unique_id = f"{area_name}_{entity_suffix}"
+
+            # Update with conflict checking
+            success, conflict_entity_id = _update_entity_unique_id(
+                entity_registry,
                 entity_id,
+                old_unique_id_str,
+                new_unique_id,
+                check_conflicts=True,
             )
 
-            entity_registry.async_update_entity(
-                entity_id,
-                new_unique_id=new_unique_id,
-            )
-            updated_count += 1
+            if success:
+                _LOGGER.info(
+                    "Migrating entity unique_id: %s -> %s (entity: %s)",
+                    old_unique_id_str,
+                    new_unique_id,
+                    entity_id,
+                )
+                updated_count += 1
+            else:
+                conflicts.append((entity_id, old_unique_id_str, new_unique_id))
+                _LOGGER.warning(
+                    "Unique ID conflict: %s already exists for entity %s. "
+                    "Skipping migration for %s (old unique_id: %s)",
+                    new_unique_id,
+                    conflict_entity_id,
+                    entity_id,
+                    old_unique_id_str,
+                )
+                skipped_count += 1
 
     _LOGGER.info(
         "Migrated %d entity registry entries, skipped %d due to conflicts",
@@ -934,6 +1142,11 @@ async def _migrate_database_for_consolidation(
         _LOGGER.exception("Error during database migration")
 
 
+# ============================================================================
+# Entry Migration (Main Entry Point)
+# ============================================================================
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to the new version."""
     current_major = CONF_VERSION
@@ -969,6 +1182,35 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     # Check if we need to consolidate multiple entries (for version < 13)
     if entry_major < 13:
         _LOGGER.info("Checking for multiple entries that need consolidation...")
+        # Find all entries that would be consolidated
+        entries_to_consolidate = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.version < 13
+        ]
+
+        # Migrate unique IDs for all entries that will be consolidated BEFORE consolidation
+        # This ensures consolidation migration can find entities with the expected prefix format
+        if len(entries_to_consolidate) > 1:
+            _LOGGER.info(
+                "Migrating unique IDs for %d entries before consolidation",
+                len(entries_to_consolidate),
+            )
+            for entry_to_migrate in entries_to_consolidate:
+                try:
+                    _LOGGER.debug(
+                        "Migrating unique IDs for entry %s before consolidation",
+                        entry_to_migrate.entry_id,
+                    )
+                    for platform in PLATFORMS:
+                        await async_migrate_unique_ids(hass, entry_to_migrate, platform)
+                except HomeAssistantError as err:
+                    _LOGGER.warning(
+                        "Error migrating unique IDs for entry %s before consolidation: %s",
+                        entry_to_migrate.entry_id,
+                        err,
+                    )
+
         consolidation_result = await async_migrate_to_single_instance(hass)
         if not consolidation_result:
             _LOGGER.error("Single-instance consolidation failed")
@@ -993,7 +1235,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     options = {**config_entry.options}
 
     try:
-        # Run the unique ID migrations
+        # Run the unique ID migrations (for entries that weren't consolidated)
         _LOGGER.debug("Starting unique ID migrations for %s", config_entry.entry_id)
         for platform in PLATFORMS:
             _LOGGER.debug("Migrating unique IDs for platform %s", platform)
@@ -1060,6 +1302,11 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         return False
     else:
         return True
+
+
+# ============================================================================
+# Validation Functions
+# ============================================================================
 
 
 def validate_threshold(threshold: float) -> float:
