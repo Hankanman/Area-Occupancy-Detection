@@ -27,6 +27,7 @@ This guide explains how to write and maintain tests for the Area Occupancy Detec
 - [Choosing the Right Fixtures](#choosing-the-right-fixtures)
 - [Common Patterns](#common-patterns)
 - [Area-Based Access](#area-based-access)
+- [Database Connection Management](#database-connection-management)
 - [Migration Guide](#migration-guide)
 - [Examples](#examples)
 
@@ -126,14 +127,7 @@ def test_something(hass: HomeAssistant):
 
 **We now prefer using real coordinators and databases in tests.** This provides better integration testing and catches real-world issues.
 
-**Use `mock_coordinator` when:**
-
-- Testing component interactions without real coordinator behavior
-- Unit testing individual methods in isolation
-- You need to control all coordinator behavior via mocks
-- Testing error handling paths that are hard to trigger with real coordinators
-
-**Use `coordinator_with_areas` when:**
+**Use `coordinator` when:**
 
 - Integration-style tests that need real coordinator behavior
 - Testing area loading and initialization
@@ -141,17 +135,55 @@ def test_something(hass: HomeAssistant):
 - Testing coordinator methods that interact with areas
 - **This is the recommended default for most tests**
 
-**Use `coordinator_with_db` when:**
+**Use `test_db` when:**
 
-- Testing database operations with a real coordinator
+- Testing database operations directly
 - Testing data persistence and loading
 - Testing migration logic
-- Testing prior analysis and likelihood calculations
-- **Use this when you need both coordinator and database functionality**
+- Testing database schema and models
+- **This is the recommended primary fixture for database testing**
+
+**Use `coordinator_with_db` when:**
+
+- Testing database operations that need coordinator access
+- Testing integration between coordinator and database
+- You prefer accessing database via `coordinator.db`
+- **This is a wrapper around `test_db` that returns the coordinator**
 
 ### Database Fixtures
 
-**`coordinator_with_db`** - Real coordinator + real database (in-memory):
+**`test_db`** - Primary fixture for database testing (recommended):
+
+```python
+def test_db_operation(test_db: AreaOccupancyDB):
+    """Test with real database instance."""
+    db = test_db  # Real AreaOccupancyDB instance
+    area_name = db.coordinator.get_area_names()[0]
+
+    # Save data to database
+    db.save_area_data(area_name)
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data persisted
+    area_data = db.get_area_data(db.coordinator.entry_id)
+    assert area_data is not None
+```
+
+**`db_test_session`** - Per-test database session with automatic rollback:
+
+```python
+def test_with_session(test_db: AreaOccupancyDB, db_test_session):
+    """Test with direct session access."""
+    session = db_test_session
+    # Use session for direct database operations
+    session.add(...)
+    session.commit()
+    # Changes are automatically rolled back after test
+```
+
+**`coordinator_with_db`** - Wrapper around `test_db` that returns the coordinator:
 
 ```python
 def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
@@ -171,7 +203,7 @@ def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
     assert area_data is not None
 ```
 
-**`db_engine`** - In-memory SQLite engine for database tests:
+**`db_engine`** - In-memory SQLite engine for low-level database tests:
 
 ```python
 def test_database_schema(db_engine):
@@ -183,15 +215,67 @@ def test_database_schema(db_engine):
     assert "entities" in tables
 ```
 
-**`mock_db_with_engine`** - DEPRECATED: Use `coordinator_with_db` instead. Kept for backward compatibility only.
+**`db_session`** - Low-level database session (for tests that don't need AreaOccupancyDB):
+
+```python
+def test_low_level_operations(db_session):
+    """Test with direct SQLAlchemy session."""
+    # Use for testing ORM models directly
+    session = db_session
+    session.add(AreaOccupancyDB.Areas(...))
+    session.commit()
+```
+
+### Database Connection Management
+
+The database fixtures are designed to properly manage SQLite connections and prevent ResourceWarnings. All fixtures automatically handle connection cleanup:
+
+**Connection Cleanup in Fixtures:**
+
+- **`db_engine`**: Uses `StaticPool` for shared cache support and explicitly disposes of all connections in teardown
+- **`test_db`**: Immediately disposes of the original engine created by `AreaOccupancyDB` to prevent connection leaks
+- **`db_test_session`**: Properly closes sessions and invalidates connections after each test
+- **`db_session`**: Closes sessions and invalidates connections with proper cleanup
+- **`transactional_db_session`**: Ensures proper cleanup order (session → transaction → connection)
+
+**ResourceWarnings in Python 3.13:**
+
+Python 3.13 has stricter resource tracking and may emit `ResourceWarning` messages about unclosed SQLite connections. These warnings are handled in two ways:
+
+1. **Fixture-level cleanup**: All database fixtures explicitly close connections and dispose of engines
+2. **Pytest filterwarnings**: The `pyproject.toml` configuration includes filters to suppress remaining warnings that SQLAlchemy handles through its connection pooling
+
+The warnings don't indicate actual connection leaks - SQLAlchemy's connection pooling properly manages connections, but Python 3.13's resource tracker is more aggressive about detecting unclosed resources.
+
+**Best Practices:**
+
+- Always use the provided fixtures - they handle connection cleanup automatically
+- Don't manually create database engines or sessions in tests - use the fixtures
+- If you need a custom session, use `db_test_session` which provides proper cleanup
+- The fixtures ensure connections are closed even if tests fail
 
 ### Coordinator Fixtures
 
-**`coordinator_with_areas`** - Real coordinator with areas loaded:
+**`coordinator`** - Primary fixture for coordinator testing (recommended):
+
+```python
+def test_coordinator_method(coordinator: AreaOccupancyCoordinator):
+    """Test coordinator with real areas."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+
+    # Test coordinator methods that require area_name
+    prob = coordinator.probability(area_name)
+    assert 0.0 <= prob <= 1.0
+```
+
+**`coordinator_with_areas`** - Alias for `coordinator` fixture (backward compatibility):
 
 ```python
 def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
     """Test coordinator with real areas."""
+    # DEPRECATED: Use `coordinator` fixture instead.
+    # This fixture is kept for backward compatibility.
     area_name = coordinator_with_areas.get_area_names()[0]
     area = coordinator_with_areas.get_area_or_default(area_name)
 
@@ -200,18 +284,31 @@ def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
     assert 0.0 <= prob <= 1.0
 ```
 
-**`coordinator_with_areas_with_sensors`** - Real coordinator with mock entities set up:
+**`coordinator_with_sensors`** - Real coordinator with mock entities set up:
 
 ```python
-def test_sensor_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+def test_sensor_entities(coordinator_with_sensors: AreaOccupancyCoordinator):
     """Test sensor entities with pre-configured mock entities."""
-    coordinator = coordinator_with_areas_with_sensors
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    area_name = coordinator_with_sensors.get_area_names()[0]
+    area = coordinator_with_sensors.get_area_or_default(area_name)
 
     # Mock entities are already set up on the area
     assert "binary_sensor.motion" in area.entities.entities
     assert "media_player.tv" in area.entities.entities
+```
+
+**`coordinator_with_areas_with_sensors`** - Alias for `coordinator_with_sensors` fixture (backward compatibility):
+
+```python
+def test_sensor_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+    """Test sensor entities with pre-configured mock entities."""
+    # DEPRECATED: Use `coordinator_with_sensors` fixture instead.
+    # This fixture is kept for backward compatibility.
+    area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
+    area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+
+    # Mock entities are already set up on the area
+    assert "binary_sensor.motion" in area.entities.entities
 ```
 
 ### Area Fixtures
@@ -265,17 +362,17 @@ def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
 ```python
 def test_coordinator_method(
     hass: HomeAssistant,
-    coordinator_with_areas: AreaOccupancyCoordinator
+    coordinator: AreaOccupancyCoordinator
 ):
     """Test coordinator method with real areas loaded."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area_or_default(area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
 
     # Test coordinator methods
-    prob = coordinator_with_areas.probability(area_name)
+    prob = coordinator.probability(area_name)
     assert 0.0 <= prob <= 1.0
 
-    threshold = coordinator_with_areas.threshold(area_name)
+    threshold = coordinator.threshold(area_name)
     assert threshold == area.config.threshold
 ```
 
@@ -316,11 +413,10 @@ def test_area_properties(default_area):
 ### Pattern 4: Testing Sensor Entities
 
 ```python
-def test_sensor_with_mock_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+def test_sensor_with_mock_entities(coordinator_with_sensors: AreaOccupancyCoordinator):
     """Test sensors with pre-configured mock entities."""
-    coordinator = coordinator_with_areas_with_sensors
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    area_name = coordinator_with_sensors.get_area_names()[0]
+    area = coordinator_with_sensors.get_area_or_default(area_name)
 
     # Mock entities are already set up
     assert "binary_sensor.motion" in area.entities.entities
@@ -329,6 +425,27 @@ def test_sensor_with_mock_entities(coordinator_with_areas_with_sensors: AreaOccu
 ```
 
 ### Pattern 5: Testing Database Operations
+
+**Using `test_db` (recommended):**
+
+```python
+async def test_load_data(test_db: AreaOccupancyDB):
+    """Test loading data from database."""
+    db = test_db
+    area_name = db.coordinator.get_area_names()[0]
+    area = db.coordinator.get_area_or_default(area_name)
+
+    # Save some test data
+    db.save_area_data(area_name)
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data was loaded
+    assert area.prior.global_prior is not None
+```
+
+**Using `coordinator_with_db` (alternative):**
 
 ```python
 async def test_load_data(coordinator_with_db: AreaOccupancyCoordinator):
@@ -348,13 +465,35 @@ async def test_load_data(coordinator_with_db: AreaOccupancyCoordinator):
     assert area.prior.global_prior is not None
 ```
 
+**Using `db_test_session` for direct session access:**
+
+```python
+def test_direct_session_operations(test_db: AreaOccupancyDB, db_test_session):
+    """Test with direct database session access."""
+    session = db_test_session
+
+    # Direct ORM operations
+    area = AreaOccupancyDB.Areas(
+        entry_id=test_db.coordinator.entry_id,
+        area_name="Test Area",
+        threshold=0.5
+    )
+    session.add(area)
+    session.commit()
+
+    # Verify
+    retrieved = session.query(AreaOccupancyDB.Areas).first()
+    assert retrieved.area_name == "Test Area"
+    # Changes automatically rolled back after test
+```
+
 ### Pattern 6: Creating Custom Areas
 
 ```python
-def test_custom_area(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_custom_area(coordinator: AreaOccupancyCoordinator):
     """Create a custom area for testing."""
     area = create_test_area(
-        coordinator_with_areas,
+        coordinator,
         area_name="Kitchen",
         entity_ids=["binary_sensor.motion1"],
         threshold=0.6
@@ -366,12 +505,12 @@ def test_custom_area(coordinator_with_areas: AreaOccupancyCoordinator):
 ### Pattern 7: Patching Area Methods That Survive Reloads
 
 ```python
-def test_async_update_options(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_async_update_options(coordinator: AreaOccupancyCoordinator):
     """Test async_update_options which reloads areas."""
     from custom_components.area_occupancy.area.area import Area
 
     with patch_area_method(Area, "async_cleanup", AsyncMock()) as mock_cleanup:
-        await coordinator_with_areas.async_update_options({"threshold": 0.7})
+        await coordinator.async_update_options({"threshold": 0.7})
         mock_cleanup.assert_called()
 ```
 
@@ -380,17 +519,17 @@ def test_async_update_options(coordinator_with_areas: AreaOccupancyCoordinator):
 When using real coordinators, you can still mock specific methods:
 
 ```python
-def test_with_mocked_method(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_with_mocked_method(coordinator: AreaOccupancyCoordinator):
     """Test with specific coordinator method mocked."""
-    area_name = coordinator_with_areas.get_area_names()[0]
+    area_name = coordinator.get_area_names()[0]
 
     # Mock a specific method
     with patch.object(
-        coordinator_with_areas,
+        coordinator,
         "probability",
         return_value=0.75
     ) as mock_prob:
-        prob = coordinator_with_areas.probability(area_name)
+        prob = coordinator.probability(area_name)
         assert prob == 0.75
         mock_prob.assert_called_once_with(area_name)
 ```
@@ -428,6 +567,73 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
         assert area.area_name == area_name
 ```
 
+## Database Connection Management
+
+### Overview
+
+Python 3.13 has stricter resource tracking and may emit `ResourceWarning` messages about unclosed SQLite connections during test execution. The database fixtures are designed to properly manage connections and prevent these warnings.
+
+### How Fixtures Handle Connections
+
+**`db_engine` fixture:**
+
+- Uses `StaticPool` for shared cache support (required for in-memory SQLite with multiple connections)
+- Explicitly disposes of all connections in teardown with `engine.dispose(close=True)`
+- Closes pool connections before disposing
+
+**`test_db` fixture:**
+
+- Immediately disposes of the original engine created by `AreaOccupancyDB.__init__` to prevent connection leaks
+- Overrides the engine with the test engine before any operations
+- Ensures no connections are opened on the original engine
+
+**Session fixtures (`db_test_session`, `db_session`, `transactional_db_session`):**
+
+- Properly rollback and close sessions
+- Expunge all objects before closing to ensure cleanup
+- Invalidate bound connections when available
+- Maintain proper cleanup order (session → transaction → connection)
+
+### ResourceWarnings Configuration
+
+The `pyproject.toml` includes pytest filterwarnings to suppress SQLite connection warnings:
+
+```toml
+filterwarnings = [
+  # -- SQLite connection warnings in tests
+  # Python 3.13 is very strict about unclosed resources. SQLite connections
+  # created during test setup/teardown may not be immediately closed, but
+  # they are properly cleaned up by SQLAlchemy's connection pooling.
+  "ignore::ResourceWarning:.*sqlite3.Connection",
+  "ignore:unclosed.*database.*sqlite3.Connection:ResourceWarning",
+  "ignore:unclosed database:ResourceWarning",
+  # ...
+]
+```
+
+**Why suppress these warnings?**
+
+- SQLAlchemy's connection pooling properly manages connections
+- Python 3.13's resource tracker detects connections before SQLAlchemy's cleanup runs
+- The fixtures ensure all connections are properly closed, but the warnings may appear during test execution
+- These warnings don't indicate actual connection leaks
+
+### Best Practices
+
+1. **Always use the provided fixtures** - They handle connection cleanup automatically
+2. **Don't manually create engines or sessions** - Use the fixtures instead
+3. **Use context managers** - When accessing database directly, use `with db.get_session()` to ensure proper cleanup
+4. **Trust the fixtures** - The fixtures are designed to prevent connection leaks
+
+### Troubleshooting Connection Warnings
+
+If you see ResourceWarnings despite using the fixtures:
+
+1. **Verify fixture usage** - Ensure you're using `test_db` or `coordinator_with_db` for database tests
+2. **Check for manual engine creation** - Don't create engines or sessions outside the fixtures
+3. **Use context managers** - Always use `with db.get_session()` when accessing the database directly
+4. **Review pytest configuration** - The `pyproject.toml` should include the ResourceWarning filters
+
 ## Migration Guide
 
 ### Migrating from Mock Coordinators to Real Coordinators
@@ -436,19 +642,12 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
 
 ### Step-by-Step Migration
 
-1. **Replace `mock_coordinator` with `coordinator_with_areas`:**
+1. **Use `coordinator` fixture for all coordinator tests:**
 
    ```python
-   # Before
-   def test_something(mock_coordinator: Mock):
-       mock_coordinator.entities.entities = {...}
-       mock_coordinator.config.threshold = 0.5
-       # Test code
-
-   # After
-   def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
-       area_name = coordinator_with_areas.get_area_names()[0]
-       area = coordinator_with_areas.get_area_or_default(area_name)
+   def test_something(coordinator: AreaOccupancyCoordinator):
+       area_name = coordinator.get_area_names()[0]
+       area = coordinator.get_area_or_default(area_name)
        area.entities.entities = {...}
        area.config.threshold = 0.5
        # Test code
@@ -474,9 +673,9 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
 
    ```python
    # Before
-   def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
-       area_name = coordinator_with_areas.get_area_names()[0]
-       area = coordinator_with_areas.get_area_or_default(area_name)
+   def test_something(coordinator: AreaOccupancyCoordinator):
+       area_name = coordinator.get_area_names()[0]
+       area = coordinator.get_area_or_default(area_name)
        # Test code
 
    # After
@@ -493,7 +692,14 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
        mock_db.save_data.return_value = None
        # Test code
 
-   # After
+   # After (using test_db - recommended)
+   async def test_db_operation(test_db: AreaOccupancyDB):
+       db = test_db  # Real database
+       area_name = db.coordinator.get_area_names()[0]
+       db.save_area_data(area_name)
+       # Test code
+
+   # After (using coordinator_with_db - alternative)
    async def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
        coordinator = coordinator_with_db
        db = coordinator.db  # Real database
@@ -518,17 +724,14 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
 6. **Update mocks for coordinator methods:**
 
    ```python
-   # Before
-   mock_coordinator.probability = 0.5  # Direct assignment
-   mock_coordinator.threshold = 0.6  # Direct assignment
-
-   # After
-   area_name = coordinator_with_areas.get_area_names()[0]
-   coordinator_with_areas.probability = Mock(return_value=0.5)  # Mock callable
-   coordinator_with_areas.threshold = Mock(return_value=0.6)  # Mock callable
-   # Or use patch.object
-   with patch.object(coordinator_with_areas, "probability", return_value=0.5):
-       prob = coordinator_with_areas.probability(area_name)
+   # For coordinator methods, patch the area methods they delegate to
+   area_name = coordinator.get_area_names()[0]
+   area = coordinator.get_area_or_default(area_name)
+   with patch.object(area, "probability", return_value=0.5):
+       prob = coordinator.probability(area_name)
+   # Or patch coordinator methods directly
+   with patch.object(coordinator, "threshold", return_value=0.6):
+       threshold = coordinator.threshold(area_name)
    ```
 
 ### Common Migration Patterns
@@ -566,7 +769,14 @@ area.config.threshold = 0.7
 mock_db.save_data.return_value = None
 mock_db.load_data = AsyncMock(return_value=None)
 
-# After
+# After (using test_db - recommended)
+async def test_db(test_db: AreaOccupancyDB):
+    db = test_db
+    area_name = db.coordinator.get_area_names()[0]
+    db.save_area_data(area_name)
+    await db.load_data()
+
+# After (using coordinator_with_db - alternative)
 async def test_db(coordinator_with_db: AreaOccupancyCoordinator):
     coordinator = coordinator_with_db
     db = coordinator.db
@@ -582,14 +792,14 @@ async def test_db(coordinator_with_db: AreaOccupancyCoordinator):
 ```python
 async def test_setup_loads_areas(
     hass: HomeAssistant,
-    coordinator_with_areas: AreaOccupancyCoordinator
+    coordinator: AreaOccupancyCoordinator
 ):
     """Test that setup loads areas correctly."""
-    area_names = coordinator_with_areas.get_area_names()
+    area_names = coordinator.get_area_names()
     assert len(area_names) > 0
 
     for area_name in area_names:
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator.get_area_or_default(area_name)
         assert area is not None
         assert area.config is not None
         assert area.entities is not None
@@ -597,11 +807,35 @@ async def test_setup_loads_areas(
 
 ### Example 2: Testing Database Operations
 
+**Using `test_db` (recommended):**
+
 ```python
-async def test_save_and_load_data(
-    hass: HomeAssistant,
-    coordinator_with_db: AreaOccupancyCoordinator
-):
+async def test_save_and_load_data(test_db: AreaOccupancyDB):
+    """Test saving and loading data from database."""
+    db = test_db
+    area_name = db.coordinator.get_area_names()[0]
+    area = db.coordinator.get_area_or_default(area_name)
+
+    # Set some test data
+    area.prior.set_global_prior(0.75)
+
+    # Save to database
+    db.save_area_data(area_name)
+
+    # Clear area prior to simulate reload
+    area.prior.global_prior = None
+
+    # Load data back
+    await db.load_data()
+
+    # Verify data was restored
+    assert area.prior.global_prior == 0.75
+```
+
+**Using `coordinator_with_db` (alternative):**
+
+```python
+async def test_save_and_load_data(coordinator_with_db: AreaOccupancyCoordinator):
     """Test saving and loading data from database."""
     coordinator = coordinator_with_db
     db = coordinator.db
@@ -659,15 +893,15 @@ def test_entity_access(default_area):
 ```python
 def test_probability_method(
     hass: HomeAssistant,
-    coordinator_with_areas: AreaOccupancyCoordinator
+    coordinator: AreaOccupancyCoordinator
 ):
     """Test probability method with area_name."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prob = coordinator_with_areas.probability(area_name)
+    area_name = coordinator.get_area_names()[0]
+    prob = coordinator.probability(area_name)
     assert 0.0 <= prob <= 1.0
 
     # Test device_info method
-    device_info = coordinator_with_areas.device_info(area_name)
+    device_info = coordinator.device_info(area_name)
     assert device_info is not None
     assert device_info["identifiers"] == {(DOMAIN, area_name)}
 ```
@@ -702,35 +936,34 @@ async def test_config_flow_with_device_registry(
 ### Example 6: Testing Sensor Entities
 
 ```python
-def test_sensor_with_mock_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+def test_sensor_with_mock_entities(coordinator_with_sensors: AreaOccupancyCoordinator):
     """Test sensor entities with pre-configured mock entities."""
-    coordinator = coordinator_with_areas_with_sensors
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    area_name = coordinator_with_sensors.get_area_names()[0]
+    area = coordinator_with_sensors.get_area_or_default(area_name)
 
     # Mock entities are already set up
     assert "binary_sensor.motion" in area.entities.entities
     assert "media_player.tv" in area.entities.entities
 
     # Test sensor calculations
-    prob = coordinator.probability(area_name)
+    prob = coordinator_with_sensors.probability(area_name)
     assert prob > 0.0
 ```
 
 ### Example 7: Testing with Multiple Areas
 
 ```python
-def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_multiple_areas(coordinator: AreaOccupancyCoordinator):
     """Test coordinator with multiple areas."""
     # Create additional area
     area2 = create_test_area(
-        coordinator_with_areas,
+        coordinator,
         area_name="Kitchen",
         entity_ids=["binary_sensor.kitchen_motion"]
     )
 
     # Verify both areas exist
-    area_names = coordinator_with_areas.get_area_names()
+    area_names = coordinator.get_area_names()
     assert len(area_names) == 2
     assert "Testing" in area_names  # Default area name
     assert "Kitchen" in area_names
@@ -738,13 +971,14 @@ def test_multiple_areas(coordinator_with_areas: AreaOccupancyCoordinator):
 
 ### Example 8: Testing Database Entity Operations
 
+**Using `test_db` (recommended):**
+
 ```python
-async def test_save_entity_data(coordinator_with_db: AreaOccupancyCoordinator):
+async def test_save_entity_data(test_db: AreaOccupancyDB):
     """Test saving entity data to database."""
-    coordinator = coordinator_with_db
-    db = coordinator.db
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    db = test_db
+    area_name = db.coordinator.get_area_names()[0]
+    area = db.coordinator.get_area_or_default(area_name)
 
     # Set up entities on the area
     area._entities = SimpleNamespace(
@@ -756,8 +990,8 @@ async def test_save_entity_data(coordinator_with_db: AreaOccupancyCoordinator):
     # Save entity data
     db.save_entity_data()
 
-    # Verify entity was saved
-    with db.get_session() as session:
+    # Verify entity was saved using db_test_session
+    with db.get_locked_session() as session:
         entity = session.query(db.Entities).filter_by(
             area_name=area_name,
             entity_id="binary_sensor.motion"
@@ -765,18 +999,45 @@ async def test_save_entity_data(coordinator_with_db: AreaOccupancyCoordinator):
         assert entity is not None
 ```
 
+**Using `db_test_session` for direct session access:**
+
+```python
+def test_entity_operations(test_db: AreaOccupancyDB, db_test_session):
+    """Test entity operations with direct session."""
+    session = db_test_session
+    area_name = test_db.coordinator.get_area_names()[0]
+
+    # Create entity directly
+    entity = AreaOccupancyDB.Entities(
+        entry_id=test_db.coordinator.entry_id,
+        area_name=area_name,
+        entity_id="binary_sensor.motion",
+        entity_type="motion"
+    )
+    session.add(entity)
+    session.commit()
+
+    # Verify
+    retrieved = session.query(AreaOccupancyDB.Entities).first()
+    assert retrieved.entity_id == "binary_sensor.motion"
+    # Changes automatically rolled back after test
+```
+
 ## Best Practices
 
-1. **Prefer real coordinators and databases** - Use `coordinator_with_areas` and `coordinator_with_db` over mocks when possible
+1. **Prefer real coordinators and databases** - Use `coordinator` and `test_db` over mocks when possible
 2. **Always use area-based access** - Prefer `area.entities` over `coordinator.entities`
-3. **Use fixtures** - Leverage `coordinator_with_areas`, `coordinator_with_db`, and `default_area` to reduce boilerplate
+3. **Use fixtures** - Leverage `coordinator`, `test_db`, `coordinator_with_db`, and `default_area` to reduce boilerplate
 4. **Patch at class level** - Use `patch_area_method()` for methods that need to survive area reloads
 5. **Be explicit** - Use `area_name` parameter when calling coordinator methods
 6. **Test isolation** - Each test should set up its own areas if needed
-7. **Use real databases for DB tests** - Prefer `coordinator_with_db` over `mock_db` for database operation tests
+7. **Use real databases for DB tests** - Prefer `test_db` or `coordinator_with_db` over `mock_db` for database operation tests
 8. **Mock only when necessary** - Use mocks for error cases or when real behavior is too complex
 9. **Get area_name dynamically** - Always get `area_name` from `coordinator.get_area_names()[0]` rather than hardcoding
-10. **Use `coordinator_with_areas_with_sensors`** - For sensor tests that need pre-configured entities
+10. **Use `coordinator_with_sensors`** - For sensor tests that need pre-configured entities
+11. **Use `test_db` for database tests** - This is the primary fixture for database testing, providing proper session management and isolation
+12. **Let fixtures handle connection cleanup** - Don't manually create engines or sessions; use the provided fixtures which handle cleanup automatically
+13. **Use context managers for sessions** - When accessing database directly, use `with db.get_session()` to ensure proper cleanup
 
 ## Troubleshooting
 
@@ -807,7 +1068,7 @@ prob = coordinator.probability(area_name)  # Must call with area_name
 
 ### Issue: Database tests failing with real coordinator
 
-**Solution:** Use `coordinator_with_db` fixture instead of `mock_db`. This provides a real coordinator with a real database.
+**Solution:** Use `test_db` or `coordinator_with_db` fixture instead of `mock_db`. These provide a real database with proper session management and isolation.
 
 ### Issue: Tests accessing `coordinator.entities` directly
 
@@ -816,6 +1077,23 @@ prob = coordinator.probability(area_name)  # Must call with area_name
 ### Issue: Hardcoded area names in tests
 
 **Solution:** Always get area name dynamically: `area_name = coordinator.get_area_names()[0]`
+
+### Issue: ResourceWarnings about unclosed database connections
+
+**Solution:** The database fixtures automatically handle connection cleanup. If you see ResourceWarnings:
+
+1. **Ensure you're using the provided fixtures** - Don't manually create engines or sessions
+2. **Check pytest filterwarnings** - The `pyproject.toml` includes filters for SQLite connection warnings
+3. **Verify fixture teardown** - All fixtures properly dispose of engines and close sessions
+4. **Python 3.13 strictness** - Python 3.13 is very strict about resource tracking; the warnings are suppressed via pytest configuration
+
+The warnings don't indicate actual leaks - SQLAlchemy's connection pooling handles connections correctly, but Python 3.13's resource tracker detects them before SQLAlchemy's cleanup runs.
+
+**If warnings persist:**
+
+- Check that you're not creating additional engines or sessions outside the fixtures
+- Ensure all database operations use the context managers (`with db.get_session()`)
+- Verify that `test_db` fixture is being used (it disposes the original engine immediately)
 
 ### Issue: Tests failing with "hass fixture not found"
 
@@ -857,16 +1135,39 @@ async def test_device(hass: HomeAssistant, device_registry):
 
 - **`mock_config_entry`** - Mock config entry with default values
 - **`mock_realistic_config_entry`** - Mock config entry with realistic multi-area configuration
-- **`coordinator_with_areas`** - Real coordinator with areas loaded (recommended default)
-- **`coordinator_with_db`** - Real coordinator with real database (for DB tests)
-- **`coordinator_with_areas_with_sensors`** - Real coordinator with mock entities pre-configured
-- **`default_area`** - First area from `coordinator_with_areas` (convenience fixture)
-- **`mock_coordinator`** - Mock coordinator (use sparingly, prefer real coordinators)
+- **`coordinator`** - Primary fixture for coordinator testing (recommended default)
+- **`coordinator_with_areas`** - Alias for `coordinator` fixture (backward compatibility, DEPRECATED)
+- **`coordinator_with_db`** - Real coordinator with real database (wrapper around `test_db`)
+- **`coordinator_with_sensors`** - Real coordinator with mock entities pre-configured
+- **`coordinator_with_areas_with_sensors`** - Alias for `coordinator_with_sensors` fixture (backward compatibility, DEPRECATED)
+- **`default_area`** - First area from `coordinator` (convenience fixture)
 
 ### Database Fixtures
 
-- **`db_engine`** - In-memory SQLite engine for database tests
-- **`mock_db_with_engine`** - DEPRECATED: Use `coordinator_with_db` instead
+- **`test_db`** - Primary fixture for database testing (recommended) - provides real AreaOccupancyDB with in-memory SQLite
+  - Automatically disposes of original engine to prevent connection leaks
+  - Uses test engine with proper session management
+  - All connections are properly closed in teardown
+- **`db_test_session`** - Per-test database session with automatic rollback (for direct session access)
+  - Properly closes sessions and invalidates connections
+  - Expunges all objects before closing
+- **`coordinator_with_db`** - Wrapper around `test_db` that returns the coordinator (for tests needing coordinator access)
+- **`db_engine`** - In-memory SQLite engine for low-level database tests
+  - Uses `StaticPool` for shared cache support
+  - Explicitly disposes of all connections in teardown
+- **`db_session`** - Low-level database session (for tests that don't need AreaOccupancyDB wrapper)
+  - Properly closes sessions and invalidates connections
+- **`transactional_db_session`** - Database session with nested transaction for maximum isolation
+  - Ensures proper cleanup order (session → transaction → connection)
+
+**Connection Management:**
+
+All database fixtures are designed to prevent ResourceWarnings by:
+
+- Explicitly disposing of engines with `engine.dispose(close=True)`
+- Closing all sessions and invalidating connections
+- Using proper cleanup order in teardown
+- Immediately disposing of original engines when overriding with test engines
 
 ### Entity Fixtures
 
@@ -895,8 +1196,8 @@ async def test_device(hass: HomeAssistant, device_registry):
 - See existing test files for examples of patterns:
   - `tests/test_coordinator.py` - Coordinator tests with real coordinators and `hass` fixture
   - `tests/test_config_flow.py` - Config flow tests with `hass` and `device_registry` fixtures
-  - `tests/test_db.py` - Database tests with `coordinator_with_db`
-  - `tests/test_sensor.py` - Sensor tests with `coordinator_with_areas_with_sensors` and `hass`
+  - `tests/test_db.py` - Database tests with `test_db` fixture
+  - `tests/test_sensor.py` - Sensor tests with `coordinator_with_sensors` and `hass`
   - `tests/test_service.py` - Service tests with real coordinators and `hass`
   - `tests/test_binary_sensor.py` - Binary sensor tests with `hass` fixture
 - Check `custom_components/area_occupancy/coordinator.py` for coordinator API
