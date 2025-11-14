@@ -10,6 +10,7 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.number import Threshold, async_setup_entry
 from homeassistant.components.number import NumberMode
 from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 
@@ -233,7 +234,7 @@ class TestAsyncSetupEntry:
 
     async def test_async_setup_entry_success(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         mock_config_entry: Mock,
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
@@ -242,7 +243,7 @@ class TestAsyncSetupEntry:
         # Use real coordinator
         mock_config_entry.runtime_data = coordinator_with_areas
 
-        await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
@@ -251,7 +252,7 @@ class TestAsyncSetupEntry:
 
     async def test_async_setup_entry_with_coordinator_data(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         mock_config_entry: Mock,
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
@@ -261,7 +262,7 @@ class TestAsyncSetupEntry:
         mock_config_entry.entry_id = "test_entry_id"
         mock_async_add_entities = Mock()
 
-        await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
         entities = mock_async_add_entities.call_args[0][0]
         threshold_entity = entities[0]

@@ -1,7 +1,6 @@
 """Tests for binary_sensor module."""
 
 from datetime import timedelta
-from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -13,6 +12,7 @@ from custom_components.area_occupancy.binary_sensor import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # Add marker for tests that may have lingering timers due to HA internals
@@ -155,7 +155,7 @@ class TestWaspInBoxSensor:
 
     def test_initialization(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -164,9 +164,9 @@ class TestWaspInBoxSensor:
         entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
 
         # Set hass (normally done by HA when entity is added)
-        entity.hass = mock_hass
+        entity.hass = hass
 
-        assert entity.hass == mock_hass
+        assert entity.hass == hass
         assert entity._coordinator == wasp_coordinator
         # unique_id uses area_name directly
         assert entity.unique_id == f"{area_name}_wasp_in_box"
@@ -175,7 +175,7 @@ class TestWaspInBoxSensor:
 
     async def test_async_added_to_hass(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -207,7 +207,7 @@ class TestWaspInBoxSensor:
     )
     async def test_restore_previous_state(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
         has_previous_state: bool,
@@ -247,7 +247,7 @@ class TestWaspInBoxSensor:
 
     async def test_async_will_remove_from_hass(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -274,7 +274,7 @@ class TestWaspInBoxSensor:
 
     def test_extra_state_attributes(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -303,7 +303,7 @@ class TestWaspInBoxSensor:
 
     def test_weight_property(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -312,24 +312,20 @@ class TestWaspInBoxSensor:
         entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
         assert entity.weight == 0.85
 
-    def test_get_valid_entities(
+    async def test_get_valid_entities(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
         """Test _get_valid_entities method."""
         area_name = wasp_coordinator.get_area_names()[0]
         entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
-        # Mock hass.states.get to return valid states for configured entities
-        def mock_get_state(entity_id: str) -> Mock | None:
-            if entity_id in ["binary_sensor.door1", "binary_sensor.motion1"]:
-                return Mock(state=STATE_OFF)
-            return None
-
-        mock_hass.states.get.side_effect = mock_get_state
+        # Create actual states in hass.states instead of mocking
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
 
         result = entity._get_valid_entities()
 
@@ -339,23 +335,24 @@ class TestWaspInBoxSensor:
         assert "binary_sensor.door1" in result["doors"]
         assert "binary_sensor.motion1" in result["motion"]
 
-    def test_initialize_from_current_states(
+    async def test_initialize_from_current_states(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
         """Test _initialize_from_current_states method."""
         entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
         valid_entities = {
             "doors": ["binary_sensor.door1"],
             "motion": ["binary_sensor.motion1"],
         }
 
-        # Mock current states
-        mock_hass.states.get.side_effect = lambda entity_id: Mock(state=STATE_OFF)
+        # Create actual states in hass.states instead of mocking
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
 
         # Mock async_write_ha_state to avoid entity registration issues
         with patch.object(entity, "async_write_ha_state"):
@@ -374,7 +371,7 @@ class TestWaspInBoxSensor:
     )
     def test_handle_state_change(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
         entity_type: str,
@@ -408,9 +405,9 @@ class TestWaspInBoxSensor:
             (False, STATE_OFF, STATE_ON),  # Door closes with motion -> occupied
         ],
     )
-    def test_process_door_state_scenarios(
+    async def test_process_door_state_scenarios(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
         initial_occupied: bool,
@@ -419,7 +416,7 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test processing door state changes in different scenarios."""
         entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
         # Set up initial state
         entity._attr_is_on = initial_occupied
@@ -431,8 +428,8 @@ class TestWaspInBoxSensor:
             entity._motion_state = STATE_ON
             entity._last_motion_time = dt_util.utcnow() - timedelta(seconds=30)
 
-        # Mock hass.states.get to return appropriate door state for aggregate calculation
-        mock_hass.states.get.return_value = Mock(state=door_state)
+        # Create actual state in hass.states for aggregate calculation
+        hass.states.async_set("binary_sensor.door1", door_state)
 
         # Mock async_write_ha_state to avoid entity registration issues
         with (
@@ -442,18 +439,18 @@ class TestWaspInBoxSensor:
             entity._process_door_state("binary_sensor.door1", door_state)
             mock_set_state.assert_called_once_with(expected_state)
 
-    def test_process_motion_state_detected(
+    async def test_process_motion_state_detected(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
         """Test processing motion detection."""
         entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
-        # Mock hass.states.get to return motion as ON for aggregate calculation
-        mock_hass.states.get.return_value = Mock(state=STATE_ON)
+        # Create actual state in hass.states for aggregate calculation
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
 
         # Mock async_write_ha_state to avoid entity registration issues
         with patch.object(entity, "async_write_ha_state"):
@@ -472,7 +469,7 @@ class TestWaspInBoxSensor:
     )
     def test_set_state_scenarios(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
         new_state: str,
@@ -509,7 +506,7 @@ class TestWaspInBoxSensor:
 
     def test_timer_management(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -580,7 +577,7 @@ class TestAsyncSetupEntry:
     )
     async def test_async_setup_entry(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         setup_config_entry: Mock,
         wasp_enabled: bool,
         expected_entity_count: int,
@@ -599,7 +596,7 @@ class TestAsyncSetupEntry:
 
         mock_async_add_entities = Mock()
 
-        await async_setup_entry(mock_hass, setup_config_entry, mock_async_add_entities)
+        await async_setup_entry(hass, setup_config_entry, mock_async_add_entities)
 
         # Should add expected entities
         mock_async_add_entities.assert_called_once()
@@ -636,13 +633,13 @@ class TestWaspInBoxIntegration:
     @pytest.fixture
     def comprehensive_wasp_sensor(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> WaspInBoxSensor:
         """Create a comprehensive wasp sensor for testing."""
         entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
         # Initialize with known state
         entity._door_state = STATE_OFF
@@ -651,8 +648,8 @@ class TestWaspInBoxIntegration:
 
         return entity
 
-    def test_complete_wasp_occupancy_cycle(
-        self, comprehensive_wasp_sensor: WaspInBoxSensor
+    async def test_complete_wasp_occupancy_cycle(
+        self, hass: HomeAssistant, comprehensive_wasp_sensor: WaspInBoxSensor
     ) -> None:
         """Test complete wasp occupancy detection cycle."""
         entity = comprehensive_wasp_sensor
@@ -660,16 +657,16 @@ class TestWaspInBoxIntegration:
         # Mock async_write_ha_state to avoid entity registration issues
         with patch.object(entity, "async_write_ha_state"):
             # Step 1: Motion detected while unoccupied
-            # Mock hass.states.get to return motion as ON
-            cast(Mock, entity.hass.states.get).return_value = Mock(state=STATE_ON)
+            # Create actual state in hass.states
+            hass.states.async_set("binary_sensor.motion1", STATE_ON)
             entity._process_motion_state("binary_sensor.motion1", STATE_ON)
 
             # Should update motion state
             assert entity._motion_state == STATE_ON
 
             # Step 2: Door closes with recent motion -> should trigger occupancy
-            # Mock hass.states.get to return door as OFF (closed)
-            cast(Mock, entity.hass.states.get).return_value = Mock(state=STATE_OFF)
+            # Create actual state in hass.states
+            hass.states.async_set("binary_sensor.door1", STATE_OFF)
             with patch.object(entity, "_start_max_duration_timer") as mock_start_timer:
                 entity._process_door_state("binary_sensor.door1", STATE_OFF)
 
@@ -678,8 +675,8 @@ class TestWaspInBoxIntegration:
             mock_start_timer.assert_called_once()
 
             # Step 3: Door opens while occupied -> should end occupancy
-            # Mock hass.states.get to return door as ON (open)
-            cast(Mock, entity.hass.states.get).return_value = Mock(state=STATE_ON)
+            # Create actual state in hass.states
+            hass.states.async_set("binary_sensor.door1", STATE_ON)
             with patch.object(entity, "_cancel_max_duration_timer"):
                 entity._process_door_state("binary_sensor.door1", STATE_ON)
 
@@ -789,18 +786,18 @@ class TestWaspMultiSensorAggregation:
     @pytest.fixture
     def multi_sensor_wasp(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         multi_sensor_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> WaspInBoxSensor:
         """Create a wasp sensor with multiple door and motion sensors."""
         area_name = multi_sensor_coordinator.get_area_names()[0]
         entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
         entity.entity_id = "binary_sensor.test_wasp_in_box"
 
         # Mock states for multiple sensors (all sensors default to OFF)
-        mock_hass.states.get.side_effect = lambda entity_id: Mock(state=STATE_OFF)
+        # Note: hass.states.get is read-only, so we'll patch it in each test that needs it
 
         # Initialize state
         entity._door_state = STATE_OFF
@@ -810,72 +807,60 @@ class TestWaspMultiSensorAggregation:
 
         return entity
 
-    def test_aggregate_door_state_all_closed(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_aggregate_door_state_all_closed(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that aggregate door state is CLOSED when all doors are closed."""
         entity = multi_sensor_wasp
 
-        # Mock all doors as closed
-        def get_state(entity_id):
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
 
         result = entity._get_aggregate_door_state()
         assert result == STATE_OFF  # All doors closed
 
-    def test_aggregate_door_state_any_open(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_aggregate_door_state_any_open(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that aggregate door state is OPEN if ANY door is open."""
         entity = multi_sensor_wasp
 
-        # Mock door1 open, door2 closed
-        def get_state(entity_id):
-            if entity_id == "binary_sensor.door1":
-                return Mock(state=STATE_ON)
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states - door1 open, door2 closed
+        hass.states.async_set("binary_sensor.door1", STATE_ON)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
 
         result = entity._get_aggregate_door_state()
         assert result == STATE_ON  # Any door open
 
-    def test_aggregate_motion_state_all_off(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_aggregate_motion_state_all_off(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that aggregate motion state is OFF when all motion sensors are off."""
         entity = multi_sensor_wasp
 
-        # Mock all motion sensors as off
-        def get_state(entity_id):
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states
+        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
+        hass.states.async_set("binary_sensor.motion2", STATE_OFF)
 
         result = entity._get_aggregate_motion_state()
         assert result == STATE_OFF  # All motion off
 
-    def test_aggregate_motion_state_any_on(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_aggregate_motion_state_any_on(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that aggregate motion state is ON if ANY motion sensor is active."""
         entity = multi_sensor_wasp
 
-        # Mock motion1 active, motion2 off
-        def get_state(entity_id):
-            if entity_id == "binary_sensor.motion1":
-                return Mock(state=STATE_ON)
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states - motion1 active, motion2 off
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+        hass.states.async_set("binary_sensor.motion2", STATE_OFF)
 
         result = entity._get_aggregate_motion_state()
         assert result == STATE_ON  # Any motion active
 
-    def test_multi_door_any_opening_clears_occupancy(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_multi_door_any_opening_clears_occupancy(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that opening ANY door clears occupancy."""
         entity = multi_sensor_wasp
@@ -885,13 +870,9 @@ class TestWaspMultiSensorAggregation:
         entity._attr_is_on = True
         entity._door_state = STATE_OFF
 
-        # Mock door1 opening, door2 staying closed
-        def get_state(entity_id):
-            if entity_id == "binary_sensor.door1":
-                return Mock(state=STATE_ON)  # Door 1 opens
-            return Mock(state=STATE_OFF)  # Door 2 stays closed
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states - door1 opening, door2 staying closed
+        hass.states.async_set("binary_sensor.door1", STATE_ON)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
 
         with (
             patch.object(entity, "async_write_ha_state"),
@@ -903,8 +884,8 @@ class TestWaspMultiSensorAggregation:
         assert entity._attr_is_on is False
         assert entity._state == STATE_OFF
 
-    def test_multi_door_all_closed_with_motion(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_multi_door_all_closed_with_motion(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that occupancy triggers when all doors are closed with motion."""
         entity = multi_sensor_wasp
@@ -914,11 +895,9 @@ class TestWaspMultiSensorAggregation:
         entity._attr_is_on = False
         entity._motion_state = STATE_ON
 
-        # Mock all doors as closed
-        def get_state(entity_id):
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states - all doors closed
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
 
         with (
             patch.object(entity, "_start_max_duration_timer"),
@@ -931,8 +910,8 @@ class TestWaspMultiSensorAggregation:
         assert entity._attr_is_on is True
         assert entity._state == STATE_ON
 
-    def test_multi_motion_any_triggers_occupancy(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_multi_motion_any_triggers_occupancy(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test that ANY motion sensor triggers occupancy with doors closed."""
         entity = multi_sensor_wasp
@@ -942,13 +921,9 @@ class TestWaspMultiSensorAggregation:
         entity._attr_is_on = False
         entity._door_state = STATE_OFF
 
-        # Mock motion2 activating, motion1 staying off
-        def get_state(entity_id):
-            if entity_id == "binary_sensor.motion2":
-                return Mock(state=STATE_ON)  # Motion 2 activates
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state
+        # Create actual states in hass.states - motion2 activating, motion1 staying off
+        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
+        hass.states.async_set("binary_sensor.motion2", STATE_ON)
 
         with (
             patch.object(entity, "_start_max_duration_timer"),
@@ -961,20 +936,16 @@ class TestWaspMultiSensorAggregation:
         assert entity._attr_is_on is True
         assert entity._state == STATE_ON
 
-    def test_multi_sensor_complete_cycle(
-        self, mock_hass: Mock, multi_sensor_wasp: WaspInBoxSensor
+    async def test_multi_sensor_complete_cycle(
+        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
     ) -> None:
         """Test complete occupancy cycle with multiple sensors."""
         entity = multi_sensor_wasp
 
         # Step 1: Both doors closed, motion1 triggers
-        def get_state_step1(entity_id):
-            if entity_id == "binary_sensor.motion1":
-                return Mock(state=STATE_ON)
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state_step1
-
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
         with (
             patch.object(entity, "_start_max_duration_timer"),
             patch.object(entity, "_start_verification_timer"),
@@ -985,13 +956,8 @@ class TestWaspMultiSensorAggregation:
         assert entity._attr_is_on is True
 
         # Step 2: Door1 opens (door2 still closed)
-        def get_state_step2(entity_id):
-            if entity_id == "binary_sensor.door1":
-                return Mock(state=STATE_ON)
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state_step2
-
+        hass.states.async_set("binary_sensor.door1", STATE_ON)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
         with (
             patch.object(entity, "_cancel_verification_timer"),
             patch.object(entity, "async_write_ha_state"),
@@ -1001,13 +967,9 @@ class TestWaspMultiSensorAggregation:
         assert entity._attr_is_on is False  # Any door opening clears occupancy
 
         # Step 3: Door1 closes again (both doors closed)
-        def get_state_step3(entity_id):
-            if entity_id == "binary_sensor.motion1":
-                return Mock(state=STATE_ON)  # Motion still active
-            return Mock(state=STATE_OFF)
-
-        mock_hass.states.get.side_effect = get_state_step3
-
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)  # Motion still active
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door2", STATE_OFF)
         with (
             patch.object(entity, "_start_max_duration_timer"),
             patch.object(entity, "_start_verification_timer"),
@@ -1019,7 +981,7 @@ class TestWaspMultiSensorAggregation:
 
     def test_no_door_sensors_configured(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         multi_sensor_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -1031,14 +993,14 @@ class TestWaspMultiSensorAggregation:
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
         entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
         result = entity._get_aggregate_door_state()
         assert result == STATE_OFF  # Should default to closed
 
     def test_no_motion_sensors_configured(
         self,
-        mock_hass: Mock,
+        hass: HomeAssistant,
         multi_sensor_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
@@ -1050,7 +1012,7 @@ class TestWaspMultiSensorAggregation:
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
         entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
-        entity.hass = mock_hass
+        entity.hass = hass
 
         result = entity._get_aggregate_motion_state()
         assert result == STATE_OFF  # Should default to off

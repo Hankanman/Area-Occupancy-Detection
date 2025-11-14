@@ -20,7 +20,19 @@ from custom_components.area_occupancy.data.entity_type import (
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
+
+
+def _set_states_get(hass, mock_get):
+    """Helper to set hass.states.get by replacing the entire states object."""
+    # Replace the entire states object with a mock that has a get method
+    from unittest.mock import MagicMock
+
+    mock_states = MagicMock()
+    mock_states.get = mock_get
+    mock_states.async_set = hass.states.async_set  # Preserve async_set
+    mock_states.async_all = hass.states.async_all  # Preserve other methods if needed
+    object.__setattr__(hass, "states", mock_states)
 
 
 # Helper functions to reduce code duplication
@@ -290,14 +302,21 @@ class TestEntityPropertiesAndMethods:
     ) -> None:
         """Test state property with edge cases."""
         # Test with no state available
-        coordinator_with_areas.hass.states.get.return_value = None
-        assert test_entity.state is None
+        original_states = coordinator_with_areas.hass.states
+        _set_states_get(coordinator_with_areas.hass, lambda _: None)
+        try:
+            assert test_entity.state is None
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
         # Test with state but no state attribute
         mock_state = Mock()
         mock_state.state = "test_state"
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-        assert test_entity.state == "test_state"
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            assert test_entity.state == "test_state"
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     @pytest.mark.parametrize(
         ("state_value", "expected_available"),
@@ -315,14 +334,17 @@ class TestEntityPropertiesAndMethods:
         expected_available: bool,
     ) -> None:
         """Test available property with different states."""
-        if state_value is None:
-            coordinator_with_areas.hass.states.get.return_value = None
-        else:
-            mock_state = Mock()
-            mock_state.state = state_value
-            coordinator_with_areas.hass.states.get.return_value = mock_state
-
-        assert test_entity.available is expected_available
+        original_states = coordinator_with_areas.hass.states
+        try:
+            if state_value is None:
+                _set_states_get(coordinator_with_areas.hass, lambda _: None)
+            else:
+                mock_state = Mock()
+                mock_state.state = state_value
+                _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+            assert test_entity.available is expected_available
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     @pytest.mark.parametrize(
         ("state_value", "expected_evidence"),
@@ -348,11 +370,14 @@ class TestEntityPropertiesAndMethods:
             coordinator=coordinator_with_areas,
         )
 
+        original_states = coordinator_with_areas.hass.states
         mock_state = Mock()
         mock_state.state = state_value
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-
-        assert entity.evidence is expected_evidence
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            assert entity.evidence is expected_evidence
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     def test_has_new_evidence_transitions(
         self, coordinator_with_areas: AreaOccupancyCoordinator
@@ -368,19 +393,23 @@ class TestEntityPropertiesAndMethods:
             coordinator=coordinator_with_areas,
         )
 
+        original_states = coordinator_with_areas.hass.states
         # Test initial state (no transition)
         mock_state = Mock()
         mock_state.state = STATE_ON
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-        assert not entity.has_new_evidence()  # No transition on first call
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            assert not entity.has_new_evidence()  # No transition on first call
 
-        # Test transition from True to False
-        mock_state.state = "off"
-        assert entity.has_new_evidence()  # Should detect transition
+            # Test transition from True to False
+            mock_state.state = "off"
+            assert entity.has_new_evidence()  # Should detect transition
 
-        # Test transition from False to True
-        mock_state.state = STATE_ON
-        assert entity.has_new_evidence()  # Should detect transition
+            # Test transition from False to True
+            mock_state.state = STATE_ON
+            assert entity.has_new_evidence()  # Should detect transition
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     def test_entity_properties_comprehensive(
         self, coordinator_with_areas: AreaOccupancyCoordinator
@@ -409,30 +438,34 @@ class TestEntityPropertiesAndMethods:
             coordinator=coordinator_with_areas,
         )
 
+        original_states = coordinator_with_areas.hass.states
         # Test name property
         mock_state = Mock()
         mock_state.name = "Test Motion Sensor"
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-        assert entity.name == "Test Motion Sensor"
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            assert entity.name == "Test Motion Sensor"
 
-        # Test weight property
-        assert entity.weight == 0.85
+            # Test weight property
+            assert entity.weight == 0.85
 
-        # Test active_states and active_range properties
-        assert entity.active_states == [STATE_ON]
-        assert entity.active_range is None
+            # Test active_states and active_range properties
+            assert entity.active_states == [STATE_ON]
+            assert entity.active_range is None
 
-        # Test active property when evidence is True
-        mock_state.state = STATE_ON
-        assert entity.active is True
+            # Test active property when evidence is True
+            mock_state.state = STATE_ON
+            assert entity.active is True
 
-        # Test decay_factor when evidence is True (should return 1.0)
-        assert entity.decay_factor == 1.0
+            # Test decay_factor when evidence is True (should return 1.0)
+            assert entity.decay_factor == 1.0
 
-        # Test decay_factor when evidence is False (should return decay.decay_factor)
-        mock_state.state = "off"
-        # decay_factor should be < 1.0 since decay is running and started 1 minute ago
-        assert entity.decay_factor < 1.0
+            # Test decay_factor when evidence is False (should return decay.decay_factor)
+            mock_state.state = "off"
+            # decay_factor should be < 1.0 since decay is running and started 1 minute ago
+            assert entity.decay_factor < 1.0
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     def test_entity_methods_update_likelihood_and_decay(
         self, coordinator_with_areas: AreaOccupancyCoordinator
@@ -467,32 +500,49 @@ class TestEntityPropertiesAndMethods:
             previous_evidence=None,  # Start with None
         )
 
+        original_states = coordinator_with_areas.hass.states
         # Test with current evidence None (entity unavailable)
-        coordinator_with_areas.hass.states.get.return_value = None
-        assert not entity.has_new_evidence()
-        assert entity.previous_evidence is None
+        _set_states_get(coordinator_with_areas.hass, lambda _: None)
+        try:
+            assert not entity.has_new_evidence()
+            assert entity.previous_evidence is None
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
         # Test with previous evidence None but current evidence available
         mock_state = Mock()
         mock_state.state = STATE_ON
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-        assert not entity.has_new_evidence()  # No transition when previous is None
-        assert entity.previous_evidence is True
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            assert not entity.has_new_evidence()  # No transition when previous is None
+            assert entity.previous_evidence is True
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
         # Test decay interaction when evidence becomes True
         entity.decay.is_decaying = True
         entity.decay.stop_decay = Mock()
 
         # Set state to off to establish previous_evidence as False
-        mock_state.state = "off"
-        entity.has_new_evidence()  # This sets previous_evidence to False
+        mock_state_off = Mock()
+        mock_state_off.state = "off"
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state_off)
+        try:
+            entity.has_new_evidence()  # This sets previous_evidence to False
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
         # Reset the mock to count only the next call
         entity.decay.stop_decay.reset_mock()
 
         # Now change to on - this should trigger stop_decay
-        mock_state.state = STATE_ON
-        assert entity.has_new_evidence()  # Should detect transition and stop decay
+        mock_state_on = Mock()
+        mock_state_on.state = STATE_ON
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state_on)
+        try:
+            assert entity.has_new_evidence()  # Should detect transition and stop decay
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
         # stop_decay is called twice: once for inconsistent state, once for transition
         assert entity.decay.stop_decay.call_count == 2
 
@@ -639,12 +689,15 @@ class TestEntityPropertiesAndMethods:
         )
 
         # Set up a valid state
+        original_states = coordinator_with_areas.hass.states
         mock_state = Mock()
         mock_state.state = "some_state"
-        coordinator_with_areas.hass.states.get.return_value = mock_state
-
-        # Should return None when neither active_states nor active_range is configured
-        assert entity.evidence is None
+        _set_states_get(coordinator_with_areas.hass, lambda _: mock_state)
+        try:
+            # Should return None when neither active_states nor active_range is configured
+            assert entity.evidence is None
+        finally:
+            object.__setattr__(coordinator_with_areas.hass, "states", original_states)
 
     @pytest.mark.asyncio
     async def test_entity_manager_cleanup(

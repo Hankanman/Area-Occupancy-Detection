@@ -16,6 +16,7 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
 from custom_components.area_occupancy.data.prior import MIN_PRIOR
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -49,12 +50,12 @@ class TestAreaOccupancyCoordinator:
             yield
 
     def test_initialization(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test coordinator initialization."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
-        assert coordinator.hass == mock_hass
+        assert coordinator.hass == hass
         assert coordinator.config_entry == mock_realistic_config_entry
         assert coordinator.entry_id == mock_realistic_config_entry.entry_id
         assert coordinator.name == mock_realistic_config_entry.data["name"]
@@ -118,10 +119,10 @@ class TestAreaOccupancyCoordinator:
         )
 
     def test_device_info_with_missing_config(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test device info generation when config is missing."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Get first area (always exists - at least one area is guaranteed)
         area = coordinator.get_area_or_default()
@@ -520,10 +521,10 @@ class TestAreaOccupancyCoordinator:
             await method() if call_args is None else await method(call_args)
 
     async def test_timer_lifecycle(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test complete timer lifecycle from start to cancellation."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test
         area_name = "Test Area"
@@ -558,20 +559,20 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._global_decay_timer is None
 
     def test_timer_start_with_missing_hass(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test timer start when hass is missing/invalid."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with patch.object(coordinator, "hass", None):
             coordinator._start_decay_timer()
             assert coordinator._global_decay_timer is None
 
     async def test_setup_scenarios(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test various setup scenarios."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Test setup with stored data
         stored_data: dict[str, Any] = {"entities": {"binary_sensor.test": {}}}
@@ -648,10 +649,10 @@ class TestAreaOccupancyCoordinator:
 
     @pytest.mark.parametrize("expected_lingering_timers", [True])
     async def test_shutdown_behavior(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test shutdown behavior with real coordinator instance."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test using helper
         area_name = "Test Area"
@@ -691,10 +692,10 @@ class TestAreaOccupancyCoordinator:
             # assert coordinator._remove_state_listener is None
 
     async def test_shutdown_with_none_resources(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test shutdown when resources are already None."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test using helper
         area_name = "Test Area"
@@ -729,10 +730,10 @@ class TestAreaOccupancyCoordinator:
 
     @pytest.mark.expected_lingering_timers(True)
     async def test_full_coordinator_lifecycle(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test complete coordinator lifecycle with realistic configuration."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test using helper
         area_name = "Test Area"
@@ -811,10 +812,10 @@ class TestAreaOccupancyCoordinator:
         mock_coordinator.track_entity_state_changes.assert_called_with(entity_ids)
 
     def test_type_probabilities_property(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test type_probabilities property calculation."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Create an area and add it to coordinator
         area_name = "Test Area"
@@ -848,10 +849,10 @@ class TestAreaOccupancyCoordinator:
         assert "temperature" in type_probs
 
     def test_type_probabilities_with_empty_entities(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test type_probabilities property with no entities."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Get area name - handle case where areas might not be loaded
         area_names = coordinator.get_area_names()
@@ -889,10 +890,10 @@ class TestAreaOccupancyCoordinator:
         assert area.threshold.return_value == 0.5
 
     async def test_decay_timer_handling(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test decay timer start and handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with patch(
             "custom_components.area_occupancy.coordinator.async_track_point_in_time",
@@ -903,10 +904,10 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._global_decay_timer is not None
 
     async def test_decay_timer_handling_with_existing_timer(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test decay timer start when timer already exists."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._global_decay_timer = Mock()
 
         with patch(
@@ -916,10 +917,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_not_called()
 
     async def test_decay_timer_handling_without_hass(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test decay timer start when hass is None."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator, "hass", None),
@@ -931,10 +932,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_not_called()
 
     async def test_handle_decay_timer(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test decay timer callback handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._global_decay_timer = Mock()
 
         # Set up an area for the test using helper
@@ -957,10 +958,10 @@ class TestAreaOccupancyCoordinator:
             mock_refresh.assert_called_once()
 
     async def test_handle_decay_timer_disabled(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test decay timer callback when decay is disabled."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._global_decay_timer = Mock()
 
         # Set up an area for the test using helper
@@ -990,10 +991,10 @@ class TestAreaOccupancyCoordinator:
             mock_refresh.assert_not_called()
 
     async def test_analysis_timer_handling(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test analysis timer start and handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with patch(
             "custom_components.area_occupancy.coordinator.async_track_point_in_time",
@@ -1004,10 +1005,10 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._analysis_timer is not None
 
     async def test_analysis_timer_handling_with_existing_timer(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test analysis timer start when timer already exists."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
 
         with patch(
@@ -1017,10 +1018,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_not_called()
 
     async def test_analysis_timer_handling_without_hass(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test analysis timer start when hass is None."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator, "hass", None),
@@ -1032,10 +1033,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_not_called()
 
     async def test_run_analysis(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test run_analysis method."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         coordinator._is_master = True  # Enable pruning (master-only)
 
@@ -1064,10 +1065,10 @@ class TestAreaOccupancyCoordinator:
             coordinator.db.prune_old_intervals.assert_called_once()
 
     async def test_run_analysis_with_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test run_analysis method with error handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
 
         with (
@@ -1085,10 +1086,10 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._analysis_timer is None
 
     async def test_run_analysis_with_custom_time(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test run_analysis method with custom time parameter."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         custom_time = dt_util.utcnow()
 
@@ -1112,10 +1113,10 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._analysis_timer is None
 
     async def test_track_entity_state_changes_with_existing_listener(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test entity state tracking with existing listener."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         # _remove_state_listener doesn't exist in new architecture - state listeners are per-area
         # coordinator._remove_state_listener = Mock()
         # prev_listener = coordinator._remove_state_listener
@@ -1133,10 +1134,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_called_once()
 
     async def test_track_entity_state_changes_empty_list(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test entity state tracking with empty entity list."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         # _remove_state_listener doesn't exist in new architecture - state listeners are per-area
         # coordinator._remove_state_listener = Mock()
         # prev_listener = coordinator._remove_state_listener
@@ -1152,10 +1153,10 @@ class TestAreaOccupancyCoordinator:
             mock_track.assert_not_called()
 
     async def test_track_entity_state_changes_with_entity_with_new_evidence(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test entity state tracking with entity that has new evidence."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Ensure setup_complete is True so the refresh condition is met
         coordinator._setup_complete = True
@@ -1200,10 +1201,10 @@ class TestAreaOccupancyCoordinator:
             mock_refresh.assert_called_once()
 
     async def test_track_entity_state_changes_with_entity_without_new_evidence(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test entity state tracking with entity that has no new evidence."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test using helper
         area_name = "Test Area"
@@ -1251,10 +1252,10 @@ class TestAreaOccupancyCoordinator:
             mock_refresh.assert_not_called()
 
     async def test_setup_with_intervals_empty(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup when intervals table is empty."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
@@ -1280,10 +1281,10 @@ class TestAreaOccupancyCoordinator:
             mock_start_timer.assert_called_once()
 
     async def test_setup_with_intervals_not_empty(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup when intervals table is not empty."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
@@ -1318,10 +1319,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator.async_shutdown()
 
     async def test_setup_with_no_entity_ids(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup when no entity IDs are configured."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Set up an area for the test using helper
         area_name = "Test Area"
@@ -1365,10 +1366,10 @@ class TestAreaOccupancyCoordinator:
             mock_run.assert_not_called()
 
     async def test_setup_with_database_errors(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup with database errors that should be handled gracefully."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
@@ -1394,10 +1395,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator.setup()
 
     async def test_setup_with_intervals_check_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup with intervals check error."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
@@ -1427,10 +1428,10 @@ class TestAreaOccupancyCoordinator:
 
     @pytest.mark.parametrize("expected_lingering_timers", [True])
     async def test_setup_with_analysis_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup with analysis error handling."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
@@ -1463,10 +1464,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator.setup()
 
     async def test_setup_with_unexpected_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup with unexpected error that should continue with basic functionality."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(
@@ -1491,10 +1492,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator.setup()
 
     async def test_setup_with_timer_start_error(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test setup with timer start error."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(
@@ -1513,10 +1514,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator.setup()
 
     async def test_async_update_options(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test async_update_options method."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Load areas from config (normally done during setup)
         coordinator._load_areas_from_config()
@@ -1650,10 +1651,10 @@ class TestRunAnalysisWithPruning:
     """Test run_analysis method with pruning functionality."""
 
     async def test_run_analysis_with_pruning(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test that prune_old_intervals is called during run_analysis."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         coordinator._is_master = True  # Enable pruning (master-only)
 
@@ -1683,10 +1684,10 @@ class TestRunAnalysisWithPruning:
             assert coordinator._analysis_timer is None
 
     async def test_run_analysis_pruning_failure(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test that analysis continues if pruning fails."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         coordinator._is_master = True  # Enable pruning (master-only)
 
@@ -1721,10 +1722,10 @@ class TestRunAnalysisWithPruning:
             assert coordinator._analysis_timer is None
 
     async def test_run_analysis_pruning_error_handling(
-        self, mock_hass: Mock, mock_realistic_config_entry: Mock
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
         """Test that analysis continues if pruning raises an exception."""
-        coordinator = AreaOccupancyCoordinator(mock_hass, mock_realistic_config_entry)
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         coordinator._is_master = True  # Enable pruning (master-only)
 
