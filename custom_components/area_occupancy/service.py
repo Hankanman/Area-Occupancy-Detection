@@ -7,6 +7,11 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 from homeassistant.util import dt as dt_util
 
 from .const import ALL_AREAS_IDENTIFIER, DOMAIN
@@ -500,20 +505,51 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         return {"area_status": status}
 
 
-async def async_setup_services(hass: HomeAssistant) -> None:
-    """Register custom services for area occupancy."""
+def _create_area_selector_schema(hass: HomeAssistant) -> vol.Schema:
+    """Create dynamic schema with area selector options.
 
-    # Service schema: area_name is optional, defaults to "all"
-    # Accepts area name or "all" for all areas operation
-    # Also supports deprecated entry_id for backward compatibility
-    area_name_schema = vol.Schema(
+    Gets area names from coordinator if available, otherwise falls back to
+    simple text field with "all" option.
+
+    Args:
+        hass: Home Assistant instance
+
+    Returns:
+        vol.Schema with SelectSelector for area_name field
+    """
+    # Try to get coordinator to build dynamic options
+    coordinator = hass.data.get(DOMAIN)
+    options = [{"value": "all", "label": "All Areas"}]
+
+    if coordinator is not None:
+        try:
+            area_names = coordinator.get_area_names()
+            options.extend(
+                [{"value": area_name, "label": area_name} for area_name in area_names]
+            )
+        except (AttributeError, RuntimeError, ValueError) as err:
+            # If coordinator exists but get_area_names fails, use fallback
+            _LOGGER.debug(
+                "Could not get area names from coordinator, using fallback schema: %s",
+                err,
+            )
+
+    return vol.Schema(
         {
-            vol.Optional("area_name", default="all"): vol.Any(
-                str, vol.In(["all", ALL_AREAS_IDENTIFIER])
+            vol.Optional("area_name", default="all"): SelectSelector(
+                SelectSelectorConfig(options=options, mode=SelectSelectorMode.DROPDOWN)
             ),
             vol.Optional("entry_id"): str,  # Deprecated, for backward compatibility
         }
     )
+
+
+async def async_setup_services(hass: HomeAssistant) -> None:
+    """Register custom services for area occupancy."""
+
+    # Create dynamic schema with area selector options
+    # Schema will be populated with actual area names from coordinator
+    area_name_schema = _create_area_selector_schema(hass)
 
     # Create async wrapper functions to properly handle the service calls
 

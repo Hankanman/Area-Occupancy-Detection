@@ -108,6 +108,12 @@ class PriorAnalyzer:
             _LOGGER.debug("No time bounds available, using default prior")
             return DEFAULT_PRIOR
 
+        # Ensure times are timezone-aware
+        if first_time.tzinfo is None:
+            first_time = first_time.replace(tzinfo=UTC)
+        if last_time.tzinfo is None:
+            last_time = last_time.replace(tzinfo=UTC)
+
         # Align denominator with lookback
         window_start = max(first_time, lookback_date)
         total_seconds = (last_time - window_start).total_seconds()
