@@ -6,7 +6,7 @@ All tests are written using pytest.
 
 All tests are written in the `tests` directory.
 
-The conftest.py file is used to configure the tests and contains the fixtures for the tests.
+The `conftest.py` file is used to configure the tests and contains the fixtures for the tests.
 
 All fixtures should be defined in the conftest.py file.
 

@@ -96,17 +96,52 @@ from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+# Note: Event loop management is handled by pytest-asyncio
+# We removed the enable_event_loop_debug fixture as it was interfering
+# with pytest-asyncio's event loop management and causing RuntimeError
+# issues when tests run together. pytest-asyncio handles event loop
+# creation and cleanup automatically.
 
-# Ensure an event loop exists for fixtures that rely on it
+
+# Ensure all config entries have state attribute for hass fixture teardown
 @pytest.fixture(autouse=True)
-def enable_event_loop_debug() -> None:
-    """Ensure an event loop exists and enable debug mode."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    loop.set_debug(True)
+def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
+    """Ensure all config entries returned by async_entries() have state attribute.
+
+    The hass fixture from pytest-homeassistant-custom-component checks entry.state
+    during teardown. This fixture ensures all entries have state set to prevent
+    AttributeError during teardown.
+    """
+    from homeassistant.config_entries import ConfigEntryState
+
+    original_async_entries = hass.config_entries.async_entries
+
+    def async_entries_with_state(domain=None):
+        """Wrapper that ensures all returned entries have state attribute."""
+        # Call original async_entries (could be real method or a mock)
+        if callable(original_async_entries):
+            entries = original_async_entries(domain)
+        else:
+            # If it's not callable, try to get entries from _entries dict
+            entries = (
+                list(hass.config_entries._entries.values())
+                if hasattr(hass.config_entries, "_entries")
+                else []
+            )
+
+        # Ensure all entries have state attribute
+        for entry in entries:
+            if not hasattr(entry, "state") or entry.state is None:
+                entry.state = ConfigEntryState.LOADED
+        return entries
+
+    # Patch async_entries to ensure state is set
+    hass.config_entries.async_entries = async_entries_with_state
+
+    yield
+
+    # Restore original (though it may not matter after test)
+    hass.config_entries.async_entries = original_async_entries
 
 
 # mock_hass fixture removed - using pytest-homeassistant-custom-component's hass fixture instead
@@ -1888,6 +1923,8 @@ def mock_config() -> Mock:
 @pytest.fixture
 def mock_realistic_config_entry() -> Mock:
     """Return a realistic ConfigEntry for Area Occupancy Detection."""
+    from homeassistant.config_entries import ConfigEntryState
+
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
     entry.domain = "area_occupancy"
@@ -1896,7 +1933,7 @@ def mock_realistic_config_entry() -> Mock:
     entry.version = 9
     entry.minor_version = 2
     entry.unique_id = None
-    entry.state = None
+    entry.state = ConfigEntryState.LOADED
     entry.runtime_data = None
     entry.pref_disable_new_entities = False
     entry.pref_disable_polling = False
@@ -2002,26 +2039,46 @@ def mock_realistic_config_entry() -> Mock:
 
 @pytest.fixture(autouse=True)
 def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
-    """Automatically track and cancel all timers created during a test."""
-    loop = asyncio.get_event_loop()
-    original_call_later = loop.call_later
-    original_call_at = loop.call_at
+    """Automatically track and cancel all timers created during a test.
+
+    Note: This fixture only activates if an event loop exists to avoid
+    RuntimeError when event loops are closed between tests.
+    """
     timer_handles: list[Any] = []
+    loop = None
 
-    def tracking_call_later(
-        delay: float, callback: Any, *args: Any, **kwargs: Any
-    ) -> Any:
-        handle = original_call_later(delay, callback, *args, **kwargs)
-        timer_handles.append(handle)
-        return handle
+    # Try to get the event loop, but don't fail if it doesn't exist
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = None
+        except RuntimeError:
+            # No event loop available - skip timer tracking
+            loop = None
 
-    def tracking_call_at(when: float, callback: Any, *args: Any, **kwargs: Any) -> Any:
-        handle = original_call_at(when, callback, *args, **kwargs)
-        timer_handles.append(handle)
-        return handle
+    if loop is not None:
+        original_call_later = loop.call_later
+        original_call_at = loop.call_at
 
-    monkeypatch.setattr(loop, "call_later", tracking_call_later)
-    monkeypatch.setattr(loop, "call_at", tracking_call_at)
+        def tracking_call_later(
+            delay: float, callback: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            handle = original_call_later(delay, callback, *args, **kwargs)
+            timer_handles.append(handle)
+            return handle
+
+        def tracking_call_at(
+            when: float, callback: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            handle = original_call_at(when, callback, *args, **kwargs)
+            timer_handles.append(handle)
+            return handle
+
+        monkeypatch.setattr(loop, "call_later", tracking_call_later)
+        monkeypatch.setattr(loop, "call_at", tracking_call_at)
 
     # Patch async_track_point_in_time if used directly
     try:
@@ -2044,9 +2101,11 @@ def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
 
     yield
 
-    for handle in timer_handles:
-        with contextlib.suppress(Exception):
-            handle.cancel()
+    # Clean up timers if loop is still available
+    if loop is not None and not loop.is_closed():
+        for handle in timer_handles:
+            with contextlib.suppress(Exception):
+                handle.cancel()
 
 
 # SQLAlchemy Database Testing Fixtures
@@ -2456,10 +2515,11 @@ def config_flow_mock_config_entry_with_areas() -> Mock:
 @pytest.fixture
 def config_flow_mock_config_entry_legacy() -> Mock:
     """Create a mock config entry with legacy single-area format."""
-    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
+    entry.state = ConfigEntryState.LOADED
     entry.data = {
         CONF_NAME: "Legacy Area",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
@@ -2472,10 +2532,11 @@ def config_flow_mock_config_entry_legacy() -> Mock:
 @pytest.fixture
 def config_flow_mock_config_entry_legacy_no_name() -> Mock:
     """Create a mock config entry with legacy format but no name."""
-    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
+    entry.state = ConfigEntryState.LOADED
     entry.data = {
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
