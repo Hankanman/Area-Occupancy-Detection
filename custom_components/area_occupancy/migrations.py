@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry, entity_registry as er
 
 from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
@@ -27,7 +27,6 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
-    CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -45,7 +44,6 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
-    validate_and_sanitize_area_name,
 )
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
@@ -416,23 +414,47 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         areas_list: list[dict[str, Any]] = []
         entry_id_to_area_name: dict[str, str] = {}  # Map for entity registry migration
 
+        area_reg = area_registry.async_get(hass)
+
         for entry in entries:
-            # Get area name from config
+            # Get area name from config (legacy format)
             merged = dict(entry.data)
             merged.update(entry.options)
-            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
 
-            # Validate and sanitize area name
-            try:
-                area_name = validate_and_sanitize_area_name(area_name)
-            except ValueError as err:
-                _LOGGER.warning(
-                    "Invalid area name '%s' for entry %s: %s. Using default name.",
-                    area_name,
-                    entry.entry_id,
-                    err,
-                )
-                area_name = DEFAULT_NAME
+            # Try to get area_id first (new format), then fall back to name (legacy)
+            area_id = merged.get(CONF_AREA_ID)
+            area_name = None
+
+            if area_id:
+                # New format - resolve area name from ID
+                area_entry = area_reg.async_get_area(area_id)
+                if area_entry:
+                    area_name = area_entry.name
+                else:
+                    _LOGGER.warning(
+                        "Area ID '%s' for entry %s not found in registry. Skipping.",
+                        area_id,
+                        entry.entry_id,
+                    )
+                    continue
+            else:
+                # Legacy format - try to resolve name to ID
+                legacy_name = merged.get("name", DEFAULT_NAME)  # Use string literal for legacy
+
+                # Try to find area by name
+                for area_entry in area_reg.async_list_areas():
+                    if area_entry.name == legacy_name:
+                        area_id = area_entry.id
+                        area_name = legacy_name
+                        break
+
+                if not area_id:
+                    _LOGGER.warning(
+                        "Could not resolve area name '%s' for entry %s to area ID. Skipping.",
+                        legacy_name,
+                        entry.entry_id,
+                    )
+                    continue
 
             # Ensure unique area names
             original_area_name = area_name
@@ -443,9 +465,11 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 
             entry_id_to_area_name[entry.entry_id] = area_name
 
-            # Create area config (merge data and options, ensure CONF_NAME is set)
+            # Create area config (merge data and options, ensure CONF_AREA_ID is set)
             area_config = {**merged}
-            area_config[CONF_NAME] = area_name
+            area_config[CONF_AREA_ID] = area_id
+            # Remove legacy CONF_NAME if present
+            area_config.pop("name", None)
             areas_list.append(area_config)
 
             _LOGGER.debug(
