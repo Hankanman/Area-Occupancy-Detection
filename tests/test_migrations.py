@@ -32,6 +32,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 
+# ruff: noqa: PLC0415
 class TestAsyncMigrateUniqueIds:
     """Test async_migrate_unique_ids function."""
 
@@ -225,10 +226,13 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_v1_0(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at version 1.0."""
+        from homeassistant.config_entries import ConfigEntryState
+
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
         entry.entry_id = mock_config_entry.entry_id
+        entry.state = ConfigEntryState.LOADED
         entry.data = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
         entry.options = {}
         return entry
@@ -236,10 +240,13 @@ class TestAsyncMigrateEntry:
     @pytest.fixture
     def mock_config_entry_current(self, mock_config_entry: Mock) -> Mock:
         """Create a mock config entry at current version."""
+        from homeassistant.config_entries import ConfigEntryState
+
         entry = Mock(spec=ConfigEntry)
         entry.version = CONF_VERSION
         entry.minor_version = CONF_VERSION_MINOR
         entry.entry_id = mock_config_entry.entry_id
+        entry.state = ConfigEntryState.LOADED
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -251,8 +258,14 @@ class TestAsyncMigrateEntry:
         self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration from version 1.0 to current."""
+
         # Ensure the entry exists in config_entries so it's not considered consolidated
-        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry_v1_0])
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        # Make it return the entry for both calls: with DOMAIN argument and without (during teardown)
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
 
         with (
             patch(
@@ -292,10 +305,13 @@ class TestAsyncMigrateEntry:
         self, hass: HomeAssistant
     ) -> None:
         """Test migration from future version."""
+        from homeassistant.config_entries import ConfigEntryState
+
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.version = CONF_VERSION + 1
         mock_entry.minor_version = 0
         mock_entry.entry_id = "test_entry_id"
+        mock_entry.state = ConfigEntryState.LOADED
         mock_entry.data = {}
         mock_entry.options = {}
 
@@ -306,8 +322,13 @@ class TestAsyncMigrateEntry:
         self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
     ) -> None:
         """Test migration with error during migration."""
+
         # Mock async_entries to return the entry so it's not considered consolidated
-        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry_v1_0])
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
         with (
             patch(
                 "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
@@ -339,8 +360,13 @@ class TestAsyncMigrateEntry:
     ) -> None:
         """Test migration with invalid threshold value."""
         mock_config_entry_v1_0.options = {CONF_THRESHOLD: 150}
+
         # Mock async_entries to return the entry so it's not considered consolidated
-        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry_v1_0])
+        # async_entries is synchronous in Home Assistant, so use Mock not AsyncMock
+        def async_entries_mock(domain=None):
+            return [mock_config_entry_v1_0]
+
+        hass.config_entries.async_entries = async_entries_mock
 
         with (
             patch(

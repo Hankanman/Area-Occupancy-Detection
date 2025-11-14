@@ -593,17 +593,20 @@ class AreaOccupancyDB:
     def _verify_all_tables_exist(self) -> bool:
         """Verify all required tables exist in the database.
 
+        Uses SQLAlchemy's inspector to ensure consistent connection handling,
+        avoiding race conditions with in-memory databases where different
+        connections might not see tables created by other connections.
+
         Returns:
             bool: True if all required tables exist, False otherwise
         """
         required_tables = {"areas", "entities", "intervals", "priors", "metadata"}
         try:
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
-                existing_tables = {row[0] for row in result}
-                return required_tables.issubset(existing_tables)
+            # Use inspector instead of raw connection to ensure consistent
+            # connection pool usage (same as init_db uses Base.metadata.create_all)
+            inspector = sa.inspect(self.engine)
+            existing_tables = set(inspector.get_table_names())
+            return required_tables.issubset(existing_tables)
         except sa.exc.SQLAlchemyError:
             return False
 

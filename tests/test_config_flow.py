@@ -600,6 +600,9 @@ class TestAreaOccupancyConfigFlow:
             patch.object(config_flow_flow, "_validate_config") as mock_validate,
             patch_create_schema_context(),
         ):
+            # Call async_step_area_config to trigger validation
+            await config_flow_flow.async_step_area_config(user_input)
+
             # Should have preserved the name
             mock_validate.assert_called_once()
             call_args = mock_validate.call_args[0][0]
