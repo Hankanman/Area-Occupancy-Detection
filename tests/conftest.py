@@ -3,22 +3,33 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import Lock
 from collections.abc import Generator
 import contextlib
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import os
 import time
 import types
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import voluptuous as vol
 
 # Set environment variable for auto database initialization in tests
 os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: SLF001
+from custom_components.area_occupancy.area.area import Area
+from custom_components.area_occupancy.config_flow import (
+    AreaOccupancyConfigFlow,
+    AreaOccupancyOptionsFlow,
+)
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -85,14 +96,17 @@ from custom_components.area_occupancy.data.config import (
     WaspInBox,
     Weights,
 )
-from custom_components.area_occupancy.data.entity import EntityManager
+from custom_components.area_occupancy.data.decay import Decay as DecayClass
+from custom_components.area_occupancy.data.entity import Entity, EntityManager
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
 from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
-from homeassistant.config_entries import ConfigEntry
+from custom_components.area_occupancy.db import AreaOccupancyDB, Base
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.entity_registry import EntityRegistry
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -112,8 +126,6 @@ def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
     during teardown. This fixture ensures all entries have state set to prevent
     AttributeError during teardown.
     """
-    from homeassistant.config_entries import ConfigEntryState
-
     original_async_entries = hass.config_entries.async_entries
 
     def async_entries_with_state(domain=None):
@@ -142,9 +154,6 @@ def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
 
     # Restore original (though it may not matter after test)
     hass.config_entries.async_entries = original_async_entries
-
-
-# mock_hass fixture removed - using pytest-homeassistant-custom-component's hass fixture instead
 
 
 @pytest.fixture
@@ -198,10 +207,8 @@ def mock_config_entry() -> Mock:
     # Set state attribute explicitly so it can be accessed during teardown
     # Use ConfigEntryState if available, otherwise use None
     try:
-        from homeassistant.config_entries import ConfigEntryState
-
         entry.state = ConfigEntryState.LOADED
-    except ImportError:
+    except (ImportError, NameError):
         entry.state = None
 
     # Config entry methods
@@ -297,153 +304,23 @@ def mock_entity_manager() -> Mock:
 
 
 @pytest.fixture
-def mock_coordinator(
-    hass: HomeAssistant,
-    mock_realistic_config_entry: Mock,
-    mock_config: AreaConfig,
-    mock_entity_manager: Mock,
-    mock_entity_type_manager: Mock,
-    mock_area_prior: Mock,
-    mock_purpose_manager: Mock,
-) -> Mock:
-    """Create a comprehensive mock coordinator using realistic fixtures."""
-
-    coordinator = Mock(spec=AreaOccupancyCoordinator)
-    coordinator.hass = hass
-    coordinator.config_entry = mock_realistic_config_entry
-    coordinator.entry_id = mock_realistic_config_entry.entry_id
-    coordinator.available = True
-    coordinator.is_occupied = False
-    coordinator.occupancy_entity_id = None
-    coordinator.wasp_entity_id = None
-    coordinator.last_update_success = True
-
-    # Set up multi-area architecture with default test area
-    mock_area = Mock()
-    mock_area.config = mock_config
-    mock_area.entities = mock_entity_manager
-    mock_area.prior = mock_area_prior
-    mock_area.purpose = mock_purpose_manager
-    mock_area.area_name = "Test Area"
-    # Mock area methods (coordinator wrappers will delegate to these)
-    mock_area.probability = Mock(return_value=0.5)
-    mock_area.threshold = Mock(return_value=0.5)
-    mock_area.area_prior = Mock(return_value=0.3)
-    mock_area.decay = Mock(return_value=1.0)
-    mock_area.occupied = Mock(return_value=False)
-    mock_area.type_probabilities = Mock(return_value={})
-    mock_area.device_info = Mock(
-        return_value={
-            "identifiers": {(DOMAIN, "Test Area")},
-            "name": mock_config.name,
-            "manufacturer": DEVICE_MANUFACTURER,
-            "model": DEVICE_MODEL,
-            "sw_version": DEVICE_SW_VERSION,
-        }
-    )
-    coordinator.areas = {"Test Area": mock_area}
-
-    # Mock legacy attributes for backward compatibility in tests
-    coordinator.entity_types = mock_entity_type_manager
-
-    # Database - use the new AreaOccupancyDB system
-    coordinator.db = _create_mock_db()
-
-    # Legacy store for backward compatibility
-    coordinator.store = coordinator.db
-
-    # Mock get_area_or_default to return default test area
-    coordinator.get_area_or_default = Mock(return_value=mock_area)
-    coordinator.get_area_names = Mock(return_value=["Test Area"])
-
-    # Set up areas dict
-    coordinator.areas = {"Test Area": mock_area}
-
-    # DEPRECATED: For backward compatibility in tests, expose config from first area
-    # New tests should use area.config instead
-    coordinator.config = mock_config
-
-    # Only mock real public methods
-    coordinator.async_shutdown = AsyncMock()
-    coordinator.async_update_options = AsyncMock()
-    coordinator.setup = AsyncMock()
-    coordinator.update = AsyncMock()
-    coordinator.track_entity_state_changes = AsyncMock()
-    coordinator.async_refresh = AsyncMock()
-
-    # Mock data property
-    coordinator.data = {"last_updated": dt_util.utcnow().isoformat()}
-
-    # Device info
-    # device_info is now a method that takes area_name
-    coordinator.device_info = Mock(
-        return_value={
-            "identifiers": {(coordinator.config_entry.domain, coordinator.entry_id)},
-            "name": mock_config.name,
-            "manufacturer": "Area Occupancy",
-            "model": "Area Occupancy Detection",
-            "sw_version": "1.0.0",
-        }
-    )
-
-    # Mock timers and trackers
-    coordinator._global_prior_timer = None
-    coordinator._global_decay_timer = None
-    # _remove_state_listener doesn't exist in new architecture
-    # coordinator._remove_state_listener = None
-
-    # Mock binary_sensor_entity_ids property to return a proper dictionary
-    coordinator.binary_sensor_entity_ids = {
-        "occupancy": "binary_sensor.test_area_occupancy",
-        "wasp": "binary_sensor.test_area_wasp",
-    }
-
-    # Mock entities manager with methods that actually exist in EntityManager
-    # Note: In multi-area architecture, entities are accessed via area.entities
-    # Set entities on the area, not directly on coordinator
-    mock_area.entities = mock_entity_manager
-    mock_area.entities.cleanup = AsyncMock()
-    mock_area.entities.update_likelihoods = AsyncMock(return_value=1)
-    mock_area.entities.get_entity = Mock(
-        return_value=mock_entity_manager.get_entity.return_value
-    )
-    mock_area.entities.add_entity = Mock()
-    mock_area.entities.entities = {}
-    mock_area.entities.active_entities = []
-    mock_area.entities.inactive_entities = []
-    mock_area.entities.decaying_entities = []
-
-    # For backward compatibility in tests, also set on coordinator (but prefer area.entities)
-    coordinator.entities = mock_entity_manager
-    coordinator.entities.cleanup = AsyncMock()
-    coordinator.entities.update_likelihoods = AsyncMock(return_value=1)
-    coordinator.entities.get_entity = Mock(
-        return_value=mock_entity_manager.get_entity.return_value
-    )
-    coordinator.entities.add_entity = Mock()
-    coordinator.entities.entities = {}
-    coordinator.entities.active_entities = []
-    coordinator.entities.inactive_entities = []
-    coordinator.entities.decaying_entities = []
-
-    # Mock purpose manager (already set via fixture)
-
-    return coordinator
-
-
-@pytest.fixture
-def coordinator_with_areas(
+def coordinator(
     hass: HomeAssistant, mock_realistic_config_entry: Mock
 ) -> AreaOccupancyCoordinator:
-    """Create a real coordinator with areas already loaded from config.
+    """Primary fixture for coordinator testing.
 
-    This fixture creates a real AreaOccupancyCoordinator instance and loads
-    areas from the config entry. Use this for integration-style tests that
-    need real coordinator behavior.
+    Provides a real AreaOccupancyCoordinator instance with:
+    - Real Home Assistant instance
+    - Areas loaded from config entry
+    - Real coordinator behavior
+    - Proper initialization
+
+    This is the recommended default for most coordinator tests.
+    Use mocks only when you need to test error paths or control behavior.
 
     Example:
-        def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
-            area_names = coordinator_with_areas.get_area_names()
+        def test_coordinator_method(coordinator: AreaOccupancyCoordinator):
+            area_names = coordinator.get_area_names()
             assert len(area_names) > 0
     """
     coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
@@ -452,14 +329,28 @@ def coordinator_with_areas(
 
 
 @pytest.fixture
-def coordinator_with_db(
-    coordinator_with_areas: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
+def coordinator_with_areas(
+    coordinator: AreaOccupancyCoordinator,
 ) -> AreaOccupancyCoordinator:
+    """Alias for coordinator fixture (backward compatibility).
+
+    DEPRECATED: Use `coordinator` fixture instead.
+    This fixture is kept for backward compatibility.
+
+    Example:
+        def test_something(coordinator_with_areas: AreaOccupancyCoordinator):
+            area_names = coordinator_with_areas.get_area_names()
+            assert len(area_names) > 0
+    """
+    return coordinator
+
+
+@pytest.fixture
+def coordinator_with_db(test_db: Any) -> AreaOccupancyCoordinator:
     """Create a real coordinator with real db attached.
 
-    This fixture combines a real AreaOccupancyCoordinator with a real
-    AreaOccupancyDB instance using an in-memory database. Use this for tests
-    that need both coordinator and database functionality.
+    This is a simple wrapper around test_db that returns the coordinator.
+    Use this for tests that need both coordinator and database functionality.
 
     Example:
         def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
@@ -468,40 +359,7 @@ def coordinator_with_db(
             area = coordinator.get_area_or_default("Test Area")
             # Use real area.prior.value instead of mocking
     """
-    from sqlalchemy.orm import sessionmaker
-
-    from custom_components.area_occupancy.db import AreaOccupancyDB
-
-    coordinator = coordinator_with_areas
-
-    # Create real database instance attached to real coordinator
-    db = AreaOccupancyDB(coordinator=coordinator)
-
-    # Override the database with our test database
-    db.engine = db_engine
-
-    # Create a fresh session for each test
-    SessionLocal = sessionmaker(bind=db_engine)
-    session = SessionLocal()
-
-    # Clear any existing data
-    try:
-        session.query(db.Intervals).delete()
-        session.query(db.Entities).delete()
-        session.query(db.Areas).delete()
-        session.query(db.Priors).delete()
-        session.commit()
-    except (ValueError, OSError):
-        session.rollback()
-
-    setattr(db, "session", session)
-    setattr(db, "_session_maker", SessionLocal)
-
-    # Attach db to coordinator (it's already attached via AreaOccupancyDB.__init__)
-    # but ensure it's using our test engine
-    coordinator.db = db
-
-    return coordinator
+    return test_db.coordinator
 
 
 @pytest.fixture
@@ -555,8 +413,6 @@ def mock_entity_type() -> Mock:
 @pytest.fixture
 def mock_entity_type_manager(mock_entity_type: Mock) -> Mock:
     """Create a mock entity type manager (simplified since EntityTypeManager doesn't exist)."""
-    from custom_components.area_occupancy.data.entity_type import InputType
-
     manager = Mock()
     manager.cleanup = Mock()
     # Remove non-existent to_dict method mock
@@ -754,7 +610,7 @@ def create_db_data_with_entities(entry_id: str, entities: dict) -> dict[str, Any
 
 def _create_mock_entity(
     entity_id: str,
-    mock_coordinator: Mock,
+    coordinator: AreaOccupancyCoordinator,
     mock_entity_type: Mock,
     mock_decay: Mock,
     evidence: bool | None = True,
@@ -769,15 +625,13 @@ def _create_mock_entity(
     decay_factor: float = 1.0,
 ) -> Mock:
     """Create mock entities with different states."""
-    from custom_components.area_occupancy.data.entity import Entity
-
     entity = Mock(spec=Entity)
     entity.entity_id = entity_id
     entity.type = mock_entity_type
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.hass = mock_coordinator.hass
+    entity.hass = coordinator.hass
     entity.last_updated = last_updated or dt_util.utcnow()
     entity.previous_evidence = previous_evidence
     entity.previous_probability = previous_probability
@@ -825,12 +679,12 @@ def _create_mock_db() -> Mock:
 
 @pytest.fixture
 def mock_active_entity(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity in active state (evidence=True, available=True)."""
     return _create_mock_entity(
         entity_id="binary_sensor.active_entity",
-        mock_coordinator=mock_coordinator,
+        coordinator=coordinator,
         mock_entity_type=mock_entity_type,
         mock_decay=mock_decay,
         evidence=True,
@@ -847,12 +701,12 @@ def mock_active_entity(
 
 @pytest.fixture
 def mock_inactive_entity(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity in inactive state (evidence=False, available=True)."""
     return _create_mock_entity(
         entity_id="binary_sensor.inactive_entity",
-        mock_coordinator=mock_coordinator,
+        coordinator=coordinator,
         mock_entity_type=mock_entity_type,
         mock_decay=mock_decay,
         evidence=False,
@@ -869,12 +723,12 @@ def mock_inactive_entity(
 
 @pytest.fixture
 def mock_unavailable_entity(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity in unavailable state (available=False)."""
     return _create_mock_entity(
         entity_id="binary_sensor.unavailable_entity",
-        mock_coordinator=mock_coordinator,
+        coordinator=coordinator,
         mock_entity_type=mock_entity_type,
         mock_decay=mock_decay,
         evidence=None,
@@ -892,12 +746,12 @@ def mock_unavailable_entity(
 
 @pytest.fixture
 def mock_stale_entity(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity with stale update (> 1 hour ago)."""
     return _create_mock_entity(
         entity_id="binary_sensor.stale_entity",
-        mock_coordinator=mock_coordinator,
+        coordinator=coordinator,
         mock_entity_type=mock_entity_type,
         mock_decay=mock_decay,
         evidence=False,
@@ -965,39 +819,19 @@ def mock_entities_container() -> Mock:
 
 
 @pytest.fixture
-def mock_coordinator_with_threshold(mock_coordinator: Mock) -> Mock:
-    """Create a coordinator mock with threshold-specific attributes."""
-    # threshold is now a method that delegates to area
-    area = mock_coordinator.get_area_or_default.return_value
-    area.config.threshold = 0.6
-    area.threshold = Mock(return_value=0.6)
-    area.probability = Mock(return_value=0.5)
-    area.occupied = Mock(return_value=False)
-    area.area_prior = Mock(return_value=0.3)
-    area.decay = Mock(return_value=1.0)
-    area.type_probabilities = Mock(return_value={})
-    area.device_info = Mock(return_value={})
-    mock_coordinator.is_occupied = False  # 0.5 < 0.6
-    return mock_coordinator
-
-
-@pytest.fixture
-def coordinator_with_areas_with_sensors(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+def coordinator_with_sensors(
+    coordinator: AreaOccupancyCoordinator,
 ) -> AreaOccupancyCoordinator:
     """Create a real coordinator with sensors set up for testing.
 
-    This fixture extends coordinator_with_areas by setting up mock entities
+    This fixture extends coordinator by setting up mock entities
     on the area for sensor testing purposes.
+
+    Example:
+        def test_sensor_entities(coordinator_with_sensors: AreaOccupancyCoordinator):
+            area = coordinator_with_sensors.get_area_or_default()
+            assert "binary_sensor.motion" in area.entities.entities
     """
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    from custom_components.area_occupancy.data.entity_type import InputType
-    from homeassistant.const import STATE_ON
-    from homeassistant.util import dt as dt_util
-
-    coordinator = coordinator_with_areas
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area_or_default(area_name)
 
@@ -1114,112 +948,20 @@ def coordinator_with_areas_with_sensors(
 
 
 @pytest.fixture
-def mock_coordinator_with_sensors(mock_coordinator: Mock) -> Mock:
-    """Create a coordinator mock with sensor-specific attributes.
+def coordinator_with_areas_with_sensors(
+    coordinator_with_sensors: AreaOccupancyCoordinator,
+) -> AreaOccupancyCoordinator:
+    """Alias for coordinator_with_sensors fixture (backward compatibility).
 
-    DEPRECATED: Use coordinator_with_areas_with_sensors instead.
-    Kept for backward compatibility only.
+    DEPRECATED: Use `coordinator_with_sensors` fixture instead.
+    This fixture is kept for backward compatibility.
+
+    Example:
+        def test_sensor_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
+            area = coordinator_with_areas_with_sensors.get_area_or_default()
+            assert "binary_sensor.motion" in area.entities.entities
     """
-    # Mock entity manager with comprehensive entities - use area-based access
-    area = mock_coordinator.get_area_or_default.return_value
-    if not hasattr(area, "entities"):
-        # Ensure area has entities attribute
-        area = Mock()
-        area.entities = Mock()
-        mock_coordinator.areas = {"Test Area": area}
-        mock_coordinator.get_area_names = Mock(return_value=["Test Area"])
-        mock_coordinator.get_area_or_default = Mock(return_value=area)
-
-    # Set entities on area
-    area.entities.entities = {
-        "binary_sensor.motion1": Mock(
-            entity_id="binary_sensor.motion1",
-            available=True,
-            evidence=True,
-            probability=0.75,
-            type=Mock(input_type=InputType.MOTION, weight=0.85),
-            decay=Mock(is_decaying=False, decay_factor=1.0),
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=False,
-            previous_probability=0.35,
-            active=True,
-            active_states=[STATE_ON],
-            active_range=None,
-            decay_factor=1.0,
-            state=STATE_ON,
-        ),
-        "binary_sensor.motion2": Mock(
-            entity_id="binary_sensor.motion2",
-            available=True,
-            evidence=False,
-            probability=0.25,
-            type=Mock(input_type=InputType.MOTION, weight=0.85),
-            decay=Mock(is_decaying=True, decay_factor=0.8),
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=True,
-            previous_probability=0.75,
-            active=True,
-            active_states=[STATE_ON],
-            active_range=None,
-            decay_factor=0.8,
-            state=STATE_OFF,
-        ),
-        "binary_sensor.appliance": Mock(
-            entity_id="binary_sensor.appliance",
-            available=True,
-            evidence=False,
-            probability=0.15,
-            type=Mock(input_type=InputType.APPLIANCE, weight=0.3),
-            decay=Mock(is_decaying=False, decay_factor=1.0),
-            prob_given_true=0.6,
-            prob_given_false=0.05,
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=False,
-            previous_probability=0.15,
-            active=False,
-            active_states=["on", "standby"],
-            active_range=None,
-            decay_factor=1.0,
-            state="off",
-        ),
-        "media_player.tv": Mock(
-            entity_id="media_player.tv",
-            available=True,
-            evidence=True,
-            probability=0.85,
-            type=Mock(input_type=InputType.MEDIA, weight=0.7),
-            decay=Mock(is_decaying=False, decay_factor=1.0),
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            coordinator=mock_coordinator,
-            last_updated=dt_util.utcnow(),
-            previous_evidence=False,
-            previous_probability=0.35,
-            active=True,
-            active_states=["playing", "paused"],
-            active_range=None,
-            decay_factor=1.0,
-            state="playing",
-        ),
-    }
-
-    # Set up decaying entities based on is_decaying status
-    decaying_entities = [
-        entity for entity in area.entities.entities.values() if entity.decay.is_decaying
-    ]
-    area.entities.decaying_entities = decaying_entities
-    # For backward compatibility, also set on coordinator.entities
-    mock_coordinator.entities.decaying_entities = decaying_entities
-    mock_coordinator.decaying_entities = decaying_entities  # Add both for compatibility
-
-    return mock_coordinator
+    return coordinator_with_sensors
 
 
 def create_test_area(
@@ -1251,8 +993,6 @@ def create_test_area(
             threshold=0.6
         )
     """
-    from custom_components.area_occupancy.area.area import Area
-
     # Create area - it will load config from coordinator.config_entry
     area = Area(coordinator, area_name=area_name)
 
@@ -1401,9 +1141,7 @@ def mock_area_prior() -> Mock:
 @pytest.fixture
 def mock_decay() -> Mock:
     """Create a mock Decay instance matching the real Decay class."""
-    from custom_components.area_occupancy.data.decay import Decay
-
-    decay = Mock(spec=Decay)
+    decay = Mock(spec=DecayClass)
     decay.is_decaying = False
     decay.last_trigger_ts = time.time()
     decay.half_life = 60.0
@@ -1445,18 +1183,16 @@ def mock_service_call_with_entity() -> Mock:
 
 @pytest.fixture
 def mock_comprehensive_entity(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a comprehensive mock entity with all components."""
-    from custom_components.area_occupancy.data.entity import Entity
-
     entity = Mock(spec=Entity)
     entity.entity_id = "binary_sensor.test_motion"
     entity.type = mock_entity_type
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.hass = mock_coordinator.hass
+    entity.hass = coordinator.hass
     entity.last_updated = dt_util.utcnow()
     entity.previous_evidence = False
     entity.previous_probability = 0.5
@@ -1481,15 +1217,15 @@ def mock_comprehensive_entity(
 
 @pytest.fixture
 def mock_comprehensive_entity_manager(
-    mock_coordinator: Mock, mock_comprehensive_entity: Mock
+    coordinator: AreaOccupancyCoordinator, mock_comprehensive_entity: Mock
 ) -> Mock:
     """Create a comprehensive mock entity manager with entities."""
-    from custom_components.area_occupancy.data.entity import EntityManager
-
     manager = Mock(spec=EntityManager)
-    manager.coordinator = mock_coordinator
-    manager.config = mock_coordinator.config
-    manager.hass = mock_coordinator.hass
+    manager.coordinator = coordinator
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area_or_default(area_name)
+    manager.config = area.config
+    manager.hass = coordinator.hass
     manager._entities = {"binary_sensor.test_motion": mock_comprehensive_entity}
     manager.entities = {"binary_sensor.test_motion": mock_comprehensive_entity}
     manager.entity_ids = ["binary_sensor.test_motion"]
@@ -1582,18 +1318,16 @@ def mock_track_point_in_time_globally() -> Generator[None]:
 
 @pytest.fixture
 def mock_entity_for_likelihood_tests(
-    mock_coordinator: Mock, mock_entity_type: Mock, mock_decay: Mock
+    coordinator: AreaOccupancyCoordinator, mock_entity_type: Mock, mock_decay: Mock
 ) -> Mock:
     """Create a mock entity specifically for likelihood calculation tests."""
-    from custom_components.area_occupancy.data.entity import Entity
-
     entity = Mock(spec=Entity)
     entity.entity_id = "binary_sensor.motion_sensor_1"
     entity.type = mock_entity_type
     entity.prob_given_true = 0.8
     entity.prob_given_false = 0.1
     entity.decay = mock_decay
-    entity.hass = mock_coordinator.hass
+    entity.hass = coordinator.hass
     entity.last_updated = dt_util.utcnow()
     entity.previous_evidence = False
     entity.previous_probability = 0.35
@@ -1618,14 +1352,43 @@ def mock_entity_for_likelihood_tests(
 
 @pytest.fixture(autouse=True)
 def mock_area_occupancy_db_globally(request: Any) -> Generator[Mock | None]:
-    """Automatically mock AreaOccupancyDB for all tests except database tests."""
-    # Skip mocking for database tests. Checking request.cls is more reliable
-    # than matching the node string only.
+    """Automatically mock AreaOccupancyDB for all tests except database tests.
+
+    Skips mocking for:
+    1. Test files named test_db.py
+    2. Test classes named Test*DB* or TestDatabase*
+    3. Tests using test_db or coordinator_with_db fixtures
+    """
+    # Get test file name
+    test_file = ""
+    if hasattr(request.node, "fspath"):
+        test_file = str(request.node.fspath)
+    elif hasattr(request, "path"):
+        test_file = str(request.path)
+
+    # Get test class name
     cls_name = getattr(getattr(request.node, "cls", None), "__name__", "")
-    if "TestAreaOccupancyDB" in str(request.node) or cls_name == "TestAreaOccupancyDB":
+
+    # Get fixture names requested by this test
+    fixture_names = getattr(request, "fixturenames", [])
+    if not fixture_names and hasattr(request.node, "fixturenames"):
+        fixture_names = request.node.fixturenames
+
+    # Check if this is a database test
+    is_db_test = (
+        "test_db.py" in test_file
+        or "TestDatabase" in cls_name
+        or "TestAreaOccupancyDB" in cls_name
+        or "test_db" in fixture_names
+        or "coordinator_with_db" in fixture_names
+        or "configured_db" in fixture_names
+    )
+
+    if is_db_test:
         yield None
         return
 
+    # Mock for all other tests
     with patch("custom_components.area_occupancy.db.AreaOccupancyDB") as mock_db_class:
         mock_db = _create_mock_db()
         mock_db_class.return_value = mock_db
@@ -1923,8 +1686,6 @@ def mock_config() -> Mock:
 @pytest.fixture
 def mock_realistic_config_entry() -> Mock:
     """Return a realistic ConfigEntry for Area Occupancy Detection."""
-    from homeassistant.config_entries import ConfigEntryState
-
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "01JQRDH37YHVXR3X4FMDYTHQD8"
     entry.domain = "area_occupancy"
@@ -2082,8 +1843,6 @@ def auto_cancel_timers(monkeypatch: Any) -> Generator[None]:
 
     # Patch async_track_point_in_time if used directly
     try:
-        from homeassistant.helpers.event import async_track_point_in_time
-
         orig_async_track_point_in_time = async_track_point_in_time
 
         def tracking_async_track_point_in_time(
@@ -2119,35 +1878,144 @@ def db_engine() -> Generator[Any]:
     Uses shared cache mode so data saved in one connection is visible
     to other connections in the same process (important for executor threads).
     """
-    import sqlalchemy as sa
-    from sqlalchemy import create_engine
-
-    from custom_components.area_occupancy.db import Base
-
     # Create in-memory SQLite engine with shared cache
-    # This allows multiple connections to see the same data
+    # Use StaticPool to reuse connections (required for shared cache)
+    # We'll explicitly close all connections in cleanup
     engine = create_engine(
         "sqlite:///:memory:?cache=shared",
         echo=False,
-        pool_pre_ping=True,
-        poolclass=sa.pool.StaticPool,  # Use StaticPool to reuse connections
+        pool_pre_ping=False,  # Not needed for in-memory
+        poolclass=sa.pool.StaticPool,  # Use StaticPool for shared cache
         connect_args={"check_same_thread": False},
+        # Explicitly close connections when returned to pool
+        pool_reset_on_return="commit",
     )
 
     # Create all tables
     Base.metadata.create_all(engine)
 
-    yield engine
+    try:
+        yield engine
+    finally:
+        # Clean up - explicitly close all connections before disposing
+        # This prevents ResourceWarnings from unclosed connections
+        pool = engine.pool
+        if pool and hasattr(pool, "_conn"):
+            # Close all connections in StaticPool
+            with suppress(Exception):
+                # StaticPool stores connection in _conn
+                if hasattr(pool, "_conn") and pool._conn:
+                    pool._conn.close()
+        # Dispose engine to close any remaining connections
+        engine.dispose(close=True)
+        # Drop tables
+        Base.metadata.drop_all(engine)
 
-    # Clean up - drop all tables
-    Base.metadata.drop_all(engine)
+
+@pytest.fixture
+def test_db(
+    coordinator_with_areas: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
+) -> Generator[Any]:
+    """Primary fixture for database testing.
+
+    Provides a real AreaOccupancyDB instance with:
+    - In-memory SQLite database
+    - Real coordinator attached
+    - Proper session management
+    - Automatic cleanup
+
+    Each test gets a fresh database instance with rollback for isolation.
+    The db_engine fixture (module-scoped) handles table creation/cleanup efficiently.
+
+    Example:
+        def test_db_operation(test_db: AreaOccupancyDB):
+            db = test_db
+            area_name = db.coordinator.get_area_names()[0]
+            # Use real database operations
+    """
+    coordinator = coordinator_with_areas
+
+    # Create real database instance attached to real coordinator
+    db = AreaOccupancyDB(coordinator=coordinator)
+
+    # Store the original engine so we can dispose of it immediately
+    # This prevents any connections from being opened on the original engine
+    original_engine = db.engine
+
+    # Override the database with our test database BEFORE any operations
+    # This prevents the original engine from opening connections
+    db.engine = db_engine
+
+    # Immediately dispose of the original engine to close any connections
+    # This prevents ResourceWarnings from unclosed connections
+    if original_engine is not None:
+        with suppress(Exception):
+            original_engine.dispose(close=True)
+
+    # Create session factory (reused across tests in module)
+    # Configure session to expire on commit to prevent connection leaks
+    SessionLocal = sessionmaker(
+        bind=db_engine,
+        expire_on_commit=False,  # Keep objects after commit
+        autoflush=False,  # Don't autoflush
+        autocommit=False,  # Use transactions
+    )
+    db._session_maker = SessionLocal
+
+    # Initialize database (now uses test engine)
+    db.init_db()
+    db.set_db_version()
+
+    # Attach db to coordinator (it's already attached via AreaOccupancyDB.__init__)
+    # but ensure it's using our test engine
+    coordinator.db = db
+
+    try:
+        yield db
+    finally:
+        # No need to dispose original_engine here - we already did it above
+        # The test engine (db_engine) is disposed by the db_engine fixture
+        pass
+
+
+@pytest.fixture
+def db_test_session(test_db: Any) -> Generator[Any]:
+    """Provide a fresh database session for each test with automatic rollback.
+
+    This fixture provides per-test session isolation. Each test gets a fresh
+    session that is automatically rolled back after the test completes.
+
+    Example:
+        def test_with_session(test_db: AreaOccupancyDB, db_test_session):
+            session = db_test_session
+            # Use session for direct database operations
+            session.add(...)
+            session.commit()
+            # Changes are automatically rolled back after test
+    """
+    session = test_db._session_maker()
+
+    try:
+        yield session
+    finally:
+        # Rollback any uncommitted changes and close session
+        # Ensure connection is properly closed to prevent ResourceWarnings
+        with suppress(Exception):
+            session.rollback()
+        # Expunge all objects before closing to ensure cleanup
+        if hasattr(session, "expunge_all"):
+            session.expunge_all()
+        # Close session - this should close the underlying connection
+        session.close()
+        # Explicitly close any bound connection
+        if hasattr(session, "bind") and hasattr(session.bind, "invalidate"):
+            with suppress(Exception):
+                session.bind.invalidate()
 
 
 @pytest.fixture
 def db_session(db_engine: Any) -> Generator[Any]:
     """Create a database session for testing with automatic rollback."""
-    from sqlalchemy.orm import sessionmaker
-
     # Create session factory bound to the test engine
     SessionLocal = sessionmaker(bind=db_engine)
     session = SessionLocal()
@@ -2156,15 +2024,23 @@ def db_session(db_engine: Any) -> Generator[Any]:
         yield session
     finally:
         # Rollback any uncommitted changes and close session
-        session.rollback()
+        # Also close any bound connections to prevent ResourceWarnings
+        with suppress(Exception):
+            session.rollback()
+        # Expunge all objects before closing to ensure cleanup
+        if hasattr(session, "expunge_all"):
+            session.expunge_all()
+        # Close session - this should close the underlying connection
         session.close()
+        # Explicitly invalidate any bound connection
+        if hasattr(session, "bind") and hasattr(session.bind, "invalidate"):
+            with suppress(Exception):
+                session.bind.invalidate()
 
 
 @pytest.fixture
 def transactional_db_session(db_engine: Any) -> Generator[Any]:
     """Create a database session with nested transaction for maximum isolation."""
-    from sqlalchemy.orm import sessionmaker
-
     # Create connection and start transaction
     connection = db_engine.connect()
     trans = connection.begin()
@@ -2180,135 +2056,20 @@ def transactional_db_session(db_engine: Any) -> Generator[Any]:
         yield session
     finally:
         # Rollback nested transaction, then outer transaction
+        # Close session first, then connection
         session.rollback()
+        session.close()
         trans.rollback()
         connection.close()
 
 
-@pytest.fixture
-def mock_area_occupancy_db(db_engine: Any, db_session: Any, tmp_path: Any) -> Any:
-    """Create a mock AreaOccupancyDB instance using in-memory database."""
-    from unittest.mock import Mock
-
-    from custom_components.area_occupancy.db import AreaOccupancyDB
-
-    # Create mock coordinator with config_dir using tmp_path
-    mock_coordinator = Mock()
-    mock_coordinator.hass = Mock()
-    mock_coordinator.hass.config = Mock()
-    mock_coordinator.hass.config.config_dir = str(tmp_path)
-    mock_coordinator.config_entry = Mock()
-    mock_coordinator.config_entry.data = {"version": 9}
-
-    # Create the .storage directory that AreaOccupancyDB expects
-    storage_dir = tmp_path / ".storage"
-    storage_dir.mkdir(exist_ok=True)
-
-    # Create AreaOccupancyDB instance but override the engine
-    db = AreaOccupancyDB(coordinator=mock_coordinator)
-
-    # Replace the engine with our test engine
-    db.engine = db_engine
-    setattr(db, "session", db_session)
-
-    return db
-
-
 # Removed redundant fixture: seeded_db_session (use db_session directly)
-
-
-@pytest.fixture
-def db_with_engine(
-    coordinator_with_areas: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
-) -> Any:
-    """Create AreaOccupancyDB instance with in-memory database attached to real coordinator.
-
-    DEPRECATED: Prefer using coordinator_with_db fixture instead.
-    This fixture is kept for backward compatibility with existing tests.
-    """
-    from sqlalchemy.orm import sessionmaker
-
-    from custom_components.area_occupancy.db import AreaOccupancyDB
-
-    coordinator = coordinator_with_areas
-
-    # Create real database instance attached to real coordinator
-    db = AreaOccupancyDB(coordinator=coordinator)
-
-    # Override the database with our test database
-    db.engine = db_engine
-
-    # Create a fresh session for each test
-    SessionLocal = sessionmaker(bind=db_engine)
-    session = SessionLocal()
-
-    # Clear any existing data
-    try:
-        session.query(db.Intervals).delete()
-        session.query(db.Entities).delete()
-        session.query(db.Areas).delete()
-        session.query(db.Priors).delete()
-        session.commit()
-    except (ValueError, OSError):
-        session.rollback()
-
-    setattr(db, "session", session)
-    setattr(db, "_session_maker", SessionLocal)
-
-    return db
-
-
-@pytest.fixture
-def mock_db_with_engine(hass: HomeAssistant, db_engine: Any, tmp_path: Any) -> Any:
-    """Create AreaOccupancyDB instance with in-memory database.
-
-    DEPRECATED: Use coordinator_with_db or db_with_engine instead.
-    This fixture creates a mock coordinator which is not recommended.
-    Kept for backward compatibility only.
-    """
-    from unittest.mock import Mock
-
-    from sqlalchemy.orm import sessionmaker
-
-    from custom_components.area_occupancy.db import AreaOccupancyDB
-
-    # Create mock coordinator
-    mock_coordinator = Mock()
-    mock_coordinator.hass = hass
-    mock_coordinator.entry_id = "test_entry_001"
-    mock_coordinator.config_entry = Mock()
-    mock_coordinator.config_entry.data = {"version": 9}
-
-    # Create real database instance
-    db = AreaOccupancyDB(coordinator=mock_coordinator)
-
-    # Override the database with our test database
-    db.engine = db_engine
-
-    # Create a fresh session for each test
-    SessionLocal = sessionmaker(bind=db_engine)
-    session = SessionLocal()
-
-    # Clear any existing data
-    try:
-        session.query(db.Intervals).delete()
-        session.query(db.Entities).delete()
-        session.query(db.Areas).delete()
-        session.query(db.Priors).delete()
-        session.commit()
-    except (ValueError, OSError):
-        session.rollback()
-
-    setattr(db, "session", session)
-    setattr(db, "_session_maker", SessionLocal)
-
-    return db
+# Removed deprecated fixtures: mock_area_occupancy_db, db_with_engine, mock_db_with_engine
+# Use test_db fixture instead for all database testing needs
 
 
 def _create_sample_data() -> dict[str, Any]:
     """Create sample data for testing."""
-    from datetime import timedelta
-
     now = dt_util.utcnow()
     start_time = now
     end_time = start_time + timedelta(hours=1)
@@ -2391,8 +2152,6 @@ def sample_prior_data() -> dict[str, Any]:
 @pytest.fixture
 def config_flow_flow(hass: HomeAssistant) -> Any:
     """Create an AreaOccupancyConfigFlow instance for testing."""
-    from custom_components.area_occupancy.config_flow import AreaOccupancyConfigFlow
-
     flow = AreaOccupancyConfigFlow()
     flow.hass = hass
     return flow
@@ -2403,8 +2162,6 @@ def config_flow_options_flow(
     hass: HomeAssistant, config_flow_mock_config_entry_with_areas: Mock
 ) -> Any:
     """Create an AreaOccupancyOptionsFlow instance for testing."""
-    from custom_components.area_occupancy.config_flow import AreaOccupancyOptionsFlow
-
     flow = AreaOccupancyOptionsFlow()
     flow.hass = hass
 
@@ -2486,10 +2243,6 @@ def config_flow_valid_user_input() -> dict[str, Any]:
 @pytest.fixture
 def config_flow_mock_config_entry_with_areas() -> Mock:
     """Create a mock config entry with multi-area format."""
-    from asyncio import Lock
-
-    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
     entry.unique_id = "test_unique_id"
@@ -2515,8 +2268,6 @@ def config_flow_mock_config_entry_with_areas() -> Mock:
 @pytest.fixture
 def config_flow_mock_config_entry_legacy() -> Mock:
     """Create a mock config entry with legacy single-area format."""
-    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
     entry.state = ConfigEntryState.LOADED
@@ -2532,8 +2283,6 @@ def config_flow_mock_config_entry_legacy() -> Mock:
 @pytest.fixture
 def config_flow_mock_config_entry_legacy_no_name() -> Mock:
     """Create a mock config entry with legacy format but no name."""
-    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-
     entry = Mock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
     entry.state = ConfigEntryState.LOADED
@@ -2555,8 +2304,6 @@ def config_flow_mock_hass_for_schema(hass: HomeAssistant) -> HomeAssistant:
 @pytest.fixture
 def config_flow_mock_entity_registry_for_schema() -> Mock:
     """Create mock entity registry for schema tests."""
-    from homeassistant.helpers.entity_registry import EntityRegistry
-
     mock_registry = Mock(spec=EntityRegistry)
     mock_registry.entities = {}
     return mock_registry
@@ -2569,8 +2316,6 @@ def config_flow_mock_entity_registry_for_schema() -> Mock:
 @contextmanager
 def patch_create_schema_context(return_value: dict[str, Any] | None = None):
     """Context manager to patch create_schema for tests."""
-    import voluptuous as vol
-
     with patch(
         "custom_components.area_occupancy.config_flow.create_schema",
         return_value=return_value or {"test": vol.Required("test")},
@@ -2593,7 +2338,6 @@ def patch_validate_methods_context(
         validate_duplicate: If None, patches _validate_duplicate_name_internal.
             If False, doesn't patch. Otherwise, uses as side_effect.
     """
-    from contextlib import ExitStack
 
     patches = []
     if validate_config is not None:
@@ -2620,7 +2364,7 @@ def patch_validate_methods_context(
     else:
         patches.append(patch.object(flow, "_validate_duplicate_name_internal"))
 
-    with ExitStack() as stack:
+    with contextlib.ExitStack() as stack:
         for p in patches:
             stack.enter_context(p)
         yield

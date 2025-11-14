@@ -41,6 +41,7 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     HA_RECORDER_DAYS,
 )
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import (
     AreaConfig,
     Decay,
@@ -355,14 +356,17 @@ class TestWaspInBox:
 class TestConfig:
     """Test AreaConfig class."""
 
-    def test_initialization_defaults(self, mock_coordinator: Mock) -> None:
+    def test_initialization_defaults(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test AreaConfig initialization with defaults."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Test basic properties
         assert config.name == "Testing"
         # area_id is now set to area_name if area_name is provided and area_id is not in data
-        assert config.area_id == "Test Area"
+        assert config.area_id == area_name  # Use actual area name from coordinator
         assert config.threshold == 0.52  # 52.0 / 100.0 (from options)
 
         # Test component types
@@ -377,7 +381,9 @@ class TestConfig:
         for attr_name, expected_type in expected_components.items():
             assert isinstance(getattr(config, attr_name), expected_type)
 
-    def test_initialization_with_values(self, mock_coordinator: Mock) -> None:
+    def test_initialization_with_values(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test Config initialization with specific values."""
         # Update the mock coordinator's config entry data
         test_data = {
@@ -393,10 +399,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}  # Clear options to avoid conflicts
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}  # Clear options to avoid conflicts
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Test key properties
         assert config.name == "Living Room"
@@ -405,23 +412,28 @@ class TestConfig:
         assert config.sensors.motion == ["binary_sensor.motion1"]
         assert config.weights.motion == 0.9
 
-    def test_initialization_with_missing_weights(self, mock_coordinator: Mock) -> None:
+    def test_initialization_with_missing_weights(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test Config initialization with missing weight values."""
         # Create minimal data without weights
         test_data = {
             CONF_NAME: "Test Area",
             CONF_THRESHOLD: 50,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
         # Weights now use defaults if not provided, so no KeyError is raised
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         # Verify that default weights are used
         assert config.weights.motion == DEFAULT_WEIGHT_MOTION
         assert config.weights.media == DEFAULT_WEIGHT_MEDIA
 
-    def test_initialization_with_string_threshold(self, mock_coordinator: Mock) -> None:
+    def test_initialization_with_string_threshold(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test Config initialization with string threshold value."""
         test_data = {
             CONF_NAME: "Test Area",
@@ -434,10 +446,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         assert config.threshold == 0.75  # Should convert string to float
 
     @pytest.mark.parametrize(
@@ -449,13 +462,14 @@ class TestConfig:
     )
     def test_time_properties(
         self,
-        mock_coordinator: Mock,
+        coordinator: AreaOccupancyCoordinator,
         property_name: str,
         expected_type: str,
         time_tolerance: int,
     ) -> None:
         """Test time-related properties."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         time_value = getattr(config, property_name)
 
         assert time_value is not None
@@ -467,7 +481,7 @@ class TestConfig:
 
         assert abs((time_value - expected_time).total_seconds()) < time_tolerance
 
-    def test_entity_ids_property(self, mock_coordinator: Mock) -> None:
+    def test_entity_ids_property(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test entity_ids property."""
         # Set up mock coordinator with sensor data
         test_data = {
@@ -482,10 +496,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
         expected_entities = [
@@ -497,7 +512,7 @@ class TestConfig:
             assert entity_id in entity_ids
 
     def test_entity_ids_property_with_all_sensor_types(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test entity_ids property with all sensor types populated."""
         test_data = {
@@ -517,10 +532,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
         expected_entities = [
@@ -545,7 +561,7 @@ class TestConfig:
             assert entity_id in entity_ids
 
     def test_entity_ids_property_with_empty_sensors(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test entity_ids property with empty sensor lists."""
         test_data = {
@@ -557,10 +573,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
         assert entity_ids == []
@@ -575,13 +592,14 @@ class TestConfig:
     )
     def test_get_method(
         self,
-        mock_coordinator: Mock,
+        coordinator: AreaOccupancyCoordinator,
         key: str,
         default: str | None,
         expected_result: str | None,
     ) -> None:
         """Test get method with different parameters."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         if default is None:
             result = config.get(key)
@@ -590,18 +608,22 @@ class TestConfig:
 
         assert result == expected_result
 
-    async def test_update_config(self, mock_coordinator: Mock) -> None:
+    async def test_update_config(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test update_config method."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         options = {CONF_NAME: "Updated Name", CONF_THRESHOLD: 70}
 
         # Mock all the required methods
         with (
             patch.object(
-                mock_coordinator.hass.config_entries, "async_update_entry"
+                coordinator.hass.config_entries, "async_update_entry"
             ) as mock_update_entry,
             patch.object(config, "_load_config") as mock_load_config,
-            patch.object(mock_coordinator, "async_request_refresh") as mock_refresh,
+            patch.object(coordinator, "async_request_refresh") as mock_refresh,
+            patch.object(
+                coordinator, "_setup_complete", True
+            ),  # Ensure setup_complete is True
         ):
             await config.update_config(options)
 
@@ -610,14 +632,17 @@ class TestConfig:
             mock_load_config.assert_called_once()
             mock_refresh.assert_called_once()
 
-    async def test_update_config_with_exception(self, mock_coordinator: Mock) -> None:
+    async def test_update_config_with_exception(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test update_config method when an exception occurs."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         options = {CONF_NAME: "Updated Name"}
 
         # Mock the update_entry method to raise an exception
         with patch.object(
-            mock_coordinator.hass.config_entries, "async_update_entry"
+            coordinator.hass.config_entries, "async_update_entry"
         ) as mock_update_entry:
             mock_update_entry.side_effect = Exception("Update failed")
 
@@ -626,7 +651,9 @@ class TestConfig:
             ):
                 await config.update_config(options)
 
-    def test_validate_entity_configuration_valid(self, mock_coordinator: Mock) -> None:
+    def test_validate_entity_configuration_valid(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test validate_entity_configuration with valid configuration."""
         test_data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
@@ -638,16 +665,17 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert errors == []
 
     def test_validate_entity_configuration_duplicate_entities(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test validate_entity_configuration with duplicate entity IDs."""
         test_data = {
@@ -661,10 +689,11 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
@@ -672,7 +701,7 @@ class TestConfig:
         assert "binary_sensor.sensor1" in errors[0]
 
     def test_validate_entity_configuration_no_sensors(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test validate_entity_configuration with no motion, media, or appliance sensors."""
         test_data = {
@@ -685,17 +714,18 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
         assert "No motion, media, or appliance sensors configured" in errors[0]
 
     def test_validate_entity_configuration_invalid_entity_ids(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test validate_entity_configuration with invalid entity IDs."""
         test_data = {
@@ -708,17 +738,18 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
         assert "Invalid motion sensor entity IDs" in errors[0]
 
     def test_validate_entity_configuration_non_string_entity_ids(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test validate_entity_configuration with non-string entity IDs."""
         test_data = {
@@ -731,17 +762,18 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 1
         assert "Invalid motion sensor entity IDs" in errors[0]
 
     def test_validate_entity_configuration_multiple_errors(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test validate_entity_configuration with multiple validation errors."""
         test_data = {
@@ -755,19 +787,21 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert len(errors) == 2
         assert any("Duplicate entity IDs found" in error for error in errors)
         assert any("Invalid motion sensor entity IDs" in error for error in errors)
 
-    def test_update_from_entry(self, mock_coordinator: Mock) -> None:
+    def test_update_from_entry(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test update_from_entry method."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Create a new config entry with different data
         new_config_entry = Mock()
@@ -835,9 +869,12 @@ class TestConfig:
 class TestConfigIntegration:
     """Test Config integration scenarios."""
 
-    def test_config_manager_full_lifecycle(self, mock_coordinator: Mock) -> None:
+    def test_config_manager_full_lifecycle(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test full config lifecycle."""
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Test basic property access
         assert config.name is not None
@@ -859,7 +896,7 @@ class TestConfigIntegration:
         assert isinstance(config.entity_ids, list)
 
     def test_config_with_all_sensor_types_and_validation(
-        self, mock_coordinator: Mock
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test config with all sensor types and validation."""
         test_data = {
@@ -879,10 +916,11 @@ class TestConfigIntegration:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Test validation passes
         errors = config.validate_entity_configuration()
@@ -907,7 +945,7 @@ class TestConfigIntegration:
         for entity_id in expected_entities:
             assert entity_id in entity_ids
 
-    def test_config_edge_cases(self, mock_coordinator: Mock) -> None:
+    def test_config_edge_cases(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test config edge cases and boundary conditions."""
         # Test with minimal valid configuration
         test_data = {
@@ -920,10 +958,11 @@ class TestConfigIntegration:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.data = test_data
-        mock_coordinator.config_entry.options = {}
+        coordinator.config_entry.data = test_data
+        coordinator.config_entry.options = {}
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Test with extreme threshold values
         assert config.threshold > 0
@@ -945,10 +984,12 @@ class TestConfigIntegration:
         errors = config.validate_entity_configuration()
         assert errors == []
 
-    def test_config_with_options_override(self, mock_coordinator: Mock) -> None:
+    def test_config_with_options_override(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         """Test config where options override data values."""
         # Set up data and options with conflicting values
-        mock_coordinator.config_entry.data = {
+        coordinator.config_entry.data = {
             CONF_NAME: "Data Name",
             CONF_THRESHOLD: 50,
             CONF_WEIGHT_MOTION: 0.9,
@@ -959,12 +1000,13 @@ class TestConfigIntegration:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
-        mock_coordinator.config_entry.options = {
+        coordinator.config_entry.options = {
             CONF_NAME: "Options Name",
             CONF_THRESHOLD: 75,
         }
 
-        config = AreaConfig(mock_coordinator, area_name="Test Area")
+        area_name = coordinator.get_area_names()[0]
+        config = AreaConfig(coordinator, area_name=area_name)
 
         # Options should override data
         assert config.name == "Options Name"

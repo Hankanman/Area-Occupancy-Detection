@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.area_occupancy.const import DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.service import (
     _get_area_status,
@@ -19,7 +20,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: SLF001
 # Helper functions to reduce code duplication
 def _setup_coordinator_test(
     hass: HomeAssistant,
@@ -28,8 +29,6 @@ def _setup_coordinator_test(
     entry_id: str = "test_entry_id",
 ) -> None:
     """Set up common coordinator test configuration."""
-    from custom_components.area_occupancy.const import DOMAIN
-
     mock_config_entry.runtime_data = coordinator
     # Set coordinator in hass.data for service functions that use _get_coordinator()
     hass.data[DOMAIN] = coordinator
@@ -69,8 +68,6 @@ class TestGetCoordinator:
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test successful coordinator retrieval."""
-        from custom_components.area_occupancy.const import DOMAIN
-
         _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
         hass.data[DOMAIN] = coordinator_with_areas
 
@@ -79,8 +76,6 @@ class TestGetCoordinator:
 
     def test_get_coordinator_missing_domain(self, hass: HomeAssistant) -> None:
         """Test coordinator retrieval with missing domain."""
-        from custom_components.area_occupancy.const import DOMAIN
-
         hass.data[DOMAIN] = None
 
         with pytest.raises(
@@ -131,8 +126,6 @@ class TestRunAnalysis:
 
     async def test_run_analysis_missing_entry_id(self, hass: HomeAssistant) -> None:
         """Test analysis run with missing entry_id (backward compatibility)."""
-        from custom_components.area_occupancy.const import DOMAIN
-
         hass.data[DOMAIN] = None
         mock_service_call = _create_missing_entry_service_call()
 
@@ -190,8 +183,6 @@ class TestResetEntities:
 
     async def test_reset_entities_missing_entry_id(self, hass: HomeAssistant) -> None:
         """Test entity reset with missing entry_id (backward compatibility)."""
-        from custom_components.area_occupancy.const import DOMAIN
-
         hass.data[DOMAIN] = None
         mock_service_call = _create_missing_entry_service_call()
 
@@ -244,8 +235,6 @@ class TestGetEntityMetrics:
         self, hass: HomeAssistant
     ) -> None:
         """Test entity metrics with missing entry_id (backward compatibility)."""
-        from custom_components.area_occupancy.const import DOMAIN
-
         hass.data[DOMAIN] = None
         mock_service_call = _create_missing_entry_service_call()
 

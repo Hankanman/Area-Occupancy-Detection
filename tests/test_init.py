@@ -15,13 +15,12 @@ from custom_components.area_occupancy import (
     async_setup_entry,
     async_unload_entry,
 )
-from custom_components.area_occupancy.const import CONF_VERSION, DOMAIN
+from custom_components.area_occupancy.const import CONF_VERSION, DOMAIN as DOMAIN_CONST
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 
-# ruff: noqa: PLC0415
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
@@ -42,8 +41,6 @@ class TestAsyncSetupEntry:
     ) -> None:
         """Test various setup failure scenarios."""
         # Ensure hass.data[DOMAIN] doesn't exist initially
-        from custom_components.area_occupancy.const import DOMAIN as DOMAIN_CONST
-
         if DOMAIN_CONST in hass.data:
             del hass.data[DOMAIN_CONST]
 
@@ -88,8 +85,6 @@ class TestAsyncSetupEntry:
     ) -> None:
         """Test successful setup flow with real database initialization."""
         # Ensure hass.data[DOMAIN] doesn't exist initially
-        from custom_components.area_occupancy.const import DOMAIN as DOMAIN_CONST
-
         if DOMAIN_CONST in hass.data:
             del hass.data[DOMAIN_CONST]
 
@@ -145,9 +140,7 @@ class TestAsyncSetupEntry:
 
         mock_services.assert_awaited_once()
         # Coordinator is now stored in hass.data[DOMAIN] instead of runtime_data
-        from custom_components.area_occupancy.const import DOMAIN
-
-        assert hass.data[DOMAIN] == coordinator
+        assert hass.data[DOMAIN_CONST] == coordinator
 
 
 class TestAsyncSetup:
@@ -197,7 +190,7 @@ class TestAsyncUnloadEntry:
         """Test successful unload of config entry."""
         mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
         # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
-        hass.data[DOMAIN] = mock_coordinator
+        hass.data[DOMAIN_CONST] = mock_coordinator
         # Mock async_unload_platforms since hass is now a real instance
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
@@ -213,7 +206,7 @@ class TestAsyncUnloadEntry:
         """Test unload when platform unload fails."""
         mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
         # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
-        hass.data[DOMAIN] = mock_coordinator
+        hass.data[DOMAIN_CONST] = mock_coordinator
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=False)
 
         result = await async_unload_entry(hass, mock_config_entry)
@@ -227,8 +220,8 @@ class TestAsyncUnloadEntry:
         """Test unload when coordinator doesn't exist."""
         # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
         # So we need to ensure it doesn't exist or is None
-        if DOMAIN in hass.data:
-            del hass.data[DOMAIN]
+        if DOMAIN_CONST in hass.data:
+            del hass.data[DOMAIN_CONST]
         # Mock async_unload_platforms since hass is now a real instance
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
@@ -258,7 +251,7 @@ class TestEntryUpdated:
         """Test successful entry update."""
         mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
         # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
-        hass.data[DOMAIN] = mock_coordinator
+        hass.data[DOMAIN_CONST] = mock_coordinator
 
         await _async_entry_updated(hass, mock_config_entry)
 
@@ -273,8 +266,8 @@ class TestEntryUpdated:
         """Test entry update when coordinator doesn't exist."""
         # Coordinator is now stored directly in hass.data[DOMAIN], not as a dict
         # Ensure it doesn't exist
-        if DOMAIN in hass.data:
-            del hass.data[DOMAIN]
+        if DOMAIN_CONST in hass.data:
+            del hass.data[DOMAIN_CONST]
         mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
 
         # Should not raise an exception

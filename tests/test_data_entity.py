@@ -1,7 +1,7 @@
 """Tests for data.entity module."""
 
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -20,14 +20,12 @@ from custom_components.area_occupancy.data.entity_type import (
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
-# ruff: noqa: SLF001, PLC0415
+# ruff: noqa: SLF001
 
 
 def _set_states_get(hass, mock_get):
     """Helper to set hass.states.get by replacing the entire states object."""
     # Replace the entire states object with a mock that has a get method
-    from unittest.mock import MagicMock
-
     mock_states = MagicMock()
     mock_states.get = mock_get
     mock_states.async_set = hass.states.async_set  # Preserve async_set
