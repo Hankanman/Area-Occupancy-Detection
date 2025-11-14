@@ -58,7 +58,9 @@ class TestAreaOccupancyCoordinator:
         assert coordinator.hass == hass
         assert coordinator.config_entry == mock_realistic_config_entry
         assert coordinator.entry_id == mock_realistic_config_entry.entry_id
-        assert coordinator.name == mock_realistic_config_entry.data["name"]
+        # Coordinator no longer has a single 'name' property (multi-area architecture)
+        # Use config entry title instead
+        assert coordinator.config_entry.title == mock_realistic_config_entry.title
 
     def test_device_info_property(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test device_info property."""
@@ -88,8 +90,10 @@ class TestAreaOccupancyCoordinator:
         identifiers = device_info.get("identifiers")
         assert identifiers is not None
         assert isinstance(identifiers, set)
-        # In multi-area architecture, device_info uses area_name as identifier, not entry_id
-        expected_identifier = (DOMAIN, area_name)
+        # In multi-area architecture, device_info uses area_id as identifier (stable even if area is renamed)
+        # Fallback to area_name for legacy compatibility
+        area = coordinator_with_areas.get_area_or_default(area_name)
+        expected_identifier = (DOMAIN, area.config.area_id or area_name)
         assert expected_identifier in identifiers, (
             f"Expected {expected_identifier} in {identifiers}"
         )

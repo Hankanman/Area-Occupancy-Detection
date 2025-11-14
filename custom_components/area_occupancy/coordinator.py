@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
-from homeassistant.helpers import area_registry, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
 # Dispatcher imports removed - no longer needed without master election
@@ -27,8 +27,8 @@ from homeassistant.util import dt as dt_util
 from .area import AllAreas, Area
 from .const import (
     ALL_AREAS_IDENTIFIER,
-    CONF_AREAS,
     CONF_AREA_ID,
+    CONF_AREAS,
     DEFAULT_NAME,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -114,7 +114,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
 
-        area_reg = area_registry.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
         areas_to_remove: list[str] = []  # Track areas to remove (deleted or invalid)
         config_updated = False  # Track if config needs updating
 
@@ -146,7 +146,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             area_data.pop("name", None)
                             config_updated = True
                             _LOGGER.info(
-                                "Migrated area '%s' to area ID '%s'", legacy_name, area_id
+                                "Migrated area '%s' to area ID '%s'",
+                                legacy_name,
+                                area_id,
                             )
                         else:
                             _LOGGER.warning(
@@ -157,7 +159,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             areas_to_remove.append(legacy_name)
                             continue
                     else:
-                        _LOGGER.warning("Skipping area without area ID or name: %s", area_data)
+                        _LOGGER.warning(
+                            "Skipping area without area ID or name: %s", area_data
+                        )
                         continue
 
                 # Validate that area ID exists in Home Assistant
@@ -188,10 +192,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
         else:
             # Legacy single-area format - migrate to new format
-            legacy_name = merged.get("name", DEFAULT_NAME)  # Use string literal for legacy
+            legacy_name = merged.get(
+                "name", DEFAULT_NAME
+            )  # Use string literal for legacy
 
             _LOGGER.info(
-                "Legacy single-area config format detected, migrating area '%s'", legacy_name
+                "Legacy single-area config format detected, migrating area '%s'",
+                legacy_name,
             )
 
             # Try to resolve name to ID
@@ -230,7 +237,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         area_id,
                     )
                 else:
-                    _LOGGER.error("No areas available in Home Assistant. Cannot create area.")
+                    _LOGGER.error(
+                        "No areas available in Home Assistant. Cannot create area."
+                    )
                     return
 
             # Create area for migration path
@@ -239,7 +248,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name=area_name,
                 area_data=merged,
             )
-            _LOGGER.debug("Created area from legacy config: %s (ID: %s)", area_name, area_id)
+            _LOGGER.debug(
+                "Created area from legacy config: %s (ID: %s)", area_name, area_id
+            )
 
         # Log warnings for deleted/invalid areas
         # Note: We don't update the config entry here as setup() is called during initialization

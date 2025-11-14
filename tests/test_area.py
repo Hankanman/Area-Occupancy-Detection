@@ -23,7 +23,10 @@ class TestAreaMethods:
         device_info = default_area.device_info()
 
         assert device_info is not None
-        assert device_info["identifiers"] == {(DOMAIN, default_area.area_name)}
+        # Device identifier should use area_id (stable even if area is renamed)
+        # Fallback to area_name for legacy compatibility
+        expected_identifier = default_area.config.area_id or default_area.area_name
+        assert device_info["identifiers"] == {(DOMAIN, expected_identifier)}
         assert device_info["name"] == default_area.config.name
         assert device_info["manufacturer"] == DEVICE_MANUFACTURER
         assert device_info["model"] == DEVICE_MODEL
@@ -216,5 +219,8 @@ class TestAreaMethodsIntegration:
 
         device_info = area.device_info()
         assert device_info is not None
-        assert device_info["identifiers"] == {(DOMAIN, area_name)}
+        # Device identifier should use area_id (stable even if area is renamed)
+        # Fallback to area_name for legacy compatibility
+        expected_identifier = area.config.area_id or area_name
+        assert device_info["identifiers"] == {(DOMAIN, expected_identifier)}
         assert device_info["name"] == area.config.name
