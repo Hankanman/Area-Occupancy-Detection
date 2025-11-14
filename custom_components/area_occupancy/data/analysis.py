@@ -591,7 +591,7 @@ class PriorAnalyzer:
             start_time = dt_util.utcnow()
             with db.get_session() as session:
                 # Get motion sensor intervals with state='on' within lookback period
-                motion_intervals = (
+                motion_query = (
                     session.query(
                         db.Intervals.start_time,
                         db.Intervals.end_time,
@@ -606,16 +606,20 @@ class PriorAnalyzer:
                         db.Intervals.state == "on",
                         db.Intervals.start_time >= lookback_date,
                     )
-                    .order_by(db.Intervals.start_time)
-                    .all()
                 )
+                # Add area filter if area_name is set
+                if hasattr(self, "area_name") and self.area_name is not None:
+                    motion_query = motion_query.filter(
+                        db.Entities.area_name == self.area_name
+                    )
+                motion_intervals = motion_query.order_by(db.Intervals.start_time).all()
 
                 motion_raw = [(start, end) for start, end in motion_intervals]
                 all_intervals.extend(motion_raw)
 
                 # Get media player intervals if requested (playing state only)
                 if include_media and self.media_sensor_ids:
-                    media_intervals = (
+                    media_query = (
                         session.query(
                             db.Intervals.start_time,
                             db.Intervals.end_time,
@@ -631,9 +635,15 @@ class PriorAnalyzer:
                             db.Intervals.state == STATE_PLAYING,
                             db.Intervals.start_time >= lookback_date,
                         )
-                        .order_by(db.Intervals.start_time)
-                        .all()
                     )
+                    # Add area filter if area_name is set
+                    if hasattr(self, "area_name") and self.area_name is not None:
+                        media_query = media_query.filter(
+                            db.Entities.area_name == self.area_name
+                        )
+                    media_intervals = media_query.order_by(
+                        db.Intervals.start_time
+                    ).all()
                     media_raw = [(start, end) for start, end in media_intervals]
                     all_intervals.extend(media_raw)
                     _LOGGER.debug(
@@ -643,7 +653,7 @@ class PriorAnalyzer:
 
                 # Get appliance intervals if requested (on state only)
                 if include_appliance and self.appliance_sensor_ids:
-                    appliance_intervals = (
+                    appliance_query = (
                         session.query(
                             db.Intervals.start_time,
                             db.Intervals.end_time,
@@ -659,9 +669,15 @@ class PriorAnalyzer:
                             db.Intervals.state == STATE_ON,
                             db.Intervals.start_time >= lookback_date,
                         )
-                        .order_by(db.Intervals.start_time)
-                        .all()
                     )
+                    # Add area filter if area_name is set
+                    if hasattr(self, "area_name") and self.area_name is not None:
+                        appliance_query = appliance_query.filter(
+                            db.Entities.area_name == self.area_name
+                        )
+                    appliance_intervals = appliance_query.order_by(
+                        db.Intervals.start_time
+                    ).all()
                     appliance_raw = [(start, end) for start, end in appliance_intervals]
                     all_intervals.extend(appliance_raw)
                     _LOGGER.debug(
@@ -854,7 +870,9 @@ class LikelihoodAnalyzer:
     def _get_sensors(self, session: Any) -> list[Any]:
         """Get all sensor configs for this area."""
         return list(
-            session.query(self.db.Entities).filter_by(entry_id=self.entry_id).all()
+            session.query(self.db.Entities)
+            .filter_by(entry_id=self.entry_id, area_name=self.area_name)
+            .all()
         )
 
     def _get_intervals_by_entity(

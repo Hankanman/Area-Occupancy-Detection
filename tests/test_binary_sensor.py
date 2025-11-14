@@ -37,11 +37,13 @@ class TestOccupancy:
         assert entity.name == "Occupancy Status"
 
     async def test_async_added_to_hass(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, hass: HomeAssistant, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test entity added to Home Assistant."""
         area_name = coordinator_with_areas.get_area_names()[0]
         entity = Occupancy(coordinator_with_areas, area_name)
+        # Set hass on entity so device registry can be accessed
+        entity.hass = hass
 
         # Mock parent method
         with patch(

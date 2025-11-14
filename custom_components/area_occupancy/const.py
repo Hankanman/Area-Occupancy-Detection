@@ -42,7 +42,8 @@ CONF_ACTION_CANCEL: Final = "cancel"
 CONF_OPTION_PREFIX_AREA: Final = "area_"
 
 # Configuration constants
-CONF_NAME: Final = "name"
+# CONF_NAME removed - use CONF_AREA_ID instead
+CONF_AREA_ID: Final = "area_id"
 CONF_PURPOSE: Final = "purpose"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
@@ -60,7 +61,6 @@ CONF_THRESHOLD: Final = "threshold"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
 CONF_DEVICE_STATES: Final = "device_states"
-CONF_AREA_ID: Final = "area_id"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
