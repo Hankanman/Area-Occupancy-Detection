@@ -480,10 +480,28 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 entry.entry_id,
             )
 
+        # Build filtered list of entries that were successfully resolved
+        # Only these entries should be processed in subsequent migration steps
+        filtered_entries = [
+            entry for entry in entries if entry.entry_id in entry_id_to_area_name
+        ]
+
+        if not filtered_entries:
+            _LOGGER.error(
+                "No entries could be resolved for consolidation. Migration aborted."
+            )
+            return False
+
+        _LOGGER.info(
+            "Successfully resolved %d of %d entries for consolidation",
+            len(filtered_entries),
+            len(entries),
+        )
+
         # Step 2: Migrate entity registry entries
         try:
             await _migrate_entity_registry_for_consolidation(
-                hass, entries, entry_id_to_area_name
+                hass, filtered_entries, entry_id_to_area_name
             )
             migration_steps_completed["entity_registry"] = True
             _LOGGER.debug("Step 2 completed: Entity registry migration")
@@ -494,7 +512,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         # Step 3: Migrate database entries
         try:
             await _migrate_database_for_consolidation(
-                hass, entries, entry_id_to_area_name
+                hass, filtered_entries, entry_id_to_area_name
             )
             migration_steps_completed["database"] = True
             _LOGGER.debug("Step 3 completed: Database migration")
@@ -511,8 +529,8 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         # Step 4: Create new consolidated config entry
         consolidated_data = {CONF_AREAS: areas_list}
 
-        # Use the first entry as the base for the consolidated entry
-        base_entry = entries[0]
+        # Use the first successfully resolved entry as the base for the consolidated entry
+        base_entry = filtered_entries[0]
 
         _LOGGER.info(
             "Creating consolidated config entry with %d areas", len(areas_list)
@@ -550,9 +568,9 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 _LOGGER.error("Failed to restore config entry state: %s", restore_err)
             raise
 
-        # Step 5: Remove other entries
+        # Step 5: Remove other entries (only those that were successfully resolved)
         removal_errors: list[tuple[str, Exception]] = []
-        for entry in entries[1:]:
+        for entry in filtered_entries[1:]:
             try:
                 _LOGGER.info("Removing old config entry: %s", entry.entry_id)
                 await hass.config_entries.async_remove(entry.entry_id)
@@ -573,7 +591,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 
         _LOGGER.info(
             "Successfully consolidated %d entries into single-instance architecture",
-            len(entries),
+            len(filtered_entries),
         )
 
     except Exception:
@@ -710,6 +728,14 @@ async def _migrate_entity_registry_for_consolidation(
     ] = []  # (entity_id, old_unique_id, new_unique_id)
 
     for entry in entries:
+        # Skip entries that weren't successfully resolved
+        if entry.entry_id not in entry_id_to_area_name:
+            _LOGGER.debug(
+                "Skipping entry %s - not in entry_id_to_area_name mapping",
+                entry.entry_id,
+            )
+            continue
+
         area_name = entry_id_to_area_name[entry.entry_id]
         old_prefix = f"{entry.entry_id}_"
 
