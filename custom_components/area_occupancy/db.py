@@ -2093,13 +2093,14 @@ class AreaOccupancyDB:
             return 0
 
     def get_aggregated_intervals_by_slot(
-        self, entry_id: str, slot_minutes: int = 60
+        self, entry_id: str, slot_minutes: int = 60, area_name: str | None = None
     ) -> list[tuple[int, int, float]]:
         """Get aggregated interval data using SQL GROUP BY for better performance.
 
         Args:
             entry_id: The area entry ID to filter by
             slot_minutes: Time slot size in minutes
+            area_name: The area name to filter by (required for multi-area support)
 
         Returns:
             List of (day_of_week, time_slot, total_occupied_seconds) tuples
@@ -2145,8 +2146,12 @@ class AreaOccupancyDB:
                         == "motion",  # Use string instead of InputType enum
                         self.Intervals.state == "on",
                     )
-                    .group_by("day_of_week", "time_slot")
-                    .order_by("day_of_week", "time_slot")
+                )
+                # Add area_name filter if provided (required for multi-area support)
+                if area_name is not None:
+                    query = query.filter(self.Entities.area_name == area_name)
+                query = query.group_by("day_of_week", "time_slot").order_by(
+                    "day_of_week", "time_slot"
                 )
 
                 results = query.all()
