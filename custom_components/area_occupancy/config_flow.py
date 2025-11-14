@@ -1807,15 +1807,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     async def async_step_area_config(
         self,
         user_input: dict[str, Any] | None = None,
-        migrate_fn: Any | None = None,
     ) -> ConfigFlowResult:
-        """Configure a single area (add or edit).
-
-        Args:
-            user_input: User input from form
-            migrate_fn: Optional migration function for testing. If not provided,
-                uses _migrate_area_name_in_entity_registry.
-        """
+        """Configure a single area (add or edit)."""
         errors: dict[str, str] = {}
         areas = self._get_areas_from_config()
 

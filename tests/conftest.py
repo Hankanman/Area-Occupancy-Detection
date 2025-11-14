@@ -1691,7 +1691,7 @@ def mock_config() -> Mock:
     )
 
     # Create decay configuration
-    config.decay = Decay(enabled=True, half_life=300)
+    config.decay = Decay(half_life=300, enabled=True)
 
     # Create wasp configuration
     config.wasp_in_box = WaspInBox(

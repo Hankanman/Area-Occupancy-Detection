@@ -21,9 +21,9 @@ class Decay:
         """Initialize the decay model.
 
         Args:
-            decay_start: When decay began. Defaults to current time if None.
             half_life: Purpose-based half-life in seconds.
             is_decaying: Whether decay is currently active.
+            decay_start: When decay began. Defaults to current time if None.
         """
         # Ensure decay_start is timezone-aware
         if decay_start is not None:

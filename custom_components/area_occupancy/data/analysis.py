@@ -99,6 +99,8 @@ class PriorAnalyzer:
         # Step 1: Calculate prior from motion sensors only
         total_occupied_seconds = self.get_total_occupied_seconds()
 
+        lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+
         # Get total time period from motion sensors
         first_time, last_time = self.get_time_bounds(entity_ids)
 
@@ -106,7 +108,9 @@ class PriorAnalyzer:
             _LOGGER.debug("No time bounds available, using default prior")
             return DEFAULT_PRIOR
 
-        total_seconds = (last_time - first_time).total_seconds()
+        # Align denominator with lookback
+        window_start = max(first_time, lookback_date)
+        total_seconds = (last_time - window_start).total_seconds()
 
         # Validate time range before division
         if total_seconds <= 0:

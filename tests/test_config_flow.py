@@ -1177,23 +1177,23 @@ class TestAreaOccupancyOptionsFlow:
     async def test_options_flow_area_config_migration(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
     ):
-        """Test options flow area config with migration."""
+        """Test options flow area config with migration.
+
+        Note: Migration is no longer needed since area IDs are stable.
+        This test verifies that area config works without migration.
+        """
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
         # Use sanitized name to avoid triggering migration due to sanitization
         # _area_being_edited now stores area ID, not name
         flow._area_being_edited = "living_room"
 
-        mock_migrate = AsyncMock()
         user_input = create_user_input(name="Living_Room")
 
         with patch_create_schema_context():
-            result = await flow.async_step_area_config(
-                user_input, migrate_fn=mock_migrate
-            )
+            result = await flow.async_step_area_config(user_input)
             # Should succeed without calling migration since name didn't change
             assert result["type"] == FlowResultType.CREATE_ENTRY
-            mock_migrate.assert_not_called()
 
     async def test_options_flow_area_config_migration_on_rename(
         self,
@@ -1219,18 +1219,14 @@ class TestAreaOccupancyOptionsFlow:
         renamed_area = area_reg.async_create("Living Room Renamed")
         renamed_area_id = renamed_area.id
 
-        mock_migrate = AsyncMock()
         user_input = create_user_input(name="Living Room Renamed")
         # Update user_input to use the actual area ID from registry
         user_input[CONF_AREA_ID] = renamed_area_id
 
         with patch_create_schema_context():
-            result = await flow.async_step_area_config(
-                user_input, migrate_fn=mock_migrate
-            )
+            result = await flow.async_step_area_config(user_input)
             assert result["type"] == FlowResultType.CREATE_ENTRY
             # Migration is no longer called when area ID changes (it's a different area selection)
-            mock_migrate.assert_not_called()
 
     @pytest.mark.parametrize(
         "error_type",
@@ -1244,7 +1240,11 @@ class TestAreaOccupancyOptionsFlow:
         setup_area_registry: dict[str, str],
         error_type,
     ):
-        """Test options flow area config handles migration errors gracefully."""
+        """Test options flow area config when area ID changes.
+
+        Note: Migration is no longer needed since area IDs are stable.
+        This test verifies that area config works when changing area selection.
+        """
 
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
@@ -1257,16 +1257,13 @@ class TestAreaOccupancyOptionsFlow:
         renamed_area = area_reg.async_create("Living Room Renamed")
         renamed_area_id = renamed_area.id
 
-        mock_migrate = AsyncMock(side_effect=error_type("Migration failed"))
         user_input = create_user_input(name="Living Room Renamed")
         # Update user_input to use the actual area ID from registry
         user_input[CONF_AREA_ID] = renamed_area_id
 
         with patch_create_schema_context():
-            result = await flow.async_step_area_config(
-                user_input, migrate_fn=mock_migrate
-            )
-            # Should still succeed even if migration fails
+            result = await flow.async_step_area_config(user_input)
+            # Should succeed without migration since migration is no longer used
             assert result["type"] == FlowResultType.CREATE_ENTRY
 
     async def test_options_flow_area_config_no_old_area(
