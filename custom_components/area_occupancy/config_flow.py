@@ -716,8 +716,12 @@ def _sanitize_area_name_for_option(area_name: str) -> str:
     Returns:
         Sanitized name safe for use in option values
     """
-    # Use existing validation function, then replace spaces/slashes
-    sanitized = validate_and_sanitize_area_name(area_name)
+    # Use existing validation function, then replace spaces/slashes.
+    # For legacy/invalid names, fall back to a simple sanitized variant
+    try:
+        sanitized = validate_and_sanitize_area_name(area_name)
+    except ValueError:
+        sanitized = area_name.strip()
     return sanitized.replace(" ", "_").replace("/", "_")
 
 
