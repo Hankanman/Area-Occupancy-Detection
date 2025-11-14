@@ -973,27 +973,28 @@ class TestAreaOccupancyDBUtilities:
 
         if field == "entry_id":
             db.coordinator.entry_id = value
-            # When entry_id is empty, save_area_data will skip the area (logs error and continues)
-            # No exception is raised, but no data is saved
-            db.save_area_data(area_name=area_name)
+            # When entry_id is empty, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
         elif field == "area_name":
             # area_name is passed as parameter, not from config
             # Test with invalid area_name parameter - empty string will cause area lookup to fail
             # and no areas will be saved
-            db.save_area_data(area_name="")
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name="")
             return
         elif field == "purpose":
             area.config.purpose = value
-            # When purpose is empty, save_area_data will skip the area (logs error and continues)
-            # No exception is raised, but no data is saved
-            db.save_area_data(area_name=area_name)
+            # When purpose is empty, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
         elif field == "threshold":
             area.config.threshold = value
-            # When threshold is None, save_area_data will skip the area (logs error and continues)
-            # No exception is raised, but no data is saved
-            db.save_area_data(area_name=area_name)
+            # When threshold is None, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
 
-        # Verify no data was saved
+        # Verify no data was saved (transaction was rolled back)
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0

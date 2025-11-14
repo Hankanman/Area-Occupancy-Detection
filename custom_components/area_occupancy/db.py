@@ -1351,15 +1351,27 @@ class AreaOccupancyDB:
         With single-instance architecture, no file lock is required.
         """
         # Determine which areas to save
-        if area_name:
+        if area_name is not None:
             areas_to_save = [area_name]
         else:
             areas_to_save = self.coordinator.get_area_names()
 
         def _attempt(session: Any) -> bool:
             """Save area data for all configured areas."""
+            failures: list[
+                tuple[str, str]
+            ] = []  # List of (area_name, error_message) tuples
+            has_failures = False
+
             for area_name_item in areas_to_save:
                 area_data_obj = self.coordinator.get_area_or_default(area_name_item)
+                if area_data_obj is None:
+                    error_msg = f"Area '{area_name_item}' not found"
+                    _LOGGER.error("%s, cannot insert area", error_msg)
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
+                    continue
+
                 cfg = area_data_obj.config
 
                 # Call area_prior() method to get the actual value
@@ -1378,21 +1390,41 @@ class AreaOccupancyDB:
 
                 _LOGGER.debug("Attempting to insert area data: %s", area_data)
 
-                # Validate required fields
+                # Validate required fields and collect failures
                 if not area_data["entry_id"]:
-                    _LOGGER.error("entry_id is empty or None, cannot insert area")
+                    error_msg = "entry_id is empty or None"
+                    _LOGGER.error(
+                        "%s, cannot insert area '%s'", error_msg, area_name_item
+                    )
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
                     continue
 
                 if not area_data["area_name"]:
-                    _LOGGER.error("area_name is empty or None, cannot insert area")
+                    error_msg = "area_name is empty or None"
+                    _LOGGER.error(
+                        "%s, cannot insert area '%s'", error_msg, area_name_item
+                    )
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
                     continue
 
                 if not area_data["purpose"]:
-                    _LOGGER.error("purpose is empty or None, cannot insert area")
+                    error_msg = "purpose is empty or None"
+                    _LOGGER.error(
+                        "%s, cannot insert area '%s'", error_msg, area_name_item
+                    )
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
                     continue
 
                 if area_data["threshold"] is None:
-                    _LOGGER.error("threshold is None, cannot insert area")
+                    error_msg = "threshold is None"
+                    _LOGGER.error(
+                        "%s, cannot insert area '%s'", error_msg, area_name_item
+                    )
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
                     continue
 
                 # Handle area_prior - use DEFAULT_AREA_PRIOR as fallback if None
@@ -1415,6 +1447,18 @@ class AreaOccupancyDB:
                 # Use session.merge for upsert functionality
                 area_obj = self.Areas.from_dict(area_data)
                 session.merge(area_obj)
+
+            # If there are failures, rollback and return False
+            if has_failures:
+                session.rollback()
+                # Log concise summary of all failures
+                failed_areas = [f"{area} ({error})" for area, error in failures]
+                _LOGGER.error(
+                    "Failed to save area data for %d area(s): %s",
+                    len(failures),
+                    "; ".join(failed_areas),
+                )
+                return False
 
             session.commit()
             return True
