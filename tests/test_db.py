@@ -68,10 +68,11 @@ def create_test_entity_data(
     return data
 
 
-def create_test_prior_data(entry_id="test_entry_001", **overrides):
+def create_test_prior_data(entry_id="test_entry_001", area_name="Testing", **overrides):
     """Create standardized test prior data."""
     data = {
         "entry_id": entry_id,
+        "area_name": area_name,
         "day_of_week": 1,  # Monday
         "time_slot": 14,  # 2 PM
         "prior_value": 0.35,
@@ -183,6 +184,7 @@ class TestDatabaseModels:
                 db_session.query(model_class)
                 .filter_by(
                     entry_id=test_data["entry_id"],
+                    area_name=test_data.get("area_name", "Testing"),
                     day_of_week=test_data["day_of_week"],
                     time_slot=test_data["time_slot"],
                 )
@@ -801,6 +803,7 @@ class TestAreaOccupancyDBUtilities:
         pri = AreaOccupancyDB.Priors.from_dict(
             {
                 "entry_id": "e1",
+                "area_name": "Testing",
                 "day_of_week": 1,
                 "time_slot": 0,
                 "prior_value": 0.1,

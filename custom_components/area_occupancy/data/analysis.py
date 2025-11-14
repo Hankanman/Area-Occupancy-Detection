@@ -336,6 +336,7 @@ class PriorAnalyzer:
                             session.query(db.Priors)
                             .filter_by(
                                 entry_id=self.entry_id,
+                                area_name=self.area_name,
                                 day_of_week=day,
                                 time_slot=slot,
                             )
@@ -351,6 +352,7 @@ class PriorAnalyzer:
                             # Create new prior
                             prior = db.Priors(
                                 entry_id=self.entry_id,
+                                area_name=self.area_name,
                                 day_of_week=day,
                                 time_slot=slot,
                                 prior_value=p,
