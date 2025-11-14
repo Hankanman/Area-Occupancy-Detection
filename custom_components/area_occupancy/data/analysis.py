@@ -402,7 +402,7 @@ class PriorAnalyzer:
         try:
             start_time = dt_util.utcnow()
             result = self.db.get_aggregated_intervals_by_slot(
-                self.entry_id, slot_minutes
+                self.entry_id, slot_minutes, self.area_name
             )
             query_time = (dt_util.utcnow() - start_time).total_seconds()
             _LOGGER.debug(

@@ -384,8 +384,10 @@ class TestPriorAnalyzer:
             assert result[0] == (0, 0, 3600.0)
             assert result[1] == (1, 12, 1800.0)
 
-            # Verify SQL method was called
-            mock_get_aggregated.assert_called_once_with(coordinator.entry_id, 60)
+            # Verify SQL method was called with area_name
+            mock_get_aggregated.assert_called_once_with(
+                coordinator.entry_id, 60, area_name
+            )
 
     def test_get_interval_aggregates_fallback(
         self, coordinator: AreaOccupancyCoordinator

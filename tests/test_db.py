@@ -1995,7 +1995,9 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Test aggregation with 60-minute slots
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name="Test Area"
+        )
 
         # Should have aggregated data
         assert len(result) >= 2
@@ -2012,7 +2014,9 @@ class TestGetAggregatedIntervalsBySlot:
         """Test aggregation with no intervals."""
         db = test_db
 
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name=None
+        )
 
         # Should return empty list
         assert result == []
@@ -2046,7 +2050,9 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Should handle edge cases gracefully
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name="Test Area"
+        )
 
         # Should return valid data or empty list
         assert isinstance(result, list)
@@ -2060,7 +2066,7 @@ class TestGetAggregatedIntervalsBySlot:
             db, "get_session", side_effect=OperationalError("DB Error", None, None)
         ):
             result = db.get_aggregated_intervals_by_slot(
-                "test_entry_id", slot_minutes=60
+                "test_entry_id", slot_minutes=60, area_name=None
             )
 
             # Should return empty list on error
