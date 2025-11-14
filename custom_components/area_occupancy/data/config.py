@@ -412,8 +412,8 @@ class AreaConfig:
                 if area_entry and area_entry.name == area_name:
                     return area_data
 
-        # Fallback: if no match found, return first area or None
-        return areas_list[0] if areas_list else None
+        # Fallback: if no match found, return None
+        return None
 
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry."""
