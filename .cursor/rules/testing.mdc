@@ -6,7 +6,7 @@ All tests are written using pytest.
 
 All tests are written in the `tests` directory.
 
-The conftest.py file is used to configure the tests and contains the fixtures for the tests.
+The `conftest.py` file is used to configure the tests and contains the fixtures for the tests.
 
 All fixtures should be defined in the conftest.py file.
 
@@ -23,6 +23,7 @@ This guide explains how to write and maintain tests for the Area Occupancy Detec
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+- [Using pytest-homeassistant-custom-component](#using-pytest-homeassistant-custom-component)
 - [Choosing the Right Fixtures](#choosing-the-right-fixtures)
 - [Common Patterns](#common-patterns)
 - [Area-Based Access](#area-based-access)
@@ -37,6 +38,87 @@ The component uses a **multi-area architecture** where:
 - Each `Area` has its own `config`, `entities`, `prior`, and `purpose`
 - Properties like `probability()`, `threshold()`, `device_info()` now take `area_name` parameter
 - Access patterns: `coordinator.get_area_or_default(area_name).entities` instead of `coordinator.entities`
+
+## Using pytest-homeassistant-custom-component
+
+This project uses the [`pytest-homeassistant-custom-component`](https://pypi.org/project/pytest-homeassistant-custom-component/) package to provide proper Home Assistant test infrastructure. This package automatically provides fixtures for testing custom components.
+
+### Key Fixtures from the Package
+
+**`hass`** - Real Home Assistant instance for testing:
+
+```python
+def test_with_hass(hass: HomeAssistant):
+    """Test using real Home Assistant instance."""
+    # hass is a real HomeAssistant instance, not a mock
+    assert hass is not None
+    assert hass.states is not None
+    assert hass.config_entries is not None
+```
+
+**`device_registry`** - Device registry fixture:
+
+```python
+async def test_device_registry(hass: HomeAssistant, device_registry):
+    """Test using device registry."""
+    # Create a device in the registry
+    device_entry = device_registry.async_get_or_create(
+        config_entry_id="test_entry_id",
+        identifiers={("domain", "identifier")},
+        name="Test Device",
+    )
+    assert device_entry is not None
+```
+
+**`entity_registry`** - Entity registry fixture:
+
+```python
+async def test_entity_registry(hass: HomeAssistant, entity_registry):
+    """Test using entity registry."""
+    # Access entity registry
+    entities = entity_registry.entities
+    assert entities is not None
+```
+
+**`enable_custom_integrations`** - Automatically enables custom integrations (autouse fixture):
+
+This fixture is automatically applied to all tests, so you don't need to explicitly request it. It ensures that custom components can be loaded during tests.
+
+### Import Requirements
+
+When using the `hass` fixture, import `HomeAssistant` from `homeassistant.core`:
+
+```python
+from homeassistant.core import HomeAssistant
+
+def test_something(hass: HomeAssistant):
+    """Test using hass fixture."""
+    # Use hass here
+```
+
+### Benefits of Using the Package
+
+1. **Real Home Assistant Infrastructure** - Tests run against real Home Assistant components, not mocks
+2. **Automatic Setup** - The package handles all the complex setup required for testing custom components
+3. **Standard Fixtures** - Uses the same fixtures that Home Assistant core uses for testing
+4. **Better Integration Testing** - Tests catch real-world issues that mocks might miss
+5. **Device and Entity Registry Support** - Provides real registry fixtures for testing device/entity interactions
+
+### Migration from Custom mock_hass
+
+**We no longer use a custom `mock_hass` fixture.** All tests should use the `hass` fixture from `pytest-homeassistant-custom-component`:
+
+```python
+# OLD - Don't use this anymore
+def test_something(mock_hass: Mock):
+    mock_hass.states = Mock()
+    # ...
+
+# NEW - Use this instead
+def test_something(hass: HomeAssistant):
+    # hass already has states, config_entries, etc.
+    # No need to mock them
+```
 
 ## Choosing the Right Fixtures
 
@@ -181,7 +263,10 @@ def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
 ### Pattern 2: Testing with Real Coordinator (No Database)
 
 ```python
-def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_coordinator_method(
+    hass: HomeAssistant,
+    coordinator_with_areas: AreaOccupancyCoordinator
+):
     """Test coordinator method with real areas loaded."""
     area_name = coordinator_with_areas.get_area_names()[0]
     area = coordinator_with_areas.get_area_or_default(area_name)
@@ -192,6 +277,30 @@ def test_coordinator_method(coordinator_with_areas: AreaOccupancyCoordinator):
 
     threshold = coordinator_with_areas.threshold(area_name)
     assert threshold == area.config.threshold
+```
+
+### Pattern 2a: Testing Device Registry Interactions
+
+```python
+async def test_device_registry_interaction(
+    hass: HomeAssistant,
+    device_registry,
+    config_flow_options_flow
+):
+    """Test config flow with device registry."""
+    flow = config_flow_options_flow
+
+    # Create a device in the registry
+    device_entry = device_registry.async_get_or_create(
+        config_entry_id=flow.config_entry.entry_id,
+        identifiers={(DOMAIN, "Test Area")},
+        name="Test Area",
+    )
+
+    # Use device_id in flow
+    flow._device_id = device_entry.id
+    result = await flow.async_step_init()
+    assert result["type"] == FlowResultType.FORM
 ```
 
 ### Pattern 3: Testing with Default Area
@@ -471,7 +580,10 @@ async def test_db(coordinator_with_db: AreaOccupancyCoordinator):
 ### Example 1: Testing Coordinator Setup
 
 ```python
-async def test_setup_loads_areas(coordinator_with_areas: AreaOccupancyCoordinator):
+async def test_setup_loads_areas(
+    hass: HomeAssistant,
+    coordinator_with_areas: AreaOccupancyCoordinator
+):
     """Test that setup loads areas correctly."""
     area_names = coordinator_with_areas.get_area_names()
     assert len(area_names) > 0
@@ -486,7 +598,10 @@ async def test_setup_loads_areas(coordinator_with_areas: AreaOccupancyCoordinato
 ### Example 2: Testing Database Operations
 
 ```python
-async def test_save_and_load_data(coordinator_with_db: AreaOccupancyCoordinator):
+async def test_save_and_load_data(
+    hass: HomeAssistant,
+    coordinator_with_db: AreaOccupancyCoordinator
+):
     """Test saving and loading data from database."""
     coordinator = coordinator_with_db
     db = coordinator.db
@@ -542,7 +657,10 @@ def test_entity_access(default_area):
 ### Example 5: Testing Coordinator Methods
 
 ```python
-def test_probability_method(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_probability_method(
+    hass: HomeAssistant,
+    coordinator_with_areas: AreaOccupancyCoordinator
+):
     """Test probability method with area_name."""
     area_name = coordinator_with_areas.get_area_names()[0]
     prob = coordinator_with_areas.probability(area_name)
@@ -552,6 +670,33 @@ def test_probability_method(coordinator_with_areas: AreaOccupancyCoordinator):
     device_info = coordinator_with_areas.device_info(area_name)
     assert device_info is not None
     assert device_info["identifiers"] == {(DOMAIN, area_name)}
+```
+
+### Example 9: Testing Config Flow with Device Registry
+
+```python
+async def test_config_flow_with_device_registry(
+    hass: HomeAssistant,
+    device_registry,
+    config_flow_options_flow
+):
+    """Test config flow when called from device registry."""
+    flow = config_flow_options_flow
+
+    # Create a device in the registry
+    device_entry = device_registry.async_get_or_create(
+        config_entry_id=flow.config_entry.entry_id,
+        identifiers={(DOMAIN, "Test Area")},
+        name="Test Area",
+    )
+
+    # Update flow's device_id to match the created device
+    flow._device_id = device_entry.id
+
+    result = await flow.async_step_init()
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "area_config"
+    assert flow._area_being_edited == "Test Area"
 ```
 
 ### Example 6: Testing Sensor Entities
@@ -672,11 +817,44 @@ prob = coordinator.probability(area_name)  # Must call with area_name
 
 **Solution:** Always get area name dynamically: `area_name = coordinator.get_area_names()[0]`
 
+### Issue: Tests failing with "hass fixture not found"
+
+**Solution:** Ensure you're importing `HomeAssistant` and requesting the `hass` fixture:
+
+```python
+from homeassistant.core import HomeAssistant
+
+def test_something(hass: HomeAssistant):
+    """Test with hass fixture."""
+    # Use hass here
+```
+
+### Issue: Device registry tests hanging or failing
+
+**Solution:** Use the `device_registry` fixture from `pytest-homeassistant-custom-component` instead of manually mocking:
+
+```python
+# OLD - Don't do this
+with patch.object(dr, "async_get", return_value=mock_device_registry):
+    # ...
+
+# NEW - Use the fixture
+async def test_device(hass: HomeAssistant, device_registry):
+    device_entry = device_registry.async_get_or_create(...)
+    # ...
+```
+
 ## Fixture Reference
 
-### Core Fixtures
+### Core Fixtures from pytest-homeassistant-custom-component
 
-- **`mock_hass`** - Mock Home Assistant instance
+- **`hass`** - Real Home Assistant instance (from `pytest-homeassistant-custom-component`)
+- **`device_registry`** - Device registry fixture (from `pytest-homeassistant-custom-component`)
+- **`entity_registry`** - Entity registry fixture (from `pytest-homeassistant-custom-component`)
+- **`enable_custom_integrations`** - Autouse fixture that enables custom integrations (from `pytest-homeassistant-custom-component`)
+
+### Custom Fixtures (from conftest.py)
+
 - **`mock_config_entry`** - Mock config entry with default values
 - **`mock_realistic_config_entry`** - Mock config entry with realistic multi-area configuration
 - **`coordinator_with_areas`** - Real coordinator with areas loaded (recommended default)
@@ -706,11 +884,28 @@ prob = coordinator.probability(area_name)  # Must call with area_name
 
 ## Additional Resources
 
+### Package Documentation
+
+- [pytest-homeassistant-custom-component on PyPI](https://pypi.org/project/pytest-homeassistant-custom-component/)
+- [Package GitHub Repository](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component)
+
+### Project Files
+
 - See `tests/conftest.py` for all available fixtures and their implementations
 - See existing test files for examples of patterns:
-  - `tests/test_coordinator.py` - Coordinator tests with real coordinators
+  - `tests/test_coordinator.py` - Coordinator tests with real coordinators and `hass` fixture
+  - `tests/test_config_flow.py` - Config flow tests with `hass` and `device_registry` fixtures
   - `tests/test_db.py` - Database tests with `coordinator_with_db`
-  - `tests/test_sensor.py` - Sensor tests with `coordinator_with_areas_with_sensors`
-  - `tests/test_service.py` - Service tests with real coordinators
+  - `tests/test_sensor.py` - Sensor tests with `coordinator_with_areas_with_sensors` and `hass`
+  - `tests/test_service.py` - Service tests with real coordinators and `hass`
+  - `tests/test_binary_sensor.py` - Binary sensor tests with `hass` fixture
 - Check `custom_components/area_occupancy/coordinator.py` for coordinator API
 - Check `custom_components/area_occupancy/db.py` for database API
+
+### Installation
+
+The package is installed as a test dependency. Ensure it's in your `requirements_test.txt`:
+
+```
+pytest-homeassistant-custom-component>=0.10.0
+```
