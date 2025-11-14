@@ -1715,13 +1715,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if CONF_PURPOSE not in defaults:
             defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
 
-        # Create schema with name field for new areas
+        # Create schema for options flow
         schema_dict = create_schema(self.hass, defaults, True)
-        # Add name field if adding new area (not editing)
-        if not self._area_being_edited:
-            schema_dict[
-                vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))
-            ] = str
+        # Always expose name field so areas can be renamed
+        schema_dict[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
 
         return self.async_show_form(
             step_id="area_config",
