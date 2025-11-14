@@ -559,7 +559,29 @@ class TestAreaOccupancyDBUtilities:
     async def test_load_data(self, configured_db, monkeypatch):
         """Test loading data from database."""
         db = configured_db
+        # Ensure database is initialized before saving data
+        db.init_db()
+        # Ensure area has an area_prior set so load_data will call set_global_prior
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set area_prior so it will be saved and loaded
+        area.prior.set_global_prior(0.5)
+        # Verify area_prior is set correctly
+        assert area.area_prior() >= 0.5, (
+            f"area_prior should be >= 0.5, got {area.area_prior()}"
+        )
         db.save_area_data()
+
+        # Verify that area_prior was saved to the database
+        area_data = db.get_area_data(db.coordinator.entry_id)
+        if area_data:
+            saved_prior = area_data.get("area_prior")
+            assert saved_prior is not None, (
+                "area_prior should be saved to database, got None"
+            )
+            assert saved_prior >= 0.5, f"area_prior should be >= 0.5, got {saved_prior}"
 
         # Populate entities table directly
         good = SimpleNamespace(
@@ -617,7 +639,11 @@ class TestAreaOccupancyDBUtilities:
         await db.load_data()
 
         # Check that prior was set
-        assert any(call[0] == "prior" for call in called)
+        # Note: set_global_prior might be called with the saved area_prior value,
+        # which could be different from 0.5 if it was combined with time_prior
+        assert any(call[0] == "prior" for call in called), (
+            f"set_global_prior was not called. Called: {called}"
+        )
 
     @pytest.mark.asyncio
     async def test_load_data_entity_handling(self, configured_db, monkeypatch):
