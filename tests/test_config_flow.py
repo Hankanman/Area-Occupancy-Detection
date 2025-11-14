@@ -16,8 +16,8 @@ from custom_components.area_occupancy.config_flow import (
     _create_action_selection_schema,
     _create_area_selection_schema,
     _ensure_primary_in_motion_sensors,
-    _find_area_by_name,
-    _find_area_by_sanitized_name,
+    _find_area_by_id,
+    _find_area_by_sanitized_id,
     _flatten_sectioned_input,
     _get_area_summary_info,
     _get_default_decay_half_life,
@@ -38,6 +38,7 @@ from custom_components.area_occupancy.const import (
     CONF_ACTION_REMOVE,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
+    CONF_AREA_ID,
     CONF_AREAS,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -45,7 +46,6 @@ from custom_components.area_occupancy.const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
-    CONF_NAME,
     CONF_OPTION_PREFIX_AREA,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
@@ -56,8 +56,10 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from tests.conftest import (
     create_area_config,
     create_user_input,
@@ -75,9 +77,11 @@ class TestBaseOccupancyFlow:
         """Create a BaseOccupancyFlow instance."""
         return BaseOccupancyFlow()
 
-    def test_validate_config_valid(self, flow, config_flow_base_config):
+    def test_validate_config_valid(self, flow, config_flow_base_config, hass):
         """Test validating a valid configuration."""
-        flow._validate_config(config_flow_base_config)  # Should not raise any exception
+        flow._validate_config(
+            config_flow_base_config, hass
+        )  # Should not raise any exception
 
     @pytest.mark.parametrize(
         ("invalid_config", "expected_error"),
@@ -107,8 +111,8 @@ class TestBaseOccupancyFlow:
                 "Threshold must be between 1 and 100",
             ),
             (
-                {"name": ""},
-                "Name is required",
+                {CONF_AREA_ID: ""},
+                "Area selection is required",
             ),
             (
                 {"decay_enabled": True, "decay_half_life": 0},
@@ -147,7 +151,7 @@ class TestBaseOccupancyFlow:
         ],
     )
     def test_validate_config_invalid_scenarios(
-        self, flow, config_flow_base_config, invalid_config, expected_error
+        self, flow, config_flow_base_config, invalid_config, expected_error, hass
     ):
         """Test various invalid configuration scenarios."""
         test_config = {**config_flow_base_config, **invalid_config}
@@ -155,7 +159,7 @@ class TestBaseOccupancyFlow:
         test_config = {k: v for k, v in test_config.items() if v is not None}
 
         with pytest.raises(vol.Invalid) as excinfo:
-            flow._validate_config(test_config)
+            flow._validate_config(test_config, hass)
         assert expected_error.lower() in str(excinfo.value).lower()
 
 
@@ -209,37 +213,37 @@ class TestHelperFunctions:
             assert result == expected
 
     @pytest.mark.parametrize(
-        ("areas", "sanitized_name", "expected_name"),
+        ("areas", "sanitized_id", "expected_id"),
         [
             (
-                [{CONF_NAME: "Living Room", CONF_PURPOSE: "social"}],
-                "Living_Room",
-                "Living Room",
+                [{CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"}],
+                "living_room",
+                "living_room",
             ),
             (
                 [
-                    {CONF_NAME: "Living Room", CONF_PURPOSE: "social"},
-                    {CONF_NAME: "Kitchen", CONF_PURPOSE: "work"},
+                    {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
+                    {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
                 ],
-                "Bedroom",
+                "bedroom",
                 None,
             ),
-            ([], "Living_Room", None),
+            ([], "living_room", None),
         ],
     )
-    def test_find_area_by_sanitized_name(self, areas, sanitized_name, expected_name):
-        """Test _find_area_by_sanitized_name function."""
-        result = _find_area_by_sanitized_name(areas, sanitized_name)
-        if expected_name is None:
+    def test_find_area_by_sanitized_id(self, areas, sanitized_id, expected_id):
+        """Test _find_area_by_sanitized_id function."""
+        result = _find_area_by_sanitized_id(areas, sanitized_id)
+        if expected_id is None:
             assert result is None
         else:
             assert result is not None
-            assert result[CONF_NAME] == expected_name
+            assert result[CONF_AREA_ID] == expected_id
 
     def test_build_area_description_placeholders(self):
         """Test _build_area_description_placeholders function."""
         area_config = {
-            CONF_NAME: "Living Room",
+            CONF_AREA_ID: "living_room",
             CONF_PURPOSE: "social",
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_MEDIA_DEVICES: ["media_player.tv"],
@@ -249,9 +253,13 @@ class TestHelperFunctions:
             CONF_THRESHOLD: 60.0,
         }
 
-        placeholders = _build_area_description_placeholders(area_config, "Living Room")
+        placeholders = _build_area_description_placeholders(
+            area_config, "living_room", hass=None
+        )
 
-        assert placeholders["area_name"] == "Living Room"
+        assert (
+            placeholders["area_name"] == "living_room"
+        )  # Uses area_id when hass is None
         assert placeholders["motion_count"] == "1"
         assert placeholders["media_count"] == "1"
         assert placeholders["door_count"] == "1"
@@ -262,7 +270,7 @@ class TestHelperFunctions:
     def test_get_area_summary_info(self):
         """Test _get_area_summary_info function."""
         area = {
-            CONF_NAME: "Living Room",
+            CONF_AREA_ID: "living_room",
             CONF_PURPOSE: "social",
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_MEDIA_DEVICES: ["media_player.tv"],
@@ -274,7 +282,7 @@ class TestHelperFunctions:
 
         summary = _get_area_summary_info(area)
         assert isinstance(summary, str)
-        assert "Living Room" not in summary  # Name should not be in summary
+        assert "living_room" not in summary  # Area ID should not be in summary
         assert "60" in summary  # Threshold should be included
         assert "3" in summary  # Total sensors count
 
@@ -284,7 +292,7 @@ class TestHelperFunctions:
             (
                 [
                     {
-                        CONF_NAME: "Living Room",
+                        CONF_AREA_ID: "living_room",
                         CONF_PURPOSE: "social",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                         CONF_THRESHOLD: 60.0,
@@ -295,7 +303,7 @@ class TestHelperFunctions:
             (
                 [
                     {
-                        CONF_NAME: "Living Room",
+                        CONF_AREA_ID: "living_room",
                         CONF_PURPOSE: "social",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                         CONF_THRESHOLD: 60.0,
@@ -393,15 +401,20 @@ class TestHelperFunctions:
             (None, False, True, False),  # defaults test
             (
                 {
-                    CONF_NAME: "Test Area",
+                    CONF_AREA_ID: "test_area",
                     CONF_MOTION_SENSORS: ["binary_sensor.motion_1"],
                     CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion_1",
                 },
                 False,
-                True,
+                True,  # CONF_AREA_ID is always present in schema now
                 True,
             ),  # with_defaults test
-            (None, True, False, False),  # options_mode test
+            (
+                None,
+                True,
+                True,
+                False,
+            ),  # options_mode test - CONF_AREA_ID is always present
         ],
     )
     def test_create_schema(
@@ -436,15 +449,15 @@ class TestHelperFunctions:
             assert section in schema_dict
 
         if expected_name_present:
-            assert CONF_NAME in schema_dict
+            assert CONF_AREA_ID in schema_dict
         else:
-            assert CONF_NAME not in schema_dict
+            assert CONF_AREA_ID not in schema_dict
 
         if test_schema_validation:
             # Test schema instantiation
             data = schema(
                 {
-                    CONF_NAME: "Test Area",
+                    CONF_AREA_ID: "test_area",
                     "purpose": {},
                     "motion": {},
                     "doors": {},
@@ -456,7 +469,7 @@ class TestHelperFunctions:
                     "parameters": {},
                 }
             )
-            assert data[CONF_NAME] == "Test Area"
+            assert data[CONF_AREA_ID] == "test_area"
 
 
 class TestAreaOccupancyConfigFlow:
@@ -475,7 +488,7 @@ class TestAreaOccupancyConfigFlow:
             (
                 [
                     {
-                        CONF_NAME: "Living Room",
+                        CONF_AREA_ID: "living_room",
                         CONF_PURPOSE: "social",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                     }
@@ -495,7 +508,7 @@ class TestAreaOccupancyConfigFlow:
             (
                 [
                     {
-                        CONF_NAME: "Living Room",
+                        CONF_AREA_ID: "living_room",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                         CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                         CONF_PURPOSE: "social",
@@ -509,12 +522,12 @@ class TestAreaOccupancyConfigFlow:
             (
                 [
                     {
-                        CONF_NAME: "Living Room",
+                        CONF_AREA_ID: "living_room",
                         CONF_PURPOSE: "social",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                     }
                 ],
-                {"selected_option": f"{CONF_OPTION_PREFIX_AREA}Living_Room"},
+                {"selected_option": f"{CONF_OPTION_PREFIX_AREA}living_room"},
                 "area_action",
                 FlowResultType.FORM,
                 None,
@@ -523,7 +536,9 @@ class TestAreaOccupancyConfigFlow:
     )
     async def test_async_step_user_scenarios(
         self,
+        hass: HomeAssistant,
         config_flow_flow,
+        setup_area_registry: dict[str, str],
         areas,
         user_input,
         expected_step_id,
@@ -531,6 +546,26 @@ class TestAreaOccupancyConfigFlow:
         patch_type,
     ):
         """Test async_step_user with various scenarios."""
+        # Replace hardcoded area IDs with actual area IDs from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        for area in areas:
+            if area.get(CONF_AREA_ID) == "living_room":
+                area[CONF_AREA_ID] = living_room_area_id
+
+        # Update user_input if it references living_room
+        if user_input and "selected_option" in user_input:
+            selected_option = user_input["selected_option"]
+            if selected_option and "living_room" in selected_option:
+                # The option format is "area_<sanitized_id>"
+                # Sanitize the actual area ID (replace spaces/slashes with underscores)
+                sanitized_area_id = living_room_area_id.replace(" ", "_").replace(
+                    "/", "_"
+                )
+                # Replace the sanitized "living_room" with the sanitized actual area ID
+                user_input["selected_option"] = selected_option.replace(
+                    "living_room", sanitized_area_id
+                )
+
         # Set up areas
         config_flow_flow._areas = areas
 
@@ -557,7 +592,8 @@ class TestAreaOccupancyConfigFlow:
         elif expected_step_id == "user":
             assert "data_schema" in result
         elif expected_step_id == "area_action":
-            assert config_flow_flow._area_being_edited == "Living Room"
+            # _area_being_edited now stores area ID, not name
+            assert config_flow_flow._area_being_edited == "living_room"
 
     @pytest.mark.parametrize(
         (
@@ -568,8 +604,8 @@ class TestAreaOccupancyConfigFlow:
             "needs_schema_mock",
         ),
         [
-            (CONF_ACTION_EDIT, "area_config", "Living Room", None, True),
-            (CONF_ACTION_REMOVE, "remove_area", None, "Living Room", False),
+            (CONF_ACTION_EDIT, "area_config", "living_room", None, True),
+            (CONF_ACTION_REMOVE, "remove_area", None, "living_room", False),
             (CONF_ACTION_CANCEL, "user", None, None, False),
         ],
     )
@@ -585,7 +621,8 @@ class TestAreaOccupancyConfigFlow:
     ):
         """Test async_step_area_action with different actions."""
         config_flow_flow._areas = [config_flow_sample_area]
-        config_flow_flow._area_being_edited = "Living Room"
+        # _area_being_edited now stores area ID, not name
+        config_flow_flow._area_being_edited = "living_room"
 
         user_input = {"action": action}
 
@@ -607,7 +644,7 @@ class TestAreaOccupancyConfigFlow:
     async def test_async_step_area_config_preserves_name_when_editing(
         self, config_flow_flow
     ):
-        """Test that name is preserved when editing an area."""
+        """Test that area_id is preserved when editing an area."""
         config_flow_flow._areas = [
             create_area_config(
                 name="Living Room",
@@ -615,11 +652,12 @@ class TestAreaOccupancyConfigFlow:
                 primary_occupancy_sensor="binary_sensor.motion1",
             )
         ]
-        config_flow_flow._area_being_edited = "Living Room"
+        # _area_being_edited now stores area ID, not name
+        config_flow_flow._area_being_edited = "living_room"
 
-        # User submits form without name field (or with empty name)
+        # User submits form without area_id field (or with empty area_id)
         user_input = create_user_input(name="")  # Empty name - should be preserved
-        del user_input[CONF_NAME]  # Remove name to test preservation
+        del user_input[CONF_AREA_ID]  # Remove area_id to test preservation
 
         with (
             patch.object(config_flow_flow, "_validate_config") as mock_validate,
@@ -628,10 +666,10 @@ class TestAreaOccupancyConfigFlow:
             # Call async_step_area_config to trigger validation
             await config_flow_flow.async_step_area_config(user_input)
 
-            # Should have preserved the name
+            # Should have preserved the area_id
             mock_validate.assert_called_once()
             call_args = mock_validate.call_args[0][0]
-            assert call_args[CONF_NAME] == "Living Room"
+            assert call_args[CONF_AREA_ID] == "living_room"
 
     @pytest.mark.parametrize(
         (
@@ -675,7 +713,8 @@ class TestAreaOccupancyConfigFlow:
                 motion_sensors=["binary_sensor.motion1"],
             )
         ]
-        config_flow_flow._area_to_remove = "Living Room"
+        # _area_to_remove now stores area ID, not name
+        config_flow_flow._area_to_remove = "living_room"
         user_input = {"confirm": False}
         result = await config_flow_flow.async_step_remove_area(user_input)
         assert result.get("type") == FlowResultType.FORM
@@ -690,7 +729,8 @@ class TestAreaOccupancyConfigFlow:
                 motion_sensors=["binary_sensor.motion1"],
             )
         ]
-        config_flow_flow._area_to_remove = "Living Room"
+        # _area_to_remove now stores area ID, not name
+        config_flow_flow._area_to_remove = "living_room"
         user_input = {"confirm": True}
         result = await config_flow_flow.async_step_remove_area(user_input)
         assert result.get("type") == FlowResultType.FORM
@@ -738,25 +778,31 @@ class TestConfigFlowIntegration:
             areas = result_data.get(CONF_AREAS, [])
             assert len(areas) == 1
             area_data = areas[0]
-            assert area_data.get(CONF_NAME) == "Living_Room"  # Sanitized
+            assert area_data.get(CONF_AREA_ID) == "living_room"  # Area ID
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert (
                 area_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR) == "binary_sensor.motion1"
             )
             assert area_data.get(CONF_THRESHOLD) == 60
 
-    async def test_config_flow_with_existing_entry(self, config_flow_flow, hass):
+    async def test_config_flow_with_existing_entry(
+        self, config_flow_flow, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ):
         """Test config flow when entry already exists."""
         hass.data = {}
 
+        # Use actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+
         # When finish setup is selected, it should check for existing entry
-        config_flow_flow._areas = [
-            create_area_config(
-                name="Living Room",
-                motion_sensors=["binary_sensor.motion1"],
-                primary_occupancy_sensor="binary_sensor.motion1",
-            )
-        ]
+        area_config = create_area_config(
+            name="Living Room",
+            motion_sensors=["binary_sensor.motion1"],
+            primary_occupancy_sensor="binary_sensor.motion1",
+        )
+        # Update to use actual area ID from registry
+        area_config[CONF_AREA_ID] = living_room_area_id
+        config_flow_flow._areas = [area_config]
 
         user_input = {"selected_option": CONF_ACTION_FINISH_SETUP}
 
@@ -876,9 +922,11 @@ class TestConfigFlowIntegration:
     )
     async def test_flow_show_form(
         self,
+        hass: HomeAssistant,
         config_flow_flow,
         config_flow_options_flow,
         config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
         flow_type,
         step_method,
         step_id,
@@ -889,13 +937,35 @@ class TestConfigFlowIntegration:
         """Test that flows show forms correctly when no user input."""
         if flow_type == "config":
             flow = config_flow_flow
-            flow._areas = [create_area_config(name="Living Room")]
+            # Use actual area ID from registry
+            living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+            area_config = create_area_config(name="Living Room")
+            area_config[CONF_AREA_ID] = living_room_area_id
+            flow._areas = [area_config]
         else:
             flow = config_flow_options_flow
             flow.config_entry = config_flow_mock_config_entry_with_areas
 
-        flow._area_being_edited = area_being_edited
-        flow._area_to_remove = area_to_remove
+        # Convert area names to area IDs
+        if area_being_edited:
+            area_id = setup_area_registry.get(area_being_edited)
+            if area_id:
+                flow._area_being_edited = area_id
+            else:
+                flow._area_being_edited = (
+                    area_being_edited  # Fallback if not in registry
+                )
+        else:
+            flow._area_being_edited = area_being_edited
+
+        if area_to_remove:
+            area_id = setup_area_registry.get(area_to_remove)
+            if area_id:
+                flow._area_to_remove = area_id
+            else:
+                flow._area_to_remove = area_to_remove  # Fallback if not in registry
+        else:
+            flow._area_to_remove = area_to_remove
 
         method = getattr(flow, step_method)
         result = await method()
@@ -907,13 +977,20 @@ class TestConfigFlowIntegration:
         for key, value in expected_placeholders.items():
             assert result["description_placeholders"][key] == value
 
-    async def test_error_recovery_in_config_flow(self, config_flow_flow):
+    async def test_error_recovery_in_config_flow(
+        self, config_flow_flow, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ):
         """Test error recovery in config flow."""
+        # Use actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+
         # First attempt with invalid data in area_config
         invalid_input = create_user_input(
             name="Living Room",
             motion={CONF_MOTION_SENSORS: [], CONF_PRIMARY_OCCUPANCY_SENSOR: ""},
         )
+        # Update to use actual area ID from registry
+        invalid_input[CONF_AREA_ID] = living_room_area_id
 
         with patch_create_schema_context():
             result1 = await config_flow_flow.async_step_area_config(invalid_input)
@@ -967,15 +1044,30 @@ class TestAreaOccupancyOptionsFlow:
         assert flow._device_id is None
 
     @pytest.mark.parametrize(
-        ("config_entry_fixture", "expected_name"),
+        ("config_entry_fixture", "expected_area_id"),
         [
-            ("config_flow_mock_config_entry_with_areas", "Living Room"),
-            ("config_flow_mock_config_entry_legacy", "Legacy Area"),
-            ("config_flow_mock_config_entry_legacy_no_name", "Area"),
+            (
+                "config_flow_mock_config_entry_with_areas",
+                "living_room",
+            ),  # Will be replaced with actual ID
+            (
+                "config_flow_mock_config_entry_legacy",
+                "legacy_area",
+            ),  # Will be replaced with actual ID
+            (
+                "config_flow_mock_config_entry_legacy_no_name",
+                None,  # Legacy format without name/area_id - no CONF_AREA_ID expected
+            ),
         ],
     )
     def test_get_areas_from_config(
-        self, config_flow_options_flow, config_entry_fixture, expected_name, request
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        setup_area_registry: dict[str, str],
+        config_entry_fixture,
+        expected_area_id,
+        request,
     ):
         """Test _get_areas_from_config with different config formats."""
         flow = config_flow_options_flow
@@ -983,7 +1075,21 @@ class TestAreaOccupancyOptionsFlow:
         areas = flow._get_areas_from_config()
         assert isinstance(areas, list)
         assert len(areas) == 1
-        assert areas[0][CONF_NAME] == expected_name
+
+        # For legacy_no_name, there's no area_id in the config
+        if expected_area_id is None:
+            # Legacy format without name - no CONF_AREA_ID should be present
+            assert CONF_AREA_ID not in areas[0]
+        else:
+            # Use actual area ID from registry for comparison
+            if expected_area_id == "living_room":
+                expected_area_id = setup_area_registry.get("Living Room", "living_room")
+            elif expected_area_id == "legacy_area":
+                # Legacy entry has CONF_AREA_ID: "legacy_area" which doesn't exist in registry
+                # The _get_areas_from_config just returns what's in the config, doesn't validate
+                expected_area_id = "legacy_area"
+
+            assert areas[0][CONF_AREA_ID] == expected_area_id
 
     async def test_options_flow_init_with_device_id(
         self, config_flow_options_flow, hass, device_registry
@@ -995,9 +1101,10 @@ class TestAreaOccupancyOptionsFlow:
         hass.config_entries._entries[flow.config_entry.entry_id] = flow.config_entry
 
         # Create a device in the registry
+        # Device identifier now uses area_id, not area name
         device_entry = device_registry.async_get_or_create(
             config_entry_id=flow.config_entry.entry_id,
-            identifiers={(DOMAIN, "Test Area")},
+            identifiers={(DOMAIN, "test_area")},  # Use area ID, not name
             name="Test Area",
         )
 
@@ -1008,7 +1115,8 @@ class TestAreaOccupancyOptionsFlow:
             result = await flow.async_step_init()
             assert result["type"] == FlowResultType.FORM
             assert result["step_id"] == "area_config"
-            assert flow._area_being_edited == "Test Area"
+            # _area_being_edited now stores area ID from device identifier
+            assert flow._area_being_edited == "test_area"
 
     async def test_options_flow_init_device_not_found(
         self, config_flow_options_flow, device_registry
@@ -1061,10 +1169,10 @@ class TestAreaOccupancyOptionsFlow:
         with patch_create_schema_context():
             result = await flow.async_step_area_config(user_input)
             assert result["type"] == FlowResultType.CREATE_ENTRY
-            # Verify name field was added to schema
+            # Verify area_id field was added to schema
             areas = result["data"][CONF_AREAS]
             assert len(areas) == 2  # Original + new
-            assert any(area[CONF_NAME] == "Kitchen" for area in areas)
+            assert any(area[CONF_AREA_ID] == "kitchen" for area in areas)
 
     async def test_options_flow_area_config_migration(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
@@ -1073,7 +1181,8 @@ class TestAreaOccupancyOptionsFlow:
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
         # Use sanitized name to avoid triggering migration due to sanitization
-        flow._area_being_edited = "Living_Room"
+        # _area_being_edited now stores area ID, not name
+        flow._area_being_edited = "living_room"
 
         mock_migrate = AsyncMock()
         user_input = create_user_input(name="Living_Room")
@@ -1087,22 +1196,41 @@ class TestAreaOccupancyOptionsFlow:
             mock_migrate.assert_not_called()
 
     async def test_options_flow_area_config_migration_on_rename(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
     ):
-        """Test options flow area config triggers migration on rename."""
+        """Test options flow area config when area ID changes (different area selection).
+
+        Note: With area IDs, changing the area ID means selecting a different area,
+        not renaming. Migration is no longer needed since area IDs are stable.
+        """
+
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = "Living Room"
+        # Use actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        flow._area_being_edited = living_room_area_id
+
+        # Create "Living Room Renamed" area in registry
+        area_reg = ar.async_get(hass)
+        renamed_area = area_reg.async_create("Living Room Renamed")
+        renamed_area_id = renamed_area.id
 
         mock_migrate = AsyncMock()
         user_input = create_user_input(name="Living Room Renamed")
+        # Update user_input to use the actual area ID from registry
+        user_input[CONF_AREA_ID] = renamed_area_id
 
         with patch_create_schema_context():
             result = await flow.async_step_area_config(
                 user_input, migrate_fn=mock_migrate
             )
             assert result["type"] == FlowResultType.CREATE_ENTRY
-            mock_migrate.assert_called_once()
+            # Migration is no longer called when area ID changes (it's a different area selection)
+            mock_migrate.assert_not_called()
 
     @pytest.mark.parametrize(
         "error_type",
@@ -1110,17 +1238,29 @@ class TestAreaOccupancyOptionsFlow:
     )
     async def test_options_flow_area_config_migration_errors(
         self,
+        hass: HomeAssistant,
         config_flow_options_flow,
         config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
         error_type,
     ):
         """Test options flow area config handles migration errors gracefully."""
+
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = "Living Room"
+        # Use actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        flow._area_being_edited = living_room_area_id
+
+        # Create "Living Room Renamed" area in registry
+        area_reg = ar.async_get(hass)
+        renamed_area = area_reg.async_create("Living Room Renamed")
+        renamed_area_id = renamed_area.id
 
         mock_migrate = AsyncMock(side_effect=error_type("Migration failed"))
         user_input = create_user_input(name="Living Room Renamed")
+        # Update user_input to use the actual area ID from registry
+        user_input[CONF_AREA_ID] = renamed_area_id
 
         with patch_create_schema_context():
             result = await flow.async_step_area_config(
@@ -1130,14 +1270,26 @@ class TestAreaOccupancyOptionsFlow:
             assert result["type"] == FlowResultType.CREATE_ENTRY
 
     async def test_options_flow_area_config_no_old_area(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
     ):
         """Test options flow area config when old area is not found."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = "NonExistent"
+        flow._area_being_edited = "nonexistent_area_id"  # Non-existent area ID
+
+        # Create "New Name" area in registry for the test
+        area_reg = ar.async_get(hass)
+        new_area = area_reg.async_create("New Name")
+        new_area_id = new_area.id
 
         user_input = create_user_input(name="New Name")
+        # Update user_input to use the actual area ID from registry
+        user_input[CONF_AREA_ID] = new_area_id
+
         with patch_create_schema_context():
             result = await flow.async_step_area_config(user_input)
             # Should succeed without migration since old area not found
@@ -1178,7 +1330,8 @@ class TestAreaOccupancyOptionsFlow:
         """Test options flow area action with different actions."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = "Living Room"
+        # _area_being_edited now stores area ID, not name
+        flow._area_being_edited = "living_room"
 
         user_input = {"action": action}
         if needs_schema_mock:
@@ -1287,8 +1440,10 @@ class TestAreaOccupancyOptionsFlow:
     )
     async def test_options_flow_remove_area(
         self,
+        hass: HomeAssistant,
         config_flow_options_flow,
         config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
         confirm,
         area_to_remove,
         add_second_area,
@@ -1301,15 +1456,28 @@ class TestAreaOccupancyOptionsFlow:
         """Test options flow remove area with various scenarios."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_to_remove = area_to_remove
+
+        # Convert area name to area_id if area_to_remove is provided
+        if area_to_remove:
+            # Get area_id from registry (area_to_remove is the area name like "Living Room")
+            area_id = setup_area_registry.get(area_to_remove)
+            if not area_id:
+                # Fallback: convert name to area_id format
+                area_id = area_to_remove.lower().replace(" ", "_")
+            flow._area_to_remove = area_id
+        else:
+            flow._area_to_remove = area_to_remove
 
         if add_second_area:
             # Add another area so we can remove one
+            kitchen_area_id = setup_area_registry.get("Kitchen", "kitchen")
             flow.config_entry.data[CONF_AREAS].append(
                 create_area_config(
                     name="Kitchen", motion_sensors=["binary_sensor.kitchen_motion"]
                 )
             )
+            # Update the area_id to use the actual one from registry
+            flow.config_entry.data[CONF_AREAS][-1][CONF_AREA_ID] = kitchen_area_id
 
         user_input = {"confirm": confirm} if user_input_provided else None
         result = await flow.async_step_remove_area(user_input)
@@ -1353,8 +1521,11 @@ class TestHelperFunctionEdgeCases:
             ("not a list", True),  # not_list
             (["not a dict", 123, None], True),  # invalid_area_dict
             ([{CONF_PURPOSE: "social"}], True),  # missing_name
-            ([{CONF_NAME: "", CONF_PURPOSE: "social"}], True),  # empty_name
-            ([{CONF_NAME: "Unknown", CONF_PURPOSE: "social"}], True),  # unknown_name
+            ([{CONF_AREA_ID: "", CONF_PURPOSE: "social"}], True),  # empty_area_id
+            (
+                [{CONF_AREA_ID: "unknown", CONF_PURPOSE: "social"}],
+                True,
+            ),  # unknown_area_id
         ],
     )
     def test_create_area_selection_schema_edge_cases(self, areas, is_initial):
@@ -1362,47 +1533,28 @@ class TestHelperFunctionEdgeCases:
         schema = _create_area_selection_schema(areas, is_initial=is_initial)
         assert isinstance(schema, vol.Schema)
 
-    def test_find_area_by_sanitized_name_unknown_area(self):
-        """Test _find_area_by_sanitized_name when area name is 'Unknown'."""
-        areas = [{CONF_NAME: "Unknown", CONF_PURPOSE: "social"}]
-        result = _find_area_by_sanitized_name(areas, "Unknown")
-        assert result is None
+    def test_find_area_by_sanitized_id_unknown_area(self):
+        """Test _find_area_by_sanitized_id when area ID is 'unknown'."""
+        areas = [{CONF_AREA_ID: "unknown", CONF_PURPOSE: "social"}]
+        result = _find_area_by_sanitized_id(areas, "unknown")
+        assert result is not None  # Should find it
+        assert result[CONF_AREA_ID] == "unknown"
 
-    def test_find_area_by_sanitized_name_empty_name(self):
-        """Test _find_area_by_sanitized_name when area name is empty."""
-        areas = [{CONF_NAME: "", CONF_PURPOSE: "social"}]
-        result = _find_area_by_sanitized_name(areas, "")
-        assert result is None
-
-    def test_validate_duplicate_name_raises(self):
-        """Test _validate_duplicate_name_internal raises vol.Invalid for duplicate."""
+    def test_validate_duplicate_area_id_raises(self):
+        """Test _validate_duplicate_area_id raises vol.Invalid for duplicate."""
         flow = BaseOccupancyFlow()
-        flattened_input = {CONF_NAME: "Test Area"}
-        areas = [{CONF_NAME: "Test Area", CONF_PURPOSE: "social"}]
-        with pytest.raises(vol.Invalid, match="already exists"):
-            flow._validate_duplicate_name_internal(flattened_input, areas)
+        flattened_input = {CONF_AREA_ID: "test_area"}
+        areas = [{CONF_AREA_ID: "test_area", CONF_PURPOSE: "social"}]
+        with pytest.raises(vol.Invalid, match="already configured"):
+            flow._validate_duplicate_area_id(flattened_input, areas, None, None)
 
-    def test_validate_duplicate_name_same_area_editing(self):
-        """Test _validate_duplicate_name_internal allows same name when editing same area."""
+    def test_validate_duplicate_area_id_same_area_editing(self):
+        """Test _validate_duplicate_area_id allows same ID when editing same area."""
         flow = BaseOccupancyFlow()
-        flattened_input = {CONF_NAME: "Test Area"}
-        areas = [{CONF_NAME: "Test Area", CONF_PURPOSE: "social"}]
+        flattened_input = {CONF_AREA_ID: "test_area"}
+        areas = [{CONF_AREA_ID: "test_area", CONF_PURPOSE: "social"}]
         # Should not raise when editing the same area
-        flow._validate_duplicate_name_internal(
-            flattened_input, areas, area_being_edited="Test Area"
-        )
-
-    def test_validate_config_name_sanitization_error(self):
-        """Test _validate_config when validate_and_sanitize_area_name raises ValueError."""
-        flow = BaseOccupancyFlow()
-        with (
-            patch(
-                "custom_components.area_occupancy.config_flow.validate_and_sanitize_area_name",
-                side_effect=ValueError("Invalid name"),
-            ),
-            pytest.raises(vol.Invalid, match="Invalid name"),
-        ):
-            flow._validate_config({CONF_NAME: "Invalid/Name"})
+        flow._validate_duplicate_area_id(flattened_input, areas, "test_area", None)
 
 
 class TestStaticMethods:
@@ -1499,7 +1651,7 @@ class TestNewHelperFunctions:
     def test_flatten_sectioned_input(self):
         """Test flattening sectioned input."""
         user_input = {
-            CONF_NAME: "Test Area",
+            CONF_AREA_ID: "test_area",
             "motion": {
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
                 CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
@@ -1508,7 +1660,7 @@ class TestNewHelperFunctions:
             "wasp_in_box": {CONF_WASP_ENABLED: True},
         }
         result = _flatten_sectioned_input(user_input)
-        assert result[CONF_NAME] == "Test Area"
+        assert result[CONF_AREA_ID] == "test_area"
         assert result[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert result[CONF_PURPOSE] == "social"
         assert result[CONF_WASP_ENABLED] is True
@@ -1518,27 +1670,29 @@ class TestNewHelperFunctions:
         [
             (
                 [
-                    {CONF_NAME: "Living Room", CONF_PURPOSE: "social"},
-                    {CONF_NAME: "Kitchen", CONF_PURPOSE: "work"},
+                    {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
+                    {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
                 ],
-                "Living Room",
+                "living_room",
                 True,
-                "Living Room",
+                "living_room",
             ),  # found
             (
-                [{CONF_NAME: "Living Room", CONF_PURPOSE: "social"}],
-                "Bedroom",
+                [{CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"}],
+                "bedroom",
                 False,
                 None,
             ),  # not_found
         ],
     )
     def test_find_area_by_name(self, areas, search_name, expected_found, expected_name):
-        """Test finding area by name."""
-        result = _find_area_by_name(areas, search_name)
+        """Test finding area by name (legacy support)."""
+        # Note: _find_area_by_name is for legacy support only
+        # For new format areas with CONF_AREA_ID, use _find_area_by_id instead
+        result = _find_area_by_id(areas, search_name)
         if expected_found:
             assert result is not None
-            assert result[CONF_NAME] == expected_name
+            assert result[CONF_AREA_ID] == expected_name
         else:
             assert result is None
 
@@ -1554,22 +1708,22 @@ class TestNewHelperFunctions:
         [
             (
                 [
-                    {CONF_NAME: "Living Room", CONF_PURPOSE: "social"},
-                    {CONF_NAME: "Kitchen", CONF_PURPOSE: "work"},
+                    {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
+                    {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
                 ],
-                {CONF_NAME: "Living Room", CONF_PURPOSE: "entertainment"},
-                "Living Room",
+                {CONF_AREA_ID: "living_room", CONF_PURPOSE: "entertainment"},
+                "living_room",
                 2,
                 "entertainment",
                 None,
             ),  # update_existing
             (
-                [{CONF_NAME: "Living Room", CONF_PURPOSE: "social"}],
-                {CONF_NAME: "Kitchen", CONF_PURPOSE: "work"},
+                [{CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"}],
+                {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
                 None,
                 2,
                 None,
-                "Kitchen",
+                "kitchen",
             ),  # add_new
         ],
     )
@@ -1588,17 +1742,17 @@ class TestNewHelperFunctions:
         if expected_purpose:
             assert result[0][CONF_PURPOSE] == expected_purpose
         if expected_name:
-            assert result[1][CONF_NAME] == expected_name
+            assert result[1][CONF_AREA_ID] == expected_name
 
     def test_remove_area_from_list(self):
         """Test removing an area from list."""
         areas = [
-            {CONF_NAME: "Living Room", CONF_PURPOSE: "social"},
-            {CONF_NAME: "Kitchen", CONF_PURPOSE: "work"},
+            {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
+            {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
         ]
-        result = _remove_area_from_list(areas, "Living Room")
+        result = _remove_area_from_list(areas, "living_room")
         assert len(result) == 1
-        assert result[0][CONF_NAME] == "Kitchen"
+        assert result[0][CONF_AREA_ID] == "kitchen"
 
     @pytest.mark.parametrize(
         ("error_type", "error_message", "expected_result"),

@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 
 from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
@@ -27,7 +27,6 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
-    CONF_NAME,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -45,7 +44,6 @@ from .const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     PLATFORMS,
-    validate_and_sanitize_area_name,
 )
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
@@ -416,23 +414,49 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         areas_list: list[dict[str, Any]] = []
         entry_id_to_area_name: dict[str, str] = {}  # Map for entity registry migration
 
+        area_reg = ar.async_get(hass)
+
         for entry in entries:
-            # Get area name from config
+            # Get area name from config (legacy format)
             merged = dict(entry.data)
             merged.update(entry.options)
-            area_name = merged.get(CONF_NAME, DEFAULT_NAME)
 
-            # Validate and sanitize area name
-            try:
-                area_name = validate_and_sanitize_area_name(area_name)
-            except ValueError as err:
-                _LOGGER.warning(
-                    "Invalid area name '%s' for entry %s: %s. Using default name.",
-                    area_name,
-                    entry.entry_id,
-                    err,
-                )
-                area_name = DEFAULT_NAME
+            # Try to get area_id first (new format), then fall back to name (legacy)
+            area_id = merged.get(CONF_AREA_ID)
+            area_name = None
+
+            if area_id:
+                # New format - resolve area name from ID
+                area_entry = area_reg.async_get_area(area_id)
+                if area_entry:
+                    area_name = area_entry.name
+                else:
+                    _LOGGER.warning(
+                        "Area ID '%s' for entry %s not found in registry. Skipping.",
+                        area_id,
+                        entry.entry_id,
+                    )
+                    continue
+            else:
+                # Legacy format - try to resolve name to ID
+                legacy_name = merged.get(
+                    "name", DEFAULT_NAME
+                )  # Use string literal for legacy
+
+                # Try to find area by name
+                for area_entry in area_reg.async_list_areas():
+                    if area_entry.name == legacy_name:
+                        area_id = area_entry.id
+                        area_name = legacy_name
+                        break
+
+                if not area_id:
+                    _LOGGER.warning(
+                        "Could not resolve area name '%s' for entry %s to area ID. Skipping.",
+                        legacy_name,
+                        entry.entry_id,
+                    )
+                    continue
 
             # Ensure unique area names
             original_area_name = area_name
@@ -443,9 +467,11 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 
             entry_id_to_area_name[entry.entry_id] = area_name
 
-            # Create area config (merge data and options, ensure CONF_NAME is set)
+            # Create area config (merge data and options, ensure CONF_AREA_ID is set)
             area_config = {**merged}
-            area_config[CONF_NAME] = area_name
+            area_config[CONF_AREA_ID] = area_id
+            # Remove legacy CONF_NAME if present
+            area_config.pop("name", None)
             areas_list.append(area_config)
 
             _LOGGER.debug(
@@ -454,10 +480,28 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 entry.entry_id,
             )
 
+        # Build filtered list of entries that were successfully resolved
+        # Only these entries should be processed in subsequent migration steps
+        filtered_entries = [
+            entry for entry in entries if entry.entry_id in entry_id_to_area_name
+        ]
+
+        if not filtered_entries:
+            _LOGGER.error(
+                "No entries could be resolved for consolidation. Migration aborted."
+            )
+            return False
+
+        _LOGGER.info(
+            "Successfully resolved %d of %d entries for consolidation",
+            len(filtered_entries),
+            len(entries),
+        )
+
         # Step 2: Migrate entity registry entries
         try:
             await _migrate_entity_registry_for_consolidation(
-                hass, entries, entry_id_to_area_name
+                hass, filtered_entries, entry_id_to_area_name
             )
             migration_steps_completed["entity_registry"] = True
             _LOGGER.debug("Step 2 completed: Entity registry migration")
@@ -468,7 +512,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         # Step 3: Migrate database entries
         try:
             await _migrate_database_for_consolidation(
-                hass, entries, entry_id_to_area_name
+                hass, filtered_entries, entry_id_to_area_name
             )
             migration_steps_completed["database"] = True
             _LOGGER.debug("Step 3 completed: Database migration")
@@ -485,8 +529,8 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         # Step 4: Create new consolidated config entry
         consolidated_data = {CONF_AREAS: areas_list}
 
-        # Use the first entry as the base for the consolidated entry
-        base_entry = entries[0]
+        # Use the first successfully resolved entry as the base for the consolidated entry
+        base_entry = filtered_entries[0]
 
         _LOGGER.info(
             "Creating consolidated config entry with %d areas", len(areas_list)
@@ -524,9 +568,9 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
                 _LOGGER.error("Failed to restore config entry state: %s", restore_err)
             raise
 
-        # Step 5: Remove other entries
+        # Step 5: Remove other entries (only those that were successfully resolved)
         removal_errors: list[tuple[str, Exception]] = []
-        for entry in entries[1:]:
+        for entry in filtered_entries[1:]:
             try:
                 _LOGGER.info("Removing old config entry: %s", entry.entry_id)
                 await hass.config_entries.async_remove(entry.entry_id)
@@ -547,7 +591,7 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 
         _LOGGER.info(
             "Successfully consolidated %d entries into single-instance architecture",
-            len(entries),
+            len(filtered_entries),
         )
 
     except Exception:
@@ -684,6 +728,14 @@ async def _migrate_entity_registry_for_consolidation(
     ] = []  # (entity_id, old_unique_id, new_unique_id)
 
     for entry in entries:
+        # Skip entries that weren't successfully resolved
+        if entry.entry_id not in entry_id_to_area_name:
+            _LOGGER.debug(
+                "Skipping entry %s - not in entry_id_to_area_name mapping",
+                entry.entry_id,
+            )
+            continue
+
         area_name = entry_id_to_area_name[entry.entry_id]
         old_prefix = f"{entry.entry_id}_"
 

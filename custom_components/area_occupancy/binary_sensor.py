@@ -14,6 +14,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
@@ -83,7 +84,19 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
             self._area_name != ALL_AREAS_IDENTIFIER
             and self._area_name in self.coordinator.areas
         ):
-            self.coordinator.areas[self._area_name].occupancy_entity_id = self.entity_id
+            area = self.coordinator.areas[self._area_name]
+            area.occupancy_entity_id = self.entity_id
+
+            # Assign device to Home Assistant area if area_id is configured
+            if area.config.area_id and self.device_info:
+                device_registry = dr.async_get(self.hass)
+                # DeviceInfo is a TypedDict, access identifiers directly
+                identifiers = self.device_info.get("identifiers", set())
+                device = device_registry.async_get_device(identifiers=identifiers)
+                if device and device.area_id != area.config.area_id:
+                    device_registry.async_update_device(
+                        device.id, area_id=area.config.area_id
+                    )
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
