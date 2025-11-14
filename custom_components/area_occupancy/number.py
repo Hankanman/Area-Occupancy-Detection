@@ -49,8 +49,8 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
-        area = coordinator.get_area_or_default(area_name)
-        self._attr_device_info = area.device_info()
+        # Use coordinator helper so we get proper defaults if the area is missing
+        self._attr_device_info = coordinator.device_info(area_name)
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
     async def async_added_to_hass(self) -> None:
@@ -70,9 +70,8 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
     @property
     def native_value(self) -> float:
         """Return the current threshold value as a percentage."""
-        # Use the area method for threshold (0.0-1.0) and convert to percentage
-        area = self.coordinator.get_area_or_default(self._area_name)
-        return area.threshold() * 100.0
+        # Use coordinator helper for a None-safe threshold (0.0–1.0) and convert to percentage
+        return self.coordinator.threshold(self._area_name) * 100.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""
@@ -80,8 +79,14 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
             raise ServiceValidationError(
                 f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
             )
-        # Update the area's config threshold
+        # Update the area's config threshold, guarding against a missing area
         area = self.coordinator.get_area_or_default(self._area_name)
+        if area is None:
+            _LOGGER.warning(
+                "Threshold update requested for unknown area '%s'; ignoring",
+                self._area_name,
+            )
+            return
         await area.config.update_config({CONF_THRESHOLD: value})
 
 
