@@ -153,18 +153,19 @@ def segment_interval_with_motion(
         clamped_end = min(motion_end, merged_end)
 
         # Create motion segment with timeout applied
+        motion_timeout_end = None
         if clamped_start < clamped_end:
             motion_timeout_end = clamped_end + timeout_delta
             segments.append((clamped_start, motion_timeout_end))
             last_motion_timeout_end = motion_timeout_end
 
         # Add gap segment between current and next motion (if any)
+        # Gap starts after motion timeout period ends
         if i < len(sorted_motion) - 1:
             next_motion_start = sorted_motion[i + 1][0]
-            gap_start = clamped_end
             gap_end = min(next_motion_start, merged_end)
-            if gap_start < gap_end:
-                segments.append((gap_start, gap_end))
+            if motion_timeout_end is not None and motion_timeout_end < gap_end:
+                segments.append((motion_timeout_end, gap_end))
 
     # Add segment after last motion (if any)
     # Start after the timeout applied to the last motion

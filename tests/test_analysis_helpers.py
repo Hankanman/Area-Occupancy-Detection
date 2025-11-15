@@ -389,10 +389,11 @@ class TestSegmentIntervalWithMotion:
             now + timedelta(hours=1),
             now + timedelta(hours=1, minutes=30, seconds=timeout_seconds),
         )  # Motion1 with timeout
+        # Gap starts after motion timeout ends
         assert result[2] == (
-            now + timedelta(hours=1, minutes=30),
+            now + timedelta(hours=1, minutes=30, seconds=timeout_seconds),
             now + timedelta(hours=1, minutes=45),
-        )  # Gap between motions
+        )  # Gap between motions (starts after timeout)
         assert result[3] == (
             now + timedelta(hours=1, minutes=45),
             now + timedelta(hours=2, seconds=timeout_seconds),
