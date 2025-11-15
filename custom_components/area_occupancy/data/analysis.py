@@ -6,8 +6,9 @@ separating analysis logic from state management in Prior and EntityManager class
 
 from __future__ import annotations
 
-import bisect
 from collections import defaultdict
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -25,6 +26,12 @@ from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
+from ..data.analysis_helpers import (
+    aggregate_intervals_by_slot,
+    apply_motion_timeout,
+    is_timestamp_occupied,
+    merge_overlapping_intervals,
+)
 from ..data.entity_type import InputType
 from ..utils import clamp_probability
 
@@ -65,12 +72,19 @@ SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
 class PriorAnalyzer:
     """Analyzer for prior probability calculations from database."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str,
+        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
+    ) -> None:
         """Initialize the PriorAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
+            session_provider: Optional callable that returns a context manager for sessions.
+                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -86,6 +100,7 @@ class PriorAnalyzer:
         self.media_sensor_ids = self.config.sensors.media
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
+        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
@@ -339,7 +354,7 @@ class PriorAnalyzer:
         db = self.db
 
         try:
-            with db.get_session() as session:
+            with self._session_provider() as session:
                 for day in range(DAYS_PER_WEEK):
                     for slot in range(slots_per_day):
                         total_slot_seconds = days * slot_duration_seconds
@@ -474,83 +489,235 @@ class PriorAnalyzer:
         if not extended_intervals:
             return []
 
-        # Aggregate extended intervals by time slots
-        slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
-        for start_time, end_time in extended_intervals:
-            # Calculate which slots this interval covers
-            current_time = start_time
-            while current_time < end_time:
-                day_of_week = current_time.weekday()
-                hour = current_time.hour
-                minute = current_time.minute
-                slot = (hour * MINUTES_PER_HOUR + minute) // slot_minutes
+        # Aggregate extended intervals by time slots using helper function
+        return aggregate_intervals_by_slot(extended_intervals, slot_minutes)
 
-                # Calculate how much of this interval falls in this slot
-                slot_start = current_time.replace(
-                    minute=(slot * slot_minutes) % MINUTES_PER_HOUR,
-                    second=0,
-                    microsecond=0,
-                )
-                slot_end = slot_start + timedelta(minutes=slot_minutes)
+    def _build_base_filters(self, db: Any, lookback_date: datetime) -> list[Any]:
+        """Build base filter conditions for interval queries.
 
-                # Calculate overlap duration
-                overlap_start = max(current_time, slot_start)
-                overlap_end = min(end_time, slot_end)
-                overlap_duration = (overlap_end - overlap_start).total_seconds()
+        Args:
+            db: Database instance to access table definitions
+            lookback_date: Minimum start_time for intervals
 
-                if overlap_duration > 0:
-                    slot_seconds[(day_of_week, slot)] += overlap_duration
+        Returns:
+            List of filter conditions
+        """
+        base_filters = [
+            db.Entities.entry_id == self.entry_id,
+            db.Intervals.start_time >= lookback_date,
+        ]
+        if hasattr(self, "area_name") and self.area_name is not None:
+            base_filters.append(db.Entities.area_name == self.area_name)
+        return base_filters
 
-                # Move to next slot
-                current_time = slot_end
+    def _build_motion_query(
+        self, session: Any, db: Any, base_filters: list[Any]
+    ) -> Any:
+        """Build motion sensor query with sensor_type indicator.
 
-        # Convert to result format
-        result = []
-        for (day, slot), seconds in slot_seconds.items():
-            result.append((day, slot, seconds))
+        Args:
+            session: SQLAlchemy session
+            db: Database instance to access table definitions
+            base_filters: List of base filter conditions
 
-        return result
+        Returns:
+            SQLAlchemy query object
+        """
+        return (
+            session.query(
+                db.Intervals.start_time,
+                db.Intervals.end_time,
+                func.literal("motion").label("sensor_type"),
+            )
+            .join(
+                db.Entities,
+                db.Intervals.entity_id == db.Entities.entity_id,
+            )
+            .filter(
+                *base_filters,
+                db.Entities.entity_type == InputType.MOTION,
+                db.Intervals.state == "on",
+            )
+        )
+
+    def _build_media_query(
+        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
+    ) -> Any:
+        """Build media player query with sensor_type indicator.
+
+        Args:
+            session: SQLAlchemy session
+            db: Database instance to access table definitions
+            base_filters: List of base filter conditions
+            sensor_ids: List of media sensor entity IDs to include
+
+        Returns:
+            SQLAlchemy query object
+        """
+        return (
+            session.query(
+                db.Intervals.start_time,
+                db.Intervals.end_time,
+                func.literal("media").label("sensor_type"),
+            )
+            .join(
+                db.Entities,
+                db.Intervals.entity_id == db.Entities.entity_id,
+            )
+            .filter(
+                *base_filters,
+                db.Entities.entity_type == InputType.MEDIA,
+                db.Intervals.entity_id.in_(sensor_ids),
+                db.Intervals.state == STATE_PLAYING,
+            )
+        )
+
+    def _build_appliance_query(
+        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
+    ) -> Any:
+        """Build appliance query with sensor_type indicator.
+
+        Args:
+            session: SQLAlchemy session
+            db: Database instance to access table definitions
+            base_filters: List of base filter conditions
+            sensor_ids: List of appliance sensor entity IDs to include
+
+        Returns:
+            SQLAlchemy query object
+        """
+        return (
+            session.query(
+                db.Intervals.start_time,
+                db.Intervals.end_time,
+                func.literal("appliance").label("sensor_type"),
+            )
+            .join(
+                db.Entities,
+                db.Intervals.entity_id == db.Entities.entity_id,
+            )
+            .filter(
+                *base_filters,
+                db.Entities.entity_type == InputType.APPLIANCE,
+                db.Intervals.entity_id.in_(sensor_ids),
+                db.Intervals.state == STATE_ON,
+            )
+        )
+
+    def _execute_union_queries(
+        self, session: Any, db: Any, queries: list[Any]
+    ) -> list[tuple[datetime, datetime, str]]:
+        """Execute a list of queries using UNION ALL or single query.
+
+        Args:
+            session: SQLAlchemy session
+            db: Database instance to access table definitions
+            queries: List of SQLAlchemy query objects
+
+        Returns:
+            List of (start_time, end_time, sensor_type) tuples
+        """
+        if len(queries) == 1:
+            combined_query = queries[0].order_by(db.Intervals.start_time)
+            all_results = combined_query.all()
+        else:
+            # Create union of all subqueries
+            union_query = union_all(*[q.subquery() for q in queries])
+            # Query the union result
+            combined_query = session.query(
+                union_query.c.start_time,
+                union_query.c.end_time,
+                union_query.c.sensor_type,
+            ).order_by(union_query.c.start_time)
+            all_results = combined_query.all()
+
+        return all_results
+
+    def _process_query_results(
+        self, results: list[tuple[datetime, datetime, str]]
+    ) -> tuple[
+        list[tuple[datetime, datetime]], list[tuple[datetime, datetime]], int, int
+    ]:
+        """Process query results and separate by sensor type.
+
+        Args:
+            results: List of (start_time, end_time, sensor_type) tuples
+
+        Returns:
+            Tuple of (all_intervals, motion_intervals, media_count, appliance_count)
+        """
+        motion_raw: list[tuple[datetime, datetime]] = []
+        all_intervals: list[tuple[datetime, datetime]] = []
+        media_count = 0
+        appliance_count = 0
+
+        for start, end, sensor_type in results:
+            interval = (start, end)
+            all_intervals.append(interval)
+            if sensor_type == "motion":
+                motion_raw.append(interval)
+            elif sensor_type == "media":
+                media_count += 1
+            elif sensor_type == "appliance":
+                appliance_count += 1
+
+        return (all_intervals, motion_raw, media_count, appliance_count)
 
     def get_time_bounds(
-        self, entity_ids: list[str] | None = None
+        self, entity_ids: list[str] | None = None, session: Any | None = None
     ) -> tuple[datetime | None, datetime | None]:
         """Get time bounds for specific entities or a specific area.
 
         Args:
             entity_ids: List of entity IDs to get bounds for. If None, uses all entities for the area.
+            session: Optional database session. If None, creates a new session.
 
         Returns:
             Tuple of (first_time, last_time) or (None, None) if no data
         """
         _LOGGER.debug("Getting time bounds")
-        db = self.db
 
         try:
-            with db.get_session() as session:
-                query = session.query(
-                    func.min(db.Intervals.start_time).label("first"),
-                    func.max(db.Intervals.end_time).label("last"),
+            if session is not None:
+                # Use provided session (don't use context manager)
+                return self._get_time_bounds_from_session(session, self.db, entity_ids)
+
+            # Create new session
+            with self._session_provider() as new_session:
+                return self._get_time_bounds_from_session(
+                    new_session, self.db, entity_ids
+                )
+        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
+            _LOGGER.error("Database error in get_time_bounds: %s", e)
+            return (None, None)
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error in get_time_bounds: %s", e)
+            return (None, None)
+
+    def _get_time_bounds_from_session(
+        self, session: Any, db: Any, entity_ids: list[str] | None = None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Get time bounds using an existing session."""
+        try:
+            query = session.query(
+                func.min(db.Intervals.start_time).label("first"),
+                func.max(db.Intervals.end_time).label("last"),
+            )
+
+            if entity_ids is not None:
+                # Filter by specific entity IDs
+                query = query.filter(db.Intervals.entity_id.in_(entity_ids))
+            else:
+                # Filter by area entry_id and area_name
+                query = query.join(
+                    db.Entities,
+                    db.Intervals.entity_id == db.Entities.entity_id,
+                ).filter(
+                    db.Entities.entry_id == self.entry_id,
+                    db.Entities.area_name == self.area_name,
                 )
 
-                if entity_ids is not None:
-                    # Filter by specific entity IDs
-                    query = query.filter(db.Intervals.entity_id.in_(entity_ids))
-                else:
-                    # Filter by area entry_id and area_name
-                    query = query.join(
-                        db.Entities,
-                        db.Intervals.entity_id == db.Entities.entity_id,
-                    ).filter(
-                        db.Entities.entry_id == self.entry_id,
-                        db.Entities.area_name == self.area_name,
-                    )
-
-                time_bounds = query.first()
-                return (
-                    (time_bounds.first, time_bounds.last)
-                    if time_bounds
-                    else (None, None)
-                )
+            time_bounds = query.first()
         except OperationalError as e:
             _LOGGER.error("Database connection error getting time bounds: %s", e)
             return (None, None)
@@ -566,6 +733,10 @@ class PriorAnalyzer:
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Unexpected error getting time bounds: %s", e)
             return (None, None)
+        else:
+            return (
+                (time_bounds.first, time_bounds.last) if time_bounds else (None, None)
+            )
 
     def get_total_occupied_seconds(
         self, include_media: bool = False, include_appliance: bool = False
@@ -638,6 +809,7 @@ class PriorAnalyzer:
         lookback_days: int = DEFAULT_LOOKBACK_DAYS,
         include_media: bool = False,
         include_appliance: bool = False,
+        session: Any | None = None,
     ) -> list[tuple[datetime, datetime]]:
         """Get occupied time intervals from motion sensors using unified logic.
 
@@ -648,6 +820,7 @@ class PriorAnalyzer:
             lookback_days: Number of days to look back for interval data (default: 90)
             include_media: If True, include media player intervals (playing state only)
             include_appliance: If True, include appliance intervals (on state only)
+            session: Optional database session. If None, creates a new session.
 
         Returns:
             List of (start_time, end_time) tuples representing occupied periods
@@ -658,230 +831,117 @@ class PriorAnalyzer:
             include_media,
             include_appliance,
         )
-        db = self.db
 
         # Calculate lookback date
         now = dt_util.utcnow()
         lookback_date = now - timedelta(days=lookback_days)
 
-        all_intervals: list[tuple[datetime, datetime]] = []
-
         try:
             start_time = dt_util.utcnow()
-            with db.get_session() as session:
-                # Build base filter conditions
-                base_filters = [
-                    db.Entities.entry_id == self.entry_id,
-                    db.Intervals.start_time >= lookback_date,
-                ]
-                if hasattr(self, "area_name") and self.area_name is not None:
-                    base_filters.append(db.Entities.area_name == self.area_name)
-
-                # Build motion sensor query with sensor_type indicator
-                motion_query = (
-                    session.query(
-                        db.Intervals.start_time,
-                        db.Intervals.end_time,
-                        func.literal("motion").label("sensor_type"),
-                    )
-                    .join(
-                        db.Entities,
-                        db.Intervals.entity_id == db.Entities.entity_id,
-                    )
-                    .filter(
-                        *base_filters,
-                        db.Entities.entity_type == InputType.MOTION,
-                        db.Intervals.state == "on",
-                    )
+            if session is not None:
+                # Use provided session (don't use context manager)
+                return self._get_occupied_intervals_from_session(
+                    session,
+                    self.db,
+                    lookback_date,
+                    include_media,
+                    include_appliance,
+                    start_time,
                 )
 
-                # Build queries list starting with motion
-                queries = [motion_query]
-
-                # Add media player query if requested
-                if include_media and self.media_sensor_ids:
-                    media_query = (
-                        session.query(
-                            db.Intervals.start_time,
-                            db.Intervals.end_time,
-                            func.literal("media").label("sensor_type"),
-                        )
-                        .join(
-                            db.Entities,
-                            db.Intervals.entity_id == db.Entities.entity_id,
-                        )
-                        .filter(
-                            *base_filters,
-                            db.Entities.entity_type == InputType.MEDIA,
-                            db.Intervals.entity_id.in_(self.media_sensor_ids),
-                            db.Intervals.state == STATE_PLAYING,
-                        )
-                    )
-                    queries.append(media_query)
-
-                # Add appliance query if requested
-                if include_appliance and self.appliance_sensor_ids:
-                    appliance_query = (
-                        session.query(
-                            db.Intervals.start_time,
-                            db.Intervals.end_time,
-                            func.literal("appliance").label("sensor_type"),
-                        )
-                        .join(
-                            db.Entities,
-                            db.Intervals.entity_id == db.Entities.entity_id,
-                        )
-                        .filter(
-                            *base_filters,
-                            db.Entities.entity_type == InputType.APPLIANCE,
-                            db.Intervals.entity_id.in_(self.appliance_sensor_ids),
-                            db.Intervals.state == STATE_ON,
-                        )
-                    )
-                    queries.append(appliance_query)
-
-                # Combine all queries with UNION ALL and order by start_time
-                if len(queries) == 1:
-                    combined_query = queries[0].order_by(db.Intervals.start_time)
-                    all_results = combined_query.all()
-                else:
-                    # Create union of all subqueries
-                    union_query = union_all(*[q.subquery() for q in queries])
-                    # Query the union result
-                    combined_query = session.query(
-                        union_query.c.start_time,
-                        union_query.c.end_time,
-                        union_query.c.sensor_type,
-                    ).order_by(union_query.c.start_time)
-                    all_results = combined_query.all()
-
-                # Separate intervals by type for processing
-                motion_raw: list[tuple[datetime, datetime]] = []
-                all_intervals: list[tuple[datetime, datetime]] = []
-                media_count = 0
-                appliance_count = 0
-
-                for start, end, sensor_type in all_results:
-                    interval = (start, end)
-                    all_intervals.append(interval)
-                    if sensor_type == "motion":
-                        motion_raw.append(interval)
-                    elif sensor_type == "media":
-                        media_count += 1
-                    elif sensor_type == "appliance":
-                        appliance_count += 1
-
-                query_time = (dt_util.utcnow() - start_time).total_seconds()
-                _LOGGER.debug(
-                    "Query executed in %.3f seconds, found %d total intervals (motion: %d, media: %d, appliance: %d)",
-                    query_time,
-                    len(all_intervals),
-                    len(motion_raw),
-                    media_count,
-                    appliance_count,
+            # Create new session
+            with self._session_provider() as new_session:
+                return self._get_occupied_intervals_from_session(
+                    new_session,
+                    self.db,
+                    lookback_date,
+                    include_media,
+                    include_appliance,
+                    start_time,
                 )
+        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
+            _LOGGER.error("Database error in get_occupied_intervals: %s", e)
+            return []
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error in get_occupied_intervals: %s", e)
+            return []
 
-                if not all_intervals:
-                    _LOGGER.debug("No intervals found for occupancy calculation")
-                    return []
+    def _get_occupied_intervals_from_session(
+        self,
+        session: Any,
+        db: Any,
+        lookback_date: datetime,
+        include_media: bool,
+        include_appliance: bool,
+        start_time: datetime,
+    ) -> list[tuple[datetime, datetime]]:
+        """Get occupied intervals using an existing session."""
+        try:
+            # Build base filter conditions
+            base_filters = self._build_base_filters(db, lookback_date)
 
-                # Sort all intervals by start time for merging
-                all_intervals.sort(key=lambda x: x[0])
+            # Build motion sensor query
+            motion_query = self._build_motion_query(session, db, base_filters)
 
-                # Merge overlapping intervals
-                merged_intervals: list[tuple[datetime, datetime]] = []
-                for start, end in all_intervals:
-                    if not merged_intervals:
-                        merged_intervals.append((start, end))
-                    else:
-                        last_start, last_end = merged_intervals[-1]
-                        if start <= last_end:
-                            # Overlapping or adjacent, merge them
-                            merged_intervals[-1] = (last_start, max(last_end, end))
-                        else:
-                            # Non-overlapping, add as new interval
-                            merged_intervals.append((start, end))
+            # Build queries list starting with motion
+            queries = [motion_query]
 
-                # Apply motion timeout only to motion sensor intervals
-                # For media/appliances, we use the raw intervals directly
-                # We need to split merged intervals at motion boundaries to avoid
-                # incorrectly applying timeout to media/appliance portions
-                extended_intervals = []
-                timeout_seconds = self.config.sensors.motion_timeout
-
-                for merged_start, merged_end in merged_intervals:
-                    # Find all motion intervals that overlap with this merged interval
-                    overlapping_motion = [
-                        (m_start, m_end)
-                        for m_start, m_end in motion_raw
-                        if not (merged_end < m_start or merged_start > m_end)
-                    ]
-
-                    if not overlapping_motion:
-                        # No motion overlap, use interval as-is (media/appliance only)
-                        extended_intervals.append((merged_start, merged_end))
-                        continue
-
-                    # Calculate the union of motion coverage within this merged interval
-                    # Sort motion intervals by start time
-                    overlapping_motion.sort(key=lambda x: x[0])
-                    motion_union_start = min(
-                        m_start for m_start, _ in overlapping_motion
-                    )
-                    motion_union_end = max(m_end for _, m_end in overlapping_motion)
-                    # Clamp to merged interval boundaries
-                    motion_union_start = max(motion_union_start, merged_start)
-                    motion_union_end = min(motion_union_end, merged_end)
-
-                    # Split the merged interval into segments:
-                    # 1. Before motion (if any) - no timeout
-                    # 2. Motion portion - apply timeout
-                    # 3. After motion (if any) - no timeout
-
-                    if merged_start < motion_union_start:
-                        # Segment before motion: no timeout
-                        extended_intervals.append((merged_start, motion_union_start))
-
-                    # Motion segment: apply timeout
-                    extended_intervals.append(
-                        (
-                            motion_union_start,
-                            motion_union_end + timedelta(seconds=timeout_seconds),
-                        )
-                    )
-
-                    if motion_union_end < merged_end:
-                        # Segment after motion: no timeout
-                        extended_intervals.append((motion_union_end, merged_end))
-
-                # Merge again after extending motion intervals
-                if extended_intervals:
-                    final_intervals: list[tuple[datetime, datetime]] = []
-                    extended_intervals.sort(key=lambda x: x[0])
-                    for start, end in extended_intervals:
-                        if not final_intervals:
-                            final_intervals.append((start, end))
-                        else:
-                            last_start, last_end = final_intervals[-1]
-                            if start <= last_end:
-                                final_intervals[-1] = (
-                                    last_start,
-                                    max(last_end, end),
-                                )
-                            else:
-                                final_intervals.append((start, end))
-                    extended_intervals = final_intervals
-
-                processing_time = (dt_util.utcnow() - start_time).total_seconds()
-
-                _LOGGER.debug(
-                    "Unified occupancy calculation: %d raw intervals -> %d merged intervals (processing: %.3fs)",
-                    len(all_intervals),
-                    len(extended_intervals),
-                    processing_time,
+            # Add media player query if requested
+            if include_media and self.media_sensor_ids:
+                media_query = self._build_media_query(
+                    session, db, base_filters, self.media_sensor_ids
                 )
+                queries.append(media_query)
 
-                return extended_intervals
+            # Add appliance query if requested
+            if include_appliance and self.appliance_sensor_ids:
+                appliance_query = self._build_appliance_query(
+                    session, db, base_filters, self.appliance_sensor_ids
+                )
+                queries.append(appliance_query)
+
+            # Execute queries using UNION ALL
+            all_results = self._execute_union_queries(session, db, queries)
+
+            # Process results and separate by sensor type
+            all_intervals, motion_raw, media_count, appliance_count = (
+                self._process_query_results(all_results)
+            )
+
+            query_time = (dt_util.utcnow() - start_time).total_seconds()
+            _LOGGER.debug(
+                "Query executed in %.3f seconds, found %d total intervals (motion: %d, media: %d, appliance: %d)",
+                query_time,
+                len(all_intervals),
+                len(motion_raw),
+                media_count,
+                appliance_count,
+            )
+
+            if not all_intervals:
+                _LOGGER.debug("No intervals found for occupancy calculation")
+                return []
+
+            # Merge overlapping intervals using helper function
+            merged_intervals = merge_overlapping_intervals(all_intervals)
+
+            # Apply motion timeout only to motion sensor intervals
+            # For media/appliances, we use the raw intervals directly
+            # We need to split merged intervals at motion boundaries to avoid
+            # incorrectly applying timeout to media/appliance portions
+            timeout_seconds = self.config.sensors.motion_timeout
+            extended_intervals = apply_motion_timeout(
+                merged_intervals, motion_raw, timeout_seconds
+            )
+
+            processing_time = (dt_util.utcnow() - start_time).total_seconds()
+
+            _LOGGER.debug(
+                "Unified occupancy calculation: %d raw intervals -> %d merged intervals (processing: %.3fs)",
+                len(all_intervals),
+                len(extended_intervals),
+                processing_time,
+            )
 
         except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
             _LOGGER.error("Database error getting occupied intervals: %s", e)
@@ -889,17 +949,26 @@ class PriorAnalyzer:
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Unexpected error getting occupied intervals: %s", e)
             return []
+        else:
+            return extended_intervals
 
 
 class LikelihoodAnalyzer:
     """Analyzer for likelihood probability calculations from database."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str,
+        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
+    ) -> None:
         """Initialize the LikelihoodAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
+            session_provider: Optional callable that returns a context manager for sessions.
+                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -912,42 +981,68 @@ class LikelihoodAnalyzer:
             )
         self.config = coordinator.areas[area_name].config
         self.entry_id = coordinator.entry_id
+        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_likelihoods(
         self,
         occupied_times: list[tuple[datetime, datetime]],
         entity_manager: Any,
+        session: Any | None = None,
     ) -> dict[str, tuple[float, float]]:
         """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
 
         Args:
             occupied_times: List of (start, end) tuples representing occupied periods
-            entity_manager: EntityManager instance to get entity objects
+            entity_manager: EntityManager instance for accessing entity configurations
+            session: Optional database session. If None, creates a new session.
 
         Returns:
-            Dictionary mapping entity_id to (prob_given_true, prob_given_false) tuple
+            Dictionary mapping entity_id to (P(sensor=true|occupied), P(sensor=true|empty))
         """
         _LOGGER.debug("Analyzing likelihoods")
-        db = self.db
-
-        likelihoods: dict[str, tuple[float, float]] = {}
 
         try:
-            with db.get_session() as session:
-                sensors = self._get_sensors(session)
-                if not sensors:
-                    return likelihoods
+            if session is not None:
+                # Use provided session (don't use context manager)
+                return self._analyze_likelihoods_from_session(
+                    session, occupied_times, entity_manager
+                )
 
-                intervals_by_entity = self._get_intervals_by_entity(session, sensors)
+            # Create new session
+            with self._session_provider() as new_session:
+                return self._analyze_likelihoods_from_session(
+                    new_session, occupied_times, entity_manager
+                )
+        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
+            _LOGGER.error("Database error in analyze_likelihoods: %s", e)
+            return {}
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Unexpected error in analyze_likelihoods: %s", e)
+            return {}
 
-                for entity in sensors:
-                    entity_id = str(entity.entity_id)
-                    prob_given_true, prob_given_false = self._analyze_entity_likelihood(
-                        entity, intervals_by_entity, occupied_times, entity_manager
-                    )
-                    likelihoods[entity_id] = (prob_given_true, prob_given_false)
+    def _analyze_likelihoods_from_session(
+        self,
+        session: Any,
+        occupied_times: list[tuple[datetime, datetime]],
+        entity_manager: Any,
+    ) -> dict[str, tuple[float, float]]:
+        """Analyze likelihoods using an existing session."""
+        likelihoods: dict[str, tuple[float, float]] = {}
+        try:
+            sensors = self._get_sensors(session)
+            if not sensors:
+                return likelihoods
 
-                _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
+            intervals_by_entity = self._get_intervals_by_entity(session, sensors)
+
+            for entity in sensors:
+                entity_id = str(entity.entity_id)
+                prob_given_true, prob_given_false = self._analyze_entity_likelihood(
+                    entity, intervals_by_entity, occupied_times, entity_manager
+                )
+                likelihoods[entity_id] = (prob_given_true, prob_given_false)
+
+            _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
         except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
             _LOGGER.error("Database error analyzing likelihoods: %s", e)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
@@ -1058,19 +1153,7 @@ class LikelihoodAnalyzer:
         self, ts: datetime, occupied_times: list[tuple[datetime, datetime]]
     ) -> bool:
         """Check if timestamp falls within any occupied interval."""
-        if not occupied_times:
-            return False
-
-        # Binary search to find the rightmost interval that starts <= ts
-        idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
-
-        # Check if ts falls within the interval found
-        if idx > 0:
-            start, end = occupied_times[idx - 1]
-            if start <= ts < end:
-                return True
-
-        return False
+        return is_timestamp_occupied(ts, occupied_times)
 
     def _is_interval_active(self, interval: IntervalData, entity_obj: Any) -> bool:
         """Determine if interval state is active based on entity type."""
