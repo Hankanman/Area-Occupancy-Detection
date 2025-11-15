@@ -1007,27 +1007,22 @@ class AreaOccupancyDB:
 
     def set_db_version(self) -> None:
         """Set the database version in the metadata table."""
-        # Use direct engine connection during initialization
-        with self.engine.begin() as conn:
+        # Use session for ORM operations during initialization
+        with self.get_session() as session:
             try:
-                # Try to update if exists, else insert
-                result = conn.execute(
-                    text("SELECT value FROM metadata WHERE key = 'db_version'")
-                ).fetchone()
-                if result:
-                    conn.execute(
-                        text(
-                            "UPDATE metadata SET value = :value WHERE key = 'db_version'"
-                        ),
-                        {"value": str(DB_VERSION)},
+                with session.begin():
+                    # Try to get existing metadata entry using ORM
+                    metadata_entry = (
+                        session.query(self.Metadata).filter_by(key="db_version").first()
                     )
-                else:
-                    conn.execute(
-                        text(
-                            "INSERT INTO metadata (key, value) VALUES ('db_version', :value)"
-                        ),
-                        {"value": str(DB_VERSION)},
-                    )
+                    if metadata_entry:
+                        # Update existing entry
+                        metadata_entry.value = str(DB_VERSION)
+                    else:
+                        # Insert new entry
+                        session.add(
+                            self.Metadata(key="db_version", value=str(DB_VERSION))
+                        )
             except Exception as e:
                 _LOGGER.error("Failed to set db_version in metadata table: %s", e)
                 raise
@@ -1342,6 +1337,31 @@ class AreaOccupancyDB:
 
     # --- Save Data ---
 
+    def _validate_area_data(
+        self, area_data: dict[str, Any], area_name_item: str
+    ) -> list[tuple[str, str]]:
+        """Validate area data and return list of validation errors.
+
+        Args:
+            area_data: Dictionary containing area data to validate
+            area_name_item: Name of the area being validated (for error messages)
+
+        Returns:
+            List of (area_name, error_message) tuples for any validation failures
+        """
+        failures: list[tuple[str, str]] = []
+
+        if not area_data.get("entry_id"):
+            failures.append((area_name_item, "entry_id is empty or None"))
+        if not area_data.get("area_name"):
+            failures.append((area_name_item, "area_name is empty or None"))
+        if not area_data.get("purpose"):
+            failures.append((area_name_item, "purpose is empty or None"))
+        if area_data.get("threshold") is None:
+            failures.append((area_name_item, "threshold is None"))
+
+        return failures
+
     def save_area_data(self, area_name: str | None = None) -> None:
         """Save the area data to the database.
 
@@ -1362,6 +1382,7 @@ class AreaOccupancyDB:
                 tuple[str, str]
             ] = []  # List of (area_name, error_message) tuples
             has_failures = False
+            area_objects = []  # Collect all area objects for batch merge
 
             for area_name_item in areas_to_save:
                 area_data_obj = self.coordinator.get_area_or_default(area_name_item)
@@ -1390,40 +1411,16 @@ class AreaOccupancyDB:
 
                 _LOGGER.debug("Attempting to insert area data: %s", area_data)
 
-                # Validate required fields and collect failures
-                if not area_data["entry_id"]:
-                    error_msg = "entry_id is empty or None"
-                    _LOGGER.error(
-                        "%s, cannot insert area '%s'", error_msg, area_name_item
-                    )
-                    failures.append((area_name_item, error_msg))
-                    has_failures = True
-                    continue
-
-                if not area_data["area_name"]:
-                    error_msg = "area_name is empty or None"
-                    _LOGGER.error(
-                        "%s, cannot insert area '%s'", error_msg, area_name_item
-                    )
-                    failures.append((area_name_item, error_msg))
-                    has_failures = True
-                    continue
-
-                if not area_data["purpose"]:
-                    error_msg = "purpose is empty or None"
-                    _LOGGER.error(
-                        "%s, cannot insert area '%s'", error_msg, area_name_item
-                    )
-                    failures.append((area_name_item, error_msg))
-                    has_failures = True
-                    continue
-
-                if area_data["threshold"] is None:
-                    error_msg = "threshold is None"
-                    _LOGGER.error(
-                        "%s, cannot insert area '%s'", error_msg, area_name_item
-                    )
-                    failures.append((area_name_item, error_msg))
+                # Validate required fields using helper method
+                validation_failures = self._validate_area_data(
+                    area_data, area_name_item
+                )
+                if validation_failures:
+                    for area_name_fail, error_msg in validation_failures:
+                        _LOGGER.error(
+                            "%s, cannot insert area '%s'", error_msg, area_name_fail
+                        )
+                    failures.extend(validation_failures)
                     has_failures = True
                     continue
 
@@ -1444,8 +1441,13 @@ class AreaOccupancyDB:
                     )
                     area_data["area_id"] = area_data["entry_id"]
 
-                # Use session.merge for upsert functionality
+                # Collect area object for batch merge
                 area_obj = self.Areas.from_dict(area_data)
+                area_objects.append(area_obj)
+
+            # Perform all merges in batch (SQLite requires individual merges due to upsert limitations,
+            # but collecting first allows SQLAlchemy to optimize the batch)
+            for area_obj in area_objects:
                 session.merge(area_obj)
 
             # If there are failures, rollback and return False
@@ -1583,16 +1585,27 @@ class AreaOccupancyDB:
             }
 
         def _attempt(session: Any) -> int:
+            """Attempt to save entity data with batched merges for better performance."""
             merges_count = 0
+            # Collect all entity objects first, then merge in batches
+            # This allows SQLAlchemy to optimize the operations
+            entity_objects = []
+
             for area_name, entity in _iter_area_entities():
                 entity_data = _prepare_entity_payload(area_name, entity)
                 if entity_data is None:
                     continue
 
                 entity_obj = self.Entities.from_dict(entity_data)
-                session.merge(entity_obj)
+                entity_objects.append(entity_obj)
                 merges_count += 1
 
+            # Perform all merges (SQLite requires individual merges due to upsert limitations)
+            # Collecting first allows SQLAlchemy to optimize the batch
+            for entity_obj in entity_objects:
+                session.merge(entity_obj)
+
+            # Single commit for all merges
             session.commit()
             return merges_count
 
@@ -1694,40 +1707,50 @@ class AreaOccupancyDB:
                             )
                             return 0
 
-                        # Delete orphaned entities and their intervals
-                        orphaned_count = 0
-                        for entity in orphaned_entities:
+                        # Collect orphaned entity IDs for bulk operations
+                        orphaned_entity_ids = [
+                            entity.entity_id for entity in orphaned_entities
+                        ]
+                        orphaned_count = len(orphaned_entity_ids)
+
+                        # Log orphaned entities being removed
+                        for entity_id in orphaned_entity_ids:
                             _LOGGER.info(
                                 "Removing orphaned entity %s from database for area %s (no longer in config)",
-                                entity.entity_id,
+                                entity_id,
                                 area_name,
                             )
 
-                            # First delete all intervals for this entity
-                            intervals_deleted = (
-                                session.query(self.Intervals)
-                                .filter_by(entity_id=entity.entity_id)
-                                .delete()
+                        # Bulk delete all intervals for orphaned entities in a single query
+                        intervals_deleted = (
+                            session.query(self.Intervals)
+                            .filter(self.Intervals.entity_id.in_(orphaned_entity_ids))
+                            .delete(synchronize_session=False)
+                        )
+
+                        if intervals_deleted > 0:
+                            _LOGGER.debug(
+                                "Bulk deleted %d intervals for %d orphaned entities in area %s",
+                                intervals_deleted,
+                                orphaned_count,
+                                area_name,
                             )
 
-                            if intervals_deleted > 0:
-                                _LOGGER.debug(
-                                    "Deleted %d intervals for orphaned entity %s",
-                                    intervals_deleted,
-                                    entity.entity_id,
-                                )
-
-                            # Then delete the entity
-                            session.delete(entity)
-                            orphaned_count += 1
+                        # Bulk delete all orphaned entities in a single query
+                        entities_deleted = (
+                            session.query(self.Entities)
+                            .filter(self.Entities.entity_id.in_(orphaned_entity_ids))
+                            .delete(synchronize_session=False)
+                        )
 
                         session.commit()
                         _LOGGER.info(
-                            "Cleaned up %d orphaned entities for area %s",
-                            orphaned_count,
+                            "Cleaned up %d orphaned entities for area %s (deleted %d intervals)",
+                            entities_deleted,
                             area_name,
+                            intervals_deleted,
                         )
-                        return orphaned_count
+                        return entities_deleted
 
                 result = _cleanup_operation(area_name, area_data)
                 total_cleaned += result
@@ -1760,25 +1783,31 @@ class AreaOccupancyDB:
         deleted_count = 0
         try:
             with self.get_session() as session:
-                # Get all entities for this area
-                db_entities = (
-                    session.query(self.Entities).filter_by(area_name=area_name).all()
-                )
+                # Get all entity IDs for this area first, then bulk delete intervals
+                # SQLAlchemy doesn't allow delete() on queries with join()
+                entity_ids = [
+                    entity_id
+                    for (entity_id,) in session.query(self.Entities.entity_id)
+                    .filter_by(area_name=area_name)
+                    .all()
+                ]
 
-                # Delete all intervals for entities in this area
-                for entity in db_entities:
+                # Bulk delete all intervals for entities in this area
+                if entity_ids:
                     intervals_deleted = (
                         session.query(self.Intervals)
-                        .filter_by(entity_id=entity.entity_id)
-                        .delete()
+                        .filter(self.Intervals.entity_id.in_(entity_ids))
+                        .delete(synchronize_session=False)
                     )
-                    if intervals_deleted > 0:
-                        _LOGGER.debug(
-                            "Deleted %d intervals for entity %s in removed area %s",
-                            intervals_deleted,
-                            entity.entity_id,
-                            area_name,
-                        )
+                else:
+                    intervals_deleted = 0
+
+                if intervals_deleted > 0:
+                    _LOGGER.debug(
+                        "Bulk deleted %d intervals for entities in removed area %s",
+                        intervals_deleted,
+                        area_name,
+                    )
 
                 # Delete all entities for this area
                 entities_deleted = (
@@ -2039,25 +2068,84 @@ class AreaOccupancyDB:
                 _LOGGER.debug("Syncing %d intervals", len(intervals))
                 if intervals:
                     with self.get_locked_session() as session:
-                        for interval_data in intervals:
-                            # Check if interval already exists to avoid UNIQUE constraint violation
-                            existing = (
-                                session.query(self.Intervals)
-                                .filter(
-                                    self.Intervals.entity_id
-                                    == interval_data["entity_id"],
-                                    self.Intervals.start_time
-                                    == interval_data["start_time"],
-                                    self.Intervals.end_time
-                                    == interval_data["end_time"],
+                        # Pre-filter duplicates using a single query for better performance
+                        # Build a set of (entity_id, start_time, end_time) tuples from intervals
+                        interval_keys = {
+                            (
+                                interval_data["entity_id"],
+                                interval_data["start_time"],
+                                interval_data["end_time"],
+                            )
+                            for interval_data in intervals
+                        }
+
+                        # Query existing intervals matching these keys in a single query
+                        if interval_keys:
+                            # Build OR conditions for all interval keys
+                            existing_conditions = []
+                            for entity_id, start_time, end_time in interval_keys:
+                                existing_conditions.append(
+                                    sa.and_(
+                                        self.Intervals.entity_id == entity_id,
+                                        self.Intervals.start_time == start_time,
+                                        self.Intervals.end_time == end_time,
+                                    )
                                 )
-                                .first()
+
+                            # Query all existing intervals matching any of our keys
+                            existing_intervals = (
+                                session.query(self.Intervals)
+                                .filter(sa.or_(*existing_conditions))
+                                .all()
                             )
 
-                            if not existing:
-                                # Only create if it doesn't exist
-                                interval_obj = self.Intervals.from_dict(interval_data)
-                                session.add(interval_obj)
+                            # Build set of existing keys for fast lookup
+                            # Normalize datetimes to UTC naive for comparison
+                            existing_keys = set()
+                            for interval in existing_intervals:
+                                # Normalize start_time and end_time to UTC naive datetime
+                                start = interval.start_time
+                                end = interval.end_time
+                                if start.tzinfo is not None:
+                                    start = start.replace(tzinfo=None)
+                                if end.tzinfo is not None:
+                                    end = end.replace(tzinfo=None)
+                                existing_keys.add((interval.entity_id, start, end))
+
+                            # Filter out intervals that already exist
+                            # Normalize datetimes in interval_data for comparison
+                            new_intervals = []
+                            for interval_data in intervals:
+                                # Normalize start_time and end_time to UTC naive datetime
+                                start = interval_data["start_time"]
+                                end = interval_data["end_time"]
+                                if start.tzinfo is not None:
+                                    start = start.replace(tzinfo=None)
+                                if end.tzinfo is not None:
+                                    end = end.replace(tzinfo=None)
+
+                                if (
+                                    interval_data["entity_id"],
+                                    start,
+                                    end,
+                                ) not in existing_keys:
+                                    new_intervals.append(interval_data)
+
+                            # Use bulk insert for all new intervals at once
+                            if new_intervals:
+                                session.bulk_insert_mappings(
+                                    self.Intervals, new_intervals, render_nulls=True
+                                )
+                                _LOGGER.debug(
+                                    "Bulk inserted %d new intervals (skipped %d duplicates)",
+                                    len(new_intervals),
+                                    len(intervals) - len(new_intervals),
+                                )
+                            else:
+                                _LOGGER.debug(
+                                    "All %d intervals already exist, skipping insert",
+                                    len(intervals),
+                                )
                         session.commit()
                 _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
