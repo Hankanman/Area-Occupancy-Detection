@@ -107,7 +107,9 @@ class PriorAnalyzer:
             return DEFAULT_PRIOR
 
         # Step 1: Calculate prior from motion sensors only
-        total_occupied_seconds = self.get_total_occupied_seconds()
+        total_occupied_seconds = self.get_total_occupied_seconds(
+            include_media=False, include_appliance=False
+        )
 
         lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
 
@@ -565,26 +567,43 @@ class PriorAnalyzer:
             _LOGGER.error("Unexpected error getting time bounds: %s", e)
             return (None, None)
 
-    def get_total_occupied_seconds(self) -> float:
-        """Get total occupied seconds using SQL optimization with Python fallback."""
-        _LOGGER.debug("Getting total occupied seconds")
+    def get_total_occupied_seconds(
+        self, include_media: bool = False, include_appliance: bool = False
+    ) -> float:
+        """Get total occupied seconds using SQL optimization with Python fallback.
+
+        Args:
+            include_media: If True, include media player intervals (playing state only)
+            include_appliance: If True, include appliance intervals (on state only)
+
+        Returns:
+            Total occupied seconds from motion sensors (and optionally media/appliance)
+        """
+        _LOGGER.debug(
+            "Getting total occupied seconds (media: %s, appliance: %s)",
+            include_media,
+            include_appliance,
+        )
 
         # Try SQL method first for better performance
         try:
             timeout_seconds = self.config.sensors.motion_timeout
-            include_media = bool(self.media_sensor_ids)
-            include_appliance = bool(self.appliance_sensor_ids)
+            # Use provided flags, but only if sensors are configured
+            sql_include_media = include_media and bool(self.media_sensor_ids)
+            sql_include_appliance = include_appliance and bool(
+                self.appliance_sensor_ids
+            )
 
             total_seconds = self.db.get_total_occupied_seconds_sql(
                 entry_id=self.entry_id,
                 area_name=self.area_name,
                 lookback_days=DEFAULT_LOOKBACK_DAYS,
                 motion_timeout_seconds=timeout_seconds,
-                include_media=include_media,
-                include_appliance=include_appliance,
-                media_sensor_ids=self.media_sensor_ids if include_media else None,
+                include_media=sql_include_media,
+                include_appliance=sql_include_appliance,
+                media_sensor_ids=self.media_sensor_ids if sql_include_media else None,
                 appliance_sensor_ids=self.appliance_sensor_ids
-                if include_appliance
+                if sql_include_appliance
                 else None,
             )
 
@@ -598,7 +617,9 @@ class PriorAnalyzer:
 
         # Fallback to Python method for complex cases or if SQL fails
         _LOGGER.debug("Using Python method for total occupied seconds")
-        occupied_intervals = self.get_occupied_intervals()
+        occupied_intervals = self.get_occupied_intervals(
+            include_media=include_media, include_appliance=include_appliance
+        )
 
         if not occupied_intervals:
             return DEFAULT_OCCUPIED_SECONDS
