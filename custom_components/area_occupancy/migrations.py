@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from pathlib import Path
 from typing import Any
@@ -227,6 +228,44 @@ CONF_HISTORY_PERIOD = "history_period"
 # ==========================================
 
 
+def _safe_file_operation(operation: Callable[[], Any], error_message: str) -> bool:
+    """Safely execute a file operation with error handling.
+
+    Args:
+        operation: Callable that performs the file operation
+        error_message: Error message to log if operation fails
+
+    Returns:
+        True if operation succeeded, False otherwise
+    """
+    try:
+        operation()
+    except OSError as err:
+        _LOGGER.warning("%s: %s", error_message, err)
+        return False
+    else:
+        return True
+
+
+def _safe_database_operation(operation: Callable[[], Any], error_message: str) -> bool:
+    """Safely execute a database operation with error handling.
+
+    Args:
+        operation: Callable that performs the database operation
+        error_message: Error message to log if operation fails
+
+    Returns:
+        True if operation succeeded, False otherwise
+    """
+    try:
+        operation()
+    except (SQLAlchemyError, OSError) as err:
+        _LOGGER.warning("%s: %s", error_message, err)
+        return False
+    else:
+        return True
+
+
 def _remove_deprecated_keys(
     config: dict[str, Any], keys: list[str], description: str = ""
 ) -> dict[str, Any]:
@@ -432,13 +471,11 @@ async def async_migrate_storage(
                 "Found legacy storage file %s, removing it for fresh start",
                 legacy_file.name,
             )
-            try:
-                legacy_file.unlink()
+            if _safe_file_operation(
+                lambda: legacy_file.unlink(),
+                f"Error removing legacy storage file {legacy_file}",
+            ):
                 _LOGGER.info("Successfully removed legacy storage file")
-            except OSError as err:
-                _LOGGER.warning(
-                    "Error removing legacy storage file %s: %s", legacy_file, err
-                )
 
         # Reset database for version < 11
         await async_reset_database_if_needed(hass, entry_major)
@@ -453,8 +490,72 @@ async def async_migrate_storage(
 # ============================================================================
 
 
-def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
-    """Blocking helper: perform locked drop of legacy tables if needed."""
+def _update_db_version(session: Any, version: int) -> None:
+    """Update database version in metadata table.
+
+    Args:
+        session: SQLAlchemy session
+        version: Version number to set
+    """
+    try:
+        session.execute(
+            text("UPDATE metadata SET value = :version WHERE key = 'db_version'"),
+            {"version": str(version)},
+        )
+        if session.execute(text("SELECT changes()")).scalar() == 0:
+            session.execute(
+                text(
+                    "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
+                ),
+                {"version": str(version)},
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _drop_legacy_tables(engine: Any, session: Any) -> None:
+    """Drop legacy database tables.
+
+    Args:
+        engine: SQLAlchemy engine
+        session: SQLAlchemy session
+    """
+    _LOGGER.info("Dropping tables for schema migration")
+    _update_db_version(session, DB_VERSION)
+    session.commit()
+
+    with engine.connect() as conn:
+        tables_to_drop = [
+            "intervals",
+            "priors",
+            "entities",
+            "areas",
+            "metadata",
+        ]
+        for table_name in tables_to_drop:
+            try:
+                conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                _LOGGER.debug("Dropped table: %s", table_name)
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.debug("Error dropping table %s: %s", table_name, e)
+        conn.commit()
+        _LOGGER.info("All tables dropped successfully")
+
+
+def _drop_tables_locked(
+    storage_dir: Path,
+    entry_major: int,
+    engine_factory: Any | None = None,
+    session_factory: Any | None = None,
+) -> None:
+    """Blocking helper: perform locked drop of legacy tables if needed.
+
+    Args:
+        storage_dir: Directory containing the database file
+        entry_major: Major version number of the entry
+        engine_factory: Optional factory function to create engine (for testing)
+        session_factory: Optional factory function to create session (for testing)
+    """
     if entry_major >= 11:
         _LOGGER.debug("Skipping table dropping for version %s", entry_major)
         return
@@ -467,8 +568,15 @@ def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
     lock_path = storage_dir / (DB_NAME + ".lock")
     try:
         with FileLock(lock_path):
-            engine = create_engine(f"sqlite:///{db_path}")
-            session = sessionmaker(bind=engine)()
+            if engine_factory is not None:
+                engine = engine_factory()
+            else:
+                engine = create_engine(f"sqlite:///{db_path}")
+
+            if session_factory is not None:
+                session = session_factory()
+            else:
+                session = sessionmaker(bind=engine)()
 
             db_version = 0
             try:
@@ -482,41 +590,7 @@ def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
                 db_version = 0
 
             if db_version < 3:
-                _LOGGER.info("Dropping tables for schema migration")
-                try:
-                    session.execute(
-                        text(
-                            "UPDATE metadata SET value = :version WHERE key = 'db_version'"
-                        ),
-                        {"version": str(DB_VERSION)},
-                    )
-                    if session.execute(text("SELECT changes()")).scalar() == 0:
-                        session.execute(
-                            text(
-                                "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
-                            ),
-                            {"version": str(DB_VERSION)},
-                        )
-                except Exception:  # noqa: BLE001
-                    pass
-                session.commit()
-
-                with engine.connect() as conn:
-                    tables_to_drop = [
-                        "intervals",
-                        "priors",
-                        "entities",
-                        "areas",
-                        "metadata",
-                    ]
-                    for table_name in tables_to_drop:
-                        try:
-                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
-                            _LOGGER.debug("Dropped table: %s", table_name)
-                        except Exception as e:  # noqa: BLE001
-                            _LOGGER.debug("Error dropping table %s: %s", table_name, e)
-                    conn.commit()
-                    _LOGGER.info("All tables dropped successfully")
+                _drop_legacy_tables(engine, session)
 
             session.close()
             engine.dispose()
@@ -597,46 +671,12 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         area_reg = ar.async_get(hass)
 
         for entry in entries:
-            # Get area name from config (legacy format)
-            merged = dict(entry.data)
-            merged.update(entry.options)
+            # Resolve area from entry
+            area_id, area_name = _resolve_area_from_entry(entry, area_reg)
 
-            # Try to get area_id first (new format), then fall back to name (legacy)
-            area_id = merged.get(CONF_AREA_ID)
-            area_name = None
-
-            if area_id:
-                # New format - resolve area name from ID
-                area_entry = area_reg.async_get_area(area_id)
-                if area_entry:
-                    area_name = area_entry.name
-                else:
-                    _LOGGER.warning(
-                        "Area ID '%s' for entry %s not found in registry. Skipping.",
-                        area_id,
-                        entry.entry_id,
-                    )
-                    continue
-            else:
-                # Legacy format - try to resolve name to ID
-                legacy_name = merged.get(
-                    "name", DEFAULT_NAME
-                )  # Use string literal for legacy
-
-                # Try to find area by name
-                for area_entry in area_reg.async_list_areas():
-                    if area_entry.name == legacy_name:
-                        area_id = area_entry.id
-                        area_name = legacy_name
-                        break
-
-                if not area_id:
-                    _LOGGER.warning(
-                        "Could not resolve area name '%s' for entry %s to area ID. Skipping.",
-                        legacy_name,
-                        entry.entry_id,
-                    )
-                    continue
+            if area_id is None or area_name is None:
+                # Resolution failed, skip this entry
+                continue
 
             # Ensure unique area names
             original_area_name = area_name
@@ -648,6 +688,8 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
             entry_id_to_area_name[entry.entry_id] = area_name
 
             # Create area config (merge data and options, ensure CONF_AREA_ID is set)
+            merged = dict(entry.data)
+            merged.update(entry.options)
             area_config = {**merged}
             area_config[CONF_AREA_ID] = area_id
             # Remove legacy CONF_NAME if present
@@ -731,21 +773,9 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
         except Exception as err:
             _LOGGER.error("Step 4 failed: Config entry update - %s", err)
             # Attempt to restore original state
-            try:
-                original_state = original_entry_states[base_entry.entry_id]
-                hass.config_entries.async_update_entry(
-                    base_entry,
-                    data=original_state["data"],
-                    options=original_state["options"],
-                    version=original_state["version"],
-                    minor_version=original_state["minor_version"],
-                    title=original_state["title"],
-                )
-                _LOGGER.info(
-                    "Restored original config entry state for %s", base_entry.entry_id
-                )
-            except (ValueError, KeyError, AttributeError, RuntimeError) as restore_err:
-                _LOGGER.error("Failed to restore config entry state: %s", restore_err)
+            original_state = original_entry_states.get(base_entry.entry_id)
+            if original_state:
+                _restore_config_entry_state(hass, base_entry, original_state)
             raise
 
         # Step 5: Migrate device registry entries
@@ -833,6 +863,125 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 # ==========================================
 
 
+def _restore_config_entry_state(
+    hass: HomeAssistant, entry: ConfigEntry, original_state: dict[str, Any]
+) -> bool:
+    """Restore config entry to its original state.
+
+    Args:
+        hass: Home Assistant instance
+        entry: The config entry to restore
+        original_state: Dictionary containing original state data
+
+    Returns:
+        True if restoration succeeded, False otherwise
+    """
+    try:
+        hass.config_entries.async_update_entry(
+            entry,
+            data=original_state["data"],
+            options=original_state["options"],
+            version=original_state["version"],
+            minor_version=original_state.get("minor_version", 0),
+            title=original_state.get("title", entry.title),
+        )
+        _LOGGER.info("Restored original config entry state for %s", entry.entry_id)
+    except (ValueError, KeyError, AttributeError, RuntimeError) as restore_err:
+        _LOGGER.error("Failed to restore config entry state: %s", restore_err)
+        return False
+    else:
+        return True
+
+
+def _handle_entity_conflict(
+    entity_registry: er.EntityRegistry,
+    entity_id: str,
+    old_unique_id: str,
+    new_unique_id: str,
+    conflicts: list[tuple[str, str, str]],
+) -> bool:
+    """Handle entity unique ID conflict during migration.
+
+    Args:
+        entity_registry: The entity registry
+        entity_id: The entity ID being migrated
+        old_unique_id: The old unique ID
+        new_unique_id: The new unique ID
+        conflicts: List to append conflict information to
+
+    Returns:
+        True if conflict was handled (entity skipped), False if no conflict
+    """
+    has_conflict, conflict_entity_id = _check_unique_id_conflict(
+        entity_registry, new_unique_id, entity_id
+    )
+
+    if has_conflict:
+        conflicts.append((entity_id, old_unique_id, new_unique_id))
+        _LOGGER.warning(
+            "Unique ID conflict: %s already exists for entity %s. "
+            "Skipping migration for %s (old unique_id: %s)",
+            new_unique_id,
+            conflict_entity_id,
+            entity_id,
+            old_unique_id,
+        )
+        return True
+    return False
+
+
+def _resolve_area_from_entry(
+    entry: ConfigEntry, area_reg: ar.AreaRegistry
+) -> tuple[str | None, str | None]:
+    """Resolve area ID and name from a config entry.
+
+    Handles both new format (CONF_AREA_ID) and legacy format (name).
+
+    Args:
+        entry: The config entry to resolve area from
+        area_reg: The area registry to query
+
+    Returns:
+        Tuple of (area_id, area_name) or (None, None) if resolution fails
+    """
+    merged = dict(entry.data)
+    merged.update(entry.options)
+
+    # Try to get area_id first (new format), then fall back to name (legacy)
+    area_id = merged.get(CONF_AREA_ID)
+    area_name = None
+
+    if area_id:
+        # New format - resolve area name from ID
+        area_entry = area_reg.async_get_area(area_id)
+        if area_entry:
+            area_name = area_entry.name
+            return area_id, area_name
+        _LOGGER.warning(
+            "Area ID '%s' for entry %s not found in registry. Skipping.",
+            area_id,
+            entry.entry_id,
+        )
+        return None, None
+    # Legacy format - try to resolve name to ID
+    legacy_name = merged.get("name", DEFAULT_NAME)
+
+    # Try to find area by name
+    for area_entry in area_reg.async_list_areas():
+        if area_entry.name == legacy_name:
+            area_id = area_entry.id
+            area_name = legacy_name
+            return area_id, area_name
+
+    # Could not resolve
+    _LOGGER.warning(
+        "Could not resolve area name '%s' for entry %s to area ID. Skipping.",
+        legacy_name,
+        entry.entry_id,
+    )
+    return None, None
+
+
 async def _migrate_entity_registry_for_consolidation(
     hass: HomeAssistant,
     entries: list[ConfigEntry],
@@ -889,20 +1038,9 @@ async def _migrate_entity_registry_for_consolidation(
             new_unique_id = f"{area_name}_{entity_suffix}".lower()
 
             # Check for conflicts before updating
-            has_conflict, conflict_entity_id = _check_unique_id_conflict(
-                entity_registry, new_unique_id, entity_id
-            )
-
-            if has_conflict:
-                conflicts.append((entity_id, old_unique_id_str, new_unique_id))
-                _LOGGER.warning(
-                    "Unique ID conflict: %s already exists for entity %s. "
-                    "Skipping migration for %s (old unique_id: %s)",
-                    new_unique_id,
-                    conflict_entity_id,
-                    entity_id,
-                    old_unique_id_str,
-                )
+            if _handle_entity_conflict(
+                entity_registry, entity_id, old_unique_id_str, new_unique_id, conflicts
+            ):
                 skipped_count += 1
                 continue
 
@@ -941,20 +1079,9 @@ async def _migrate_entity_registry_for_consolidation(
             new_unique_id = f"{area_name}_{entity_suffix}".lower()
 
             # Check for conflicts before updating
-            has_conflict, conflict_entity_id = _check_unique_id_conflict(
-                entity_registry, new_unique_id, entity_id
-            )
-
-            if has_conflict:
-                conflicts.append((entity_id, old_unique_id_str, new_unique_id))
-                _LOGGER.warning(
-                    "Unique ID conflict: %s already exists for entity %s. "
-                    "Skipping migration for %s (old unique_id: %s)",
-                    new_unique_id,
-                    conflict_entity_id,
-                    entity_id,
-                    old_unique_id_str,
-                )
+            if _handle_entity_conflict(
+                entity_registry, entity_id, old_unique_id_str, new_unique_id, conflicts
+            ):
                 skipped_count += 1
                 continue
 
@@ -1210,14 +1337,44 @@ async def _cleanup_orphaned_entity_registry_entries(
     )
 
 
+def _check_database_tables_exist(
+    inspector: sa.Inspector, required_tables: list[str]
+) -> bool:
+    """Check if all required database tables exist.
+
+    Args:
+        inspector: SQLAlchemy inspector
+        required_tables: List of table names to check
+
+    Returns:
+        True if all tables exist, False otherwise
+    """
+    for table_name in required_tables:
+        if not inspector.has_table(table_name):
+            _LOGGER.debug(
+                "%s table does not exist, skipping database migration", table_name
+            )
+            return False
+    return True
+
+
 async def _migrate_database_for_consolidation(
     hass: HomeAssistant,
     entries: list[ConfigEntry],
     entry_id_to_area_name: dict[str, str],
+    engine_factory: Any | None = None,
+    session_factory: Any | None = None,
 ) -> None:
     """Migrate database entries for consolidation.
 
     Updates database to use area_name instead of entry_id as keys.
+
+    Args:
+        hass: Home Assistant instance
+        entries: List of config entries being consolidated
+        entry_id_to_area_name: Mapping of entry IDs to area names
+        engine_factory: Optional factory function to create engine (for testing)
+        session_factory: Optional factory function to create session (for testing)
     """
     _LOGGER.info("Migrating database entries for consolidation")
 
@@ -1235,27 +1392,28 @@ async def _migrate_database_for_consolidation(
     try:
         with FileLock(lock_file, timeout=30):
             # Open database connection
-            engine = create_engine(
-                f"sqlite:///{db_path}",
-                echo=False,
-                connect_args={"check_same_thread": False, "timeout": 30},
-            )
-            session_maker = sessionmaker(bind=engine)
+            if engine_factory is not None:
+                engine = engine_factory()
+            else:
+                engine = create_engine(
+                    f"sqlite:///{db_path}",
+                    echo=False,
+                    connect_args={"check_same_thread": False, "timeout": 30},
+                )
+
+            if session_factory is not None:
+                session_maker = session_factory
+            else:
+                session_maker = sessionmaker(bind=engine)
 
             with session_maker() as session:
                 # Update areas table: change entry_id to area_name
                 try:
                     # Check if tables exist before attempting operations
                     inspector = sa.inspect(engine)
-                    if not inspector.has_table("entities"):
-                        _LOGGER.debug(
-                            "Entities table does not exist, skipping database migration"
-                        )
-                        return
-                    if not inspector.has_table("areas"):
-                        _LOGGER.debug(
-                            "Areas table does not exist, skipping database migration"
-                        )
+                    if not _check_database_tables_exist(
+                        inspector, ["entities", "areas"]
+                    ):
                         return
 
                     # Get all areas with old entry_id
