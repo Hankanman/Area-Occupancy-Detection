@@ -535,7 +535,7 @@ class PriorAnalyzer:
             )
             .filter(
                 *base_filters,
-                db.Entities.entity_type == InputType.MOTION,
+                db.Entities.entity_type == InputType.MOTION.value,
                 db.Intervals.state == "on",
             )
         )
@@ -566,7 +566,7 @@ class PriorAnalyzer:
             )
             .filter(
                 *base_filters,
-                db.Entities.entity_type == InputType.MEDIA,
+                db.Entities.entity_type == InputType.MEDIA.value,
                 db.Intervals.entity_id.in_(sensor_ids),
                 db.Intervals.state == STATE_PLAYING,
             )
@@ -598,7 +598,7 @@ class PriorAnalyzer:
             )
             .filter(
                 *base_filters,
-                db.Entities.entity_type == InputType.APPLIANCE,
+                db.Entities.entity_type == InputType.APPLIANCE.value,
                 db.Intervals.entity_id.in_(sensor_ids),
                 db.Intervals.state == STATE_ON,
             )
@@ -756,31 +756,23 @@ class PriorAnalyzer:
             include_appliance,
         )
 
-        # Try SQL method first for better performance
+        # Try SQL method first only when safe (no timeout/media/appliance)
         try:
             timeout_seconds = self.config.sensors.motion_timeout
-            # Use provided flags, but only if sensors are configured
-            sql_include_media = include_media and bool(self.media_sensor_ids)
-            sql_include_appliance = include_appliance and bool(
-                self.appliance_sensor_ids
-            )
-
-            total_seconds = self.db.get_total_occupied_seconds_sql(
-                entry_id=self.entry_id,
-                area_name=self.area_name,
-                lookback_days=DEFAULT_LOOKBACK_DAYS,
-                motion_timeout_seconds=timeout_seconds,
-                include_media=sql_include_media,
-                include_appliance=sql_include_appliance,
-                media_sensor_ids=self.media_sensor_ids if sql_include_media else None,
-                appliance_sensor_ids=self.appliance_sensor_ids
-                if sql_include_appliance
-                else None,
-            )
-
-            if total_seconds > 0:
-                _LOGGER.debug("Total occupied seconds (SQL): %.1f", total_seconds)
-                return total_seconds
+            if timeout_seconds == 0 and not include_media and not include_appliance:
+                total_seconds = self.db.get_total_occupied_seconds_sql(
+                    entry_id=self.entry_id,
+                    area_name=self.area_name,
+                    lookback_days=DEFAULT_LOOKBACK_DAYS,
+                    motion_timeout_seconds=0,
+                    include_media=False,
+                    include_appliance=False,
+                    media_sensor_ids=None,
+                    appliance_sensor_ids=None,
+                )
+                if total_seconds > 0:
+                    _LOGGER.debug("Total occupied seconds (SQL): %.1f", total_seconds)
+                    return total_seconds
         except (SQLAlchemyError, AttributeError, TypeError) as e:
             _LOGGER.debug(
                 "SQL method failed, falling back to Python: %s", e, exc_info=True
