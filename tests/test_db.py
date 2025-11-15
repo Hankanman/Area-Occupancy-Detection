@@ -753,6 +753,43 @@ class TestAreaOccupancyDBUtilities:
         )
         await db.sync_states()
 
+    @pytest.mark.asyncio
+    async def test_sync_states_bulk_insert_with_duplicates(self, test_db, monkeypatch):
+        """Test sync_states bulk insert handles duplicates correctly."""
+        db = test_db
+        db.init_db()
+        start = dt_util.utcnow()
+        end = start + timedelta(seconds=60)
+
+        # Create two states that will generate intervals
+        state1 = State("binary_sensor.motion", "on", last_changed=start)
+        state2 = State("binary_sensor.motion", "off", last_changed=end)
+
+        class DummyRecorder:
+            async def async_add_executor_job(self, func):
+                return {"binary_sensor.motion": [state1, state2]}
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.get_instance",
+            lambda hass: DummyRecorder(),
+        )
+
+        # First sync - should insert intervals
+        await db.sync_states()
+
+        # Verify intervals were inserted
+        with db.get_session() as session:
+            count = session.query(db.Intervals).count()
+            assert count > 0
+
+        # Second sync with same data - should skip duplicates
+        await db.sync_states()
+
+        # Verify no duplicate intervals were inserted
+        with db.get_session() as session:
+            count_after = session.query(db.Intervals).count()
+            assert count_after == count  # Should be the same count
+
     def test_get_area_data_none(self, test_db):
         """Test get_area_data with missing entry."""
         db = test_db
@@ -1767,35 +1804,43 @@ class TestAreaOccupancyDBUtilities:
     def test_set_db_version_update_existing(self, test_db):
         """Test set_db_version when version already exists."""
         db = test_db
+        db.init_db()
+        db.set_db_version()  # Create initial version
 
-        with patch.object(db.engine, "begin") as mock_begin:
-            mock_conn = Mock()
-            mock_result = Mock()
-            mock_result.fetchone.return_value = ("3",)
-            mock_conn.execute.return_value = mock_result
-            mock_begin.return_value.__enter__.return_value = mock_conn
+        # Verify the version was set correctly using real database
+        version = db.get_db_version()
+        assert version == DB_VERSION
 
-            db.set_db_version()
+        # Call set_db_version again - should update existing
+        db.set_db_version()
+
+        # Verify version is still correct
+        version_after = db.get_db_version()
+        assert version_after == DB_VERSION
 
     def test_set_db_version_insert_new(self, test_db):
         """Test set_db_version when version doesn't exist."""
         db = test_db
+        db.init_db()
 
-        with patch.object(db.engine, "begin") as mock_begin:
-            mock_conn = Mock()
-            mock_result = Mock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
-            mock_begin.return_value.__enter__.return_value = mock_conn
+        # Delete any existing version
+        with db.get_session() as session:
+            session.query(db.Metadata).filter_by(key="db_version").delete()
+            session.commit()
 
-            db.set_db_version()
+        # Set version - should insert new
+        db.set_db_version()
+
+        # Verify version was set
+        version = db.get_db_version()
+        assert version == DB_VERSION
 
     def test_set_db_version_error(self, test_db):
         """Test set_db_version with error."""
         db = test_db
 
         with (
-            patch.object(db.engine, "begin", side_effect=RuntimeError("DB Error")),
+            patch.object(db, "get_session", side_effect=RuntimeError("DB Error")),
             pytest.raises(RuntimeError),
         ):
             db.set_db_version()
@@ -2313,6 +2358,96 @@ class TestGetAggregatedIntervalsBySlot:
             assert len(entities) == 1
             assert entities[0].entity_id == "binary_sensor.motion1"
 
+    async def test_cleanup_orphaned_entities_bulk_delete_intervals(self, test_db):
+        """Test that bulk delete removes all intervals for multiple orphaned entities."""
+        db = test_db
+
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
+
+        # Add multiple orphaned entities with intervals
+        with db.get_locked_session() as session:
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="motion",
+            )
+            session.add(current_entity)
+
+            # Create 3 orphaned entities, each with multiple intervals
+            orphaned_entities = []
+            intervals = []
+            for i in range(1, 4):
+                orphaned_entity = db.Entities(
+                    entity_id=f"binary_sensor.motion_orphaned{i}",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="motion",
+                )
+                orphaned_entities.append(orphaned_entity)
+                session.add(orphaned_entity)
+
+                # Add 5 intervals per orphaned entity
+                for j in range(5):
+                    interval = db.Intervals(
+                        entity_id=f"binary_sensor.motion_orphaned{i}",
+                        start_time=dt_util.utcnow() + timedelta(hours=j),
+                        end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
+                        state="on",
+                        duration_seconds=1800,
+                    )
+                    intervals.append(interval)
+                    session.add(interval)
+
+            session.commit()
+
+        # Verify intervals were created
+        with db.get_locked_session() as session:
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 15  # 3 entities * 5 intervals each
+
+        # Run cleanup - should use bulk delete
+        cleaned_count = db.cleanup_orphaned_entities()
+
+        # Should clean up 3 entities
+        assert cleaned_count == 3
+
+        # Verify all intervals for orphaned entities are removed (bulk delete)
+        with db.get_locked_session() as session:
+            # All intervals should be gone
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 0
+
+            # All orphaned entities should be gone
+            orphaned_count = (
+                session.query(db.Entities)
+                .filter(
+                    db.Entities.entity_id.in_(
+                        [
+                            "binary_sensor.motion_orphaned1",
+                            "binary_sensor.motion_orphaned2",
+                            "binary_sensor.motion_orphaned3",
+                        ]
+                    )
+                )
+                .count()
+            )
+            assert orphaned_count == 0
+
+            # Current entity should remain
+            current_entities = (
+                session.query(db.Entities)
+                .filter_by(entity_id="binary_sensor.motion1")
+                .count()
+            )
+            assert current_entities == 1
+
     async def test_cleanup_orphaned_entities_database_error(self, test_db):
         """Test cleanup handles database errors gracefully."""
         db = test_db
@@ -2335,6 +2470,101 @@ class TestGetAggregatedIntervalsBySlot:
 
             # Should return 0 on error
             assert cleaned_count == 0
+
+    async def test_delete_area_data_bulk_delete_intervals(self, test_db):
+        """Test that delete_area_data uses bulk delete for intervals."""
+        db = test_db
+
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create entities and intervals for the area
+        with db.get_locked_session() as session:
+            # Create 3 entities for this area
+            entities = []
+            for i in range(1, 4):
+                entity = db.Entities(
+                    entity_id=f"binary_sensor.motion{i}",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="motion",
+                )
+                entities.append(entity)
+                session.add(entity)
+
+                # Add 10 intervals per entity
+                for j in range(10):
+                    interval = db.Intervals(
+                        entity_id=f"binary_sensor.motion{i}",
+                        start_time=dt_util.utcnow() + timedelta(hours=j),
+                        end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
+                        state="on",
+                        duration_seconds=1800,
+                    )
+                    session.add(interval)
+
+            # Add priors for this area
+            prior = db.Priors(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                day_of_week=1,
+                time_slot=10,
+                prior_value=0.5,
+                data_points=100,
+            )
+            session.add(prior)
+
+            # Add area record
+            area_record = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                area_id="test_area_id",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add(area_record)
+            session.commit()
+
+        # Verify data was created
+        with db.get_locked_session() as session:
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 30  # 3 entities * 10 intervals each
+            entity_count = (
+                session.query(db.Entities).filter_by(area_name=area_name).count()
+            )
+            assert entity_count == 3
+            prior_count = (
+                session.query(db.Priors).filter_by(area_name=area_name).count()
+            )
+            assert prior_count == 1
+
+        # Delete area data - should use bulk delete for intervals
+        deleted_count = db.delete_area_data(area_name)
+
+        # Should delete 3 entities
+        assert deleted_count == 3
+
+        # Verify all data is removed (bulk delete should have removed all intervals)
+        with db.get_locked_session() as session:
+            # All intervals should be gone (bulk delete via join)
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 0
+
+            # All entities should be gone
+            entity_count = (
+                session.query(db.Entities).filter_by(area_name=area_name).count()
+            )
+            assert entity_count == 0
+
+            # Priors should be gone
+            prior_count = (
+                session.query(db.Priors).filter_by(area_name=area_name).count()
+            )
+            assert prior_count == 0
+
+            # Area record should be gone
+            area_count = session.query(db.Areas).filter_by(area_name=area_name).count()
+            assert area_count == 0
 
     async def test_save_entity_data_calls_cleanup(self, test_db):
         """Test that save_entity_data calls cleanup after saving."""
