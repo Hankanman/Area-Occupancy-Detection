@@ -2416,7 +2416,7 @@ class AreaOccupancyDB:
                     )
                     .filter(
                         *base_filters,
-                        self.Entities.entity_type == InputType.MOTION,
+                        self.Entities.entity_type == InputType.MOTION.value,
                         self.Intervals.state == "on",
                     )
                 )
@@ -2438,7 +2438,7 @@ class AreaOccupancyDB:
                         )
                         .filter(
                             *base_filters,
-                            self.Entities.entity_type == InputType.MEDIA,
+                            self.Entities.entity_type == InputType.MEDIA.value,
                             self.Intervals.entity_id.in_(media_sensor_ids),
                             self.Intervals.state == STATE_PLAYING,
                         )
@@ -2459,7 +2459,7 @@ class AreaOccupancyDB:
                         )
                         .filter(
                             *base_filters,
-                            self.Entities.entity_type == InputType.APPLIANCE,
+                            self.Entities.entity_type == InputType.APPLIANCE.value,
                             self.Intervals.entity_id.in_(appliance_sensor_ids),
                             self.Intervals.state == STATE_ON,
                         )

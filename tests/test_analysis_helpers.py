@@ -318,9 +318,13 @@ class TestSegmentIntervalWithMotion:
             merged_interval, motion_intervals, timeout_seconds
         )
         # Should have: motion segment (with timeout) + after segment
+        # After segment starts after timeout ends
         assert len(result) == 2
         assert result[0] == (now, now + timedelta(hours=1, seconds=timeout_seconds))
-        assert result[1] == (now + timedelta(hours=1), now + timedelta(hours=2))
+        assert result[1] == (
+            now + timedelta(hours=1, seconds=timeout_seconds),
+            now + timedelta(hours=2),
+        )
 
     def test_motion_at_end(self, freeze_time: datetime) -> None:
         """Test segment_interval_with_motion with motion at end."""
@@ -353,13 +357,17 @@ class TestSegmentIntervalWithMotion:
             merged_interval, motion_intervals, timeout_seconds
         )
         # Should have: before + motion (with timeout) + after
+        # After segment starts after timeout ends
         assert len(result) == 3
         assert result[0] == (now, now + timedelta(hours=1))
         assert result[1] == (
             now + timedelta(hours=1),
             now + timedelta(hours=2, seconds=timeout_seconds),
         )
-        assert result[2] == (now + timedelta(hours=2), now + timedelta(hours=3))
+        assert result[2] == (
+            now + timedelta(hours=2, seconds=timeout_seconds),
+            now + timedelta(hours=3),
+        )
 
     def test_multiple_motion_intervals(self, freeze_time: datetime) -> None:
         """Test segment_interval_with_motion with multiple motion intervals."""
@@ -373,15 +381,26 @@ class TestSegmentIntervalWithMotion:
         result = segment_interval_with_motion(
             merged_interval, motion_intervals, timeout_seconds
         )
-        # Should have: before + motion union (with timeout) + after
-        assert len(result) == 3
-        assert result[0] == (now, now + timedelta(hours=1))
-        # Motion union from 1:00 to 2:00, then timeout applied
+        # Should have: before + motion1 (with timeout) + gap + motion2 (with timeout) + after
+        # Note: caller will merge overlapping/adjacent segments afterward
+        assert len(result) == 5
+        assert result[0] == (now, now + timedelta(hours=1))  # Before
         assert result[1] == (
             now + timedelta(hours=1),
+            now + timedelta(hours=1, minutes=30, seconds=timeout_seconds),
+        )  # Motion1 with timeout
+        assert result[2] == (
+            now + timedelta(hours=1, minutes=30),
+            now + timedelta(hours=1, minutes=45),
+        )  # Gap between motions
+        assert result[3] == (
+            now + timedelta(hours=1, minutes=45),
             now + timedelta(hours=2, seconds=timeout_seconds),
-        )
-        assert result[2] == (now + timedelta(hours=2), now + timedelta(hours=3))
+        )  # Motion2 with timeout
+        assert result[4] == (
+            now + timedelta(hours=2, seconds=timeout_seconds),
+            now + timedelta(hours=3),
+        )  # After
 
     def test_timeout_application_only_to_motion(self, freeze_time: datetime) -> None:
         """Test segment_interval_with_motion applies timeout only to motion segment."""
@@ -401,9 +420,10 @@ class TestSegmentIntervalWithMotion:
             now + timedelta(hours=1),
             now + timedelta(hours=1, minutes=30, seconds=timeout_seconds),
         )
-        # After segment should have no timeout
+        # After segment should have no timeout applied to it
+        # (starts after timeout ends)
         assert result[2] == (
-            now + timedelta(hours=1, minutes=30),
+            now + timedelta(hours=1, minutes=30, seconds=timeout_seconds),
             now + timedelta(hours=2),
         )
 
@@ -929,9 +949,10 @@ class TestSegmentIntervalWithMotionEdgeCases:
             merged_interval, motion_intervals, timeout_seconds
         )
         # Should have: motion (with timeout) + after
+        # After segment starts after timeout ends
         assert len(result) == 2
         assert result[0][0] == now
-        assert result[1][0] == now + timedelta(hours=1)
+        assert result[1][0] == now + timedelta(hours=1, seconds=timeout_seconds)
 
     def test_motion_exactly_at_merged_end(self, freeze_time: datetime) -> None:
         """Test segment_interval_with_motion with motion ending exactly at merged end."""
@@ -972,8 +993,12 @@ class TestSegmentIntervalWithMotionEdgeCases:
             merged_interval, motion_intervals, timeout_seconds
         )
         # Should extend motion segment significantly
-        assert len(result) == 3
-        assert result[1][1] > now + timedelta(hours=1)
+        # When timeout extends beyond merged_end, there's no "after" segment
+        assert len(result) == 2
+        assert result[0] == (now, now + timedelta(minutes=30))  # Before
+        assert result[1][1] > now + timedelta(
+            hours=1
+        )  # Motion extends beyond merged_end
 
 
 class TestApplyMotionTimeoutEdgeCases:
