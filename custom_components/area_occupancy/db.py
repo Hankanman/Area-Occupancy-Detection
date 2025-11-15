@@ -41,6 +41,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # Home Assistant imports
 from homeassistant.components.recorder.history import get_significant_states
+from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
@@ -74,6 +75,9 @@ if TYPE_CHECKING:
     Intervals = "Intervals"
 else:
     Base = declarative_base()
+
+# Import for runtime use in methods (outside TYPE_CHECKING to avoid circular imports)
+from .data.entity_type import InputType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -342,6 +346,13 @@ class AreaOccupancyDB:
             Index("idx_entities_entry", "entry_id"),
             Index("idx_entities_type", "entry_id", "entity_type"),
             Index("idx_entities_area", "area_name"),
+            # Composite index for optimized queries filtering by entry_id, area_name, and entity_type
+            Index(
+                "idx_entities_entry_area_type",
+                "entry_id",
+                "area_name",
+                "entity_type",
+            ),
         )
 
         def to_dict(self) -> dict[str, Any]:
@@ -462,6 +473,13 @@ class AreaOccupancyDB:
             Index("idx_intervals_entity_time", "entity_id", "start_time", "end_time"),
             Index("idx_intervals_start_time", "start_time"),
             Index("idx_intervals_end_time", "end_time"),
+            # Composite index for optimized queries with entity join and filtering
+            Index(
+                "idx_intervals_entity_state_time",
+                "entity_id",
+                "state",
+                "start_time",
+            ),
         )
 
         def to_dict(self) -> dict[str, Any]:
@@ -2335,3 +2353,148 @@ class AreaOccupancyDB:
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Unexpected error during interval aggregation: %s", e)
             return []
+
+    def get_total_occupied_seconds_sql(
+        self,
+        entry_id: str,
+        area_name: str | None = None,
+        lookback_days: int = 90,
+        motion_timeout_seconds: int = 0,
+        include_media: bool = False,
+        include_appliance: bool = False,
+        media_sensor_ids: list[str] | None = None,
+        appliance_sensor_ids: list[str] | None = None,
+    ) -> float:
+        """Get total occupied seconds using SQL aggregation for better performance.
+
+        This is a simplified SQL version that calculates the sum directly in the database.
+        For complex timeout logic, the Python version should be used.
+
+        Args:
+            entry_id: The area entry ID to filter by
+            area_name: The area name to filter by (required for multi-area support)
+            lookback_days: Number of days to look back for interval data
+            motion_timeout_seconds: Motion timeout in seconds (applied to motion intervals only)
+            include_media: If True, include media player intervals
+            include_appliance: If True, include appliance intervals
+            media_sensor_ids: List of media sensor entity IDs to include
+            appliance_sensor_ids: List of appliance sensor entity IDs to include
+
+        Returns:
+            Total occupied seconds as float
+        """
+        _LOGGER.debug("Getting total occupied seconds using SQL aggregation")
+
+        try:
+            # Calculate lookback date
+            now = dt_util.utcnow()
+            lookback_date = now - timedelta(days=lookback_days)
+
+            with self.get_session() as session:
+                # Build base filter conditions
+                base_filters = [
+                    self.Entities.entry_id == entry_id,
+                    self.Intervals.start_time >= lookback_date,
+                ]
+                if area_name is not None:
+                    base_filters.append(self.Entities.area_name == area_name)
+
+                # Build motion sensor query
+                # Use duration_seconds column directly, add timeout per interval
+                if motion_timeout_seconds > 0:
+                    motion_sum_expr = func.sum(
+                        self.Intervals.duration_seconds + motion_timeout_seconds
+                    )
+                else:
+                    motion_sum_expr = func.sum(self.Intervals.duration_seconds)
+
+                motion_query = (
+                    session.query(motion_sum_expr.label("total_seconds"))
+                    .join(
+                        self.Entities,
+                        self.Intervals.entity_id == self.Entities.entity_id,
+                    )
+                    .filter(
+                        *base_filters,
+                        self.Entities.entity_type == InputType.MOTION,
+                        self.Intervals.state == "on",
+                    )
+                )
+
+                # Start with motion query
+                queries = [motion_query]
+
+                # Add media player query if requested
+                if include_media and media_sensor_ids:
+                    media_query = (
+                        session.query(
+                            func.sum(self.Intervals.duration_seconds).label(
+                                "total_seconds"
+                            )
+                        )
+                        .join(
+                            self.Entities,
+                            self.Intervals.entity_id == self.Entities.entity_id,
+                        )
+                        .filter(
+                            *base_filters,
+                            self.Entities.entity_type == InputType.MEDIA,
+                            self.Intervals.entity_id.in_(media_sensor_ids),
+                            self.Intervals.state == STATE_PLAYING,
+                        )
+                    )
+                    queries.append(media_query)
+
+                # Add appliance query if requested
+                if include_appliance and appliance_sensor_ids:
+                    appliance_query = (
+                        session.query(
+                            func.sum(self.Intervals.duration_seconds).label(
+                                "total_seconds"
+                            )
+                        )
+                        .join(
+                            self.Entities,
+                            self.Intervals.entity_id == self.Entities.entity_id,
+                        )
+                        .filter(
+                            *base_filters,
+                            self.Entities.entity_type == InputType.APPLIANCE,
+                            self.Intervals.entity_id.in_(appliance_sensor_ids),
+                            self.Intervals.state == STATE_ON,
+                        )
+                    )
+                    queries.append(appliance_query)
+
+                # Sum all query results
+                total_seconds = 0.0
+                for query in queries:
+                    result = query.scalar()
+                    if result is not None:
+                        total_seconds += float(result)
+
+                _LOGGER.debug(
+                    "SQL aggregation returned %.2f total occupied seconds",
+                    total_seconds,
+                )
+                return total_seconds
+
+        except OperationalError as e:
+            _LOGGER.error(
+                "Database connection error during total seconds calculation: %s", e
+            )
+            return 0.0
+        except DataError as e:
+            _LOGGER.error("Database data error during total seconds calculation: %s", e)
+            return 0.0
+        except ProgrammingError as e:
+            _LOGGER.error(
+                "Database query error during total seconds calculation: %s", e
+            )
+            return 0.0
+        except SQLAlchemyError as e:
+            _LOGGER.error("Database error during total seconds calculation: %s", e)
+            return 0.0
+        except (ValueError, TypeError, RuntimeError, OSError, ImportError) as e:
+            _LOGGER.error("Unexpected error during total seconds calculation: %s", e)
+            return 0.0

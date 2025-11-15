@@ -177,6 +177,19 @@ class Prior:
         self._cached_occupied_intervals = None
         self._cached_intervals_timestamp = None
 
+    def clear_cache(self) -> None:
+        """Clear all cached data to release memory.
+
+        This should be called when the area is being removed or cleaned up
+        to prevent memory leaks from cached data holding references.
+        """
+        _LOGGER.debug("Clearing all caches for area: %s", self.area_name)
+        self._invalidate_time_prior_cache()
+        self._invalidate_occupied_intervals_cache()
+        # Also clear global_prior and last_updated to release references
+        self.global_prior = None
+        self._last_updated = None
+
     def get_time_prior(self) -> float:
         """Get the time prior for the current time slot.
 

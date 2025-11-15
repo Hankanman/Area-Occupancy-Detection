@@ -177,8 +177,13 @@ class Area:
         This should be called when the area is being removed or the
         integration is shutting down.
         """
+        _LOGGER.debug("Cleaning up area: %s", self.area_name)
+        # Clear prior cache first to release cached data
+        if self._prior is not None:
+            self._prior.clear_cache()
         await self.entities.cleanup()
         self.purpose.cleanup()
+        _LOGGER.debug("Area cleanup completed: %s", self.area_name)
 
     def device_info(self) -> DeviceInfo:
         """Return device info for this area.
