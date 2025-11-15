@@ -674,45 +674,86 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def async_shutdown(self) -> None:
-        """Shutdown the coordinator."""
-        # Cancel pending save timer before cleanup and perform final save
+        """Shutdown the coordinator.
+
+        Cleanup order is important to prevent circular references and memory leaks:
+        1. Cancel timers and listeners first
+        2. Save final state
+        3. Clean up areas (which clears their internal caches and references)
+        4. Reset aggregators
+        5. Dispose database engine (after all areas are cleaned up)
+        6. Call parent shutdown
+        """
+        area_names = ", ".join(self.areas.keys()) if self.areas else "no areas"
+        _LOGGER.info("Starting coordinator shutdown for areas: %s", area_names)
+
+        # Step 1: Cancel pending save timer before cleanup and perform final save
         if self._save_timer is not None:
+            _LOGGER.debug("Canceling pending save timer")
             self._save_timer()
             self._save_timer = None
 
-        # Perform final save to ensure no data loss
+        # Step 2: Perform final save to ensure no data loss
         try:
+            _LOGGER.debug("Performing final database save")
             await self.hass.async_add_executor_job(self.db.save_data)
-            area_names = ", ".join(self.areas.keys()) if self.areas else "no areas"
             _LOGGER.info("Final database save completed for areas: %s", area_names)
         except (HomeAssistantError, OSError, RuntimeError) as err:
-            area_names = ", ".join(self.areas.keys()) if self.areas else "no areas"
             _LOGGER.error("Failed final save for areas: %s: %s", area_names, err)
 
-        # Cancel all area state listeners
+        # Step 3: Cancel all area state listeners
+        _LOGGER.debug(
+            "Canceling %d area state listener(s)", len(self._area_state_listeners)
+        )
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
 
-        # Cancel prior update tracker
+        # Step 4: Cancel prior update tracker
         if self._global_decay_timer is not None:
+            _LOGGER.debug("Canceling global decay timer")
             self._global_decay_timer()
             self._global_decay_timer = None
 
-        # Clean up historical timer
+        # Step 5: Clean up historical timer
         if self._analysis_timer is not None:
+            _LOGGER.debug("Canceling analysis timer")
             self._analysis_timer()
             self._analysis_timer = None
 
-        # Clean up save timer (in case it wasn't handled in earlier logic)
+        # Step 6: Clean up save timer (defensive check)
         if self._save_timer is not None:
+            _LOGGER.debug("Canceling save timer (defensive cleanup)")
             self._save_timer()
             self._save_timer = None
 
-        # Clean up all areas
-        for area in self.areas.values():
+        # Step 7: Clean up all areas (clears caches, entities, and internal references)
+        _LOGGER.debug("Cleaning up %d area(s)", len(self.areas))
+        for area_name, area in list(self.areas.items()):
+            _LOGGER.debug("Cleaning up area: %s", area_name)
             await area.async_cleanup()
 
+        # Step 8: Reset AllAreas aggregator to release references to old areas
+        # This must be done after areas are cleaned up to break circular references
+        self._all_areas = None
+        _LOGGER.debug("Cleared AllAreas aggregator reference")
+
+        # Step 9: Dispose database engine to close all connections
+        # This must be done after all areas are cleaned up to ensure no active sessions
+        try:
+            if hasattr(self.db, "engine") and self.db.engine is not None:
+                _LOGGER.debug("Disposing database engine to close connections")
+                self.db.engine.dispose(close=True)
+                _LOGGER.debug("Database engine disposed successfully")
+        except (OSError, RuntimeError) as err:
+            _LOGGER.warning("Error disposing database engine: %s", err)
+
+        # Step 10: Clear areas dict to release all area references
+        # This helps break any remaining circular references
+        self.areas.clear()
+        _LOGGER.debug("Cleared areas dictionary")
+
+        _LOGGER.info("Coordinator shutdown completed for areas: %s", area_names)
         await super().async_shutdown()
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
@@ -732,7 +773,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Identify areas that will be removed by comparing old and new area names
         removed_area_names = set(self.areas.keys()) - set(new_areas.keys())
         if removed_area_names:
-            _LOGGER.info("Cleaning up removed areas: %s", ", ".join(removed_area_names))
+            _LOGGER.info(
+                "Cleaning up %d removed area(s): %s",
+                len(removed_area_names),
+                ", ".join(removed_area_names),
+            )
 
             # Get entity registry for cleanup
             entity_registry = er.async_get(self.hass)
@@ -793,12 +838,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             db_err,
                         )
 
-                    _LOGGER.debug("Cleaned up area: %s", area_name)
+                    _LOGGER.info("Cleaned up removed area: %s", area_name)
 
         # Cancel existing entity state listeners (will be recreated with new entity lists)
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
+
+        # Reset AllAreas aggregator to release references to old areas
+        self._all_areas = None
+        _LOGGER.debug("Reset AllAreas aggregator after area update")
 
         # Atomically replace self.areas with new_areas
         # This ensures self.areas is never empty when platform entities can access it
