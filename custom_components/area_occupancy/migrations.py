@@ -93,7 +93,7 @@ async def async_migrate_unique_ids(
     for entity_id, entity_entry in matching_entities:
         old_unique_id = entity_entry.unique_id
         # Simply remove the domain prefix to get the new ID
-        new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_")
+        new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_").lower()
 
         # Update the unique ID in the registry (no conflict checking needed here)
         _LOGGER.info(
@@ -167,10 +167,11 @@ def _check_unique_id_conflict(
     Returns:
         Tuple of (has_conflict: bool, conflicting_entity_id: str | None)
     """
+    new_unique_id_lower = str(new_unique_id).lower()
     for other_entity_id, other_entity_entry in entity_registry.entities.items():
         if (
             other_entity_id != exclude_entity_id
-            and other_entity_entry.unique_id == new_unique_id
+            and str(other_entity_entry.unique_id).lower() == new_unique_id_lower
         ):
             return True, other_entity_id
     return False, None
@@ -197,6 +198,9 @@ def _update_entity_unique_id(
         If check_conflicts is True and a conflict exists, returns (False, conflict_entity_id)
         Otherwise returns (True, None)
     """
+    # Ensure unique_id is lowercase
+    new_unique_id = str(new_unique_id).lower()
+
     if check_conflicts:
         has_conflict, conflict_entity_id = _check_unique_id_conflict(
             entity_registry, new_unique_id, entity_id
@@ -829,92 +833,6 @@ async def async_migrate_to_single_instance(hass: HomeAssistant) -> bool:
 # ==========================================
 
 
-async def _migrate_area_name_in_entity_registry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    old_area_name: str,
-    new_area_name: str,
-) -> None:
-    """Migrate entity registry unique IDs when an area name changes.
-
-    Updates unique IDs from {old_area_name}_{entity_type} to {new_area_name}_{entity_type}
-
-    Args:
-        hass: Home Assistant instance
-        config_entry: The config entry
-        old_area_name: The old area name
-        new_area_name: The new area name
-    """
-    if old_area_name == new_area_name:
-        _LOGGER.debug("Area name unchanged, skipping entity registry migration")
-        return
-
-    _LOGGER.info(
-        "Migrating entity registry unique IDs for area rename: %s -> %s",
-        old_area_name,
-        new_area_name,
-    )
-
-    entity_registry = er.async_get(hass)
-    updated_count = 0
-    skipped_count = 0
-    conflicts: list[tuple[str, str, str]] = []
-
-    old_prefix = f"{old_area_name}_"
-    new_prefix = f"{new_area_name}_"
-
-    # Find all entities for this config entry matching the old prefix
-    matching_entities = _find_entities_by_prefix(
-        entity_registry, old_prefix, config_entry.entry_id
-    )
-
-    for entity_id, entity_entry in matching_entities:
-        old_unique_id = str(entity_entry.unique_id)
-
-        # Extract entity type suffix
-        entity_suffix = old_unique_id[len(old_prefix) :]
-        new_unique_id = f"{new_prefix}{entity_suffix}"
-
-        # Update with conflict checking
-        success, conflict_entity_id = _update_entity_unique_id(
-            entity_registry,
-            entity_id,
-            old_unique_id,
-            new_unique_id,
-            check_conflicts=True,
-        )
-
-        if success:
-            _LOGGER.info(
-                "Migrating entity unique_id: %s -> %s (entity: %s)",
-                old_unique_id,
-                new_unique_id,
-                entity_id,
-            )
-            updated_count += 1
-        else:
-            conflicts.append((entity_id, old_unique_id, new_unique_id))
-            _LOGGER.warning(
-                "Unique ID conflict: %s already exists for entity %s. "
-                "Skipping migration for %s",
-                new_unique_id,
-                conflict_entity_id,
-                entity_id,
-            )
-            skipped_count += 1
-
-    _LOGGER.info(
-        "Migrated %d entity registry entries for area rename, skipped %d due to conflicts",
-        updated_count,
-        skipped_count,
-    )
-    if conflicts:
-        _LOGGER.warning(
-            "The following entities could not be migrated due to unique ID conflicts: %s",
-            conflicts,
-        )
-
-
 async def _migrate_entity_registry_for_consolidation(
     hass: HomeAssistant,
     entries: list[ConfigEntry],
@@ -968,7 +886,7 @@ async def _migrate_entity_registry_for_consolidation(
         for entity_id, entity_entry in new_format_entities:
             old_unique_id_str = str(entity_entry.unique_id)
             entity_suffix = old_unique_id_str[len(new_prefix) :]
-            new_unique_id = f"{area_name}_{entity_suffix}"
+            new_unique_id = f"{area_name}_{entity_suffix}".lower()
 
             # Check for conflicts before updating
             has_conflict, conflict_entity_id = _check_unique_id_conflict(
@@ -1020,7 +938,7 @@ async def _migrate_entity_registry_for_consolidation(
                 entry.entry_id,
             )
             entity_suffix = old_unique_id_str[len(legacy_prefix) :]
-            new_unique_id = f"{area_name}_{entity_suffix}"
+            new_unique_id = f"{area_name}_{entity_suffix}".lower()
 
             # Check for conflicts before updating
             has_conflict, conflict_entity_id = _check_unique_id_conflict(
