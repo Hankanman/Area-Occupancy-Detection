@@ -223,12 +223,9 @@ def aggregate_intervals_by_slot(
             day_of_week = current_time.weekday()
             slot = calculate_time_slot(current_time, slot_minutes)
 
-            # Calculate how much of this interval falls in this slot
-            slot_start = current_time.replace(
-                minute=(slot * slot_minutes) % MINUTES_PER_HOUR,
-                second=0,
-                microsecond=0,
-            )
+            # Calculate slot boundaries from start of day
+            day_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            slot_start = day_start + timedelta(minutes=slot * slot_minutes)
             slot_end = slot_start + timedelta(minutes=slot_minutes)
 
             # Calculate overlap duration
