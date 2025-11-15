@@ -108,10 +108,10 @@ def segment_interval_with_motion(
 ) -> list[tuple[datetime, datetime]]:
     """Segment a merged interval based on motion coverage and apply timeout.
 
-    Splits the merged interval into segments:
-    1. Before motion (if any) - no timeout
-    2. Motion portion - apply timeout
-    3. After motion (if any) - no timeout
+    Iterates through each overlapping motion interval within the merged interval
+    and creates a motion segment with timeout applied to each. Preserves gaps
+    between motion intervals as separate segments. The caller should merge
+    overlapping/adjacent segments afterward.
 
     Args:
         merged_interval: (start, end) tuple representing the merged interval
@@ -119,7 +119,9 @@ def segment_interval_with_motion(
         timeout_seconds: Motion timeout in seconds to apply to motion segments
 
     Returns:
-        List of segmented (start, end) tuples
+        List of segmented (start, end) tuples including:
+        - Non-motion segments before, between, and after motion intervals
+        - Motion segments with timeout applied (motion_start to motion_end + timeout)
     """
     merged_start, merged_end = merged_interval
 
@@ -132,28 +134,47 @@ def segment_interval_with_motion(
         # No motion overlap, return interval as-is
         return [(merged_start, merged_end)]
 
-    # Calculate motion union within this merged interval
-    motion_union_start, motion_union_end = calculate_motion_union(
-        overlapping_motion, merged_start, merged_end
-    )
+    # Sort motion intervals by start time
+    sorted_motion = sorted(overlapping_motion, key=lambda x: x[0])
 
     segments: list[tuple[datetime, datetime]] = []
+    timeout_delta = timedelta(seconds=timeout_seconds)
 
-    # Segment before motion (if any) - no timeout
-    if merged_start < motion_union_start:
-        segments.append((merged_start, motion_union_start))
+    # Add segment before first motion (if any)
+    first_motion_start = sorted_motion[0][0]
+    if merged_start < first_motion_start:
+        segments.append((merged_start, first_motion_start))
 
-    # Motion segment: apply timeout
-    segments.append(
-        (
-            motion_union_start,
-            motion_union_end + timedelta(seconds=timeout_seconds),
-        )
+    # Process each motion interval individually
+    last_motion_timeout_end = None
+    for i, (motion_start, motion_end) in enumerate(sorted_motion):
+        # Clamp motion interval to merged interval boundaries
+        clamped_start = max(motion_start, merged_start)
+        clamped_end = min(motion_end, merged_end)
+
+        # Create motion segment with timeout applied
+        if clamped_start < clamped_end:
+            motion_timeout_end = clamped_end + timeout_delta
+            segments.append((clamped_start, motion_timeout_end))
+            last_motion_timeout_end = motion_timeout_end
+
+        # Add gap segment between current and next motion (if any)
+        if i < len(sorted_motion) - 1:
+            next_motion_start = sorted_motion[i + 1][0]
+            gap_start = clamped_end
+            gap_end = min(next_motion_start, merged_end)
+            if gap_start < gap_end:
+                segments.append((gap_start, gap_end))
+
+    # Add segment after last motion (if any)
+    # Start after the timeout applied to the last motion
+    after_start = (
+        last_motion_timeout_end
+        if last_motion_timeout_end
+        else min(sorted_motion[-1][1], merged_end)
     )
-
-    # Segment after motion (if any) - no timeout
-    if motion_union_end < merged_end:
-        segments.append((motion_union_end, merged_end))
+    if after_start < merged_end:
+        segments.append((after_start, merged_end))
 
     return segments
 
