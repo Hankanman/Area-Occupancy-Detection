@@ -10,9 +10,9 @@ import bisect
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy import func
+from sqlalchemy import func, union_all
 from sqlalchemy.exc import (
     DataError,
     IntegrityError,
@@ -34,6 +34,16 @@ else:
     AreaOccupancyCoordinator = Any
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class IntervalData(NamedTuple):
+    """Lightweight interval data for likelihood analysis."""
+
+    entity_id: str
+    start_time: datetime
+    duration_seconds: float
+    state: str
+
 
 # Prior calculation constants
 DEFAULT_PRIOR = 0.5
@@ -556,10 +566,38 @@ class PriorAnalyzer:
             return (None, None)
 
     def get_total_occupied_seconds(self) -> float:
-        """Get total occupied seconds using unified occupancy logic."""
-        _LOGGER.debug("Getting total occupied seconds using unified logic")
+        """Get total occupied seconds using SQL optimization with Python fallback."""
+        _LOGGER.debug("Getting total occupied seconds")
 
-        # Use the unified method to get occupied intervals
+        # Try SQL method first for better performance
+        try:
+            timeout_seconds = self.config.sensors.motion_timeout
+            include_media = bool(self.media_sensor_ids)
+            include_appliance = bool(self.appliance_sensor_ids)
+
+            total_seconds = self.db.get_total_occupied_seconds_sql(
+                entry_id=self.entry_id,
+                area_name=self.area_name,
+                lookback_days=DEFAULT_LOOKBACK_DAYS,
+                motion_timeout_seconds=timeout_seconds,
+                include_media=include_media,
+                include_appliance=include_appliance,
+                media_sensor_ids=self.media_sensor_ids if include_media else None,
+                appliance_sensor_ids=self.appliance_sensor_ids
+                if include_appliance
+                else None,
+            )
+
+            if total_seconds > 0:
+                _LOGGER.debug("Total occupied seconds (SQL): %.1f", total_seconds)
+                return total_seconds
+        except (SQLAlchemyError, AttributeError, TypeError) as e:
+            _LOGGER.debug(
+                "SQL method failed, falling back to Python: %s", e, exc_info=True
+            )
+
+        # Fallback to Python method for complex cases or if SQL fails
+        _LOGGER.debug("Using Python method for total occupied seconds")
         occupied_intervals = self.get_occupied_intervals()
 
         if not occupied_intervals:
@@ -571,7 +609,7 @@ class PriorAnalyzer:
             duration = (end_time - start_time).total_seconds()
             total_seconds += duration
 
-        _LOGGER.debug("Total occupied seconds: %.1f", total_seconds)
+        _LOGGER.debug("Total occupied seconds (Python): %.1f", total_seconds)
         return total_seconds
 
     def get_occupied_intervals(
@@ -610,107 +648,116 @@ class PriorAnalyzer:
         try:
             start_time = dt_util.utcnow()
             with db.get_session() as session:
-                # Get motion sensor intervals with state='on' within lookback period
+                # Build base filter conditions
+                base_filters = [
+                    db.Entities.entry_id == self.entry_id,
+                    db.Intervals.start_time >= lookback_date,
+                ]
+                if hasattr(self, "area_name") and self.area_name is not None:
+                    base_filters.append(db.Entities.area_name == self.area_name)
+
+                # Build motion sensor query with sensor_type indicator
                 motion_query = (
                     session.query(
                         db.Intervals.start_time,
                         db.Intervals.end_time,
+                        func.literal("motion").label("sensor_type"),
                     )
                     .join(
                         db.Entities,
                         db.Intervals.entity_id == db.Entities.entity_id,
                     )
                     .filter(
-                        db.Entities.entry_id == self.entry_id,
+                        *base_filters,
                         db.Entities.entity_type == InputType.MOTION,
                         db.Intervals.state == "on",
-                        db.Intervals.start_time >= lookback_date,
                     )
                 )
-                # Add area filter if area_name is set
-                if hasattr(self, "area_name") and self.area_name is not None:
-                    motion_query = motion_query.filter(
-                        db.Entities.area_name == self.area_name
-                    )
-                motion_intervals = motion_query.order_by(db.Intervals.start_time).all()
 
-                motion_raw = [(start, end) for start, end in motion_intervals]
-                all_intervals.extend(motion_raw)
+                # Build queries list starting with motion
+                queries = [motion_query]
 
-                # Get media player intervals if requested (playing state only)
+                # Add media player query if requested
                 if include_media and self.media_sensor_ids:
                     media_query = (
                         session.query(
                             db.Intervals.start_time,
                             db.Intervals.end_time,
+                            func.literal("media").label("sensor_type"),
                         )
                         .join(
                             db.Entities,
                             db.Intervals.entity_id == db.Entities.entity_id,
                         )
                         .filter(
-                            db.Entities.entry_id == self.entry_id,
+                            *base_filters,
                             db.Entities.entity_type == InputType.MEDIA,
                             db.Intervals.entity_id.in_(self.media_sensor_ids),
                             db.Intervals.state == STATE_PLAYING,
-                            db.Intervals.start_time >= lookback_date,
                         )
                     )
-                    # Add area filter if area_name is set
-                    if hasattr(self, "area_name") and self.area_name is not None:
-                        media_query = media_query.filter(
-                            db.Entities.area_name == self.area_name
-                        )
-                    media_intervals = media_query.order_by(
-                        db.Intervals.start_time
-                    ).all()
-                    media_raw = [(start, end) for start, end in media_intervals]
-                    all_intervals.extend(media_raw)
-                    _LOGGER.debug(
-                        "Found %d media player intervals (playing state only)",
-                        len(media_raw),
-                    )
+                    queries.append(media_query)
 
-                # Get appliance intervals if requested (on state only)
+                # Add appliance query if requested
                 if include_appliance and self.appliance_sensor_ids:
                     appliance_query = (
                         session.query(
                             db.Intervals.start_time,
                             db.Intervals.end_time,
+                            func.literal("appliance").label("sensor_type"),
                         )
                         .join(
                             db.Entities,
                             db.Intervals.entity_id == db.Entities.entity_id,
                         )
                         .filter(
-                            db.Entities.entry_id == self.entry_id,
+                            *base_filters,
                             db.Entities.entity_type == InputType.APPLIANCE,
                             db.Intervals.entity_id.in_(self.appliance_sensor_ids),
                             db.Intervals.state == STATE_ON,
-                            db.Intervals.start_time >= lookback_date,
                         )
                     )
-                    # Add area filter if area_name is set
-                    if hasattr(self, "area_name") and self.area_name is not None:
-                        appliance_query = appliance_query.filter(
-                            db.Entities.area_name == self.area_name
-                        )
-                    appliance_intervals = appliance_query.order_by(
-                        db.Intervals.start_time
-                    ).all()
-                    appliance_raw = [(start, end) for start, end in appliance_intervals]
-                    all_intervals.extend(appliance_raw)
-                    _LOGGER.debug(
-                        "Found %d appliance intervals (on state only)",
-                        len(appliance_raw),
-                    )
+                    queries.append(appliance_query)
+
+                # Combine all queries with UNION ALL and order by start_time
+                if len(queries) == 1:
+                    combined_query = queries[0].order_by(db.Intervals.start_time)
+                    all_results = combined_query.all()
+                else:
+                    # Create union of all subqueries
+                    union_query = union_all(*[q.subquery() for q in queries])
+                    # Query the union result
+                    combined_query = session.query(
+                        union_query.c.start_time,
+                        union_query.c.end_time,
+                        union_query.c.sensor_type,
+                    ).order_by(union_query.c.start_time)
+                    all_results = combined_query.all()
+
+                # Separate intervals by type for processing
+                motion_raw: list[tuple[datetime, datetime]] = []
+                all_intervals: list[tuple[datetime, datetime]] = []
+                media_count = 0
+                appliance_count = 0
+
+                for start, end, sensor_type in all_results:
+                    interval = (start, end)
+                    all_intervals.append(interval)
+                    if sensor_type == "motion":
+                        motion_raw.append(interval)
+                    elif sensor_type == "media":
+                        media_count += 1
+                    elif sensor_type == "appliance":
+                        appliance_count += 1
 
                 query_time = (dt_util.utcnow() - start_time).total_seconds()
                 _LOGGER.debug(
-                    "Query executed in %.3f seconds, found %d total intervals (motion: %d)",
+                    "Query executed in %.3f seconds, found %d total intervals (motion: %d, media: %d, appliance: %d)",
                     query_time,
                     len(all_intervals),
                     len(motion_raw),
+                    media_count,
+                    appliance_count,
                 )
 
                 if not all_intervals:
@@ -899,26 +946,38 @@ class LikelihoodAnalyzer:
         self,
         session: Any,
         sensors: list[Any],
-    ) -> dict[str, list[Any]]:
-        """Get all intervals grouped by entity_id."""
+    ) -> dict[str, list[IntervalData]]:
+        """Get all intervals grouped by entity_id, selecting only needed columns."""
         sensor_entity_ids = [entity.entity_id for entity in sensors]
 
+        # Select only needed columns instead of full ORM objects
         all_intervals = (
-            session.query(self.db.Intervals)
+            session.query(
+                self.db.Intervals.entity_id,
+                self.db.Intervals.start_time,
+                self.db.Intervals.duration_seconds,
+                self.db.Intervals.state,
+            )
             .filter(self.db.Intervals.entity_id.in_(sensor_entity_ids))
             .all()
         )
 
-        intervals_by_entity = defaultdict(list)
-        for interval in all_intervals:
-            intervals_by_entity[interval.entity_id].append(interval)
+        intervals_by_entity: dict[str, list[IntervalData]] = defaultdict(list)
+        for entity_id, start_time, duration_seconds, state in all_intervals:
+            interval_data = IntervalData(
+                entity_id=str(entity_id),
+                start_time=start_time,
+                duration_seconds=float(duration_seconds),
+                state=str(state),
+            )
+            intervals_by_entity[str(entity_id)].append(interval_data)
 
         return intervals_by_entity
 
     def _analyze_entity_likelihood(
         self,
         entity: Any,
-        intervals_by_entity: dict[str, list[Any]],
+        intervals_by_entity: dict[str, list[IntervalData]],
         occupied_times: list[tuple[datetime, datetime]],
         entity_manager: Any,
     ) -> tuple[float, float]:
@@ -945,10 +1004,9 @@ class LikelihoodAnalyzer:
         false_empty: float = 0.0
 
         for interval in intervals:
-            # Convert SQLAlchemy interval to Python types
-            interval_data = interval.to_dict()
-            start_time = interval_data["start_time"]
-            duration_seconds = float(interval_data["duration_seconds"])
+            # Use interval data directly (already converted from ORM)
+            start_time = interval.start_time
+            duration_seconds = interval.duration_seconds
 
             occ = self._is_occupied(start_time, occupied_times)
             is_active = self._is_interval_active(interval, entity_obj)
@@ -993,7 +1051,7 @@ class LikelihoodAnalyzer:
 
         return False
 
-    def _is_interval_active(self, interval: Any, entity_obj: Any) -> bool:
+    def _is_interval_active(self, interval: IntervalData, entity_obj: Any) -> bool:
         """Determine if interval state is active based on entity type."""
         if entity_obj.active_states:
             return interval.state in entity_obj.active_states
