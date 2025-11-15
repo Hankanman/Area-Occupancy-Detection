@@ -294,7 +294,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         """Cleanup when entity is removed."""
         _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
         self._cleanup_all_resources()
-
+        await super().async_will_remove_from_hass()
     @property
     def extra_state_attributes(self) -> dict[str, str | int | None | bool]:
         """Return the state attributes."""
