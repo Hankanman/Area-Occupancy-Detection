@@ -514,6 +514,15 @@ class EntityManager:
         self._entities[entity.entity_id] = entity
 
     async def cleanup(self) -> None:
-        """Clean up resources and recreate from config."""
+        """Clean up resources and recreate from config.
+
+        This method clears all entity references to release memory
+        and prevent leaks when areas are removed or reconfigured.
+        """
+        _LOGGER.debug("Cleaning up EntityManager for area: %s", self.area_name)
+        # Clear all entity references to release memory
+        # This ensures entities and their internal state (decay, etc.) are released
         self._entities.clear()
+        # Recreate entities from config (needed for reconfiguration scenarios)
         self._entities = self._factory.create_all_from_config()
+        _LOGGER.debug("EntityManager cleanup completed for area: %s", self.area_name)

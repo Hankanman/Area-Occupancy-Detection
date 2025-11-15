@@ -256,11 +256,29 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         else:
             _LOGGER.debug("No previous state found for %s to restore", self.entity_id)
 
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup when entity is removed."""
-        _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
+    def _cleanup_all_resources(self) -> None:
+        """Defensive cleanup of all resources (timers, listeners, state).
 
-        # Clear the entity_id from coordinator
+        This method ensures all resources are cleaned up even if
+        async_will_remove_from_hass() is not called, preventing memory leaks.
+        """
+        _LOGGER.debug(
+            "Performing defensive cleanup for Wasp in Box sensor: %s", self.entity_id
+        )
+
+        # Cancel state listener
+        if self._remove_state_listener is not None:
+            try:
+                self._remove_state_listener()
+            except (RuntimeError, AttributeError) as err:
+                _LOGGER.warning("Error canceling state listener: %s", err)
+            self._remove_state_listener = None
+
+        # Cancel all timers
+        self._cancel_max_duration_timer()
+        self._cancel_verification_timer()
+
+        # Clear coordinator reference
         if (
             self._area_name in self._coordinator.areas
             and self._coordinator.areas[self._area_name].wasp_entity_id
@@ -268,12 +286,14 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         ):
             self._coordinator.areas[self._area_name].wasp_entity_id = None
 
-        if self._remove_state_listener is not None:
-            self._remove_state_listener()
-            self._remove_state_listener = None
+        _LOGGER.debug(
+            "Defensive cleanup completed for Wasp in Box sensor: %s", self.entity_id
+        )
 
-        self._cancel_max_duration_timer()
-        self._cancel_verification_timer()
+    async def async_will_remove_from_hass(self) -> None:
+        """Cleanup when entity is removed."""
+        _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
+        self._cleanup_all_resources()
 
     @property
     def extra_state_attributes(self) -> dict[str, str | int | None | bool]:
