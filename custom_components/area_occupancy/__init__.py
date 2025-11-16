@@ -25,6 +25,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     NOTE: Heavy database operations (integrity checks, historical analysis) are
     deferred to background tasks to ensure HA startup completes quickly.
+
+    With single-instance architecture, there should only be one config entry.
+    A single global coordinator manages all areas.
     """
 
     # Migration check
@@ -49,54 +52,66 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"Migration failed with exception: {err}"
             ) from err
 
-    # Create and setup coordinator (fast path - no blocking operations)
-    _LOGGER.info("Initializing Area Occupancy coordinator for entry %s", entry.entry_id)
-    try:
-        coordinator = AreaOccupancyCoordinator(hass, entry)
-    except Exception as err:
-        _LOGGER.error("Failed to create coordinator: %s", err)
-        raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
+    # Get or create global coordinator (single-instance architecture)
+    # Check if coordinator already exists (shouldn't happen in normal operation,
+    # but supports migration scenarios where multiple entries might temporarily exist)
+    if DOMAIN not in hass.data:
+        # Create and setup coordinator (fast path - no blocking operations)
+        _LOGGER.info(
+            "Creating global Area Occupancy coordinator for entry %s", entry.entry_id
+        )
+        try:
+            coordinator = AreaOccupancyCoordinator(hass, entry)
+        except Exception as err:
+            _LOGGER.error("Failed to create coordinator: %s", err)
+            raise ConfigEntryNotReady(f"Failed to create coordinator: {err}") from err
 
-    # Initialize database asynchronously (fast validation only, no integrity checks)
-    try:
-        _LOGGER.debug("Initializing database (quick validation mode)")
-        await coordinator.async_init_database()
-        _LOGGER.info("Database initialization completed")
-    except Exception as err:
-        _LOGGER.error("Failed to initialize database: %s", err)
-        raise ConfigEntryNotReady(f"Failed to initialize database: {err}") from err
+        # Initialize database asynchronously (fast validation only, no integrity checks)
+        try:
+            _LOGGER.debug("Initializing database (quick validation mode)")
+            await coordinator.async_init_database()
+            _LOGGER.info("Database initialization completed")
+        except Exception as err:
+            _LOGGER.error("Failed to initialize database: %s", err)
+            raise ConfigEntryNotReady(f"Failed to initialize database: {err}") from err
 
-    # Use modern coordinator setup pattern
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        _LOGGER.error("Failed to setup coordinator: %s", err)
-        raise ConfigEntryNotReady(f"Failed to setup coordinator: {err}") from err
+        # Use modern coordinator setup pattern
+        try:
+            await coordinator.async_config_entry_first_refresh()
+        except Exception as err:
+            _LOGGER.error("Failed to setup coordinator: %s", err)
+            raise ConfigEntryNotReady(f"Failed to setup coordinator: {err}") from err
 
-    # Store coordinator using modern pattern
+        # Store global coordinator
+        hass.data[DOMAIN] = coordinator
+    else:
+        # Coordinator already exists - reuse it (migration scenario)
+        coordinator = hass.data[DOMAIN]
+        _LOGGER.info("Reusing existing global coordinator for entry %s", entry.entry_id)
+
+    # Store reference in entry for platform entities to access
     entry.runtime_data = coordinator
 
     # Setup platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Setup services
-    await async_setup_services(hass)
+    # Setup services (idempotent - only needs to run once)
+    if DOMAIN not in hass.data.get("_services_setup", {}):
+        await async_setup_services(hass)
+        if "_services_setup" not in hass.data:
+            hass.data["_services_setup"] = {}
+        hass.data["_services_setup"][DOMAIN] = True
 
     # Add update listener
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
-    # Log role-specific info
-    role = "MASTER" if coordinator.is_master else "non-master"
-    position = await hass.async_add_executor_job(
-        coordinator.db.get_instance_position, entry.entry_id
-    )
+    # Log setup completion
+    area_count = len(coordinator.get_area_names())
     _LOGGER.info(
-        "Area Occupancy setup complete for entry %s as %s (position %d)",
+        "Area Occupancy setup complete for entry %s with %d area(s)",
         entry.entry_id,
-        role,
-        position,
+        area_count,
     )
-    _LOGGER.info("Analysis runs staggered with %d minute intervals", 2)
     return True
 
 
@@ -117,14 +132,42 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    _LOGGER.debug("Unloading Area Occupancy config entry")
+    _LOGGER.debug("Unloading Area Occupancy config entry %s", entry.entry_id)
 
     # Unload all platforms
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Clean up coordinator
-        coordinator = entry.runtime_data
-        if coordinator is not None:
-            await coordinator.async_shutdown()
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    if unload_ok:
+        # Clean up global coordinator if this is the last/only entry
+        # Check if any other entries exist for this domain
+        other_entries = [
+            e
+            for e in hass.config_entries.async_entries(DOMAIN)
+            if e.entry_id != entry.entry_id
+        ]
+
+        if not other_entries:
+            # This is the last entry - clean up global coordinator
+            coordinator = hass.data.get(DOMAIN)
+            if coordinator is not None:
+                _LOGGER.debug("Shutting down global coordinator (last entry)")
+                await coordinator.async_shutdown()
+                del hass.data[DOMAIN]
+
+            # Clean up services flag
+            if (
+                "_services_setup" in hass.data
+                and DOMAIN in hass.data["_services_setup"]
+            ):
+                del hass.data["_services_setup"][DOMAIN]
+        else:
+            _LOGGER.debug(
+                "Keeping global coordinator active (other entries exist: %d)",
+                len(other_entries),
+            )
+
+        # Clear runtime data
+        entry.runtime_data = None
 
     return unload_ok
 
@@ -133,6 +176,11 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry update."""
     _LOGGER.debug("Config entry updated, updating coordinator")
 
-    coordinator = entry.runtime_data
+    # Get coordinator from global storage or entry runtime_data
+    coordinator = hass.data.get(DOMAIN) or entry.runtime_data
+    if coordinator is None:
+        _LOGGER.warning("Coordinator not found when updating entry %s", entry.entry_id)
+        return
+
     await coordinator.async_update_options(entry.options)
     await coordinator.async_refresh()

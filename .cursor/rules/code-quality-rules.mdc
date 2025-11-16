@@ -1,0 +1,58 @@
+---
+alwaysApply: true
+---
+
+## Avoid `raise-within-try` (TRY301)
+
+**Problem**: Raising exceptions within try blocks that catch those same exceptions is redundant and flagged by ruff's TRY301 rule.
+
+**Solution**: Extract validation logic to helper functions defined OUTSIDE the try block. The raise statement should be in a separate function, not directly in the try block.
+
+**Bad Example**:
+
+```python
+try:
+    if condition:
+        raise ValueError("Error message")  # TRY301 violation
+except ValueError:
+    handle_error()
+```
+
+**Good Example - Module-level helper function**:
+
+```python
+def _validate_condition() -> None:
+    """Validate condition and raise if invalid."""
+    if condition:
+        raise ValueError("Error message")
+
+try:
+    _validate_condition()
+except ValueError:
+    handle_error()
+```
+
+**Good Example - Class method helper**:
+
+```python
+class MyClass:
+    def _validate_data(self, data: dict) -> None:
+        """Validate data and raise if invalid."""
+        if not data:
+            raise ValueError("Data is required")
+
+    def process(self):
+        try:
+            self._validate_data(self.data)
+        except ValueError:
+            handle_error()
+```
+
+**Pattern to follow**:
+
+1. Define validation functions OUTSIDE try blocks (as module-level functions or class methods)
+2. Pass any needed variables/parameters to these functions
+3. Call the validation function from within the try block
+4. The raise statement should be in the helper function, not directly in the try block
+
+This makes exceptions reusable across multiple call sites and avoids redundant try-except patterns.

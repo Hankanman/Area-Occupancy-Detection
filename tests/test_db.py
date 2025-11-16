@@ -15,8 +15,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from custom_components.area_occupancy.const import RETENTION_DAYS
-from custom_components.area_occupancy.db import DB_VERSION, AreaOccupancyDB, Base
+from custom_components.area_occupancy.const import MIN_PRIOR, RETENTION_DAYS
+from custom_components.area_occupancy.db import (
+    DB_VERSION,
+    DEFAULT_AREA_PRIOR,
+    AreaOccupancyDB,
+    Base,
+)
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -24,25 +29,9 @@ from homeassistant.util import dt as dt_util
 _LOGGER = logging.getLogger(__name__)
 
 
-@pytest.fixture(autouse=True)
-def mock_area_occupancy_db_globally():
-    """Override autouse patching from conftest to use real DB class."""
-    return
-
-
-@pytest.fixture
-def configured_db(mock_db_with_engine):
-    """Return a DB instance with a configured coordinator."""
-    db = mock_db_with_engine
-    db.coordinator.area_prior = 0.3
-    db.coordinator.config = SimpleNamespace(
-        name="Test Area",
-        area_id="test_area",
-        purpose="living",
-        threshold=0.5,
-        entity_ids=["binary_sensor.motion"],
-    )
-    return db
+# ruff: noqa: SLF001
+# Note: mock_area_occupancy_db_globally autouse fixture in conftest.py
+# automatically detects DB tests and skips mocking, so no override needed here.
 
 
 # Helper functions for creating test data
@@ -79,10 +68,11 @@ def create_test_entity_data(
     return data
 
 
-def create_test_prior_data(entry_id="test_entry_001", **overrides):
+def create_test_prior_data(entry_id="test_entry_001", area_name="Testing", **overrides):
     """Create standardized test prior data."""
     data = {
         "entry_id": entry_id,
+        "area_name": area_name,
         "day_of_week": 1,  # Monday
         "time_slot": 14,  # 2 PM
         "prior_value": 0.35,
@@ -194,6 +184,7 @@ class TestDatabaseModels:
                 db_session.query(model_class)
                 .filter_by(
                     entry_id=test_data["entry_id"],
+                    area_name=test_data.get("area_name", "Testing"),
                     day_of_week=test_data["day_of_week"],
                     time_slot=test_data["time_slot"],
                 )
@@ -267,14 +258,14 @@ class TestDatabaseOperations:
     In multi-instance setup, only the master performs these operations.
     """
 
-    def test_area_occupancy_db_initialization(self, mock_area_occupancy_db):
+    def test_area_occupancy_db_initialization(self, test_db):
         """Test AreaOccupancyDB initialization with in-memory database."""
-        db = mock_area_occupancy_db
+        db = test_db
 
         assert db.engine is not None
-        assert db.session is not None
+        assert db._session_maker is not None
 
-        # Test that we can create tables
+        # Test that we can create tables (already initialized by fixture)
         db.init_db()
 
         # Verify tables exist
@@ -322,9 +313,9 @@ class TestDatabaseOperations:
 class TestAreaOccupancyDBUtilities:
     """Test AreaOccupancyDB utility methods."""
 
-    def test_table_properties_and_engine(self, configured_db):
+    def test_table_properties_and_engine(self, test_db):
         """Test table properties and engine access."""
-        db = configured_db
+        db = test_db
         assert db.get_engine() is db.engine
         assert db.areas.name == "areas"
         assert db.entities.name == "entities"
@@ -332,17 +323,17 @@ class TestAreaOccupancyDBUtilities:
         assert db.priors.name == "priors"
         assert db.metadata.name == "metadata"
 
-    def test_version_operations(self, configured_db):
+    def test_version_operations(self, test_db):
         """Test database version operations."""
-        db = configured_db
+        db = test_db
         db.init_db()
         db.set_db_version()
         db.set_db_version()
         assert db.get_db_version() == DB_VERSION
 
-    def test_delete_and_force_reinitialize(self, configured_db, tmp_path, monkeypatch):
+    def test_delete_and_force_reinitialize(self, test_db, tmp_path, monkeypatch):
         """Test database deletion and reinitialization."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
         db.db_path.write_text("data")
         db.delete_db()
@@ -354,9 +345,9 @@ class TestAreaOccupancyDBUtilities:
         db.force_reinitialize()
         assert calls == ["init", "ver"]
 
-    def test_enable_wal_mode_and_create_tables(self, configured_db, monkeypatch):
+    def test_enable_wal_mode_and_create_tables(self, test_db, monkeypatch):
         """Test WAL mode and table creation with error handling."""
-        db = configured_db
+        db = test_db
         db.init_db()
         db._create_tables_individually()
 
@@ -379,9 +370,9 @@ class TestAreaOccupancyDBUtilities:
         db.engine = DummyEngine()
         db._enable_wal_mode()  # should swallow the error
 
-    def test_is_valid_state_and_latest_interval(self, configured_db):
+    def test_is_valid_state_and_latest_interval(self, test_db):
         """Test state validation and latest interval retrieval."""
-        db = configured_db
+        db = test_db
         db.init_db()
         assert db.is_valid_state("on")
         assert not db.is_valid_state("unknown")
@@ -408,11 +399,9 @@ class TestAreaOccupancyDBUtilities:
         assert second > first.replace(tzinfo=None)
 
     @pytest.mark.asyncio
-    async def test_states_to_intervals_and_ensure_area(
-        self, configured_db, monkeypatch
-    ):
+    async def test_states_to_intervals_and_ensure_area(self, test_db, monkeypatch):
         """Test states to intervals conversion and area existence checking."""
-        db = configured_db
+        db = test_db
         start = dt_util.utcnow()
         states = {
             "binary_sensor.motion": [
@@ -443,9 +432,9 @@ class TestAreaOccupancyDBUtilities:
         assert saved == [True]
 
     @pytest.mark.asyncio
-    async def test_ensure_area_exists_when_present(self, configured_db, monkeypatch):
+    async def test_ensure_area_exists_when_present(self, test_db, monkeypatch):
         """Test ensure_area_exists when area already exists."""
-        db = configured_db
+        db = test_db
         monkeypatch.setattr(
             db, "get_area_data", lambda entry_id: {"entry_id": entry_id}
         )
@@ -460,9 +449,9 @@ class TestAreaOccupancyDBUtilities:
         assert not called
 
     @pytest.mark.asyncio
-    async def test_save_entity_data(self, configured_db):
+    async def test_save_entity_data(self, test_db):
         """Test saving entity data with various entity types."""
-        db = configured_db
+        db = test_db
         good = SimpleNamespace(
             entity_id="binary_sensor.good",
             type=SimpleNamespace(input_type="motion", weight=0.9),
@@ -495,21 +484,31 @@ class TestAreaOccupancyDBUtilities:
             ),
             evidence=None,
         )
-        db.coordinator.entities = SimpleNamespace(
+        # Access entities via area (multi-area architecture)
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up entities on the area's entities manager using private attribute
+        # since entities is a read-only property
+        mock_entities_manager = SimpleNamespace(
             entities={
                 "binary_sensor.good": good,
                 "binary_sensor.bad": missing_type,
                 "binary_sensor.noinput": no_input,
             }
         )
+        area._entities = mock_entities_manager
         db.save_entity_data()
         with db.engine.connect() as conn:
             rows = conn.execute(sa.text("SELECT entity_id FROM entities")).fetchall()
         assert {r[0] for r in rows} == {"binary_sensor.good"}
 
-    def test_is_intervals_empty(self, configured_db):
+    def test_is_intervals_empty(self, test_db):
         """Test intervals empty check."""
-        db = configured_db
+        db = test_db
         db.init_db()
         assert db.is_intervals_empty()
 
@@ -530,9 +529,9 @@ class TestAreaOccupancyDBUtilities:
             )
         assert not db.is_intervals_empty()
 
-    def test_get_area_data_error(self, configured_db, monkeypatch):
+    def test_get_area_data_error(self, test_db, monkeypatch):
         """Test get_area_data with session error."""
-        db = configured_db
+        db = test_db
 
         def bad_session():
             raise sa.exc.SQLAlchemyError("boom")
@@ -541,124 +540,205 @@ class TestAreaOccupancyDBUtilities:
         assert db.get_area_data("x") is None
 
     @pytest.mark.asyncio
-    async def test_load_data(self, configured_db, monkeypatch):
+    async def test_load_data(self, test_db, monkeypatch):
         """Test loading data from database."""
-        db = configured_db
+        db = test_db
+        # Ensure database is initialized before saving data
+        db.init_db()
+        # Ensure area has an area_prior set so load_data will call set_global_prior
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set area_prior so it will be saved and loaded
+        area.prior.set_global_prior(0.5)
+        # Verify area_prior is set correctly
+        assert area.area_prior() >= 0.5, (
+            f"area_prior should be >= 0.5, got {area.area_prior()}"
+        )
         db.save_area_data()
-        await self.test_save_entity_data(configured_db)  # populate entities table
+
+        # Verify that area_prior was saved to the database
+        area_data = db.get_area_data(db.coordinator.entry_id)
+        if area_data:
+            saved_prior = area_data.get("area_prior")
+            assert saved_prior is not None, (
+                "area_prior should be saved to database, got None"
+            )
+            assert saved_prior >= 0.5, f"area_prior should be >= 0.5, got {saved_prior}"
+
+        # Populate entities table directly
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(
+                is_decaying=False,
+                decay_start=dt_util.utcnow(),
+            ),
+            evidence=True,
+        )
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up entities on the area's entities manager using private attribute
+        mock_entities_manager = SimpleNamespace(
+            entities={
+                "binary_sensor.good": good,
+            }
+        )
+        area._entities = mock_entities_manager
+        db.save_entity_data()
 
         called = []
         created_entities = []
 
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(
-            set_global_prior=lambda v: called.append(("prior", v))
-        )
+        # Restore real entities manager for load_data test
+        area._entities = None  # Reset to allow property to recreate
+        real_entities = area.entities  # This will create a real EntityManager
 
-        # Mock the entities manager
-        def create_mock_entity():
-            entity = SimpleNamespace(
-                prob_given_true=0.5,
-                prob_given_false=0.1,
-                last_updated=dt_util.utcnow(),
-                evidence=True,
-            )
-            entity.update_decay = Mock()
-            entity.update_likelihood = Mock()
-            return entity
+        # Track calls to set_global_prior
+        original_set_global_prior = area.prior.set_global_prior
 
-        db.coordinator.entities = SimpleNamespace(
-            get_entity=lambda entity_id: create_mock_entity(),
-            add_entity=lambda entity: created_entities.append(entity.entity_id),
-        )
+        def tracked_set_global_prior(v):
+            called.append(("prior", v))
+            return original_set_global_prior(v)
 
-        # Mock the factory
-        db.coordinator.factory = SimpleNamespace(
-            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
-        )
+        area.prior.set_global_prior = tracked_set_global_prior
+
+        # Track entity creation
+        original_add_entity = real_entities.add_entity
+
+        def tracked_add_entity(entity):
+            created_entities.append(entity.entity_id)
+            return original_add_entity(entity)
+
+        real_entities.add_entity = tracked_add_entity
 
         await db.load_data()
 
         # Check that prior was set
-        assert any(call[0] == "prior" for call in called)
-
-    @pytest.mark.asyncio
-    async def test_load_data_entity_handling(self, configured_db, monkeypatch):
-        """Test the entity handling logic in load_data method."""
-        db = configured_db
-        db.save_area_data()
-        await self.test_save_entity_data(configured_db)  # populate entities table
-
-        created_entities = []
-
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
-
-        # Mock the entities manager to simulate existing entities
-        def mock_get_entity(entity_id):
-            if entity_id == "binary_sensor.motion":
-                # Return existing entity that should be updated
-                entity = SimpleNamespace(
-                    prob_given_true=0.5,
-                    prob_given_false=0.1,
-                    last_updated=dt_util.utcnow(),
-                    evidence=True,
-                )
-                entity.update_decay = Mock()
-                entity.update_likelihood = Mock()
-                return entity
-            # Raise ValueError to simulate entity not found
-            raise ValueError(f"Entity {entity_id} not found")
-
-        db.coordinator.entities = SimpleNamespace(
-            get_entity=mock_get_entity,
-            add_entity=lambda entity: created_entities.append(entity.entity_id),
-            entity_ids=[
-                "binary_sensor.motion",
-                "binary_sensor.good",
-            ],  # Entities in current config
+        # Note: set_global_prior might be called with the saved area_prior value,
+        # which could be different from 0.5 if it was combined with time_prior
+        assert any(call[0] == "prior" for call in called), (
+            f"set_global_prior was not called. Called: {called}"
         )
 
-        # Mock the factory to create new entities
-        db.coordinator.factory = SimpleNamespace(
-            create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
+    @pytest.mark.asyncio
+    async def test_load_data_entity_handling(self, test_db, monkeypatch):
+        """Test the entity handling logic in load_data method.
+
+        This test verifies that:
+        1. Entities in the database that are in the current config are updated
+        2. Entities in the database that are NOT in the current config are deleted as stale
+        """
+        db = test_db
+        db.save_area_data()
+
+        # Populate entities table with an entity that's NOT in the current config
+        # This entity should be deleted as stale when load_data is called
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(
+                is_decaying=False,
+                decay_start=dt_util.utcnow(),
+            ),
+            evidence=True,
+        )
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up entities on the area's entities manager using private attribute
+        mock_entities_manager = SimpleNamespace(
+            entities={
+                "binary_sensor.good": good,
+            }
+        )
+        area._entities = mock_entities_manager
+        db.save_entity_data()
+
+        # Verify entity is in database
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                sa.text(
+                    "SELECT entity_id FROM entities WHERE area_name=:a AND entity_id=:e"
+                ),
+                {"a": area_name, "e": "binary_sensor.good"},
+            ).fetchone()
+        assert result is not None, "Entity should be in database before load_data"
+
+        # Restore real entities manager for load_data test
+        area._entities = None  # Reset to allow property to recreate
+        real_entities = area.entities  # This will create a real EntityManager
+
+        # Verify that binary_sensor.good is NOT in the current config
+        assert "binary_sensor.good" not in real_entities.entity_ids, (
+            "Entity should not be in current config"
         )
 
         await db.load_data()
 
-        # Verify that new entities were created for entities not found in coordinator
-        assert len(created_entities) > 0
+        # Verify that stale entity was deleted from database
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                sa.text(
+                    "SELECT entity_id FROM entities WHERE area_name=:a AND entity_id=:e"
+                ),
+                {"a": area_name, "e": "binary_sensor.good"},
+            ).fetchone()
+        assert result is None, "Stale entity should be deleted from database"
 
     @pytest.mark.asyncio
-    async def test_load_data_error_handling(self, configured_db, monkeypatch):
+    async def test_load_data_error_handling(self, test_db, monkeypatch):
         """Test error handling in load_data method."""
-        db = configured_db
+        db = test_db
         db.save_area_data()
-        await self.test_save_entity_data(configured_db)  # populate entities table
+        await self.test_save_entity_data(test_db)  # populate entities table
 
-        # Mock the prior setter
-        db.coordinator.prior = SimpleNamespace(set_global_prior=lambda v: None)
+        # Mock area-based access
+        mock_area = Mock()
+        mock_area.area_name = "Test Area"
 
-        # Mock the entities manager to always raise ValueError
-        db.coordinator.entities = SimpleNamespace(
+        # Mock the prior setter via area
+        mock_area.prior = SimpleNamespace(set_global_prior=lambda v: None)
+
+        # Mock the entities manager to always raise ValueError via area
+        mock_area.entities = SimpleNamespace(
             get_entity=lambda entity_id: (_ for _ in ()).throw(
                 ValueError(f"Entity {entity_id} not found")
             ),
             add_entity=lambda entity: None,
         )
 
-        # Mock the factory
-        db.coordinator.factory = SimpleNamespace(
+        # Mock the factory via area
+        mock_area.factory = SimpleNamespace(
             create_from_db=lambda ent: SimpleNamespace(entity_id=ent.entity_id)
         )
+
+        # Set up coordinator to return the mock area
+        db.coordinator.get_area_or_default = Mock(return_value=mock_area)
+        db.coordinator.get_area_names = Mock(return_value=["Test Area"])
+        db.coordinator.areas = {"Test Area": mock_area}
 
         # This should not raise an exception - it should handle the ValueError gracefully
         await db.load_data()
 
     @pytest.mark.asyncio
-    async def test_sync_states(self, configured_db, monkeypatch):
+    async def test_sync_states(self, test_db, monkeypatch):
         """Test syncing states from recorder."""
-        db = configured_db
+        db = test_db
         db.init_db()
         start = dt_util.utcnow()
         state = State("binary_sensor.motion", "on", last_changed=start)
@@ -673,14 +753,51 @@ class TestAreaOccupancyDBUtilities:
         )
         await db.sync_states()
 
-    def test_get_area_data_none(self, configured_db):
+    @pytest.mark.asyncio
+    async def test_sync_states_bulk_insert_with_duplicates(self, test_db, monkeypatch):
+        """Test sync_states bulk insert handles duplicates correctly."""
+        db = test_db
+        db.init_db()
+        start = dt_util.utcnow()
+        end = start + timedelta(seconds=60)
+
+        # Create two states that will generate intervals
+        state1 = State("binary_sensor.motion", "on", last_changed=start)
+        state2 = State("binary_sensor.motion", "off", last_changed=end)
+
+        class DummyRecorder:
+            async def async_add_executor_job(self, func):
+                return {"binary_sensor.motion": [state1, state2]}
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.get_instance",
+            lambda hass: DummyRecorder(),
+        )
+
+        # First sync - should insert intervals
+        await db.sync_states()
+
+        # Verify intervals were inserted
+        with db.get_session() as session:
+            count = session.query(db.Intervals).count()
+            assert count > 0
+
+        # Second sync with same data - should skip duplicates
+        await db.sync_states()
+
+        # Verify no duplicate intervals were inserted
+        with db.get_session() as session:
+            count_after = session.query(db.Intervals).count()
+            assert count_after == count  # Should be the same count
+
+    def test_get_area_data_none(self, test_db):
         """Test get_area_data with missing entry."""
-        db = configured_db
+        db = test_db
         assert db.get_area_data("missing") is None
 
-    def test_states_to_intervals_edge_cases(self, configured_db):
+    def test_states_to_intervals_edge_cases(self, test_db):
         """Test states to intervals with edge cases."""
-        db = configured_db
+        db = test_db
         old_state = State(
             "binary_sensor.motion",
             "on",
@@ -693,9 +810,9 @@ class TestAreaOccupancyDBUtilities:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_sync_states_error(self, configured_db, monkeypatch):
+    async def test_sync_states_error(self, test_db, monkeypatch):
         """Test sync_states with recorder error."""
-        db = configured_db
+        db = test_db
 
         class DummyRecorder:
             async def async_add_executor_job(self, func):
@@ -723,6 +840,7 @@ class TestAreaOccupancyDBUtilities:
         pri = AreaOccupancyDB.Priors.from_dict(
             {
                 "entry_id": "e1",
+                "area_name": "Testing",
                 "day_of_week": 1,
                 "time_slot": 0,
                 "prior_value": 0.1,
@@ -745,9 +863,9 @@ class TestAreaOccupancyDBUtilities:
         assert interval.to_dict()["entity_id"] == "sensor.test"
 
     @pytest.mark.asyncio
-    async def test_sync_states_no_states(self, configured_db, monkeypatch):
+    async def test_sync_states_no_states(self, test_db, monkeypatch):
         """Test sync_states with no states."""
-        db = configured_db
+        db = test_db
 
         class DummyRecorder:
             async def async_add_executor_job(self, func):
@@ -760,9 +878,9 @@ class TestAreaOccupancyDBUtilities:
         await db.sync_states()
 
     @pytest.mark.asyncio
-    async def test_ensure_area_exists_error_handling(self, configured_db, monkeypatch):
+    async def test_ensure_area_exists_error_handling(self, test_db, monkeypatch):
         """Test ensure_area_exists error handling."""
-        db = configured_db
+        db = test_db
         monkeypatch.setattr(db, "get_area_data", lambda eid: None)
 
         async def bad_save():
@@ -772,9 +890,9 @@ class TestAreaOccupancyDBUtilities:
         await db.ensure_area_exists()
 
     @pytest.mark.asyncio
-    async def test_ensure_area_exists_fails_to_create(self, configured_db, monkeypatch):
+    async def test_ensure_area_exists_fails_to_create(self, test_db, monkeypatch):
         """Test ensure_area_exists when creation fails."""
-        db = configured_db
+        db = test_db
         calls = []
 
         def fake_get(entry_id):
@@ -796,10 +914,10 @@ class TestAreaOccupancyDBUtilities:
         ],
     )
     def test_is_intervals_empty_error(
-        self, configured_db, monkeypatch, error_type, expected_result
+        self, test_db, monkeypatch, error_type, expected_result
     ):
         """Test is_intervals_empty with various error conditions."""
-        db = configured_db
+        db = test_db
 
         @contextmanager
         def error_session():
@@ -827,10 +945,10 @@ class TestAreaOccupancyDBUtilities:
         ],
     )
     def test_get_latest_interval_error(
-        self, configured_db, monkeypatch, error_type, should_raise
+        self, test_db, monkeypatch, error_type, should_raise
     ):
         """Test get_latest_interval with various error conditions."""
-        db = configured_db
+        db = test_db
 
         @contextmanager
         def bad_session():
@@ -852,9 +970,9 @@ class TestAreaOccupancyDBUtilities:
         assert isinstance(result, datetime)
 
     @pytest.mark.asyncio
-    async def test_load_data_error(self, configured_db, monkeypatch):
+    async def test_load_data_error(self, test_db, monkeypatch):
         """Test load_data with session error."""
-        db = configured_db
+        db = test_db
 
         @contextmanager
         def bad_session():
@@ -878,33 +996,173 @@ class TestAreaOccupancyDBUtilities:
             ("area_name", ""),
             ("purpose", ""),
             ("threshold", None),
-            ("area_prior", None),
         ],
     )
-    async def test_save_area_data_validation(self, configured_db, field, value):
+    async def test_save_area_data_validation(self, test_db, field, value):
         """Test save_area_data validation with various invalid values."""
-        db = configured_db
+        db = test_db
+        # Get the actual area name from the coordinator (from config entry)
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0, "Coordinator should have at least one area"
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None, f"Area '{area_name}' should exist"
+
         if field == "entry_id":
             db.coordinator.entry_id = value
+            # When entry_id is empty, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
         elif field == "area_name":
-            db.coordinator.config.name = value
+            # area_name is passed as parameter, not from config
+            # Test with invalid area_name parameter - empty string will cause area lookup to fail
+            # and no areas will be saved
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name="")
+            return
         elif field == "purpose":
-            db.coordinator.config.purpose = value
+            area.config.purpose = value
+            # When purpose is empty, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
         elif field == "threshold":
-            db.coordinator.config.threshold = value
-        elif field == "area_prior":
-            db.coordinator.area_prior = value
-        with pytest.raises(ValueError):
-            db.save_area_data()
+            area.config.threshold = value
+            # When threshold is None, save_area_data will rollback and raise ValueError
+            with pytest.raises(ValueError, match="Area data validation failed"):
+                db.save_area_data(area_name=area_name)
+
+        # Verify no data was saved (transaction was rolled back)
         with db.engine.connect() as conn:
             result = conn.execute(sa.text("SELECT COUNT(*) FROM areas")).scalar()
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_save_area_data_success(self, configured_db):
+    async def test_save_area_data_preserves_existing_prior_when_global_prior_none(
+        self, test_db
+    ):
+        """Test that save_area_data uses MIN_PRIOR when global_prior is None (doesn't preserve existing)."""
+        db = test_db
+        existing_prior = 0.45
+
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Set up existing area in database with a learned prior
+        with db.get_locked_session() as session:
+            existing_area = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                area_id=area.config.area_id,
+                purpose=area.config.purpose,
+                threshold=area.config.threshold,
+                area_prior=existing_prior,
+            )
+            session.add(existing_area)
+            session.commit()
+
+        # Set global_prior to None to simulate first run or failed load - use area-based access
+        area.prior.global_prior = None
+        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
+        area.area_prior = Mock(return_value=MIN_PRIOR)
+
+        # Save will use MIN_PRIOR from coordinator.area_prior when global_prior is None
+        db.save_area_data()
+
+        # Verify MIN_PRIOR was used (not the existing prior)
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
+            ).fetchone()
+        # When global_prior is None, Prior.value returns MIN_PRIOR
+        assert row[0] == MIN_PRIOR
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_uses_default_when_no_existing_prior(self, test_db):
+        """Test that save_area_data uses MIN_PRIOR when global_prior is None and no existing value."""
+        db = test_db
+
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        # Ensure no existing area in database
+        with db.get_locked_session() as session:
+            session.query(db.Areas).filter_by(
+                entry_id=db.coordinator.entry_id, area_name=area_name
+            ).delete()
+            session.commit()
+
+        # Set global_prior to None - use area-based access
+        area.prior.global_prior = None
+        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
+        area.area_prior = Mock(return_value=MIN_PRIOR)
+
+        # Save should use MIN_PRIOR (from Prior.value when global_prior is None)
+        db.save_area_data()
+
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
+            ).fetchone()
+        # When global_prior is None, Prior.value returns MIN_PRIOR
+        assert row[0] == MIN_PRIOR
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_handles_none_area_prior_with_global_prior_set(
+        self, test_db
+    ):
+        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior returns None."""
+        db = test_db
+
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+
+        # Mock area.area_prior to return None
+        # This simulates an edge case where the method returns None
+        area.area_prior = Mock(return_value=None)
+
+        # Save should use DEFAULT_AREA_PRIOR as fallback (from db.py line 1241-1247)
+        db.save_area_data()
+
+        # Verify DEFAULT_AREA_PRIOR was used as fallback
+        with db.engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": db.coordinator.entry_id, "a": area_name},
+            ).fetchone()
+        # When area_prior is None, save_area_data uses DEFAULT_AREA_PRIOR as fallback
+        assert row[0] == DEFAULT_AREA_PRIOR
+
+    @pytest.mark.asyncio
+    async def test_save_area_data_success(self, test_db):
         """Test successful save_area_data operation."""
-        db = configured_db
-        db.coordinator.config.area_id = None
+        db = test_db
+        # Get the actual area name from the coordinator
+        area_names = db.coordinator.get_area_names()
+        assert len(area_names) > 0
+        area_name = area_names[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        area.config.area_id = None
         db.save_area_data()
         with db.engine.connect() as conn:
             row = conn.execute(
@@ -916,9 +1174,9 @@ class TestAreaOccupancyDBUtilities:
         data = db.get_area_data(db.coordinator.entry_id)
         assert data is not None and data["area_id"] == db.coordinator.entry_id
 
-    def test_get_area_data_with_error(self, configured_db):
+    def test_get_area_data_with_error(self, test_db):
         """Test get_area_data with database error."""
-        db = configured_db
+        db = test_db
 
         with patch.object(
             db, "get_locked_session", side_effect=sa.exc.SQLAlchemyError("DB Error")
@@ -926,9 +1184,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.get_area_data("test_entry_id")
             assert result is None
 
-    def test_ensure_area_exists_area_already_exists(self, configured_db):
+    def test_ensure_area_exists_area_already_exists(self, test_db):
         """Test ensure_area_exists when area already exists."""
-        db = configured_db
+        db = test_db
 
         # Mock get_area_data to return existing area
         with (
@@ -939,9 +1197,9 @@ class TestAreaOccupancyDBUtilities:
             asyncio.run(db.ensure_area_exists())
             mock_save.assert_not_called()
 
-    def test_ensure_area_exists_creates_area(self, configured_db):
+    def test_ensure_area_exists_creates_area(self, test_db):
         """Test ensure_area_exists when area doesn't exist."""
-        db = configured_db
+        db = test_db
 
         # Mock get_area_data to return None (area doesn't exist)
         with (
@@ -951,17 +1209,17 @@ class TestAreaOccupancyDBUtilities:
             asyncio.run(db.ensure_area_exists())
             mock_save.assert_called_once()
 
-    def test_ensure_area_exists_with_error(self, configured_db):
+    def test_ensure_area_exists_with_error(self, test_db):
         """Test ensure_area_exists with error handling."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db, "get_area_data", side_effect=HomeAssistantError("Error")):
             # Should not raise exception, just log error
             asyncio.run(db.ensure_area_exists())
 
-    def test_safe_is_intervals_empty_with_integrity_check_failure(self, configured_db):
+    def test_safe_is_intervals_empty_with_integrity_check_failure(self, test_db):
         """Test safe_is_intervals_empty when integrity check fails."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "check_database_integrity", return_value=False),
@@ -970,9 +1228,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.safe_is_intervals_empty()
             assert result is True
 
-    def test_safe_is_intervals_empty_with_integrity_check_success(self, configured_db):
+    def test_safe_is_intervals_empty_with_integrity_check_success(self, test_db):
         """Test safe_is_intervals_empty when integrity check passes."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "check_database_integrity", return_value=True),
@@ -981,27 +1239,27 @@ class TestAreaOccupancyDBUtilities:
             result = db.safe_is_intervals_empty()
             assert result is False
 
-    def test_safe_is_intervals_empty_with_error(self, configured_db):
+    def test_safe_is_intervals_empty_with_error(self, test_db):
         """Test safe_is_intervals_empty with unexpected error."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
             result = db.safe_is_intervals_empty()
             assert result is True
 
-    def test_check_database_accessibility_file_not_exists(self, configured_db):
+    def test_check_database_accessibility_file_not_exists(self, test_db):
         """Test check_database_accessibility when file doesn't exist."""
-        db = configured_db
+        db = test_db
         db.db_path = Path("/nonexistent/path/db.db")
 
         result = db.check_database_accessibility()
         assert result is False
 
     def test_check_database_accessibility_invalid_sqlite_header(
-        self, configured_db, tmp_path
+        self, test_db, tmp_path
     ):
         """Test check_database_accessibility with invalid SQLite header."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "invalid.db"
 
         # Create file with invalid header
@@ -1011,11 +1269,9 @@ class TestAreaOccupancyDBUtilities:
         result = db.check_database_accessibility()
         assert result is False
 
-    def test_check_database_accessibility_permission_error(
-        self, configured_db, tmp_path
-    ):
+    def test_check_database_accessibility_permission_error(self, test_db, tmp_path):
         """Test check_database_accessibility with permission error."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create file
@@ -1026,9 +1282,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.check_database_accessibility()
             assert result is False
 
-    def test_is_database_corrupted_various_indicators(self, configured_db):
+    def test_is_database_corrupted_various_indicators(self, test_db):
         """Test is_database_corrupted with various corruption indicators."""
-        db = configured_db
+        db = test_db
 
         corruption_messages = [
             "database disk image is malformed",
@@ -1043,16 +1299,16 @@ class TestAreaOccupancyDBUtilities:
             error = sa.exc.SQLAlchemyError(message)
             assert db.is_database_corrupted(error) is True
 
-    def test_is_database_corrupted_non_corruption_error(self, configured_db):
+    def test_is_database_corrupted_non_corruption_error(self, test_db):
         """Test is_database_corrupted with non-corruption error."""
-        db = configured_db
+        db = test_db
 
         error = sa.exc.SQLAlchemyError("table already exists")
         assert db.is_database_corrupted(error) is False
 
-    def test_attempt_database_recovery_success(self, configured_db, tmp_path):
+    def test_attempt_database_recovery_success(self, test_db, tmp_path):
         """Test attempt_database_recovery with successful recovery (master-only)."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create a valid database file
@@ -1077,9 +1333,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.attempt_database_recovery()
             assert result is True
 
-    def test_attempt_database_recovery_failure(self, configured_db):
+    def test_attempt_database_recovery_failure(self, test_db):
         """Test attempt_database_recovery with failure."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db.engine, "dispose"),
@@ -1091,9 +1347,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.attempt_database_recovery()
             assert result is False
 
-    def test_backup_database_success(self, configured_db, tmp_path):
+    def test_backup_database_success(self, test_db, tmp_path):
         """Test backup_database with successful backup."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create source file
@@ -1107,17 +1363,17 @@ class TestAreaOccupancyDBUtilities:
         backup_path = db.db_path.with_suffix(".db.backup")
         assert backup_path.exists()
 
-    def test_backup_database_file_not_exists(self, configured_db):
+    def test_backup_database_file_not_exists(self, test_db):
         """Test backup_database when source file doesn't exist."""
-        db = configured_db
+        db = test_db
         db.db_path = Path("/nonexistent/path/db.db")
 
         result = db.backup_database()
         assert result is False
 
-    def test_backup_database_error(self, configured_db, tmp_path):
+    def test_backup_database_error(self, test_db, tmp_path):
         """Test backup_database with error."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create source file
@@ -1127,9 +1383,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.backup_database()
             assert result is False
 
-    def test_restore_database_from_backup_success(self, configured_db, tmp_path):
+    def test_restore_database_from_backup_success(self, test_db, tmp_path):
         """Test restore_database_from_backup with successful restore."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
         backup_path = tmp_path / "test.db.backup"
 
@@ -1141,17 +1397,17 @@ class TestAreaOccupancyDBUtilities:
             result = db.restore_database_from_backup()
             assert result is True
 
-    def test_restore_database_from_backup_no_backup(self, configured_db):
+    def test_restore_database_from_backup_no_backup(self, test_db):
         """Test restore_database_from_backup when no backup exists."""
-        db = configured_db
+        db = test_db
         db.db_path = Path("/nonexistent/path/db.db")
 
         result = db.restore_database_from_backup()
         assert result is False
 
-    def test_restore_database_from_backup_error(self, configured_db, tmp_path):
+    def test_restore_database_from_backup_error(self, test_db, tmp_path):
         """Test restore_database_from_backup with error."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
         backup_path = tmp_path / "test.db.backup"
 
@@ -1162,17 +1418,17 @@ class TestAreaOccupancyDBUtilities:
             result = db.restore_database_from_backup()
             assert result is False
 
-    def test_handle_database_corruption_auto_recovery_disabled(self, configured_db):
+    def test_handle_database_corruption_auto_recovery_disabled(self, test_db):
         """Test handle_database_corruption with auto recovery disabled."""
-        db = configured_db
+        db = test_db
         db.enable_auto_recovery = False
 
         result = db.handle_database_corruption()
         assert result is False
 
-    def test_handle_database_corruption_recovery_success(self, configured_db):
+    def test_handle_database_corruption_recovery_success(self, test_db):
         """Test handle_database_corruption with successful recovery."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "backup_database", return_value=True),
@@ -1182,11 +1438,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.handle_database_corruption()
             assert result is True
 
-    def test_handle_database_corruption_restore_from_backup_success(
-        self, configured_db
-    ):
+    def test_handle_database_corruption_restore_from_backup_success(self, test_db):
         """Test handle_database_corruption with successful restore from backup."""
-        db = configured_db
+        db = test_db
         db.enable_periodic_backups = True
 
         with (
@@ -1198,9 +1452,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.handle_database_corruption()
             assert result is True
 
-    def test_handle_database_corruption_recreate_database(self, configured_db):
+    def test_handle_database_corruption_recreate_database(self, test_db):
         """Test handle_database_corruption with database recreation."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "backup_database", return_value=True),
@@ -1213,9 +1467,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.handle_database_corruption()
             assert result is True
 
-    def test_handle_database_corruption_recreation_failure(self, configured_db):
+    def test_handle_database_corruption_recreation_failure(self, test_db):
         """Test handle_database_corruption with recreation failure."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "backup_database", return_value=True),
@@ -1226,9 +1480,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.handle_database_corruption()
             assert result is False
 
-    def test_periodic_health_check_success(self, configured_db):
+    def test_periodic_health_check_success(self, test_db):
         """Test periodic_health_check with successful check."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "check_database_integrity", return_value=True),
@@ -1237,9 +1491,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.periodic_health_check()
             assert result is True
 
-    def test_periodic_health_check_integrity_failure(self, configured_db):
+    def test_periodic_health_check_integrity_failure(self, test_db):
         """Test periodic_health_check with integrity failure."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "check_database_integrity", return_value=False),
@@ -1248,11 +1502,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.periodic_health_check()
             assert result is True
 
-    def test_periodic_health_check_integrity_failure_recovery_failed(
-        self, configured_db
-    ):
+    def test_periodic_health_check_integrity_failure_recovery_failed(self, test_db):
         """Test periodic_health_check with integrity failure and recovery failed."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "check_database_integrity", return_value=False),
@@ -1261,9 +1513,9 @@ class TestAreaOccupancyDBUtilities:
             result = db.periodic_health_check()
             assert result is False
 
-    def test_periodic_health_check_backup_creation(self, configured_db, tmp_path):
+    def test_periodic_health_check_backup_creation(self, test_db, tmp_path):
         """Test periodic_health_check with backup creation."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
         db.enable_periodic_backups = True
         db.backup_interval_hours = 1
@@ -1279,25 +1531,25 @@ class TestAreaOccupancyDBUtilities:
             assert result is True
             mock_backup.assert_called_once()
 
-    def test_periodic_health_check_error(self, configured_db):
+    def test_periodic_health_check_error(self, test_db):
         """Test periodic_health_check with error."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
             result = db.periodic_health_check()
             assert result is False
 
-    def test_get_engine(self, configured_db):
+    def test_get_engine(self, test_db):
         """Test get_engine method."""
-        db = configured_db
+        db = test_db
 
         engine = db.get_engine()
         assert engine is not None
         assert engine == db.engine
 
-    def test_delete_db_success(self, configured_db, tmp_path):
+    def test_delete_db_success(self, test_db, tmp_path):
         """Test delete_db with successful deletion."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create file to delete
@@ -1307,17 +1559,17 @@ class TestAreaOccupancyDBUtilities:
 
         assert not db.db_path.exists()
 
-    def test_delete_db_file_not_exists(self, configured_db):
+    def test_delete_db_file_not_exists(self, test_db):
         """Test delete_db when file doesn't exist."""
-        db = configured_db
+        db = test_db
         db.db_path = Path("/nonexistent/path/db.db")
 
         # Should not raise exception
         db.delete_db()
 
-    def test_delete_db_error(self, configured_db, tmp_path):
+    def test_delete_db_error(self, test_db, tmp_path):
         """Test delete_db with error."""
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test.db"
 
         # Create file
@@ -1329,9 +1581,9 @@ class TestAreaOccupancyDBUtilities:
             # Should not raise exception, just log error
             db.delete_db()
 
-    def test_force_reinitialize(self, configured_db):
+    def test_force_reinitialize(self, test_db):
         """Test force_reinitialize method."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "init_db") as mock_init,
@@ -1342,9 +1594,9 @@ class TestAreaOccupancyDBUtilities:
             mock_init.assert_called_once()
             mock_set_version.assert_called_once()
 
-    def test_init_db_success(self, configured_db):
+    def test_init_db_success(self, test_db):
         """Test init_db with successful initialization."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "_enable_wal_mode"),
@@ -1352,9 +1604,9 @@ class TestAreaOccupancyDBUtilities:
         ):
             db.init_db()
 
-    def test_init_db_operational_error_race_condition(self, configured_db):
+    def test_init_db_operational_error_race_condition(self, test_db):
         """Test init_db with operational error (race condition)."""
-        db = configured_db
+        db = test_db
 
         # Mock error with sqlite_errno = 1 (table already exists)
         mock_error = sa.exc.OperationalError("table already exists", None, None)
@@ -1368,9 +1620,9 @@ class TestAreaOccupancyDBUtilities:
         ):
             db.init_db()
 
-    def test_init_db_operational_error_other(self, configured_db):
+    def test_init_db_operational_error_other(self, test_db):
         """Test init_db with other operational error."""
-        db = configured_db
+        db = test_db
 
         # Mock error with different sqlite_errno
         mock_error = sa.exc.OperationalError("other error", None, None)
@@ -1384,9 +1636,9 @@ class TestAreaOccupancyDBUtilities:
         ):
             db.init_db()
 
-    def test_init_db_general_error(self, configured_db):
+    def test_init_db_general_error(self, test_db):
         """Test init_db with general error."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "_enable_wal_mode"),
@@ -1397,9 +1649,9 @@ class TestAreaOccupancyDBUtilities:
         ):
             db.init_db()
 
-    def test_enable_wal_mode_success(self, configured_db):
+    def test_enable_wal_mode_success(self, test_db):
         """Test _enable_wal_mode with success."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db.engine, "connect") as mock_connect:
             mock_conn = Mock()
@@ -1409,9 +1661,9 @@ class TestAreaOccupancyDBUtilities:
 
             mock_conn.execute.assert_called_once()
 
-    def test_enable_wal_mode_error(self, configured_db):
+    def test_enable_wal_mode_error(self, test_db):
         """Test _enable_wal_mode with error."""
-        db = configured_db
+        db = test_db
 
         with patch.object(
             db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("WAL error")
@@ -1419,17 +1671,17 @@ class TestAreaOccupancyDBUtilities:
             # Should not raise exception, just log error
             db._enable_wal_mode()
 
-    def test_verify_all_tables_exist_success(self, configured_db):
+    def test_verify_all_tables_exist_success(self, test_db):
         """Test _verify_all_tables_exist with all tables present."""
-        db = configured_db
+        db = test_db
 
-        # configured_db fixture already initializes tables via init_db()
+        # test_db fixture already initializes tables via init_db()
         # Verify all tables exist
         assert db._verify_all_tables_exist() is True
 
-    def test_verify_all_tables_exist_error(self, configured_db):
+    def test_verify_all_tables_exist_error(self, test_db):
         """Test _verify_all_tables_exist with database error."""
-        db = configured_db
+        db = test_db
 
         # Mock a database error
         with patch.object(
@@ -1438,10 +1690,10 @@ class TestAreaOccupancyDBUtilities:
             # Should return False on error
             assert db._verify_all_tables_exist() is False
 
-    def test_ensure_db_exists_new_database(self, configured_db, tmp_path):
+    def test_ensure_db_exists_new_database(self, test_db, tmp_path):
         """Test _ensure_db_exists with new database."""
 
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test_new.db"
 
         # Create new engine pointing to the new database path
@@ -1459,10 +1711,10 @@ class TestAreaOccupancyDBUtilities:
         # Verify tables were created
         assert db._verify_all_tables_exist() is True
 
-    def test_ensure_db_exists_with_file_no_tables(self, configured_db, tmp_path):
+    def test_ensure_db_exists_with_file_no_tables(self, test_db, tmp_path):
         """Test _ensure_db_exists when file exists but has no tables (race condition)."""
 
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test_race.db"
 
         # Create new engine pointing to the new database path
@@ -1490,10 +1742,10 @@ class TestAreaOccupancyDBUtilities:
         # Verify all required tables were created
         assert db._verify_all_tables_exist() is True
 
-    def test_ensure_db_exists_with_complete_database(self, configured_db, tmp_path):
+    def test_ensure_db_exists_with_complete_database(self, test_db, tmp_path):
         """Test _ensure_db_exists when database is already complete."""
 
-        db = configured_db
+        db = test_db
         db.db_path = tmp_path / "test_complete.db"
 
         # Create new engine pointing to the new database path
@@ -1514,16 +1766,16 @@ class TestAreaOccupancyDBUtilities:
         # Verify tables still exist (not corrupted)
         assert db._verify_all_tables_exist() is True
 
-    def test_create_tables_individually_success(self, configured_db):
+    def test_create_tables_individually_success(self, test_db):
         """Test _create_tables_individually with success."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db.engine, "connect"):
             db._create_tables_individually()
 
-    def test_create_tables_individually_race_condition(self, configured_db):
+    def test_create_tables_individually_race_condition(self, test_db):
         """Test _create_tables_individually with race condition."""
-        db = configured_db
+        db = test_db
 
         # Mock error with sqlite_errno = 1 (table already exists)
         mock_error = sa.exc.OperationalError("table already exists", None, None)
@@ -1534,9 +1786,9 @@ class TestAreaOccupancyDBUtilities:
             # Should not raise exception
             db._create_tables_individually()
 
-    def test_create_tables_individually_other_error(self, configured_db):
+    def test_create_tables_individually_other_error(self, test_db):
         """Test _create_tables_individually with other error."""
-        db = configured_db
+        db = test_db
 
         # Mock error with different sqlite_errno
         mock_error = sa.exc.OperationalError("other error", None, None)
@@ -1549,45 +1801,53 @@ class TestAreaOccupancyDBUtilities:
         ):
             db._create_tables_individually()
 
-    def test_set_db_version_update_existing(self, configured_db):
+    def test_set_db_version_update_existing(self, test_db):
         """Test set_db_version when version already exists."""
-        db = configured_db
+        db = test_db
+        db.init_db()
+        db.set_db_version()  # Create initial version
 
-        with patch.object(db.engine, "begin") as mock_begin:
-            mock_conn = Mock()
-            mock_result = Mock()
-            mock_result.fetchone.return_value = ("3",)
-            mock_conn.execute.return_value = mock_result
-            mock_begin.return_value.__enter__.return_value = mock_conn
+        # Verify the version was set correctly using real database
+        version = db.get_db_version()
+        assert version == DB_VERSION
 
-            db.set_db_version()
+        # Call set_db_version again - should update existing
+        db.set_db_version()
 
-    def test_set_db_version_insert_new(self, configured_db):
+        # Verify version is still correct
+        version_after = db.get_db_version()
+        assert version_after == DB_VERSION
+
+    def test_set_db_version_insert_new(self, test_db):
         """Test set_db_version when version doesn't exist."""
-        db = configured_db
+        db = test_db
+        db.init_db()
 
-        with patch.object(db.engine, "begin") as mock_begin:
-            mock_conn = Mock()
-            mock_result = Mock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
-            mock_begin.return_value.__enter__.return_value = mock_conn
+        # Delete any existing version
+        with db.get_session() as session:
+            session.query(db.Metadata).filter_by(key="db_version").delete()
+            session.commit()
 
-            db.set_db_version()
+        # Set version - should insert new
+        db.set_db_version()
 
-    def test_set_db_version_error(self, configured_db):
+        # Verify version was set
+        version = db.get_db_version()
+        assert version == DB_VERSION
+
+    def test_set_db_version_error(self, test_db):
         """Test set_db_version with error."""
-        db = configured_db
+        db = test_db
 
         with (
-            patch.object(db.engine, "begin", side_effect=RuntimeError("DB Error")),
+            patch.object(db, "get_session", side_effect=RuntimeError("DB Error")),
             pytest.raises(RuntimeError),
         ):
             db.set_db_version()
 
-    def test_get_db_version_success(self, configured_db):
+    def test_get_db_version_success(self, test_db):
         """Test get_db_version with success."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db, "get_session") as mock_session:
             mock_session_obj = Mock()
@@ -1599,9 +1859,9 @@ class TestAreaOccupancyDBUtilities:
             version = db.get_db_version()
             assert version == 3
 
-    def test_get_db_version_no_metadata(self, configured_db):
+    def test_get_db_version_no_metadata(self, test_db):
         """Test get_db_version when no metadata exists."""
-        db = configured_db
+        db = test_db
 
         with patch.object(db, "get_session") as mock_session:
             mock_session_obj = Mock()
@@ -1611,9 +1871,9 @@ class TestAreaOccupancyDBUtilities:
             version = db.get_db_version()
             assert version == 0
 
-    def test_get_db_version_error(self, configured_db):
+    def test_get_db_version_error(self, test_db):
         """Test get_db_version with error."""
-        db = configured_db
+        db = test_db
 
         with (
             patch.object(db, "get_session", side_effect=RuntimeError("DB Error")),
@@ -1628,9 +1888,9 @@ class TestAreaOccupancyDBUtilities:
 class TestPruneOldIntervals:
     """Test the prune_old_intervals method."""
 
-    def test_prune_old_intervals_success(self, configured_db):
+    def test_prune_old_intervals_success(self, test_db):
         """Test successful pruning of old intervals."""
-        db = configured_db
+        db = test_db
 
         # Create test intervals - some old, some recent
         old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
@@ -1679,9 +1939,9 @@ class TestPruneOldIntervals:
                 tzinfo=None
             ) == recent_time.replace(tzinfo=None)
 
-    def test_prune_old_intervals_no_old_data(self, configured_db):
+    def test_prune_old_intervals_no_old_data(self, test_db):
         """Test pruning when no intervals are older than RETENTION_DAYS."""
-        db = configured_db
+        db = test_db
 
         # Create only recent intervals
         recent_time = dt_util.utcnow() - timedelta(days=30)
@@ -1708,9 +1968,9 @@ class TestPruneOldIntervals:
             remaining_intervals = session.query(db.Intervals).all()
             assert len(remaining_intervals) == 1
 
-    def test_prune_old_intervals_database_errors(self, configured_db):
+    def test_prune_old_intervals_database_errors(self, test_db):
         """Test pruning with database errors."""
-        db = configured_db
+        db = test_db
 
         # Mock database error
         with patch.object(
@@ -1727,18 +1987,19 @@ class TestPruneOldIntervals:
 class TestGetAggregatedIntervalsBySlot:
     """Test the get_aggregated_intervals_by_slot method."""
 
-    def test_get_aggregated_intervals_by_slot_success(self, configured_db):
+    def test_get_aggregated_intervals_by_slot_success(self, test_db):
         """Test successful SQL aggregation."""
-        db = configured_db
+        db = test_db
 
         # Create test intervals across multiple days/times
         base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
 
         with db.get_locked_session() as session:
-            # Add entity first
+            # Add entity first (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(entity)
@@ -1780,7 +2041,9 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Test aggregation with 60-minute slots
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name="Test Area"
+        )
 
         # Should have aggregated data
         assert len(result) >= 2
@@ -1793,27 +2056,30 @@ class TestGetAggregatedIntervalsBySlot:
             assert 0 <= day_of_week <= 6  # Monday=0 to Sunday=6
             assert total_seconds > 0
 
-    def test_get_aggregated_intervals_by_slot_empty(self, configured_db):
+    def test_get_aggregated_intervals_by_slot_empty(self, test_db):
         """Test aggregation with no intervals."""
-        db = configured_db
+        db = test_db
 
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name=None
+        )
 
         # Should return empty list
         assert result == []
 
-    def test_get_aggregated_intervals_by_slot_edge_cases(self, configured_db):
+    def test_get_aggregated_intervals_by_slot_edge_cases(self, test_db):
         """Test aggregation with edge case data."""
-        db = configured_db
+        db = test_db
 
         # Create interval with potentially problematic data
         base_time = dt_util.utcnow()
 
         with db.get_locked_session() as session:
-            # Add entity
+            # Add entity (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
+                area_name="Test Area",
                 entity_type="motion",
             )
             session.add(entity)
@@ -1830,21 +2096,23 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         # Should handle edge cases gracefully
-        result = db.get_aggregated_intervals_by_slot("test_entry_id", slot_minutes=60)
+        result = db.get_aggregated_intervals_by_slot(
+            "test_entry_id", slot_minutes=60, area_name="Test Area"
+        )
 
         # Should return valid data or empty list
         assert isinstance(result, list)
 
-    def test_get_aggregated_intervals_by_slot_database_errors(self, configured_db):
+    def test_get_aggregated_intervals_by_slot_database_errors(self, test_db):
         """Test aggregation with database errors."""
-        db = configured_db
+        db = test_db
 
         # Mock database error
         with patch.object(
             db, "get_session", side_effect=OperationalError("DB Error", None, None)
         ):
             result = db.get_aggregated_intervals_by_slot(
-                "test_entry_id", slot_minutes=60
+                "test_entry_id", slot_minutes=60, area_name=None
             )
 
             # Should return empty list on error
@@ -1857,26 +2125,35 @@ class TestGetAggregatedIntervalsBySlot:
 
     # --- Entity Cleanup Tests ---
 
-    async def test_cleanup_orphaned_entities_no_orphans(self, configured_db):
+    async def test_cleanup_orphaned_entities_no_orphans(self, test_db):
         """Test cleanup when no orphaned entities exist."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with current entities
-        db.coordinator.entities.entity_ids = [
-            "binary_sensor.motion1",
-            "binary_sensor.motion2",
-        ]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity1 = Mock()
+        mock_entity1.entity_id = "binary_sensor.motion1"
+        mock_entity2 = Mock()
+        mock_entity2.entity_id = "binary_sensor.motion2"
+        area.entities._entities = {
+            "binary_sensor.motion1": mock_entity1,
+            "binary_sensor.motion2": mock_entity2,
+        }
 
         # Add entities to database that match current config
         with db.get_locked_session() as session:
             entity1 = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             entity2 = db.Entities(
                 entity_id="binary_sensor.motion2",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add_all([entity1, entity2])
@@ -1897,23 +2174,30 @@ class TestGetAggregatedIntervalsBySlot:
             )
             assert count == 2
 
-    async def test_cleanup_orphaned_entities_with_orphans(self, configured_db):
+    async def test_cleanup_orphaned_entities_with_orphans(self, test_db):
         """Test cleanup when orphaned entities exist."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add_all([current_entity, orphaned_entity])
@@ -1935,12 +2219,17 @@ class TestGetAggregatedIntervalsBySlot:
             assert len(entities) == 1
             assert entities[0].entity_id == "binary_sensor.motion1"
 
-    async def test_cleanup_orphaned_entities_with_intervals(self, configured_db):
+    async def test_cleanup_orphaned_entities_with_intervals(self, test_db):
         """Test cleanup removes orphaned entities and their intervals."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities and intervals to database
         with db.get_locked_session() as session:
@@ -1948,6 +2237,7 @@ class TestGetAggregatedIntervalsBySlot:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(current_entity)
@@ -1956,6 +2246,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(orphaned_entity)
@@ -2010,33 +2301,42 @@ class TestGetAggregatedIntervalsBySlot:
             )
             assert current_entities == 1
 
-    async def test_cleanup_orphaned_entities_multiple_orphans(self, configured_db):
+    async def test_cleanup_orphaned_entities_multiple_orphans(self, test_db):
         """Test cleanup with multiple orphaned entities."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with only one entity in current config
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add multiple orphaned entities
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned1 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
             )
             orphaned2 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned2",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="door",
             )
             orphaned3 = db.Entities(
                 entity_id="binary_sensor.motion_orphaned3",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="window",
             )
             session.add_all([current_entity, orphaned1, orphaned2, orphaned3])
@@ -2058,12 +2358,107 @@ class TestGetAggregatedIntervalsBySlot:
             assert len(entities) == 1
             assert entities[0].entity_id == "binary_sensor.motion1"
 
-    async def test_cleanup_orphaned_entities_database_error(self, configured_db):
-        """Test cleanup handles database errors gracefully."""
-        db = configured_db
+    async def test_cleanup_orphaned_entities_bulk_delete_intervals(self, test_db):
+        """Test that bulk delete removes all intervals for multiple orphaned entities."""
+        db = test_db
 
-        # Mock coordinator
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
+
+        # Add multiple orphaned entities with intervals
+        with db.get_locked_session() as session:
+            current_entity = db.Entities(
+                entity_id="binary_sensor.motion1",
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="motion",
+            )
+            session.add(current_entity)
+
+            # Create 3 orphaned entities, each with multiple intervals
+            orphaned_entities = []
+            intervals = []
+            for i in range(1, 4):
+                orphaned_entity = db.Entities(
+                    entity_id=f"binary_sensor.motion_orphaned{i}",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="motion",
+                )
+                orphaned_entities.append(orphaned_entity)
+                session.add(orphaned_entity)
+
+                # Add 5 intervals per orphaned entity
+                for j in range(5):
+                    interval = db.Intervals(
+                        entity_id=f"binary_sensor.motion_orphaned{i}",
+                        start_time=dt_util.utcnow() + timedelta(hours=j),
+                        end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
+                        state="on",
+                        duration_seconds=1800,
+                    )
+                    intervals.append(interval)
+                    session.add(interval)
+
+            session.commit()
+
+        # Verify intervals were created
+        with db.get_locked_session() as session:
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 15  # 3 entities * 5 intervals each
+
+        # Run cleanup - should use bulk delete
+        cleaned_count = db.cleanup_orphaned_entities()
+
+        # Should clean up 3 entities
+        assert cleaned_count == 3
+
+        # Verify all intervals for orphaned entities are removed (bulk delete)
+        with db.get_locked_session() as session:
+            # All intervals should be gone
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 0
+
+            # All orphaned entities should be gone
+            orphaned_count = (
+                session.query(db.Entities)
+                .filter(
+                    db.Entities.entity_id.in_(
+                        [
+                            "binary_sensor.motion_orphaned1",
+                            "binary_sensor.motion_orphaned2",
+                            "binary_sensor.motion_orphaned3",
+                        ]
+                    )
+                )
+                .count()
+            )
+            assert orphaned_count == 0
+
+            # Current entity should remain
+            current_entities = (
+                session.query(db.Entities)
+                .filter_by(entity_id="binary_sensor.motion1")
+                .count()
+            )
+            assert current_entities == 1
+
+    async def test_cleanup_orphaned_entities_database_error(self, test_db):
+        """Test cleanup handles database errors gracefully."""
+        db = test_db
+
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock database error on get_session
         with patch.object(
@@ -2076,9 +2471,104 @@ class TestGetAggregatedIntervalsBySlot:
             # Should return 0 on error
             assert cleaned_count == 0
 
-    async def test_save_entity_data_calls_cleanup(self, configured_db):
+    async def test_delete_area_data_bulk_delete_intervals(self, test_db):
+        """Test that delete_area_data uses bulk delete for intervals."""
+        db = test_db
+
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create entities and intervals for the area
+        with db.get_locked_session() as session:
+            # Create 3 entities for this area
+            entities = []
+            for i in range(1, 4):
+                entity = db.Entities(
+                    entity_id=f"binary_sensor.motion{i}",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="motion",
+                )
+                entities.append(entity)
+                session.add(entity)
+
+                # Add 10 intervals per entity
+                for j in range(10):
+                    interval = db.Intervals(
+                        entity_id=f"binary_sensor.motion{i}",
+                        start_time=dt_util.utcnow() + timedelta(hours=j),
+                        end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
+                        state="on",
+                        duration_seconds=1800,
+                    )
+                    session.add(interval)
+
+            # Add priors for this area
+            prior = db.Priors(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                day_of_week=1,
+                time_slot=10,
+                prior_value=0.5,
+                data_points=100,
+            )
+            session.add(prior)
+
+            # Add area record
+            area_record = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                area_id="test_area_id",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add(area_record)
+            session.commit()
+
+        # Verify data was created
+        with db.get_locked_session() as session:
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 30  # 3 entities * 10 intervals each
+            entity_count = (
+                session.query(db.Entities).filter_by(area_name=area_name).count()
+            )
+            assert entity_count == 3
+            prior_count = (
+                session.query(db.Priors).filter_by(area_name=area_name).count()
+            )
+            assert prior_count == 1
+
+        # Delete area data - should use bulk delete for intervals
+        deleted_count = db.delete_area_data(area_name)
+
+        # Should delete 3 entities
+        assert deleted_count == 3
+
+        # Verify all data is removed (bulk delete should have removed all intervals)
+        with db.get_locked_session() as session:
+            # All intervals should be gone (bulk delete via join)
+            interval_count = session.query(db.Intervals).count()
+            assert interval_count == 0
+
+            # All entities should be gone
+            entity_count = (
+                session.query(db.Entities).filter_by(area_name=area_name).count()
+            )
+            assert entity_count == 0
+
+            # Priors should be gone
+            prior_count = (
+                session.query(db.Priors).filter_by(area_name=area_name).count()
+            )
+            assert prior_count == 0
+
+            # Area record should be gone
+            area_count = session.query(db.Areas).filter_by(area_name=area_name).count()
+            assert area_count == 0
+
+    async def test_save_entity_data_calls_cleanup(self, test_db):
         """Test that save_entity_data calls cleanup after saving."""
-        db = configured_db
+        db = test_db
 
         # Mock coordinator with entities
         mock_entity = Mock()
@@ -2092,7 +2582,10 @@ class TestGetAggregatedIntervalsBySlot:
         mock_entity.decay.decay_start = None
         mock_entity.evidence = False
 
-        db.coordinator.entities.entities = {"binary_sensor.motion1": mock_entity}
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock cleanup method
         with patch.object(
@@ -2103,28 +2596,33 @@ class TestGetAggregatedIntervalsBySlot:
             # Verify cleanup was called
             mock_cleanup.assert_called_once()
 
-    async def test_load_data_skips_orphaned_entities(self, configured_db):
+    async def test_load_data_skips_orphaned_entities(self, test_db):
         """Test that load_data skips entities not in current config."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with limited entities (only one entity in current config)
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
-
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
         # Mock entity manager to track what gets added
-        original_add_entity = db.coordinator.entities.add_entity
+        original_add_entity = area.entities.add_entity
         added_entities = []
 
         def track_add_entity(entity):
             added_entities.append(entity.entity_id)
             return original_add_entity(entity)
 
-        db.coordinator.entities.add_entity = track_add_entity
+        area.entities.add_entity = track_add_entity
 
         # Add entities to database - one current, one orphaned
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2133,6 +2631,7 @@ class TestGetAggregatedIntervalsBySlot:
             orphaned_entity = db.Entities(
                 entity_id="binary_sensor.motion_orphaned",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2150,27 +2649,32 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.entity_id = entity_id
             return mock_entity
 
-        with patch.object(
-            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
-        ):
+        # Use area-based access for patching
+        with patch.object(area.entities, "get_entity", side_effect=mock_get_entity):
             await db.load_data()
 
         # Verify only current entity was processed, orphaned was skipped
         # The current entity should be updated (not added), so no entities should be added
         assert len(added_entities) == 0
 
-    async def test_load_data_deletes_stale_entities(self, configured_db):
+    async def test_load_data_deletes_stale_entities(self, test_db):
         """Test that load_data deletes stale entities from database."""
-        db = configured_db
+        db = test_db
 
-        # Mock coordinator with limited entities (only one entity in current config)
-        db.coordinator.entities.entity_ids = ["binary_sensor.motion1"]
+        # Get actual area name from coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        # Set up entities directly using _entities (entities property is read-only)
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion1"
+        area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Add entities to database - one current, one stale
         with db.get_locked_session() as session:
             current_entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="motion",
                 prob_given_true=0.8,
                 prob_given_false=0.05,
@@ -2179,6 +2683,7 @@ class TestGetAggregatedIntervalsBySlot:
             stale_entity = db.Entities(
                 entity_id="binary_sensor.bed_status",  # This entity is not in current config
                 entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_type="door",
                 prob_given_true=0.7,
                 prob_given_false=0.03,
@@ -2195,7 +2700,7 @@ class TestGetAggregatedIntervalsBySlot:
             assert "binary_sensor.motion1" in entity_ids_before
             assert "binary_sensor.bed_status" in entity_ids_before
 
-        # Mock the get_entity method to raise ValueError for stale entity
+        # Mock the get_entity method to raise ValueError for stale entity - use area-based access
         def mock_get_entity(entity_id):
             if entity_id == "binary_sensor.bed_status":
                 raise ValueError("Entity not found")
@@ -2208,9 +2713,7 @@ class TestGetAggregatedIntervalsBySlot:
             mock_entity.type.weight = 0.85
             return mock_entity
 
-        with patch.object(
-            db.coordinator.entities, "get_entity", side_effect=mock_get_entity
-        ):
+        with patch.object(area.entities, "get_entity", side_effect=mock_get_entity):
             await db.load_data()
 
         # Verify stale entity was actually deleted from database

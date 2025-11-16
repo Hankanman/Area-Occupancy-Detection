@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..coordinator import AreaOccupancyCoordinator
 
 
 class AreaPurpose(StrEnum):
@@ -23,118 +18,127 @@ class AreaPurpose(StrEnum):
     SLEEPING = "sleeping"
 
 
-@dataclass
 class Purpose:
     """Area purpose definition with associated decay properties."""
 
-    purpose: AreaPurpose
-    name: str
-    description: str
-    half_life: float  # in seconds
+    def __init__(
+        self,
+        purpose: AreaPurpose | str | None = None,
+        *,
+        _name: str | None = None,
+        _description: str | None = None,
+        _half_life: float | None = None,
+    ) -> None:
+        """Initialize the purpose.
 
+        Args:
+            purpose: The purpose enum or string value. Defaults to SOCIAL if None or invalid.
+            _name: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
+            _description: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
+            _half_life: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
 
-class PurposeManager:
-    """Purpose manager for area purposes."""
+        Note:
+            If _name, _description, and _half_life are provided, creates instance directly.
+            Otherwise, looks up from PURPOSE_DEFINITIONS.
+        """
+        # Direct creation from data (for PURPOSE_DEFINITIONS)
+        if _name is not None and _description is not None and _half_life is not None:
+            if purpose is None:
+                raise ValueError("purpose must be provided when using direct creation")
+            self.purpose = AreaPurpose(purpose) if isinstance(purpose, str) else purpose
+            self.name = _name
+            self.description = _description
+            self.half_life = _half_life
+            return
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Initialize the purpose manager."""
-        self.coordinator = coordinator
-        self.config = coordinator.config
-        self._current_purpose: Purpose | None = None
+        # Lookup from PURPOSE_DEFINITIONS
+        purpose_value = purpose if purpose is not None else AreaPurpose.SOCIAL
 
-    async def async_initialize(self) -> None:
-        """Initialize the purpose manager."""
-        # Get the purpose from configuration
-        purpose_value = getattr(self.config, "purpose", None)
-        if purpose_value:
-            try:
-                purpose_enum = AreaPurpose(purpose_value)
-                self._current_purpose = PURPOSE_DEFINITIONS[purpose_enum]
-            except (ValueError, KeyError):
-                # Fallback to default purpose
-                self._current_purpose = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL]
-        else:
-            # Default purpose
-            self._current_purpose = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL]
+        try:
+            purpose_enum = AreaPurpose(purpose_value)
+            definition = PURPOSE_DEFINITIONS[purpose_enum]
+        except (ValueError, KeyError):
+            definition = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL]
 
-    @property
-    def current_purpose(self) -> Purpose:
-        """Get the current purpose."""
-        if self._current_purpose is None:
-            return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL]
-        return self._current_purpose
+        self.purpose = definition.purpose
+        self.name = definition.name
+        self.description = definition.description
+        self.half_life = definition.half_life
 
-    @property
-    def half_life(self) -> float:
-        """Get the half-life for the current purpose."""
-        return self.current_purpose.half_life
+    @classmethod
+    def get_purpose(cls, purpose: AreaPurpose) -> Purpose:
+        """Get purpose definition by enum.
 
-    def get_purpose(self, purpose: AreaPurpose) -> Purpose:
-        """Get purpose definition by enum."""
+        Args:
+            purpose: The purpose enum to get.
+
+        Returns:
+            Purpose instance for the given enum.
+        """
         return PURPOSE_DEFINITIONS[purpose]
 
-    def get_all_purposes(self) -> dict[AreaPurpose, Purpose]:
-        """Get all purpose definitions."""
+    @classmethod
+    def get_all_purposes(cls) -> dict[AreaPurpose, Purpose]:
+        """Get all purpose definitions.
+
+        Returns:
+            Dictionary mapping purpose enums to Purpose instances.
+        """
         return PURPOSE_DEFINITIONS.copy()
 
-    def set_purpose(self, purpose: AreaPurpose) -> None:
-        """Set the current purpose."""
-        self._current_purpose = PURPOSE_DEFINITIONS[purpose]
-
     def cleanup(self) -> None:
-        """Clean up the purpose manager."""
-        self._current_purpose = None
+        """Clean up the purpose (no-op for compatibility)."""
 
 
 # Purpose definitions based on the provided table
 PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     AreaPurpose.PASSAGEWAY: Purpose(
         purpose=AreaPurpose.PASSAGEWAY,
-        name="Passageway",
-        description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
-        half_life=60.0,
+        _name="Passageway",
+        _description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
+        _half_life=60.0,
     ),
     AreaPurpose.UTILITY: Purpose(
         purpose=AreaPurpose.UTILITY,
-        name="Utility",
-        description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
-        half_life=120.0,
+        _name="Utility",
+        _description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
+        _half_life=120.0,
     ),
     AreaPurpose.FOOD_PREP: Purpose(
         purpose=AreaPurpose.FOOD_PREP,
-        name="Food-Prep",
-        description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
-        half_life=300.0,
+        _name="Food-Prep",
+        _description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
+        _half_life=300.0,
     ),
     AreaPurpose.EATING: Purpose(
         purpose=AreaPurpose.EATING,
-        name="Eating",
-        description="Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.",
-        half_life=600.0,
+        _name="Eating",
+        _description="Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.",
+        _half_life=600.0,
     ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
-        name="Working / Studying",
-        description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
-        half_life=600.0,
+        _name="Working / Studying",
+        _description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
+        _half_life=600.0,
     ),
     AreaPurpose.SOCIAL: Purpose(
         purpose=AreaPurpose.SOCIAL,
-        name="Social",
-        description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
-        half_life=720.0,
+        _name="Social",
+        _description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
+        _half_life=720.0,
     ),
     AreaPurpose.RELAXING: Purpose(
         purpose=AreaPurpose.RELAXING,
-        name="Relaxing",
-        description='TV lounge, reading nook, music corner. People can remain very still while watching or reading; a quarter-hour memory keeps the room "occupied" through stretches of calm.',
-        half_life=900.0,
+        _name="Relaxing",
+        _description='TV lounge, reading nook, music corner. People can remain very still while watching or reading; a quarter-hour memory keeps the room "occupied" through stretches of calm.',
+        _half_life=900.0,
     ),
     AreaPurpose.SLEEPING: Purpose(
         purpose=AreaPurpose.SLEEPING,
-        name="Sleeping",
-        description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
-        half_life=1800.0,
+        _name="Sleeping",
+        _description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
+        _half_life=1800.0,
     ),
 }
 

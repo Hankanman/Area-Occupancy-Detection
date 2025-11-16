@@ -1,13 +1,38 @@
 {
     "config": {
+        "abort": {
+            "already_configured": "A configuration for {title} already exists. {hint}"
+        },
         "step": {
             "user": {
                 "title": "Area Occupancy Detection",
-                "description": "Configure area occupancy detection with sensors and parameters",
+                "description": "Select an area to manage or choose an action. At least one area must be configured before finishing setup.",
                 "data": {
+                    "selected_option": "Select an area or action"
+                },
+                "data_description": {
+                    "selected_option": "Choose an area to edit or remove, add a new area, or finish setup"
+                }
+            },
+            "area_action": {
+                "title": "Manage {area_name}",
+                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
+                "data": {
+                    "action": "Action"
+                },
+                "data_description": {
+                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
+                }
+            },
+            "area_config": {
+                "title": "Configure Area",
+                "description": "Configure sensors and parameters for this area",
+                "data": {
+                    "area_id": "Home Assistant Area",
                     "name": "Name of Detection Area"
                 },
                 "data_description": {
+                    "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
@@ -135,6 +160,15 @@
                         }
                     }
                 }
+            },
+            "remove_area": {
+                "title": "Remove Area",
+                "data": {
+                    "confirm": "Confirm Removal"
+                },
+                "data_description": {
+                    "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
+                }
             }
         }
     },
@@ -142,7 +176,35 @@
         "step": {
             "init": {
                 "title": "Area Occupancy Detection Options",
-                "description": "Modify area occupancy detection configuration",
+                "description": "Select an area to manage or add a new area",
+                "data": {
+                    "selected_option": "Select an area or action"
+                },
+                "data_description": {
+                    "selected_option": "Choose an area to edit or remove, or add a new area"
+                }
+            },
+            "area_action": {
+                "title": "Manage {area_name}",
+                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
+                "data": {
+                    "action": "Action"
+                },
+                "data_description": {
+                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
+                }
+            },
+            "area_config": {
+                "title": "Configure Area",
+                "description": "Configure sensors and parameters for this area",
+                "data": {
+                    "area_id": "Home Assistant Area",
+                    "name": "Name of Detection Area"
+                },
+                "data_description": {
+                    "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
+                    "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
+                },
                 "sections": {
                     "purpose": {
                         "name": "Area Purpose",
@@ -267,6 +329,15 @@
                             "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
                         }
                     }
+                }
+            },
+            "remove_area": {
+                "title": "Remove Area",
+                "data": {
+                    "confirm": "Confirm Removal"
+                },
+                "data_description": {
+                    "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
                 }
             }
         }

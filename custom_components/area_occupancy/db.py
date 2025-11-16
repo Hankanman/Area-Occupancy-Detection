@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+from collections.abc import Iterable
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import logging
@@ -40,6 +41,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # Home Assistant imports
 from homeassistant.components.recorder.history import get_significant_states
+from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
@@ -52,7 +54,6 @@ from .const import (
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
-    MASTER_HEALTH_TIMEOUT,
     MAX_INTERVAL_SECONDS,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -75,6 +76,9 @@ if TYPE_CHECKING:
 else:
     Base = declarative_base()
 
+# Import for runtime use in methods (outside TYPE_CHECKING to avoid circular imports)
+from .data.entity_type import InputType
+
 _LOGGER = logging.getLogger(__name__)
 
 # States to exclude from intervals
@@ -90,7 +94,7 @@ DB_NAME = "area_occupancy.db"
 metadata = MetaData()
 
 # Database schema version for migrations
-DB_VERSION = 3
+DB_VERSION = 4
 
 
 class AreaOccupancyDB:
@@ -316,6 +320,7 @@ class AreaOccupancyDB:
 
         __tablename__ = "entities"
         entry_id = Column(String, ForeignKey("areas.entry_id"), primary_key=True)
+        area_name = Column(String, nullable=False)  # Added for multi-area support
         entity_id = Column(String, primary_key=True)
         entity_type = Column(String, nullable=False)
         weight = Column(Float, nullable=False, default=DEFAULT_ENTITY_WEIGHT)
@@ -340,12 +345,23 @@ class AreaOccupancyDB:
         __table_args__ = (
             Index("idx_entities_entry", "entry_id"),
             Index("idx_entities_type", "entry_id", "entity_type"),
+            Index("idx_entities_area", "area_name"),
+            # Composite index for optimized queries filtering by entry_id, area_name, and entity_type
+            Index(
+                "idx_entities_entry_area_type",
+                "entry_id",
+                "area_name",
+                "entity_type",
+            ),
         )
 
         def to_dict(self) -> dict[str, Any]:
             """Convert the ORM object to a dictionary."""
             return {
                 "entry_id": self.entry_id,
+                "area_name": getattr(
+                    self, "area_name", None
+                ),  # Handle existing rows that may not have area_name
                 "entity_id": self.entity_id,
                 "entity_type": self.entity_type,
                 "weight": self.weight,
@@ -363,6 +379,9 @@ class AreaOccupancyDB:
             """Create an Entities instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
+                area_name=data.get(
+                    "area_name", ""
+                ),  # Default to empty string if not provided (for backward compatibility)
                 entity_id=data["entity_id"],
                 entity_type=data["entity_type"],
                 weight=data.get("weight", DEFAULT_ENTITY_WEIGHT),
@@ -384,6 +403,7 @@ class AreaOccupancyDB:
 
         __tablename__ = "priors"
         entry_id = Column(String, ForeignKey("areas.entry_id"), primary_key=True)
+        area_name = Column(String, nullable=False, primary_key=True)
         day_of_week = Column(Integer, primary_key=True)
         time_slot = Column(Integer, primary_key=True)
         prior_value = Column(Float, nullable=False)
@@ -395,6 +415,8 @@ class AreaOccupancyDB:
 
         __table_args__ = (
             Index("idx_priors_entry", "entry_id"),
+            Index("idx_priors_area", "area_name"),
+            Index("idx_priors_entry_area", "entry_id", "area_name"),
             Index("idx_priors_day_slot", "day_of_week", "time_slot"),
             Index("idx_priors_last_updated", "last_updated"),
         )
@@ -403,6 +425,7 @@ class AreaOccupancyDB:
             """Convert the ORM object to a dictionary."""
             return {
                 "entry_id": self.entry_id,
+                "area_name": self.area_name,
                 "day_of_week": self.day_of_week,
                 "time_slot": self.time_slot,
                 "prior_value": self.prior_value,
@@ -415,6 +438,9 @@ class AreaOccupancyDB:
             """Create a Priors instance from a dictionary."""
             return cls(
                 entry_id=data["entry_id"],
+                area_name=data.get(
+                    "area_name", ""
+                ),  # Default to empty string for backward compatibility
                 day_of_week=data["day_of_week"],
                 time_slot=data["time_slot"],
                 prior_value=data["prior_value"],
@@ -447,6 +473,13 @@ class AreaOccupancyDB:
             Index("idx_intervals_entity_time", "entity_id", "start_time", "end_time"),
             Index("idx_intervals_start_time", "start_time"),
             Index("idx_intervals_end_time", "end_time"),
+            # Composite index for optimized queries with entity join and filtering
+            Index(
+                "idx_intervals_entity_state_time",
+                "entity_id",
+                "state",
+                "start_time",
+            ),
         )
 
         def to_dict(self) -> dict[str, Any]:
@@ -511,6 +544,9 @@ class AreaOccupancyDB:
                 _LOGGER.debug("Not all tables exist, initializing database")
                 self.init_db()
                 self.set_db_version()
+            else:
+                # Tables exist - verify schema is up to date
+                self._ensure_schema_up_to_date()
         except sa.exc.SQLAlchemyError as e:
             # Check if this is a corruption error
             if self.is_database_corrupted(e):
@@ -518,7 +554,7 @@ class AreaOccupancyDB:
                     "Database may be corrupted (error: %s), will attempt recovery in background",
                     e,
                 )
-                # Don't block startup - let master's periodic health check handle it
+                # Don't block startup - will attempt recovery in background
                 # Just log and continue
             else:
                 # Database doesn't exist or is not initialized, create it
@@ -530,9 +566,9 @@ class AreaOccupancyDB:
                     self.set_db_version()
                 except (sa.exc.SQLAlchemyError, OSError, RuntimeError):
                     # If initialization fails, log and continue
-                    # Master's health check will handle recovery
+                    # Will attempt recovery in background
                     _LOGGER.debug(
-                        "Database initialization failed, master will handle recovery"
+                        "Database initialization failed, will attempt recovery"
                     )
 
     def check_database_integrity(self) -> bool:
@@ -582,19 +618,182 @@ class AreaOccupancyDB:
     def _verify_all_tables_exist(self) -> bool:
         """Verify all required tables exist in the database.
 
+        Uses SQLAlchemy's inspector to ensure consistent connection handling,
+        avoiding race conditions with in-memory databases where different
+        connections might not see tables created by other connections.
+
         Returns:
             bool: True if all required tables exist, False otherwise
         """
         required_tables = {"areas", "entities", "intervals", "priors", "metadata"}
         try:
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
-                existing_tables = {row[0] for row in result}
-                return required_tables.issubset(existing_tables)
+            # Use inspector instead of raw connection to ensure consistent
+            # connection pool usage (same as init_db uses Base.metadata.create_all)
+            inspector = sa.inspect(self.engine)
+            existing_tables = set(inspector.get_table_names())
+            return required_tables.issubset(existing_tables)
         except sa.exc.SQLAlchemyError:
             return False
+
+    def _ensure_schema_up_to_date(self) -> None:
+        """Ensure database schema is up to date by adding missing columns."""
+        try:
+            inspector = sa.inspect(self.engine)
+
+            # Check if entities table has area_name column
+            if "entities" in inspector.get_table_names():
+                columns = [col["name"] for col in inspector.get_columns("entities")]
+                if "area_name" not in columns:
+                    _LOGGER.info("Adding area_name column to entities table")
+                    with self.get_session() as session:
+                        session.execute(
+                            text("ALTER TABLE entities ADD COLUMN area_name TEXT")
+                        )
+                        session.commit()
+                        _LOGGER.info(
+                            "Successfully added area_name column to entities table"
+                        )
+
+            # Check if priors table needs area_name column and primary key update
+            if "priors" in inspector.get_table_names():
+                columns = [col["name"] for col in inspector.get_columns("priors")]
+                if "area_name" not in columns:
+                    _LOGGER.info(
+                        "Migrating priors table to add area_name column and update primary key"
+                    )
+                    self._migrate_priors_table_for_area_name()
+        except (SQLAlchemyError, OSError, RuntimeError) as e:
+            _LOGGER.warning("Error updating database schema: %s", e)
+
+    def _migrate_priors_table_for_area_name(self) -> None:
+        """Migrate priors table to add area_name column and update primary key.
+
+        SQLite doesn't support ALTER TABLE for primary key changes, so we need to:
+        1. Create a new table with the correct schema
+        2. Copy data from old table, populating area_name from areas table
+        3. Drop old table
+        4. Rename new table to priors
+        """
+        try:
+            with self.get_locked_session() as session:
+                # Step 1: Create new priors table with area_name in primary key
+                _LOGGER.debug("Creating new priors table with area_name")
+                session.execute(
+                    text(
+                        """
+                        CREATE TABLE priors_new (
+                            entry_id TEXT NOT NULL,
+                            area_name TEXT NOT NULL,
+                            day_of_week INTEGER NOT NULL,
+                            time_slot INTEGER NOT NULL,
+                            prior_value REAL NOT NULL,
+                            data_points INTEGER NOT NULL,
+                            last_updated DATETIME NOT NULL,
+                            PRIMARY KEY (entry_id, area_name, day_of_week, time_slot),
+                            FOREIGN KEY (entry_id) REFERENCES areas(entry_id)
+                        )
+                        """
+                    )
+                )
+
+                # Step 2: Copy data from old table, populating area_name from areas table
+                _LOGGER.debug("Copying data from old priors table with area_name")
+                # Check if areas table exists
+                inspector = sa.inspect(self.engine)
+                if "areas" in inspector.get_table_names():
+                    # Use JOIN to get area_name from areas table
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO priors_new (
+                                entry_id, area_name, day_of_week, time_slot,
+                                prior_value, data_points, last_updated
+                            )
+                            SELECT
+                                p.entry_id,
+                                COALESCE(a.area_name, '') as area_name,
+                                p.day_of_week,
+                                p.time_slot,
+                                p.prior_value,
+                                p.data_points,
+                                p.last_updated
+                            FROM priors p
+                            LEFT JOIN areas a ON p.entry_id = a.entry_id
+                            """
+                        )
+                    )
+                else:
+                    # No areas table, use empty string for area_name
+                    _LOGGER.warning(
+                        "Areas table not found during priors migration, using empty area_name"
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO priors_new (
+                                entry_id, area_name, day_of_week, time_slot,
+                                prior_value, data_points, last_updated
+                            )
+                            SELECT
+                                entry_id,
+                                '' as area_name,
+                                day_of_week,
+                                time_slot,
+                                prior_value,
+                                data_points,
+                                last_updated
+                            FROM priors
+                            """
+                        )
+                    )
+
+                # Step 3: Drop old table
+                _LOGGER.debug("Dropping old priors table")
+                session.execute(text("DROP TABLE priors"))
+
+                # Step 4: Rename new table to priors
+                _LOGGER.debug("Renaming new priors table")
+                session.execute(text("ALTER TABLE priors_new RENAME TO priors"))
+
+                # Step 5: Create indexes
+                _LOGGER.debug("Creating indexes on priors table")
+                session.execute(
+                    text("CREATE INDEX idx_priors_entry ON priors(entry_id)")
+                )
+                session.execute(
+                    text("CREATE INDEX idx_priors_area ON priors(area_name)")
+                )
+                session.execute(
+                    text(
+                        "CREATE INDEX idx_priors_entry_area ON priors(entry_id, area_name)"
+                    )
+                )
+                session.execute(
+                    text(
+                        "CREATE INDEX idx_priors_day_slot ON priors(day_of_week, time_slot)"
+                    )
+                )
+                session.execute(
+                    text("CREATE INDEX idx_priors_last_updated ON priors(last_updated)")
+                )
+
+                session.commit()
+                _LOGGER.info(
+                    "Successfully migrated priors table to include area_name in primary key"
+                )
+        except (SQLAlchemyError, OSError, RuntimeError) as e:
+            _LOGGER.error("Error migrating priors table: %s", e)
+            # Try to clean up if migration failed
+            try:
+                with self.get_locked_session() as session:
+                    # Check if priors_new exists and drop it
+                    inspector = sa.inspect(self.engine)
+                    if "priors_new" in inspector.get_table_names():
+                        session.execute(text("DROP TABLE priors_new"))
+                        session.commit()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
     def is_database_corrupted(self, error: Exception) -> bool:
         """Check if an error indicates database corruption.
@@ -620,8 +819,6 @@ class AreaOccupancyDB:
 
     def attempt_database_recovery(self) -> bool:
         """Attempt to recover from database corruption.
-
-        **Master-only method**: Only the master instance should call this.
 
         Returns:
             bool: True if recovery was successful, False otherwise
@@ -674,8 +871,6 @@ class AreaOccupancyDB:
     def backup_database(self) -> bool:
         """Create a backup of the current database.
 
-        **Master-only method**: Only the master instance should call this.
-
         Returns:
             bool: True if backup was successful, False otherwise
 
@@ -696,8 +891,6 @@ class AreaOccupancyDB:
 
     def restore_database_from_backup(self) -> bool:
         """Restore database from backup if available.
-
-        **Master-only method**: Only the master instance should call this.
 
         Returns:
             bool: True if restore was successful, False otherwise
@@ -739,9 +932,6 @@ class AreaOccupancyDB:
 
     def handle_database_corruption(self) -> bool:
         """Handle database corruption with automatic recovery attempts.
-
-        **Master-only method**: Only the master instance should call this.
-        Non-master instances should rely on the master's periodic health checks.
 
         Returns:
             bool: True if database is now healthy, False if all recovery attempts failed
@@ -785,8 +975,7 @@ class AreaOccupancyDB:
     def periodic_health_check(self) -> bool:
         """Perform periodic database health check and maintenance.
 
-        **Master-only method**: Only the master instance should call this.
-        The master performs health checks during analysis cycles.
+        Health checks are performed during analysis cycles.
 
         Returns:
             bool: True if database is healthy, False if issues were found
@@ -836,27 +1025,22 @@ class AreaOccupancyDB:
 
     def set_db_version(self) -> None:
         """Set the database version in the metadata table."""
-        # Use direct engine connection during initialization
-        with self.engine.begin() as conn:
+        # Use session for ORM operations during initialization
+        with self.get_session() as session:
             try:
-                # Try to update if exists, else insert
-                result = conn.execute(
-                    text("SELECT value FROM metadata WHERE key = 'db_version'")
-                ).fetchone()
-                if result:
-                    conn.execute(
-                        text(
-                            "UPDATE metadata SET value = :value WHERE key = 'db_version'"
-                        ),
-                        {"value": str(DB_VERSION)},
+                with session.begin():
+                    # Try to get existing metadata entry using ORM
+                    metadata_entry = (
+                        session.query(self.Metadata).filter_by(key="db_version").first()
                     )
-                else:
-                    conn.execute(
-                        text(
-                            "INSERT INTO metadata (key, value) VALUES ('db_version', :value)"
-                        ),
-                        {"value": str(DB_VERSION)},
-                    )
+                    if metadata_entry:
+                        # Update existing entry
+                        metadata_entry.value = str(DB_VERSION)
+                    else:
+                        # Insert new entry
+                        session.add(
+                            self.Metadata(key="db_version", value=str(DB_VERSION))
+                        )
             except Exception as e:
                 _LOGGER.error("Failed to set db_version in metadata table: %s", e)
                 raise
@@ -951,231 +1135,10 @@ class AreaOccupancyDB:
         except (SQLAlchemyError, OSError, ValueError) as e:
             _LOGGER.warning("Failed to record prune timestamp: %s", e)
 
-    # --- Master Election Methods ---
-
-    def elect_master(self) -> str | None:
-        """Elect or return current master instance.
-
-        Uses file lock to prevent race conditions when multiple instances
-        start simultaneously and compete to become master.
-
-        Returns:
-            str: The entry_id of the current master instance
-            None: If master election failed and state is unknown
-        """
-        try:
-            with self.get_locked_session(timeout=5) as session:
-                # Get current master info
-                master_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_entry_id")
-                    .first()
-                )
-                master_heartbeat_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_heartbeat")
-                    .first()
-                )
-
-                now = dt_util.utcnow()
-                is_master_alive = False
-
-                if master_heartbeat_entry:
-                    try:
-                        last_heartbeat = datetime.fromisoformat(
-                            master_heartbeat_entry.value
-                        )
-                        # Master is alive if heartbeat within timeout period
-                        if (
-                            now - last_heartbeat
-                        ).total_seconds() < MASTER_HEALTH_TIMEOUT:
-                            is_master_alive = True
-                    except (ValueError, TypeError):
-                        _LOGGER.warning("Invalid master heartbeat timestamp")
-
-                # If no master or master is dead, try to become master
-                if not master_entry or not is_master_alive:
-                    old_master = master_entry.value if master_entry else None
-                    _LOGGER.info(
-                        "Electing new master. Old master: %s, Current entry: %s",
-                        old_master,
-                        self.coordinator.entry_id,
-                    )
-
-                    # Update master entry
-                    if master_entry:
-                        master_entry.value = self.coordinator.entry_id
-                    else:
-                        session.add(
-                            self.Metadata(
-                                key="master_entry_id", value=self.coordinator.entry_id
-                            )
-                        )
-
-                    # Set heartbeat
-                    if master_heartbeat_entry:
-                        master_heartbeat_entry.value = now.isoformat()
-                    else:
-                        session.add(
-                            self.Metadata(key="master_heartbeat", value=now.isoformat())
-                        )
-
-                    session.commit()
-                    return self.coordinator.entry_id
-
-                # Master is alive, return it
-                return master_entry.value
-
-        except (SQLAlchemyError, OSError, RuntimeError) as e:
-            _LOGGER.error("Failed to elect master: %s", e)
-            # Return None to indicate election failure and unknown state
-            return None
-
-    def get_master_entry_id(self) -> str | None:
-        """Get the current master instance entry_id.
-
-        Returns:
-            str: Master entry_id or None if not set
-        """
-        try:
-            with self.get_session() as session:
-                master_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_entry_id")
-                    .first()
-                )
-                return master_entry.value if master_entry else None
-        except (SQLAlchemyError, OSError) as e:
-            _LOGGER.debug("Failed to get master entry ID: %s", e)
-            return None
-
-    def is_master(self) -> bool:
-        """Check if current instance is the master.
-
-        Returns:
-            bool: True if current instance is master
-        """
-        master_id = self.get_master_entry_id()
-        return master_id == self.coordinator.entry_id
-
-    def update_master_heartbeat(self) -> None:
-        """Update master heartbeat timestamp (master-only, no lock needed).
-
-        Note: Only the master calls this method, so no file lock is required.
-        """
-        try:
-            with self.get_session() as session:
-                heartbeat_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_heartbeat")
-                    .first()
-                )
-                if heartbeat_entry:
-                    heartbeat_entry.value = dt_util.utcnow().isoformat()
-                else:
-                    session.add(
-                        self.Metadata(
-                            key="master_heartbeat", value=dt_util.utcnow().isoformat()
-                        )
-                    )
-                session.commit()
-        except (SQLAlchemyError, OSError, RuntimeError) as e:
-            _LOGGER.warning("Failed to update master heartbeat: %s", e)
-
-    def check_master_health(self) -> bool:
-        """Check if master heartbeat is recent (within MASTER_HEALTH_TIMEOUT).
-
-        Returns:
-            bool: True if master appears healthy
-        """
-        try:
-            with self.get_session() as session:
-                heartbeat_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_heartbeat")
-                    .first()
-                )
-                if not heartbeat_entry:
-                    return False
-
-                try:
-                    last_heartbeat = datetime.fromisoformat(heartbeat_entry.value)
-                    time_since_heartbeat = (
-                        dt_util.utcnow() - last_heartbeat
-                    ).total_seconds()
-                except (ValueError, TypeError):
-                    return False
-                else:
-                    return time_since_heartbeat < MASTER_HEALTH_TIMEOUT
-        except (SQLAlchemyError, OSError) as e:
-            _LOGGER.debug("Failed to check master health: %s", e)
-            return False
-
-    def release_master(self) -> None:
-        """Release master role (called on shutdown).
-
-        Uses file lock to ensure clean state transition during instance shutdown
-        or master role handoff to another instance.
-
-        """
-        try:
-            with self.get_locked_session(timeout=2) as session:
-                master_entry = (
-                    session.query(self.Metadata)
-                    .filter_by(key="master_entry_id")
-                    .first()
-                )
-                if master_entry and master_entry.value == self.coordinator.entry_id:
-                    # Clear the master entry
-                    master_entry.value = ""
-                    session.commit()
-                    _LOGGER.info(
-                        "Released master role for entry %s", self.coordinator.entry_id
-                    )
-        except (SQLAlchemyError, OSError, RuntimeError) as e:
-            _LOGGER.warning("Failed to release master role: %s", e)
-
-    def get_instance_position(self, entry_id: str) -> int:
-        """Get round-robin position for instance (for analysis staggering).
-
-        Uses file lock to ensure unique position assignment when multiple instances
-        start simultaneously and register their positions.
-
-        Args:
-            entry_id: Instance entry ID
-
-        Returns:
-            int: Position (0, 1, 2, ...) for staggering
-        """
-        try:
-            with self.get_locked_session(timeout=5) as session:
-                position_key = f"instance_{entry_id}_position"
-                position_entry = (
-                    session.query(self.Metadata).filter_by(key=position_key).first()
-                )
-
-                if position_entry:
-                    return int(position_entry.value)
-
-                # Need to assign a position - count existing instances
-                existing_positions = (
-                    session.query(self.Metadata)
-                    .filter(self.Metadata.key.like("instance_%_position"))
-                    .all()
-                )
-
-                # Assign next position
-                position = len(existing_positions)
-                session.add(self.Metadata(key=position_key, value=str(position)))
-                session.commit()
-
-                return position
-        except (SQLAlchemyError, OSError, ValueError) as e:
-            _LOGGER.warning("Failed to get instance position: %s", e)
-            return 0  # Default to position 0 if error
+    # Master election and instance position methods removed - no longer needed with single-instance architecture
 
     def init_db(self) -> None:
-        """Initialize the database with WAL mode and race condition handling."""
+        """Initialize the database with WAL mode."""
         _LOGGER.debug("Starting database initialization")
         try:
             # Enable WAL mode for better concurrent writes
@@ -1185,7 +1148,7 @@ class AreaOccupancyDB:
             Base.metadata.create_all(self.engine, checkfirst=True)
             _LOGGER.debug("Database tables created successfully")
         except sa.exc.OperationalError as err:
-            # Handle race condition when multiple instances try to create tables
+            # Handle errors when creating tables
             if err.orig and hasattr(err.orig, "sqlite_errno"):
                 if err.orig.sqlite_errno == 1:
                     _LOGGER.debug(
@@ -1227,133 +1190,155 @@ class AreaOccupancyDB:
     # --- Load Data ---
 
     async def load_data(self) -> None:
-        """Load the data from the database (optimized for parallel reads).
+        """Load the data from the database for all areas.
 
-        This method uses a two-phase approach to allow multiple integration
-        instances to load in parallel during startup:
-        1. Phase 1: Read data without lock (parallel-safe)
-        2. Phase 2: Only acquire lock if stale entities need deletion (rare)
+        This method iterates over all configured areas and loads data for each.
         """
 
-        def _read_data_operation() -> tuple[Any, list[Any], list[str]]:
-            """Read data WITHOUT lock (parallel-safe)."""
+        def _read_data_operation(
+            area_name: str,
+        ) -> tuple[Any, list[Any], list[str]]:
+            """Read data WITHOUT lock (parallel-safe) for a specific area."""
+            # Ensure tables exist (important for in-memory databases where
+            # each connection gets its own database)
+            if not self._verify_all_tables_exist():
+                self.init_db()
             stale_entity_ids = []
             with self.get_session() as session:
-                area = (
-                    session.query(self.Areas)
-                    .filter_by(entry_id=self.coordinator.entry_id)
-                    .first()
-                )
+                # Query by area_name instead of entry_id
+                area = session.query(self.Areas).filter_by(area_name=area_name).first()
                 entities = (
                     session.query(self.Entities)
-                    .filter_by(entry_id=self.coordinator.entry_id)
+                    .filter_by(area_name=area_name)
                     .order_by(self.Entities.entity_id)
                     .all()
                 )
                 if entities:
-                    for entity_obj in entities:
-                        # Check if entity exists in current coordinator config
-                        try:
-                            self.coordinator.entities.get_entity(entity_obj.entity_id)
-                        except ValueError:
-                            # Entity not found in coordinator - identify if stale
-                            should_delete = False
-                            if hasattr(self.coordinator.entities, "entity_ids"):
-                                current_entity_ids = set(
-                                    self.coordinator.entities.entity_ids
-                                )
-                                if entity_obj.entity_id not in current_entity_ids:
+                    # Get the area's entity manager to check if entities exist
+                    area_data = self.coordinator.get_area_or_default(area_name)
+                    if area_data:
+                        for entity_obj in entities:
+                            # Check if entity exists in current coordinator config
+                            try:
+                                area_data.entities.get_entity(entity_obj.entity_id)
+                            except ValueError:
+                                # Entity not found in coordinator - identify if stale
+                                should_delete = False
+                                if hasattr(area_data.entities, "entity_ids"):
+                                    current_entity_ids = set(
+                                        area_data.entities.entity_ids
+                                    )
+                                    if entity_obj.entity_id not in current_entity_ids:
+                                        should_delete = True
+                                elif hasattr(area_data.entities, "entities"):
+                                    # Fallback for mock objects that have entities dict
+                                    current_entity_ids = set(
+                                        area_data.entities.entities.keys()
+                                    )
+                                    if entity_obj.entity_id not in current_entity_ids:
+                                        should_delete = True
+                                else:
+                                    # Can't determine current config - assume entity is stale
                                     should_delete = True
-                            elif hasattr(self.coordinator.entities, "entities"):
-                                # Fallback for mock objects that have entities dict
-                                current_entity_ids = set(
-                                    self.coordinator.entities.entities.keys()
-                                )
-                                if entity_obj.entity_id not in current_entity_ids:
-                                    should_delete = True
-                            else:
-                                # Can't determine current config - assume entity is stale
-                                should_delete = True
 
-                            if should_delete:
-                                stale_entity_ids.append(entity_obj.entity_id)
+                                if should_delete:
+                                    stale_entity_ids.append(entity_obj.entity_id)
             return area, entities, stale_entity_ids
 
-        def _delete_stale_operation(stale_ids: list[str]) -> None:
+        def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
             """Delete stale entities (requires lock to prevent race conditions)."""
             with self.get_locked_session() as session:
                 for entity_id in stale_ids:
                     _LOGGER.info(
-                        "Deleting stale entity %s from database (not in current config)",
+                        "Deleting stale entity %s from database for area %s (not in current config)",
                         entity_id,
+                        area_name,
                     )
                     session.query(self.Entities).filter_by(
-                        entry_id=self.coordinator.entry_id, entity_id=entity_id
+                        area_name=area_name, entity_id=entity_id
                     ).delete()
                 session.commit()
 
         try:
-            # Phase 1: Read without lock (all instances in parallel)
-            area, entities, stale_ids = await self.hass.async_add_executor_job(
-                _read_data_operation
-            )
+            # Load data for each configured area
+            for area_name in self.coordinator.get_area_names():
+                area_data = self.coordinator.get_area_or_default(area_name)
 
-            # Update prior from area data
-            if area:
-                self.coordinator.prior.set_global_prior(area.area_prior)
-
-            # Process entities
-            if entities:
-                for entity_obj in entities:
-                    if entity_obj.entity_id in stale_ids:
-                        # Skip stale entities, will be deleted in phase 2
-                        continue
-
-                    # Try to get existing entity from coordinator
-                    try:
-                        existing_entity = self.coordinator.entities.get_entity(
-                            entity_obj.entity_id
-                        )
-                        # Update existing entity with database values (preserve database timestamp)
-                        existing_entity.update_decay(
-                            entity_obj.decay_start,
-                            entity_obj.is_decaying,
-                        )
-                        existing_entity.update_likelihood(
-                            entity_obj.prob_given_true,
-                            entity_obj.prob_given_false,
-                        )
-                        # DB weight takes priority over configured defaults when valid
-                        if hasattr(existing_entity, "type") and hasattr(
-                            existing_entity.type, "weight"
-                        ):
-                            try:
-                                weight_val = float(entity_obj.weight)
-                                if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
-                                    existing_entity.type.weight = weight_val
-                            except (TypeError, ValueError):
-                                pass
-                        existing_entity.last_updated = entity_obj.last_updated
-                        existing_entity.previous_evidence = entity_obj.evidence
-                        _LOGGER.debug(
-                            "Updated existing entity %s with database values",
-                            entity_obj.entity_id,
-                        )
-                    except ValueError:
-                        # Entity should exist but doesn't - create it from database
-                        # (This handles cases where we can't determine current config, like in tests)
-                        _LOGGER.warning(
-                            "Entity %s not found in coordinator but is in config, creating from database",
-                            entity_obj.entity_id,
-                        )
-                        new_entity = self.coordinator.factory.create_from_db(entity_obj)
-                        self.coordinator.entities.add_entity(new_entity)
-
-            # Phase 2: Only lock if cleanup needed (rare)
-            if stale_ids:
-                await self.hass.async_add_executor_job(
-                    _delete_stale_operation, stale_ids
+                # Phase 1: Read without lock (all instances in parallel)
+                area, entities, stale_ids = await self.hass.async_add_executor_job(
+                    _read_data_operation, area_name
                 )
+
+                # Update prior from area data
+                if area and area.area_prior is not None:
+                    _LOGGER.debug(
+                        "Loading area_prior %s for area %s",
+                        area.area_prior,
+                        area_name,
+                    )
+                    area_data.prior.set_global_prior(area.area_prior)
+                else:
+                    _LOGGER.debug(
+                        "No area_prior found for area %s (area=%s, area_prior=%s)",
+                        area_name,
+                        area,
+                        area.area_prior if area else None,
+                    )
+
+                # Process entities
+                if entities:
+                    for entity_obj in entities:
+                        if entity_obj.entity_id in stale_ids:
+                            # Skip stale entities, will be deleted in phase 2
+                            continue
+
+                        # Try to get existing entity from coordinator
+                        try:
+                            existing_entity = area_data.entities.get_entity(
+                                entity_obj.entity_id
+                            )
+                            # Update existing entity with database values (preserve database timestamp)
+                            existing_entity.update_decay(
+                                entity_obj.decay_start,
+                                entity_obj.is_decaying,
+                            )
+                            existing_entity.update_likelihood(
+                                entity_obj.prob_given_true,
+                                entity_obj.prob_given_false,
+                            )
+                            # DB weight takes priority over configured defaults when valid
+                            if hasattr(existing_entity, "type") and hasattr(
+                                existing_entity.type, "weight"
+                            ):
+                                try:
+                                    weight_val = float(entity_obj.weight)
+                                    if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
+                                        existing_entity.type.weight = weight_val
+                                except (TypeError, ValueError):
+                                    pass
+                            existing_entity.last_updated = entity_obj.last_updated
+                            existing_entity.previous_evidence = entity_obj.evidence
+                            _LOGGER.debug(
+                                "Updated existing entity %s with database values for area %s",
+                                entity_obj.entity_id,
+                                area_name,
+                            )
+                        except ValueError:
+                            # Entity should exist but doesn't - create it from database
+                            # (This handles cases where we can't determine current config, like in tests)
+                            _LOGGER.warning(
+                                "Entity %s not found in coordinator for area %s but is in config, creating from database",
+                                entity_obj.entity_id,
+                                area_name,
+                            )
+                            new_entity = area_data.factory.create_from_db(entity_obj)
+                            area_data.entities.add_entity(new_entity)
+
+                # Phase 2: Only lock if cleanup needed (rare)
+                if stale_ids:
+                    await self.hass.async_add_executor_job(
+                        _delete_stale_operation, area_name, stale_ids
+                    )
 
             _LOGGER.debug("Loaded area occupancy data")
 
@@ -1370,65 +1355,132 @@ class AreaOccupancyDB:
 
     # --- Save Data ---
 
-    def save_area_data(self) -> None:
-        """Save the area data to the database (master-only)."""
-        # Debounce to reduce bursts
-        now_ts = time.monotonic()
-        if (now_ts - self._last_area_save_ts) < self._save_debounce_seconds:
-            _LOGGER.debug("save_area_data debounced")
-            return
+    def _validate_area_data(
+        self, area_data: dict[str, Any], area_name_item: str
+    ) -> list[tuple[str, str]]:
+        """Validate area data and return list of validation errors.
+
+        Args:
+            area_data: Dictionary containing area data to validate
+            area_name_item: Name of the area being validated (for error messages)
+
+        Returns:
+            List of (area_name, error_message) tuples for any validation failures
+        """
+        failures: list[tuple[str, str]] = []
+
+        if not area_data.get("entry_id"):
+            failures.append((area_name_item, "entry_id is empty or None"))
+        if not area_data.get("area_name"):
+            failures.append((area_name_item, "area_name is empty or None"))
+        if not area_data.get("purpose"):
+            failures.append((area_name_item, "purpose is empty or None"))
+        if area_data.get("threshold") is None:
+            failures.append((area_name_item, "threshold is None"))
+
+        return failures
+
+    def save_area_data(self, area_name: str | None = None) -> None:
+        """Save the area data to the database.
+
+        Args:
+            area_name: Optional area name to save. If None, saves all areas.
+
+        With single-instance architecture, no file lock is required.
+        """
+        # Determine which areas to save
+        if area_name is not None:
+            areas_to_save = [area_name]
+        else:
+            areas_to_save = self.coordinator.get_area_names()
 
         def _attempt(session: Any) -> bool:
-            cfg = self.coordinator.config
+            """Save area data for all configured areas."""
+            failures: list[
+                tuple[str, str]
+            ] = []  # List of (area_name, error_message) tuples
+            has_failures = False
+            area_objects = []  # Collect all area objects for batch merge
 
-            area_data = {
-                "entry_id": self.coordinator.entry_id,
-                "area_name": cfg.name,
-                "area_id": cfg.area_id,
-                "purpose": cfg.purpose,
-                "threshold": cfg.threshold,
-                "area_prior": self.coordinator.area_prior,
-                "updated_at": dt_util.utcnow(),
-            }
+            for area_name_item in areas_to_save:
+                area_data_obj = self.coordinator.get_area_or_default(area_name_item)
+                if area_data_obj is None:
+                    error_msg = f"Area '{area_name_item}' not found"
+                    _LOGGER.error("%s, cannot insert area", error_msg)
+                    failures.append((area_name_item, error_msg))
+                    has_failures = True
+                    continue
 
-            _LOGGER.debug("Attempting to upsert area data: %s", area_data)
+                cfg = area_data_obj.config
 
-            # Validate required fields
-            if not area_data["entry_id"]:
-                _LOGGER.error("entry_id is empty or None, cannot insert area")
-                return False
+                # Call area_prior() method to get the actual value
+                area = self.coordinator.get_area_or_default(area_name_item)
+                area_prior_value = area.area_prior()
 
-            if not area_data["area_name"]:
-                _LOGGER.error("area_name is empty or None, cannot insert area")
-                return False
+                area_data = {
+                    "entry_id": self.coordinator.entry_id,
+                    "area_name": area_name_item,
+                    "area_id": cfg.area_id,
+                    "purpose": cfg.purpose,
+                    "threshold": cfg.threshold,
+                    "area_prior": area_prior_value,
+                    "updated_at": dt_util.utcnow(),
+                }
 
-            if not area_data["purpose"]:
-                _LOGGER.error("purpose is empty or None, cannot insert area")
-                return False
+                _LOGGER.debug("Attempting to insert area data: %s", area_data)
 
-            if area_data["threshold"] is None:
-                _LOGGER.error("threshold is None, cannot insert area")
-                return False
-
-            if area_data["area_prior"] is None:
-                _LOGGER.error("area_prior is None, cannot insert area")
-                return False
-
-            # Handle area_id - use entry_id as fallback if area_id is None or empty
-            if not area_data["area_id"]:
-                _LOGGER.info(
-                    "area_id is None or empty, using entry_id as fallback: %s",
-                    area_data["entry_id"],
+                # Validate required fields using helper method
+                validation_failures = self._validate_area_data(
+                    area_data, area_name_item
                 )
-                area_data["area_id"] = area_data["entry_id"]
+                if validation_failures:
+                    for area_name_fail, error_msg in validation_failures:
+                        _LOGGER.error(
+                            "%s, cannot insert area '%s'", error_msg, area_name_fail
+                        )
+                    failures.extend(validation_failures)
+                    has_failures = True
+                    continue
 
-            area_obj = self.Areas.from_dict(area_data)
-            session.merge(area_obj)
+                # Handle area_prior - use DEFAULT_AREA_PRIOR as fallback if None
+                if area_data["area_prior"] is None:
+                    _LOGGER.warning(
+                        "area_prior is None for area '%s', using DEFAULT_AREA_PRIOR (%s) as fallback",
+                        area_name_item,
+                        DEFAULT_AREA_PRIOR,
+                    )
+                    area_data["area_prior"] = DEFAULT_AREA_PRIOR
+
+                # Handle area_id - use entry_id as fallback if area_id is None or empty
+                if not area_data.get("area_id"):
+                    _LOGGER.info(
+                        "area_id is None or empty, using entry_id as fallback: %s",
+                        area_data["entry_id"],
+                    )
+                    area_data["area_id"] = area_data["entry_id"]
+
+                # Collect area object for batch merge
+                area_obj = self.Areas.from_dict(area_data)
+                area_objects.append(area_obj)
+
+            # Perform all merges in batch (SQLite requires individual merges due to upsert limitations,
+            # but collecting first allows SQLAlchemy to optimize the batch)
+            for area_obj in area_objects:
+                session.merge(area_obj)
+
+            # If there are failures, rollback and return False
+            if has_failures:
+                session.rollback()
+                # Log concise summary of all failures
+                failed_areas = [f"{area} ({error})" for area, error in failures]
+                _LOGGER.error(
+                    "Failed to save area data for %d area(s): %s",
+                    len(failures),
+                    "; ".join(failed_areas),
+                )
+                return False
+
             session.commit()
-            _LOGGER.info(
-                "Successfully saved area data for entry_id: %s",
-                area_data["entry_id"],
-            )
             return True
 
         try:
@@ -1460,77 +1512,118 @@ class AreaOccupancyDB:
             raise
 
     def save_entity_data(self) -> None:
-        """Save the entity data to the database (master-only)."""
-        # Debounce to reduce bursts
-        now_ts = time.monotonic()
-        if (now_ts - self._last_entities_save_ts) < self._save_debounce_seconds:
-            _LOGGER.debug("save_entity_data debounced")
-            return
+        """Save the entity data to the database for all areas.
+
+        With single-instance architecture, no file lock is required.
+        """
+
+        def _iter_area_entities() -> Iterable[tuple[str, Any]]:
+            """Yield (area_name, entity) tuples for all configured areas."""
+            for area_name in self.coordinator.get_area_names():
+                area_data = self.coordinator.get_area_or_default(area_name)
+                entities_container = getattr(area_data.entities, "entities", None)
+                if not entities_container:
+                    continue
+
+                try:
+                    entities_iter = entities_container.values()
+                except AttributeError:
+                    _LOGGER.debug(
+                        "Entities container for area %s does not provide values(), skipping",
+                        area_name,
+                    )
+                    continue
+
+                for entity in entities_iter:
+                    yield area_name, entity
+
+        def _prepare_entity_payload(
+            area_name: str, entity: Any
+        ) -> dict[str, Any] | None:
+            """Prepare normalized entity data for persistence."""
+            if not hasattr(entity, "type") or not entity.type:
+                _LOGGER.warning(
+                    "Entity %s has no type information, skipping",
+                    getattr(entity, "entity_id", "unknown"),
+                )
+                return None
+
+            entity_type = getattr(entity.type, "input_type", None)
+            if entity_type is None:
+                _LOGGER.warning(
+                    "Entity %s has no input_type, skipping", entity.entity_id
+                )
+                return None
+
+            # Normalize entity_type to plain string (handle Enum instances)
+            entity_type_value = (
+                entity_type.value if hasattr(entity_type, "value") else str(entity_type)
+            )
+
+            # Normalize values before persisting
+            try:
+                weight = float(getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT))
+            except (TypeError, ValueError):
+                weight = DEFAULT_ENTITY_WEIGHT
+            weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
+
+            try:
+                prob_true = float(entity.prob_given_true)
+            except (TypeError, ValueError):
+                prob_true = DEFAULT_ENTITY_PROB_GIVEN_TRUE
+            prob_true = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_true))
+
+            try:
+                prob_false = float(entity.prob_given_false)
+            except (TypeError, ValueError):
+                prob_false = DEFAULT_ENTITY_PROB_GIVEN_FALSE
+            prob_false = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_false))
+
+            last_updated = getattr(entity, "last_updated", None) or dt_util.utcnow()
+
+            evidence_source = getattr(entity, "previous_evidence", None)
+            if evidence_source is None:
+                evidence_source = getattr(entity, "evidence", None)
+            evidence_val = (
+                bool(evidence_source) if evidence_source is not None else False
+            )
+
+            return {
+                "entry_id": self.coordinator.entry_id,
+                "area_name": area_name,
+                "entity_id": entity.entity_id,
+                "entity_type": entity_type_value,
+                "weight": weight,
+                "prob_given_true": prob_true,
+                "prob_given_false": prob_false,
+                "last_updated": last_updated,
+                "is_decaying": entity.decay.is_decaying,
+                "decay_start": entity.decay.decay_start,
+                "evidence": evidence_val,
+            }
 
         def _attempt(session: Any) -> int:
-            entities = self.coordinator.entities.entities.values()
+            """Attempt to save entity data with batched merges for better performance."""
             merges_count = 0
-            for entity in entities:
-                # Skip entities with missing type information
-                if not hasattr(entity, "type") or not entity.type:
-                    _LOGGER.warning(
-                        "Entity %s has no type information, skipping",
-                        entity.entity_id,
-                    )
+            # Collect all entity objects first, then merge in batches
+            # This allows SQLAlchemy to optimize the operations
+            entity_objects = []
+
+            for area_name, entity in _iter_area_entities():
+                entity_data = _prepare_entity_payload(area_name, entity)
+                if entity_data is None:
                     continue
 
-                entity_type = getattr(entity.type, "input_type", None)
-                if entity_type is None:
-                    _LOGGER.warning(
-                        "Entity %s has no input_type, skipping", entity.entity_id
-                    )
-                    continue
-
-                # Normalize values before persisting
-                try:
-                    weight = float(
-                        getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT)
-                    )
-                except (TypeError, ValueError):
-                    weight = DEFAULT_ENTITY_WEIGHT
-                # Clamp weight to bounds
-                weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
-
-                # Clamp likelihoods to valid probability bounds
-                prob_true = max(
-                    MIN_PROBABILITY,
-                    min(MAX_PROBABILITY, float(entity.prob_given_true)),
-                )
-                prob_false = max(
-                    MIN_PROBABILITY,
-                    min(MAX_PROBABILITY, float(entity.prob_given_false)),
-                )
-
-                # Evidence must be a boolean for the DB schema
-                evidence_val = (
-                    bool(entity.evidence) if entity.evidence is not None else False
-                )
-
-                last_updated = entity.last_updated or dt_util.utcnow()
-
-                entity_data = {
-                    "entry_id": self.coordinator.entry_id,
-                    "entity_id": entity.entity_id,
-                    "entity_type": entity_type,
-                    "weight": weight,
-                    "prob_given_true": prob_true,
-                    "prob_given_false": prob_false,
-                    "last_updated": last_updated,
-                    "is_decaying": entity.decay.is_decaying,
-                    "decay_start": entity.decay.decay_start,
-                    "evidence": evidence_val,
-                }
-
-                # Use session.merge for upsert functionality
                 entity_obj = self.Entities.from_dict(entity_data)
-                session.merge(entity_obj)
+                entity_objects.append(entity_obj)
                 merges_count += 1
 
+            # Perform all merges (SQLite requires individual merges due to upsert limitations)
+            # Collecting first allows SQLAlchemy to optimize the batch
+            for entity_obj in entity_objects:
+                session.merge(entity_obj)
+
+            # Single commit for all merges
             session.commit()
             return merges_count
 
@@ -1589,82 +1682,96 @@ class AreaOccupancyDB:
         Returns:
             int: Number of entities that were cleaned up
         """
+        total_cleaned = 0
         try:
+            for area_name in self.coordinator.get_area_names():
+                area_data = self.coordinator.get_area_or_default(area_name)
 
-            def _cleanup_operation() -> int:
-                with self.get_session() as session:
-                    # Get all entity IDs currently configured in the coordinator
-                    # Handle cases where entities might be a SimpleNamespace or mock object
-                    if hasattr(self.coordinator.entities, "entity_ids"):
-                        current_entity_ids = set(self.coordinator.entities.entity_ids)
-                    elif hasattr(self.coordinator.entities, "entities"):
-                        # Fallback for mock objects that have entities dict
-                        current_entity_ids = set(
-                            self.coordinator.entities.entities.keys()
-                        )
-                    else:
-                        # If we can't determine current entities, skip cleanup
-                        _LOGGER.debug(
-                            "Cannot determine current entity IDs, skipping cleanup"
-                        )
-                        return 0
+                def _cleanup_operation(area_name: str, area_data: Any) -> int:
+                    with self.get_session() as session:
+                        # Get all entity IDs currently configured for this area
+                        # Handle cases where entities might be a SimpleNamespace or mock object
+                        if hasattr(area_data.entities, "entity_ids"):
+                            current_entity_ids = set(area_data.entities.entity_ids)
+                        elif hasattr(area_data.entities, "entities"):
+                            # Fallback for mock objects that have entities dict
+                            current_entity_ids = set(area_data.entities.entities.keys())
+                        else:
+                            # If we can't determine current entities, skip cleanup
+                            _LOGGER.debug(
+                                "Cannot determine current entity IDs for area %s, skipping cleanup",
+                                area_name,
+                            )
+                            return 0
 
-                    # Query all entities for this entry_id from database
-                    db_entities = (
-                        session.query(self.Entities)
-                        .filter_by(entry_id=self.coordinator.entry_id)
-                        .all()
-                    )
-
-                    # Find entities that exist in database but not in current config
-                    orphaned_entities = [
-                        entity
-                        for entity in db_entities
-                        if entity.entity_id not in current_entity_ids
-                    ]
-
-                    if not orphaned_entities:
-                        _LOGGER.debug(
-                            "No orphaned entities found for entry %s",
-                            self.coordinator.entry_id,
-                        )
-                        return 0
-
-                    # Delete orphaned entities and their intervals
-                    orphaned_count = 0
-                    for entity in orphaned_entities:
-                        _LOGGER.info(
-                            "Removing orphaned entity %s from database (no longer in config)",
-                            entity.entity_id,
+                        # Query all entities for this area_name from database
+                        db_entities = (
+                            session.query(self.Entities)
+                            .filter_by(area_name=area_name)
+                            .all()
                         )
 
-                        # First delete all intervals for this entity
+                        # Find entities that exist in database but not in current config
+                        orphaned_entities = [
+                            entity
+                            for entity in db_entities
+                            if entity.entity_id not in current_entity_ids
+                        ]
+
+                        if not orphaned_entities:
+                            _LOGGER.debug(
+                                "No orphaned entities found for area %s",
+                                area_name,
+                            )
+                            return 0
+
+                        # Collect orphaned entity IDs for bulk operations
+                        orphaned_entity_ids = [
+                            entity.entity_id for entity in orphaned_entities
+                        ]
+                        orphaned_count = len(orphaned_entity_ids)
+
+                        # Log orphaned entities being removed
+                        for entity_id in orphaned_entity_ids:
+                            _LOGGER.info(
+                                "Removing orphaned entity %s from database for area %s (no longer in config)",
+                                entity_id,
+                                area_name,
+                            )
+
+                        # Bulk delete all intervals for orphaned entities in a single query
                         intervals_deleted = (
                             session.query(self.Intervals)
-                            .filter_by(entity_id=entity.entity_id)
-                            .delete()
+                            .filter(self.Intervals.entity_id.in_(orphaned_entity_ids))
+                            .delete(synchronize_session=False)
                         )
 
                         if intervals_deleted > 0:
                             _LOGGER.debug(
-                                "Deleted %d intervals for orphaned entity %s",
+                                "Bulk deleted %d intervals for %d orphaned entities in area %s",
                                 intervals_deleted,
-                                entity.entity_id,
+                                orphaned_count,
+                                area_name,
                             )
 
-                        # Then delete the entity
-                        session.delete(entity)
-                        orphaned_count += 1
+                        # Bulk delete all orphaned entities in a single query
+                        entities_deleted = (
+                            session.query(self.Entities)
+                            .filter(self.Entities.entity_id.in_(orphaned_entity_ids))
+                            .delete(synchronize_session=False)
+                        )
 
-                    session.commit()
-                    _LOGGER.info(
-                        "Cleaned up %d orphaned entities for entry %s",
-                        orphaned_count,
-                        self.coordinator.entry_id,
-                    )
-                    return orphaned_count
+                        session.commit()
+                        _LOGGER.info(
+                            "Cleaned up %d orphaned entities for area %s (deleted %d intervals)",
+                            entities_deleted,
+                            area_name,
+                            intervals_deleted,
+                        )
+                        return entities_deleted
 
-            result = _cleanup_operation()
+                result = _cleanup_operation(area_name, area_data)
+                total_cleaned += result
 
         except (
             sa.exc.SQLAlchemyError,
@@ -1673,9 +1780,96 @@ class AreaOccupancyDB:
             RuntimeError,
         ) as err:
             _LOGGER.error("Failed to cleanup orphaned entities: %s", err)
-            return 0
-        else:
-            return result if result is not None else 0
+            return total_cleaned
+        return total_cleaned
+
+    def delete_area_data(self, area_name: str) -> int:
+        """Delete all database data for a removed area.
+
+        This includes:
+        - All entities for the area
+        - All intervals for those entities
+        - All priors for the area
+        - The area record itself
+
+        Args:
+            area_name: Name of the area to delete
+
+        Returns:
+            int: Number of entities deleted
+        """
+        deleted_count = 0
+        try:
+            with self.get_session() as session:
+                # Get all entity IDs for this area first, then bulk delete intervals
+                # SQLAlchemy doesn't allow delete() on queries with join()
+                entity_ids = [
+                    entity_id
+                    for (entity_id,) in session.query(self.Entities.entity_id)
+                    .filter_by(area_name=area_name)
+                    .all()
+                ]
+
+                # Bulk delete all intervals for entities in this area
+                if entity_ids:
+                    intervals_deleted = (
+                        session.query(self.Intervals)
+                        .filter(self.Intervals.entity_id.in_(entity_ids))
+                        .delete(synchronize_session=False)
+                    )
+                else:
+                    intervals_deleted = 0
+
+                if intervals_deleted > 0:
+                    _LOGGER.debug(
+                        "Bulk deleted %d intervals for entities in removed area %s",
+                        intervals_deleted,
+                        area_name,
+                    )
+
+                # Delete all entities for this area
+                entities_deleted = (
+                    session.query(self.Entities).filter_by(area_name=area_name).delete()
+                )
+                deleted_count = entities_deleted
+                if entities_deleted > 0:
+                    _LOGGER.debug(
+                        "Deleted %d entities for removed area %s",
+                        entities_deleted,
+                        area_name,
+                    )
+
+                # Delete priors for this area
+                priors_deleted = (
+                    session.query(self.Priors).filter_by(area_name=area_name).delete()
+                )
+                if priors_deleted > 0:
+                    _LOGGER.debug(
+                        "Deleted %d priors for removed area %s",
+                        priors_deleted,
+                        area_name,
+                    )
+
+                # Delete the area record itself
+                area_deleted = (
+                    session.query(self.Areas).filter_by(area_name=area_name).delete()
+                )
+                if area_deleted > 0:
+                    _LOGGER.debug("Deleted area record for removed area %s", area_name)
+
+                session.commit()
+                _LOGGER.info(
+                    "Deleted all data for removed area %s (%d entities, %d priors, %d area records)",
+                    area_name,
+                    deleted_count,
+                    priors_deleted,
+                    area_deleted,
+                )
+        except (SQLAlchemyError, OSError) as err:
+            _LOGGER.error(
+                "Failed to delete data for removed area %s: %s", area_name, err
+            )
+        return deleted_count
 
     # --- Sync Data from Recorder ---
 
@@ -1861,12 +2055,18 @@ class AreaOccupancyDB:
     async def sync_states(
         self,
     ) -> None:
-        """Fetch states history from recorder and commit to Intervals table."""
+        """Fetch states history from recorder and commit to Intervals table for all areas."""
         hass = self.coordinator.hass
-        entity_ids = self.coordinator.config.entity_ids
         recorder = get_instance(hass)
         start_time = self.get_latest_interval()
         end_time = dt_util.now()
+
+        # Collect all entity IDs from all areas
+        all_entity_ids = []
+        for area_name in self.coordinator.get_area_names():
+            area_data = self.coordinator.get_area_or_default(area_name)
+            all_entity_ids.extend(area_data.entities.entity_ids)
+        entity_ids = list(set(all_entity_ids))  # Remove duplicates
 
         try:
             states = await recorder.async_add_executor_job(
@@ -1886,25 +2086,84 @@ class AreaOccupancyDB:
                 _LOGGER.debug("Syncing %d intervals", len(intervals))
                 if intervals:
                     with self.get_locked_session() as session:
-                        for interval_data in intervals:
-                            # Check if interval already exists to avoid UNIQUE constraint violation
-                            existing = (
-                                session.query(self.Intervals)
-                                .filter(
-                                    self.Intervals.entity_id
-                                    == interval_data["entity_id"],
-                                    self.Intervals.start_time
-                                    == interval_data["start_time"],
-                                    self.Intervals.end_time
-                                    == interval_data["end_time"],
+                        # Pre-filter duplicates using a single query for better performance
+                        # Build a set of (entity_id, start_time, end_time) tuples from intervals
+                        interval_keys = {
+                            (
+                                interval_data["entity_id"],
+                                interval_data["start_time"],
+                                interval_data["end_time"],
+                            )
+                            for interval_data in intervals
+                        }
+
+                        # Query existing intervals matching these keys in a single query
+                        if interval_keys:
+                            # Build OR conditions for all interval keys
+                            existing_conditions = []
+                            for entity_id, start_time, end_time in interval_keys:
+                                existing_conditions.append(
+                                    sa.and_(
+                                        self.Intervals.entity_id == entity_id,
+                                        self.Intervals.start_time == start_time,
+                                        self.Intervals.end_time == end_time,
+                                    )
                                 )
-                                .first()
+
+                            # Query all existing intervals matching any of our keys
+                            existing_intervals = (
+                                session.query(self.Intervals)
+                                .filter(sa.or_(*existing_conditions))
+                                .all()
                             )
 
-                            if not existing:
-                                # Only create if it doesn't exist
-                                interval_obj = self.Intervals.from_dict(interval_data)
-                                session.add(interval_obj)
+                            # Build set of existing keys for fast lookup
+                            # Normalize datetimes to UTC naive for comparison
+                            existing_keys = set()
+                            for interval in existing_intervals:
+                                # Normalize start_time and end_time to UTC naive datetime
+                                start = interval.start_time
+                                end = interval.end_time
+                                if start.tzinfo is not None:
+                                    start = start.replace(tzinfo=None)
+                                if end.tzinfo is not None:
+                                    end = end.replace(tzinfo=None)
+                                existing_keys.add((interval.entity_id, start, end))
+
+                            # Filter out intervals that already exist
+                            # Normalize datetimes in interval_data for comparison
+                            new_intervals = []
+                            for interval_data in intervals:
+                                # Normalize start_time and end_time to UTC naive datetime
+                                start = interval_data["start_time"]
+                                end = interval_data["end_time"]
+                                if start.tzinfo is not None:
+                                    start = start.replace(tzinfo=None)
+                                if end.tzinfo is not None:
+                                    end = end.replace(tzinfo=None)
+
+                                if (
+                                    interval_data["entity_id"],
+                                    start,
+                                    end,
+                                ) not in existing_keys:
+                                    new_intervals.append(interval_data)
+
+                            # Use bulk insert for all new intervals at once
+                            if new_intervals:
+                                session.bulk_insert_mappings(
+                                    self.Intervals, new_intervals, render_nulls=True
+                                )
+                                _LOGGER.debug(
+                                    "Bulk inserted %d new intervals (skipped %d duplicates)",
+                                    len(new_intervals),
+                                    len(intervals) - len(new_intervals),
+                                )
+                            else:
+                                _LOGGER.debug(
+                                    "All %d intervals already exist, skipping insert",
+                                    len(intervals),
+                                )
                         session.commit()
                 _LOGGER.debug("Synced %d intervals", len(intervals))
             else:
@@ -1989,13 +2248,14 @@ class AreaOccupancyDB:
             return 0
 
     def get_aggregated_intervals_by_slot(
-        self, entry_id: str, slot_minutes: int = 60
+        self, entry_id: str, slot_minutes: int = 60, area_name: str | None = None
     ) -> list[tuple[int, int, float]]:
         """Get aggregated interval data using SQL GROUP BY for better performance.
 
         Args:
             entry_id: The area entry ID to filter by
             slot_minutes: Time slot size in minutes
+            area_name: The area name to filter by (required for multi-area support)
 
         Returns:
             List of (day_of_week, time_slot, total_occupied_seconds) tuples
@@ -2041,8 +2301,12 @@ class AreaOccupancyDB:
                         == "motion",  # Use string instead of InputType enum
                         self.Intervals.state == "on",
                     )
-                    .group_by("day_of_week", "time_slot")
-                    .order_by("day_of_week", "time_slot")
+                )
+                # Add area_name filter if provided (required for multi-area support)
+                if area_name is not None:
+                    query = query.filter(self.Entities.area_name == area_name)
+                query = query.group_by("day_of_week", "time_slot").order_by(
+                    "day_of_week", "time_slot"
                 )
 
                 results = query.all()
@@ -2089,3 +2353,148 @@ class AreaOccupancyDB:
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Unexpected error during interval aggregation: %s", e)
             return []
+
+    def get_total_occupied_seconds_sql(
+        self,
+        entry_id: str,
+        area_name: str | None = None,
+        lookback_days: int = 90,
+        motion_timeout_seconds: int = 0,
+        include_media: bool = False,
+        include_appliance: bool = False,
+        media_sensor_ids: list[str] | None = None,
+        appliance_sensor_ids: list[str] | None = None,
+    ) -> float:
+        """Get total occupied seconds using SQL aggregation for better performance.
+
+        This is a simplified SQL version that calculates the sum directly in the database.
+        For complex timeout logic, the Python version should be used.
+
+        Args:
+            entry_id: The area entry ID to filter by
+            area_name: The area name to filter by (required for multi-area support)
+            lookback_days: Number of days to look back for interval data
+            motion_timeout_seconds: Motion timeout in seconds (applied to motion intervals only)
+            include_media: If True, include media player intervals
+            include_appliance: If True, include appliance intervals
+            media_sensor_ids: List of media sensor entity IDs to include
+            appliance_sensor_ids: List of appliance sensor entity IDs to include
+
+        Returns:
+            Total occupied seconds as float
+        """
+        _LOGGER.debug("Getting total occupied seconds using SQL aggregation")
+
+        try:
+            # Calculate lookback date
+            now = dt_util.utcnow()
+            lookback_date = now - timedelta(days=lookback_days)
+
+            with self.get_session() as session:
+                # Build base filter conditions
+                base_filters = [
+                    self.Entities.entry_id == entry_id,
+                    self.Intervals.start_time >= lookback_date,
+                ]
+                if area_name is not None:
+                    base_filters.append(self.Entities.area_name == area_name)
+
+                # Build motion sensor query
+                # Use duration_seconds column directly, add timeout per interval
+                if motion_timeout_seconds > 0:
+                    motion_sum_expr = func.sum(
+                        self.Intervals.duration_seconds + motion_timeout_seconds
+                    )
+                else:
+                    motion_sum_expr = func.sum(self.Intervals.duration_seconds)
+
+                motion_query = (
+                    session.query(motion_sum_expr.label("total_seconds"))
+                    .join(
+                        self.Entities,
+                        self.Intervals.entity_id == self.Entities.entity_id,
+                    )
+                    .filter(
+                        *base_filters,
+                        self.Entities.entity_type == InputType.MOTION.value,
+                        self.Intervals.state == "on",
+                    )
+                )
+
+                # Start with motion query
+                queries = [motion_query]
+
+                # Add media player query if requested
+                if include_media and media_sensor_ids:
+                    media_query = (
+                        session.query(
+                            func.sum(self.Intervals.duration_seconds).label(
+                                "total_seconds"
+                            )
+                        )
+                        .join(
+                            self.Entities,
+                            self.Intervals.entity_id == self.Entities.entity_id,
+                        )
+                        .filter(
+                            *base_filters,
+                            self.Entities.entity_type == InputType.MEDIA.value,
+                            self.Intervals.entity_id.in_(media_sensor_ids),
+                            self.Intervals.state == STATE_PLAYING,
+                        )
+                    )
+                    queries.append(media_query)
+
+                # Add appliance query if requested
+                if include_appliance and appliance_sensor_ids:
+                    appliance_query = (
+                        session.query(
+                            func.sum(self.Intervals.duration_seconds).label(
+                                "total_seconds"
+                            )
+                        )
+                        .join(
+                            self.Entities,
+                            self.Intervals.entity_id == self.Entities.entity_id,
+                        )
+                        .filter(
+                            *base_filters,
+                            self.Entities.entity_type == InputType.APPLIANCE.value,
+                            self.Intervals.entity_id.in_(appliance_sensor_ids),
+                            self.Intervals.state == STATE_ON,
+                        )
+                    )
+                    queries.append(appliance_query)
+
+                # Sum all query results
+                total_seconds = 0.0
+                for query in queries:
+                    result = query.scalar()
+                    if result is not None:
+                        total_seconds += float(result)
+
+                _LOGGER.debug(
+                    "SQL aggregation returned %.2f total occupied seconds",
+                    total_seconds,
+                )
+                return total_seconds
+
+        except OperationalError as e:
+            _LOGGER.error(
+                "Database connection error during total seconds calculation: %s", e
+            )
+            return 0.0
+        except DataError as e:
+            _LOGGER.error("Database data error during total seconds calculation: %s", e)
+            return 0.0
+        except ProgrammingError as e:
+            _LOGGER.error(
+                "Database query error during total seconds calculation: %s", e
+            )
+            return 0.0
+        except SQLAlchemyError as e:
+            _LOGGER.error("Database error during total seconds calculation: %s", e)
+            return 0.0
+        except (ValueError, TypeError, RuntimeError, OSError, ImportError) as e:
+            _LOGGER.error("Unexpected error during total seconds calculation: %s", e)
+            return 0.0

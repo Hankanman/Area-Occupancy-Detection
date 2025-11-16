@@ -29,6 +29,7 @@ theme:
         name: Switch to light mode
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.instant
     - navigation.instant.prefetch
@@ -83,6 +84,8 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - include-markdown:
+      preserve_includer_indent: false
   - minify:
       minify_html: true
 
@@ -114,3 +117,4 @@ nav:
       - Deep Dive: technical/deep-dive.md
       - Pre-Releases: technical/prerelease.md
       - Debugging: technical/debug.md
+  - Simulator: simulator/index.md

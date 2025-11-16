@@ -2,58 +2,73 @@ run_analysis:
   name: Run Analysis
   description: "Run the analysis for the area occupancy instance."
   fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to run analysis for."
-      required: true
+    area_name:
+      name: Area Name
+      description: "Select the area to run analysis for, or 'all' for all areas."
+      required: false
+      default: "all"
       selector:
-        config_entry:
-          integration: area_occupancy
+        select:
+          options:
+            - "all"
+          mode: dropdown
 
 reset_entities:
   name: Reset Entities
   description: "Reset all entity probabilities and learned data to start fresh."
   fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to reset."
-      required: true
+    area_name:
+      name: Area Name
+      description: "Select the area to reset, or 'all' for all areas."
+      required: false
+      default: "all"
       selector:
-        config_entry:
-          integration: area_occupancy
+        select:
+          options:
+            - "all"
+          mode: dropdown
 
 get_area_status:
   name: Get Area Status
   description: "Get current area occupancy status, confidence level, and entity summary."
   fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to get status for."
-      required: true
+    area_name:
+      name: Area Name
+      description: "Select the area to get status for, or 'all' for all areas."
+      required: false
+      default: "all"
       selector:
-        config_entry:
-          integration: area_occupancy
+        select:
+          options:
+            - "all"
+          mode: dropdown
 
 get_entity_metrics:
   name: Get Entity Metrics
   description: "Get comprehensive metrics about all entities for diagnostics and monitoring."
   fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to get metrics for."
-      required: true
+    area_name:
+      name: Area Name
+      description: "Select the area to get metrics for, or 'all' for all areas."
+      required: false
+      default: "all"
       selector:
-        config_entry:
-          integration: area_occupancy
+        select:
+          options:
+            - "all"
+          mode: dropdown
 
 get_problematic_entities:
   name: Get Problematic Entities
   description: "Get entities that may need attention (unavailable, stale updates, stuck decay, etc.)."
   fields:
-    entry_id:
-      name: Entry ID
-      description: "Select the Area Occupancy instance to check for problems."
-      required: true
+    area_name:
+      name: Area Name
+      description: "Select the area to check for problems, or 'all' for all areas."
+      required: false
+      default: "all"
       selector:
-        config_entry:
-          integration: area_occupancy
+        select:
+          options:
+            - "all"
+          mode: dropdown

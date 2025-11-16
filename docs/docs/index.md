@@ -13,6 +13,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
 - **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, appliance, and environmental sensors
 - **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
+- **[All Areas Aggregation](features/entities.md#all-areas-aggregation-device)**: Automatically aggregates occupancy data across all configured areas for whole-home detection
 
 ### Advanced Features
 
@@ -102,12 +103,13 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 - **Purpose-Based Decay:** Choosing a room purpose automatically sets a decay half life suited to the space.
 - **Configurable Threshold:** Define the probability percentage required to consider the area "occupied".
 - **Exposed Entities:**
-  - Occupancy Probability Sensor (%)
-  - Occupancy Status Binary Sensor (on/off)
-  - Prior Probability Sensor (%)
-  - Evidence Sensor
-  - Decay Status Sensor (%)
-  - Occupancy Threshold Number Input
+  - Occupancy Probability Sensor (%) - per area and aggregated "All Areas"
+  - Occupancy Status Binary Sensor (on/off) - per area and aggregated "All Areas"
+  - Prior Probability Sensor (%) - per area and aggregated "All Areas"
+  - Evidence Sensor - per area only
+  - Decay Status Sensor (%) - per area and aggregated "All Areas"
+  - Occupancy Threshold Number Input - per area only
+- **All Areas Aggregation:** Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **UI Configuration:** Easy setup and management through the Home Assistant UI.
 - **Manual Prior Update Service:** Trigger the prior learning process on demand.
 

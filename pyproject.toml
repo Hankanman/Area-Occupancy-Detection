@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2025.11.2"
+version = "2025.11.3-pre4"
 license = "Apache-2.0"
 description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
 readme = "README.md"  # Assuming you'll have a README.md
@@ -81,6 +81,11 @@ dependencies = [
   "yarl==1.22.0",
   "webrtc-models==0.3.0",
   "zeroconf==0.148.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit==4.3.0",
 ]
 
 [project.urls]
@@ -453,6 +458,16 @@ markers = [
 filterwarnings = [
   "error::sqlalchemy.exc.SAWarning",
   "error:usefixtures\\(\\) in .* without arguments has no effect:UserWarning",  # pytest
+
+  # -- SQLite connection warnings in tests
+  # Python 3.13 is very strict about unclosed resources. SQLite connections
+  # created during test setup/teardown may not be immediately closed, but
+  # they are properly cleaned up by SQLAlchemy's connection pooling.
+  # These warnings come from Python's internal modules (threading, unittest.mock, etc.)
+  # when connections are created during test execution.
+  "ignore::ResourceWarning:.*sqlite3.Connection",
+  "ignore:unclosed.*database.*sqlite3.Connection:ResourceWarning",
+  "ignore:unclosed database:ResourceWarning",
 
   # -- Asyncio warnings in CI environments
   "ignore:coroutine .* was never awaited:RuntimeWarning",
