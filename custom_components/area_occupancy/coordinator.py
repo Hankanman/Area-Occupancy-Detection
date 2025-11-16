@@ -224,7 +224,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     legacy_name,
                 )
                 # Try to use first available area as fallback
-                available_areas = area_reg.async_list_areas()
+                available_areas = list(area_reg.async_list_areas())
                 if available_areas:
                     area_entry = available_areas[0]
                     area_id = area_entry.id
