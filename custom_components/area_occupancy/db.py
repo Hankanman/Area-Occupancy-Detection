@@ -1413,9 +1413,10 @@ class AreaOccupancyDB:
 
                 cfg = area_data_obj.config
 
-                # Call area_prior() method to get the actual value
+                # Persist the raw global prior value rather than the
+                # time-adjusted prior returned by area.area_prior().
                 area = self.coordinator.get_area_or_default(area_name_item)
-                area_prior_value = area.area_prior()
+                area_prior_value = getattr(area.prior, "global_prior", None)
 
                 area_data = {
                     "entry_id": self.coordinator.entry_id,
@@ -1445,7 +1446,7 @@ class AreaOccupancyDB:
                 # Handle area_prior - use DEFAULT_AREA_PRIOR as fallback if None
                 if area_data["area_prior"] is None:
                     _LOGGER.warning(
-                        "area_prior is None for area '%s', using DEFAULT_AREA_PRIOR (%s) as fallback",
+                        "Global prior missing for area '%s', using DEFAULT_AREA_PRIOR (%s) as fallback",
                         area_name_item,
                         DEFAULT_AREA_PRIOR,
                     )

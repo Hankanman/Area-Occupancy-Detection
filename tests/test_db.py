@@ -15,14 +15,15 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from custom_components.area_occupancy.const import MIN_PRIOR, RETENTION_DAYS
+from custom_components.area_occupancy.const import RETENTION_DAYS
+from custom_components.area_occupancy.data.analysis import start_prior_analysis
 from custom_components.area_occupancy.db import (
     DB_VERSION,
     DEFAULT_AREA_PRIOR,
     AreaOccupancyDB,
     Base,
 )
-from homeassistant.core import State
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -558,14 +559,14 @@ class TestAreaOccupancyDBUtilities:
         )
         db.save_area_data()
 
-        # Verify that area_prior was saved to the database
+        # Verify that the raw global prior was saved to the database
         area_data = db.get_area_data(db.coordinator.entry_id)
         if area_data:
             saved_prior = area_data.get("area_prior")
             assert saved_prior is not None, (
                 "area_prior should be saved to database, got None"
             )
-            assert saved_prior >= 0.5, f"area_prior should be >= 0.5, got {saved_prior}"
+            assert saved_prior == pytest.approx(0.5)
 
         # Populate entities table directly
         good = SimpleNamespace(
@@ -634,8 +635,8 @@ class TestAreaOccupancyDBUtilities:
         """Test the entity handling logic in load_data method.
 
         This test verifies that:
-        1. Entities in the database that are in the current config are updated
-        2. Entities in the database that are NOT in the current config are deleted as stale
+            1. Entities in the database that are in the current config are updated
+            2. Entities in the database that are NOT in the current config are deleted as stale
         """
         db = test_db
         db.save_area_data()
@@ -699,6 +700,60 @@ class TestAreaOccupancyDBUtilities:
                 {"a": area_name, "e": "binary_sensor.good"},
             ).fetchone()
         assert result is None, "Stale entity should be deleted from database"
+
+    @pytest.mark.asyncio
+    async def test_prior_value_persists_through_reload(
+        self, hass: HomeAssistant, test_db: AreaOccupancyDB
+    ) -> None:
+        """Run analysis, persist, reload, and verify prior is not double scaled."""
+
+        coordinator = test_db.coordinator
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area_or_default(area_name)
+        assert area is not None
+
+        mock_analyzer = Mock()
+        mock_analyzer.sensor_ids = ["binary_sensor.motion"]
+        mock_analyzer.analyze_area_prior = Mock(return_value=0.4)
+        mock_analyzer.analyze_time_priors = Mock(return_value=None)
+
+        def _run_in_place(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with (
+            patch(
+                "custom_components.area_occupancy.data.analysis.PriorAnalyzer",
+                return_value=mock_analyzer,
+            ),
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(side_effect=_run_in_place),
+            ),
+        ):
+            await start_prior_analysis(coordinator, area_name, area.prior)
+
+        pre_restart_value = area.prior.value
+
+        # Persist current priors to the database
+        test_db.save_area_data(area_name=area_name)
+
+        with test_db.engine.connect() as conn:
+            stored_value = conn.execute(
+                sa.text(
+                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                ),
+                {"e": coordinator.entry_id, "a": area_name},
+            ).scalar()
+        assert stored_value == pytest.approx(0.4)
+
+        # Simulate restart by clearing the in-memory global prior
+        area.prior.global_prior = None
+
+        # Reload values from storage
+        await test_db.load_data()
+
+        assert area.prior.value == pytest.approx(pre_restart_value)
 
     @pytest.mark.asyncio
     async def test_load_data_error_handling(self, test_db, monkeypatch):
@@ -1037,10 +1092,10 @@ class TestAreaOccupancyDBUtilities:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_save_area_data_preserves_existing_prior_when_global_prior_none(
+    async def test_save_area_data_uses_default_with_existing_prior_when_global_missing(
         self, test_db
-    ):
-        """Test that save_area_data uses MIN_PRIOR when global_prior is None (doesn't preserve existing)."""
+    ) -> None:
+        """Ensure DEFAULT_AREA_PRIOR is used when no global prior exists even if DB has data."""
         db = test_db
         existing_prior = 0.45
 
@@ -1064,15 +1119,13 @@ class TestAreaOccupancyDBUtilities:
             session.add(existing_area)
             session.commit()
 
-        # Set global_prior to None to simulate first run or failed load - use area-based access
+        # Set global_prior to None to simulate first run or failed load
         area.prior.global_prior = None
-        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
-        area.area_prior = Mock(return_value=MIN_PRIOR)
 
-        # Save will use MIN_PRIOR from coordinator.area_prior when global_prior is None
+        # Save will use DEFAULT_AREA_PRIOR when global_prior is None
         db.save_area_data()
 
-        # Verify MIN_PRIOR was used (not the existing prior)
+        # Verify DEFAULT_AREA_PRIOR was used (not the existing prior)
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text(
@@ -1080,12 +1133,11 @@ class TestAreaOccupancyDBUtilities:
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        # When global_prior is None, Prior.value returns MIN_PRIOR
-        assert row[0] == MIN_PRIOR
+        assert row[0] == DEFAULT_AREA_PRIOR
 
     @pytest.mark.asyncio
-    async def test_save_area_data_uses_default_when_no_existing_prior(self, test_db):
-        """Test that save_area_data uses MIN_PRIOR when global_prior is None and no existing value."""
+    async def test_save_area_data_uses_default_without_existing_prior(self, test_db):
+        """Ensure DEFAULT_AREA_PRIOR is used when no prior exists anywhere."""
         db = test_db
 
         # Get the actual area name from the coordinator
@@ -1104,10 +1156,8 @@ class TestAreaOccupancyDBUtilities:
 
         # Set global_prior to None - use area-based access
         area.prior.global_prior = None
-        # Mock area.area_prior to return MIN_PRIOR when global_prior is None
-        area.area_prior = Mock(return_value=MIN_PRIOR)
 
-        # Save should use MIN_PRIOR (from Prior.value when global_prior is None)
+        # Save should use DEFAULT_AREA_PRIOR as fallback
         db.save_area_data()
 
         with db.engine.connect() as conn:
@@ -1117,14 +1167,11 @@ class TestAreaOccupancyDBUtilities:
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        # When global_prior is None, Prior.value returns MIN_PRIOR
-        assert row[0] == MIN_PRIOR
+        assert row[0] == DEFAULT_AREA_PRIOR
 
     @pytest.mark.asyncio
-    async def test_save_area_data_handles_none_area_prior_with_global_prior_set(
-        self, test_db
-    ):
-        """Test that save_area_data uses DEFAULT_AREA_PRIOR when coordinator.area_prior returns None."""
+    async def test_save_area_data_persists_raw_global_prior(self, test_db) -> None:
+        """Ensure save_area_data writes the unadjusted global prior when available."""
         db = test_db
 
         # Get the actual area name from the coordinator
@@ -1132,15 +1179,14 @@ class TestAreaOccupancyDBUtilities:
         assert len(area_names) > 0
         area_name = area_names[0]
         area = db.coordinator.get_area_or_default(area_name)
+        assert area is not None
 
-        # Mock area.area_prior to return None
-        # This simulates an edge case where the method returns None
-        area.area_prior = Mock(return_value=None)
+        raw_global_prior = 0.37
+        area.prior.set_global_prior(raw_global_prior)
 
-        # Save should use DEFAULT_AREA_PRIOR as fallback (from db.py line 1241-1247)
-        db.save_area_data()
+        db.save_area_data(area_name=area_name)
 
-        # Verify DEFAULT_AREA_PRIOR was used as fallback
+        # Verify the stored value matches the raw global prior
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text(
@@ -1148,8 +1194,7 @@ class TestAreaOccupancyDBUtilities:
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        # When area_prior is None, save_area_data uses DEFAULT_AREA_PRIOR as fallback
-        assert row[0] == DEFAULT_AREA_PRIOR
+        assert row[0] == pytest.approx(raw_global_prior)
 
     @pytest.mark.asyncio
     async def test_save_area_data_success(self, test_db):
