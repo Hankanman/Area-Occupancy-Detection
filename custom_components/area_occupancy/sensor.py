@@ -109,10 +109,13 @@ class PriorsSensor(AreaOccupancySensorBase):
             # For "All Areas", return aggregated priors from all areas
             if self._area_name == ALL_AREAS_IDENTIFIER:
                 area_names = self.coordinator.get_area_names()
-                return {
+                attrs = {
                     "areas": {
                         area_name: {
                             "global_prior": self.coordinator.areas[
+                                area_name
+                            ].prior.global_prior,
+                            "combined_prior": self.coordinator.areas[
                                 area_name
                             ].area_prior(),
                             "time_prior": self.coordinator.areas[
@@ -128,15 +131,19 @@ class PriorsSensor(AreaOccupancySensorBase):
                         for area_name in area_names
                     }
                 }
-            area = self.coordinator.get_area_or_default(self._area_name)
-            return {
-                "global_prior": area.area_prior(),
-                "time_prior": area.prior.time_prior,
-                "day_of_week": area.prior.day_of_week,
-                "time_slot": area.prior.time_slot,
-            }
+            else:
+                area = self.coordinator.get_area_or_default(self._area_name)
+                combined_prior = area.area_prior() if area else None
+                attrs = {
+                    "global_prior": area.prior.global_prior if area else None,
+                    "combined_prior": combined_prior,
+                    "time_prior": area.prior.time_prior if area else None,
+                    "day_of_week": area.prior.day_of_week if area else None,
+                    "time_slot": area.prior.time_slot if area else None,
+                }
         except (TypeError, AttributeError, KeyError):
             return {}
+        return attrs
 
 
 class ProbabilitySensor(AreaOccupancySensorBase):

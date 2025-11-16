@@ -1,5 +1,6 @@
 """Tests for sensor module."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
@@ -454,6 +455,39 @@ class TestSensorIntegration:
         assert probability_sensor.native_value == 80.0
         assert priors_sensor.native_value == 40.0
         assert decay_sensor.native_value == 70.0
+
+    def test_priors_sensor_extra_attributes_include_combined_prior(
+        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """Ensure priors sensor reports raw and combined priors separately."""
+
+        coordinator_with_areas_with_sensors.data = {"ready": True}
+        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
+        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+
+        combined_value = 0.47
+        area.area_prior = Mock(return_value=combined_value)
+
+        original_prior = area._prior
+        mock_prior = SimpleNamespace(
+            global_prior=0.33,
+            time_prior=0.21,
+            day_of_week=3,
+            time_slot=5,
+        )
+        area._prior = mock_prior
+
+        sensor = PriorsSensor(coordinator_with_areas_with_sensors, area_name)
+        try:
+            attrs = sensor.extra_state_attributes
+        finally:
+            area._prior = original_prior
+
+        assert attrs["global_prior"] == 0.33
+        assert attrs["combined_prior"] == combined_value
+        assert attrs["time_prior"] == 0.21
+        assert attrs["day_of_week"] == 3
+        assert attrs["time_slot"] == 5
 
     def test_evidence_sensor_dynamic_updates(
         self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
