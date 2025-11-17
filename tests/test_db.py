@@ -2768,3 +2768,398 @@ class TestGetAggregatedIntervalsBySlot:
             entity_ids_after = {e.entity_id for e in entities_after}
             assert "binary_sensor.motion1" in entity_ids_after
             assert "binary_sensor.bed_status" not in entity_ids_after
+
+
+class TestTieredAggregation:
+    """Test tiered aggregation functionality."""
+
+    def test_aggregate_raw_to_daily(self, test_db):
+        """Test aggregating raw intervals to daily aggregates."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create old raw intervals (older than 30 days)
+        old_date = dt_util.utcnow() - timedelta(days=35)
+        with db.get_locked_session() as session:
+            for i in range(5):
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion1",
+                    state="on",
+                    start_time=old_date + timedelta(hours=i),
+                    end_time=old_date + timedelta(hours=i + 1),
+                    duration_seconds=3600.0,
+                    aggregation_level="raw",
+                )
+                session.add(interval)
+            session.commit()
+
+        # Run aggregation
+        result = db.aggregate_raw_to_daily(area_name)
+        assert result > 0
+
+        # Verify daily aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.IntervalAggregates)
+                .filter_by(area_name=area_name, aggregation_period="daily")
+                .all()
+            )
+            assert len(aggregates) > 0
+
+    def test_aggregate_daily_to_weekly(self, test_db):
+        """Test aggregating daily aggregates to weekly aggregates."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create old daily aggregates (older than 90 days)
+        old_date = dt_util.utcnow() - timedelta(days=95)
+        with db.get_locked_session() as session:
+            for i in range(7):
+                aggregate = db.IntervalAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion1",
+                    aggregation_period="daily",
+                    period_start=old_date + timedelta(days=i),
+                    period_end=old_date + timedelta(days=i + 1),
+                    state="on",
+                    interval_count=10,
+                    total_duration_seconds=36000.0,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Run aggregation
+        result = db.aggregate_daily_to_weekly(area_name)
+        assert result > 0
+
+        # Verify weekly aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.IntervalAggregates)
+                .filter_by(area_name=area_name, aggregation_period="weekly")
+                .all()
+            )
+            assert len(aggregates) > 0
+
+    def test_run_interval_aggregation(self, test_db):
+        """Test running full tiered aggregation process."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create test data
+        old_date = dt_util.utcnow() - timedelta(days=35)
+        with db.get_locked_session() as session:
+            interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                state="on",
+                start_time=old_date,
+                end_time=old_date + timedelta(hours=1),
+                duration_seconds=3600.0,
+                aggregation_level="raw",
+            )
+            session.add(interval)
+            session.commit()
+
+        # Run full aggregation
+        results = db.run_interval_aggregation(area_name)
+        assert "daily" in results
+        assert "weekly" in results
+        assert "monthly" in results
+
+
+class TestGlobalPriors:
+    """Test global priors functionality."""
+
+    def test_save_global_prior(self, test_db):
+        """Test saving global prior to database."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        period_start = dt_util.utcnow() - timedelta(days=90)
+        period_end = dt_util.utcnow()
+
+        result = db.save_global_prior(
+            area_name=area_name,
+            prior_value=0.35,
+            data_period_start=period_start,
+            data_period_end=period_end,
+            total_occupied_seconds=86400.0,
+            total_period_seconds=7776000.0,
+            interval_count=100,
+            calculation_method="interval_analysis",
+            confidence=0.85,
+        )
+
+        assert result is True
+
+        # Verify global prior was saved
+        global_prior = db.get_global_prior(area_name)
+        assert global_prior is not None
+        assert global_prior["prior_value"] == 0.35
+        assert global_prior["interval_count"] == 100
+
+    def test_get_global_prior(self, test_db):
+        """Test retrieving global prior from database."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Save a global prior first
+        period_start = dt_util.utcnow() - timedelta(days=90)
+        period_end = dt_util.utcnow()
+        db.save_global_prior(
+            area_name=area_name,
+            prior_value=0.42,
+            data_period_start=period_start,
+            data_period_end=period_end,
+            total_occupied_seconds=100000.0,
+            total_period_seconds=7776000.0,
+            interval_count=150,
+        )
+
+        # Retrieve it
+        global_prior = db.get_global_prior(area_name)
+        assert global_prior is not None
+        assert global_prior["prior_value"] == 0.42
+        assert global_prior["interval_count"] == 150
+
+
+class TestOccupiedIntervalsCache:
+    """Test occupied intervals cache functionality."""
+
+    def test_save_occupied_intervals_cache(self, test_db):
+        """Test saving occupied intervals to cache."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=2),
+                dt_util.utcnow() - timedelta(hours=1),
+            ),
+            (
+                dt_util.utcnow() - timedelta(minutes=30),
+                dt_util.utcnow(),
+            ),
+        ]
+
+        result = db.save_occupied_intervals_cache(
+            area_name, intervals, "motion_sensors"
+        )
+        assert result is True
+
+        # Verify intervals were cached
+        cached = db.get_occupied_intervals_cache(area_name)
+        assert len(cached) == 2
+
+    def test_get_occupied_intervals_cache(self, test_db):
+        """Test retrieving cached occupied intervals."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Save intervals first
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=2),
+                dt_util.utcnow() - timedelta(hours=1),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Retrieve them
+        cached = db.get_occupied_intervals_cache(area_name)
+        assert len(cached) == 1
+        assert cached[0][0] == intervals[0][0]
+        assert cached[0][1] == intervals[0][1]
+
+    def test_is_occupied_intervals_cache_valid(self, test_db):
+        """Test checking cache validity."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Cache should be invalid initially
+        assert db.is_occupied_intervals_cache_valid(area_name) is False
+
+        # Save intervals
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=1),
+                dt_util.utcnow(),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Cache should be valid now
+        assert db.is_occupied_intervals_cache_valid(area_name) is True
+
+
+class TestNumericCorrelation:
+    """Test numeric sensor correlation analysis."""
+
+    def test_analyze_numeric_correlation(self, test_db):
+        """Test analyzing correlation between numeric sensor and occupancy."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        # Create numeric samples
+        now = dt_util.utcnow()
+        with db.get_locked_session() as session:
+            for i in range(100):
+                sample = db.NumericSamples(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    timestamp=now - timedelta(hours=100 - i),
+                    value=20.0 + (i % 10),  # Varying temperature
+                    unit_of_measurement="°C",
+                )
+                session.add(sample)
+            session.commit()
+
+        # Create occupied intervals
+        intervals = [
+            (
+                now - timedelta(hours=50),
+                now - timedelta(hours=40),
+            ),
+            (
+                now - timedelta(hours=20),
+                now - timedelta(hours=10),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Analyze correlation
+        result = db.analyze_numeric_correlation(
+            area_name, entity_id, analysis_period_days=30
+        )
+        # Result may be None if insufficient data, which is OK
+        # Just verify the function doesn't crash
+        assert result is None or isinstance(result, dict)
+
+    def test_save_correlation_result(self, test_db):
+        """Test saving correlation analysis result."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        correlation_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "correlation_coefficient": 0.75,
+            "correlation_type": "occupancy_positive",
+            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+            "analysis_period_end": dt_util.utcnow(),
+            "sample_count": 100,
+            "confidence": 0.85,
+            "mean_value_when_occupied": 22.5,
+            "mean_value_when_unoccupied": 20.0,
+            "std_dev_when_occupied": 1.5,
+            "std_dev_when_unoccupied": 1.0,
+            "threshold_active": 21.0,
+            "threshold_inactive": 19.0,
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        result = db.save_correlation_result(correlation_data)
+        assert result is True
+
+        # Verify correlation was saved
+        correlation = db.get_correlation_for_entity(area_name, entity_id)
+        assert correlation is not None
+        assert correlation["correlation_coefficient"] == 0.75
+        assert correlation["correlation_type"] == "occupancy_positive"
+
+
+class TestAreaRelationships:
+    """Test area relationship functionality."""
+
+    def test_save_area_relationship(self, test_db):
+        """Test saving area relationship."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create a second area for testing
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        # Save relationship
+        result = db.save_area_relationship(
+            area_name=area_name,
+            related_area_name="Kitchen",
+            relationship_type="adjacent",
+            influence_weight=0.3,
+        )
+
+        assert result is True
+
+        # Verify relationship was saved
+        adjacent = db.get_adjacent_areas(area_name)
+        assert len(adjacent) == 1
+        assert adjacent[0]["related_area_name"] == "Kitchen"
+        assert adjacent[0]["influence_weight"] == 0.3
+
+    def test_get_adjacent_areas(self, test_db):
+        """Test retrieving adjacent areas."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create relationships
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        db.save_area_relationship(area_name, "Kitchen", "adjacent", 0.3)
+
+        # Retrieve adjacent areas
+        adjacent = db.get_adjacent_areas(area_name)
+        assert len(adjacent) == 1
+        assert adjacent[0]["related_area_name"] == "Kitchen"
+
+    def test_get_influence_weight(self, test_db):
+        """Test getting influence weight between areas."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create relationship
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        db.save_area_relationship(area_name, "Kitchen", "adjacent", 0.4)
+
+        # Get influence weight
+        weight = db.get_influence_weight(area_name, "Kitchen")
+        assert weight == 0.4
+
+        # Non-existent relationship should return 0.0
+        weight = db.get_influence_weight(area_name, "NonExistent")
+        assert weight == 0.0

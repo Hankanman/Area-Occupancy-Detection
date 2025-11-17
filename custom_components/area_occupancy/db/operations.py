@@ -55,7 +55,7 @@ def _validate_area_data(
     return failures
 
 
-async def load_data(db: AreaOccupancyDB) -> None:
+async def load_data(db: AreaOccupancyDB) -> None:  # noqa: C901
     """Load the data from the database for all areas.
 
     This method iterates over all configured areas and loads data for each.
@@ -132,17 +132,25 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 _read_data_operation, area_name
             )
 
-            # Update prior from area data
-            if area and area.area_prior is not None:
+            # Update prior from GlobalPriors table (preferred) or area.area_prior (backward compatibility)
+            global_prior_data = db.get_global_prior(area_name)
+            if global_prior_data:
                 _LOGGER.debug(
-                    "Loading area_prior %s for area %s",
+                    "Loading global_prior %s from GlobalPriors table for area %s",
+                    global_prior_data["prior_value"],
+                    area_name,
+                )
+                area_data.prior.set_global_prior(global_prior_data["prior_value"])
+            elif area and area.area_prior is not None:
+                _LOGGER.debug(
+                    "Loading area_prior %s from Areas table for area %s (fallback)",
                     area.area_prior,
                     area_name,
                 )
                 area_data.prior.set_global_prior(area.area_prior)
             else:
                 _LOGGER.debug(
-                    "No area_prior found for area %s (area=%s, area_prior=%s)",
+                    "No global_prior found for area %s (area=%s, area_prior=%s)",
                     area_name,
                     area,
                     area.area_prior if area else None,
