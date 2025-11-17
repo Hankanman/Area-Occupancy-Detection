@@ -180,6 +180,9 @@ class PriorAnalyzer:
 
         # Step 2: If motion prior < 0.10, supplement with media/appliance sensors
         LOW_PRIOR_THRESHOLD = 0.10
+        all_intervals = None
+        total_all_occupied = total_occupied_seconds  # Default to motion-only
+
         if motion_prior >= LOW_PRIOR_THRESHOLD:
             # Motion prior is sufficient, use it
             prior = motion_prior
@@ -253,6 +256,54 @@ class PriorAnalyzer:
                 )
 
         _LOGGER.debug("Final calculated prior: %.4f", prior)
+
+        # Save to GlobalPriors table with metadata
+        try:
+            # Determine which intervals were used
+            used_media = motion_prior < 0.10 and bool(self.media_sensor_ids)
+            used_appliance = motion_prior < 0.10 and bool(self.appliance_sensor_ids)
+
+            # Get all intervals used for calculation (if we haven't already)
+            if used_media or used_appliance:
+                # We already have all_intervals from above
+                interval_count = len(all_intervals) if all_intervals else 0
+                final_occupied_seconds = total_all_occupied
+                data_source = "merged"
+            else:
+                # Motion-only, get intervals for cache
+                if all_intervals is None:
+                    all_intervals = self.get_occupied_intervals(
+                        include_media=False, include_appliance=False
+                    )
+                interval_count = len(all_intervals) if all_intervals else 0
+                final_occupied_seconds = total_occupied_seconds
+                data_source = "motion_sensors"
+
+            # Save global prior to database
+            self.db.save_global_prior(
+                area_name=self.area_name,
+                prior_value=prior,
+                data_period_start=window_start,
+                data_period_end=last_time,
+                total_occupied_seconds=final_occupied_seconds,
+                total_period_seconds=total_seconds,
+                interval_count=interval_count,
+                calculation_method="interval_analysis",
+                confidence=None,  # Could calculate confidence based on sample size
+            )
+
+            # Save occupied intervals to cache (motion-only for cache efficiency)
+            if all_intervals and not used_media and not used_appliance:
+                self.db.save_occupied_intervals_cache(
+                    area_name=self.area_name,
+                    intervals=all_intervals,
+                    data_source=data_source,
+                )
+
+        except (ValueError, TypeError, RuntimeError, AttributeError) as e:
+            _LOGGER.warning("Error saving global prior to database: %s", e)
+            # Don't fail the calculation if saving fails
+
         return prior
 
     def analyze_time_priors(self, slot_minutes: int = DEFAULT_SLOT_MINUTES) -> None:
@@ -828,6 +879,23 @@ class PriorAnalyzer:
         now = dt_util.utcnow()
         lookback_date = now - timedelta(days=lookback_days)
 
+        # Try to use cached intervals first (only if not including media/appliance)
+        # Cache is only valid for motion-only intervals
+        if not include_media and not include_appliance:
+            if self.db.is_occupied_intervals_cache_valid(
+                self.area_name, max_age_hours=24
+            ):
+                cached_intervals = self.db.get_occupied_intervals_cache(
+                    self.area_name, period_start=lookback_date, period_end=now
+                )
+                if cached_intervals:
+                    _LOGGER.debug(
+                        "Using cached occupied intervals: %d intervals",
+                        len(cached_intervals),
+                    )
+                    return cached_intervals
+
+        # Cache not available or stale, calculate from raw intervals
         try:
             start_time = dt_util.utcnow()
             if session is not None:
@@ -1166,6 +1234,9 @@ def _update_area_prior_in_db(
     db: Any, entry_id: str, area_name: str, global_prior: float
 ) -> None:
     """Update area prior in database (synchronous helper for executor).
+
+    This function updates the area.area_prior field for backward compatibility.
+    The GlobalPriors table is updated separately by analyze_area_prior().
 
     Args:
         db: Database instance

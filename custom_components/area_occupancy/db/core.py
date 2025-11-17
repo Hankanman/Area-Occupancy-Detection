@@ -23,7 +23,17 @@ from ..const import (
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
 )
-from . import maintenance, operations, queries, sync, utils
+from . import (
+    aggregation,
+    correlation,
+    maintenance,
+    operations,
+    priors,
+    queries,
+    relationships,
+    sync,
+    utils,
+)
 from .constants import DB_NAME
 from .schema import (
     AreaRelationships,
@@ -301,6 +311,164 @@ class AreaOccupancyDB:
     async def sync_states(self) -> None:
         """Fetch states history from recorder and commit to Intervals table for all areas."""
         await sync.sync_states(self)
+
+    # Attach aggregation methods
+    def aggregate_raw_to_daily(self, area_name: str | None = None) -> int:
+        """Aggregate raw intervals to daily aggregates."""
+        return aggregation.aggregate_raw_to_daily(self, area_name)
+
+    def aggregate_daily_to_weekly(self, area_name: str | None = None) -> int:
+        """Aggregate daily aggregates to weekly aggregates."""
+        return aggregation.aggregate_daily_to_weekly(self, area_name)
+
+    def aggregate_weekly_to_monthly(self, area_name: str | None = None) -> int:
+        """Aggregate weekly aggregates to monthly aggregates."""
+        return aggregation.aggregate_weekly_to_monthly(self, area_name)
+
+    def run_interval_aggregation(
+        self, area_name: str | None = None, force: bool = False
+    ) -> dict[str, int]:
+        """Run the full tiered aggregation process for intervals."""
+        return aggregation.run_interval_aggregation(self, area_name, force)
+
+    def prune_old_aggregates(self, area_name: str | None = None) -> dict[str, int]:
+        """Prune old aggregates based on retention policies."""
+        return aggregation.prune_old_aggregates(self, area_name)
+
+    def prune_old_numeric_samples(self, area_name: str | None = None) -> int:
+        """Prune old raw numeric samples based on retention policy."""
+        return aggregation.prune_old_numeric_samples(self, area_name)
+
+    # Attach correlation methods
+    def analyze_numeric_correlation(
+        self,
+        area_name: str,
+        entity_id: str,
+        analysis_period_days: int = 30,
+    ) -> dict[str, Any] | None:
+        """Analyze correlation between numeric sensor values and occupancy."""
+        return correlation.analyze_numeric_correlation(
+            self, area_name, entity_id, analysis_period_days
+        )
+
+    def save_correlation_result(self, correlation_data: dict[str, Any]) -> bool:
+        """Save correlation analysis result to database."""
+        return correlation.save_correlation_result(self, correlation_data)
+
+    def analyze_and_save_correlation(
+        self,
+        area_name: str,
+        entity_id: str,
+        analysis_period_days: int = 30,
+    ) -> bool:
+        """Analyze and save correlation for a numeric sensor."""
+        return correlation.analyze_and_save_correlation(
+            self, area_name, entity_id, analysis_period_days
+        )
+
+    def get_correlation_for_entity(
+        self, area_name: str, entity_id: str
+    ) -> dict[str, Any] | None:
+        """Get the most recent correlation result for an entity."""
+        return correlation.get_correlation_for_entity(self, area_name, entity_id)
+
+    # Attach relationship methods
+    def save_area_relationship(
+        self,
+        area_name: str,
+        related_area_name: str,
+        relationship_type: str = "adjacent",
+        influence_weight: float | None = None,
+        distance: float | None = None,
+    ) -> bool:
+        """Save or update an area relationship."""
+        return relationships.save_area_relationship(
+            self,
+            area_name,
+            related_area_name,
+            relationship_type,
+            influence_weight,
+            distance,
+        )
+
+    def get_adjacent_areas(self, area_name: str) -> list[dict[str, Any]]:
+        """Get all adjacent/related areas for an area."""
+        return relationships.get_adjacent_areas(self, area_name)
+
+    def get_influence_weight(self, area_name: str, related_area_name: str) -> float:
+        """Get the influence weight between two areas."""
+        return relationships.get_influence_weight(self, area_name, related_area_name)
+
+    def calculate_adjacent_influence(
+        self, area_name: str, base_probability: float
+    ) -> float:
+        """Calculate probability adjustment based on adjacent area occupancy."""
+        return relationships.calculate_adjacent_influence(
+            self, area_name, base_probability
+        )
+
+    def sync_adjacent_areas_from_config(self, area_name: str) -> bool:
+        """Sync adjacent areas from area configuration to AreaRelationships table."""
+        return relationships.sync_adjacent_areas_from_config(self, area_name)
+
+    # Attach prior methods
+    def save_global_prior(
+        self,
+        area_name: str,
+        prior_value: float,
+        data_period_start: datetime,
+        data_period_end: datetime,
+        total_occupied_seconds: float,
+        total_period_seconds: float,
+        interval_count: int,
+        calculation_method: str = "interval_analysis",
+        confidence: float | None = None,
+    ) -> bool:
+        """Save global prior calculation to GlobalPriors table."""
+        return priors.save_global_prior(
+            self,
+            area_name,
+            prior_value,
+            data_period_start,
+            data_period_end,
+            total_occupied_seconds,
+            total_period_seconds,
+            interval_count,
+            calculation_method,
+            confidence,
+        )
+
+    def get_global_prior(self, area_name: str) -> dict[str, Any] | None:
+        """Get the most recent global prior for an area."""
+        return priors.get_global_prior(self, area_name)
+
+    def save_occupied_intervals_cache(
+        self,
+        area_name: str,
+        intervals: list[tuple[datetime, datetime]],
+        data_source: str = "merged",
+    ) -> bool:
+        """Save occupied intervals to OccupiedIntervalsCache table."""
+        return priors.save_occupied_intervals_cache(
+            self, area_name, intervals, data_source
+        )
+
+    def get_occupied_intervals_cache(
+        self,
+        area_name: str,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+    ) -> list[tuple[datetime, datetime]]:
+        """Get occupied intervals from OccupiedIntervalsCache table."""
+        return priors.get_occupied_intervals_cache(
+            self, area_name, period_start, period_end
+        )
+
+    def is_occupied_intervals_cache_valid(
+        self, area_name: str, max_age_hours: int = 24
+    ) -> bool:
+        """Check if cached occupied intervals are still valid."""
+        return priors.is_occupied_intervals_cache_valid(self, area_name, max_age_hours)
 
     @contextmanager
     def get_session(self) -> Any:
