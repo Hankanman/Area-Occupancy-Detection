@@ -893,8 +893,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, self.run_analysis, next_update
         )
 
-    async def run_analysis(self, _now: datetime | None = None) -> None:
-        """Handle the historical data import timer."""
+    async def run_analysis(
+        self, _now: datetime | None = None, area_name: str | None = None
+    ) -> None:
+        """Handle the historical data import timer.
+
+        Args:
+            _now: Optional timestamp for the analysis run (used by timer)
+            area_name: Optional area name to scope analysis to a specific area.
+                      If None, analyzes all areas.
+        """
         if _now is None:
             _now = dt_util.utcnow()
         self._analysis_timer = None
@@ -919,10 +927,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if pruned_count > 0:
                 _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
 
-            # Recalculate priors and likelihoods with new data for all areas
-            for area in self.areas.values():
+            # Recalculate priors and likelihoods with new data
+            if area_name is not None:
+                # Analyze specific area
+                area = self.get_area_or_default(area_name)
                 await area.run_prior_analysis()
                 await area.run_likelihood_analysis()
+            else:
+                # Analyze all areas
+                for area in self.areas.values():
+                    await area.run_prior_analysis()
+                    await area.run_likelihood_analysis()
 
             # Refresh the coordinator
             await self.async_refresh()
