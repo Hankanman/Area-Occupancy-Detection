@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import logging
@@ -300,7 +300,20 @@ def is_occupied_intervals_cache_valid(
             if not latest:
                 return False
 
-            age = (dt_util.utcnow() - latest.calculation_date).total_seconds() / 3600
+            # Normalize datetimes for comparison (database may return with/without tzinfo)
+            now = dt_util.utcnow()
+            calc_date = latest.calculation_date
+            # Ensure both are timezone-aware
+            if calc_date.tzinfo is None:
+                # If database returned naive datetime, assume it's UTC
+
+                calc_date = calc_date.replace(tzinfo=UTC)
+            if now.tzinfo is None:
+                # If now is naive (shouldn't happen with dt_util.utcnow()), make it aware
+
+                now = now.replace(tzinfo=UTC)
+
+            age = (now - calc_date).total_seconds() / 3600
             return age < max_age_hours
 
     except SQLAlchemyError as e:

@@ -36,6 +36,7 @@ def create_test_area_data(entry_id="test_entry_001", **overrides):
     data = {
         "entry_id": entry_id,
         "area_name": "Test Living Room",
+        "area_id": "test_living_room",
         "purpose": "living",
         "threshold": 0.5,
         "area_prior": 0.3,
@@ -47,11 +48,15 @@ def create_test_area_data(entry_id="test_entry_001", **overrides):
 
 
 def create_test_entity_data(
-    entry_id="test_entry_001", entity_id="binary_sensor.motion_1", **overrides
+    entry_id="test_entry_001",
+    entity_id="binary_sensor.motion_1",
+    area_name="Test Living Room",
+    **overrides,
 ):
     """Create standardized test entity data."""
     data = {
         "entry_id": entry_id,
+        "area_name": area_name,
         "entity_id": entity_id,
         "entity_type": "motion",
         "weight": 0.85,
@@ -79,11 +84,18 @@ def create_test_prior_data(entry_id="test_entry_001", area_name="Testing", **ove
     return data
 
 
-def create_test_interval_data(entity_id="binary_sensor.motion_1", **overrides):
+def create_test_interval_data(
+    entity_id="binary_sensor.motion_1",
+    entry_id="test_entry_001",
+    area_name="Test Living Room",
+    **overrides,
+):
     """Create standardized test interval data."""
     start_time = dt_util.utcnow()
     end_time = start_time + timedelta(hours=1)
     data = {
+        "entry_id": entry_id,
+        "area_name": area_name,
         "entity_id": entity_id,
         "state": "on",
         "start_time": start_time,
@@ -153,6 +165,41 @@ class TestDatabaseModels:
         self, db_session: Session, model_class, test_data, expected_attrs
     ):
         """Test creating and retrieving all model types."""
+        # For Entities, create the Area first (foreign key requirement)
+        if model_class == AreaOccupancyDB.Entities:
+            area_name = test_data.get("area_name", "Test Living Room")
+            area_data = create_test_area_data(
+                entry_id=test_data["entry_id"], area_name=area_name
+            )
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+            db_session.commit()
+
+        # For Intervals, create Area and Entity first (foreign key requirements)
+        elif model_class == AreaOccupancyDB.Intervals:
+            area_name = test_data.get("area_name", "Test Living Room")
+            entry_id = test_data.get("entry_id", "test_entry_001")
+            area_data = create_test_area_data(entry_id=entry_id, area_name=area_name)
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+
+            entity_data = create_test_entity_data(
+                entry_id=entry_id, entity_id=test_data["entity_id"], area_name=area_name
+            )
+            entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+            db_session.add(entity)
+            db_session.commit()
+
+        # For Priors, create the Area first (foreign key requirement)
+        elif model_class == AreaOccupancyDB.Priors:
+            area_name = test_data.get("area_name", "Testing")
+            area_data = create_test_area_data(
+                entry_id=test_data["entry_id"], area_name=area_name
+            )
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+            db_session.commit()
+
         # Create ORM object
         obj = model_class.from_dict(test_data)
 
@@ -200,9 +247,12 @@ class TestDatabaseModels:
     def test_relationships(self, db_session: Session):
         """Test ORM relationships between models."""
         # Create area, entity, and prior
-        _area, _entity = setup_test_area_and_entity(db_session)
+        area, _entity = setup_test_area_and_entity(db_session)
 
-        prior = AreaOccupancyDB.Priors.from_dict(create_test_prior_data())
+        # Use same area_name for prior as the area
+        prior = AreaOccupancyDB.Priors.from_dict(
+            create_test_prior_data(area_name=area.area_name)
+        )
         db_session.add(prior)
         db_session.commit()
 
@@ -377,12 +427,15 @@ class TestAreaOccupancyDBUtilities:
         assert isinstance(first, datetime)
 
         # Add an interval and check that latest interval is updated
+        area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=60)
         with db.engine.begin() as conn:
             conn.execute(
                 db.Intervals.__table__.insert(),
                 {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
                     "entity_id": "binary_sensor.motion",
                     "state": "on",
                     "start_time": start,
@@ -509,12 +562,15 @@ class TestAreaOccupancyDBUtilities:
         assert db.is_intervals_empty()
 
         # Add an interval
+        area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=5)
         with db.engine.begin() as conn:
             conn.execute(
                 db.Intervals.__table__.insert(),
                 {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
                     "entity_id": "binary_sensor.motion",
                     "state": "on",
                     "start_time": start,
@@ -1980,8 +2036,11 @@ class TestPruneOldIntervals:
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
         with db.get_session() as session:  # Use unlocked session for test setup
+            area_name = db.coordinator.get_area_names()[0]
             # Add old intervals
             old_interval1 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=old_time,
                 end_time=old_time + timedelta(hours=1),
@@ -1989,6 +2048,8 @@ class TestPruneOldIntervals:
                 duration_seconds=3600,
             )
             old_interval2 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion2",
                 start_time=old_time + timedelta(hours=2),
                 end_time=old_time + timedelta(hours=3),
@@ -1997,6 +2058,8 @@ class TestPruneOldIntervals:
             )
             # Add recent interval
             recent_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=recent_time,
                 end_time=recent_time + timedelta(hours=1),
@@ -2030,7 +2093,10 @@ class TestPruneOldIntervals:
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
         with db.get_session() as session:  # Use unlocked session for test setup
+            area_name = db.coordinator.get_area_names()[0]
             recent_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=recent_time,
                 end_time=recent_time + timedelta(hours=1),
@@ -2094,9 +2160,12 @@ class TestGetAggregatedIntervalsBySlot:
             )  # Get Monday of current week
             tuesday = monday + timedelta(days=1)
 
+            area_name = db.coordinator.get_area_names()[0]
             intervals = [
                 # Monday, 10:00-11:00 (slot 10 with 60min slots)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=monday,
                     end_time=monday + timedelta(hours=1),
@@ -2105,6 +2174,8 @@ class TestGetAggregatedIntervalsBySlot:
                 ),
                 # Tuesday, 14:00-15:00 (slot 14 with 60min slots)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=tuesday + timedelta(hours=4),
                     end_time=tuesday + timedelta(hours=5),
@@ -2113,6 +2184,8 @@ class TestGetAggregatedIntervalsBySlot:
                 ),
                 # Same Tuesday slot, different interval (should aggregate)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=tuesday + timedelta(hours=4, minutes=30),
                     end_time=tuesday + timedelta(hours=5, minutes=30),
@@ -2168,7 +2241,10 @@ class TestGetAggregatedIntervalsBySlot:
             session.add(entity)
 
             # Add interval
+            area_name = db.coordinator.get_area_names()[0]
             interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=base_time,
                 end_time=base_time + timedelta(hours=1),
@@ -2335,7 +2411,10 @@ class TestGetAggregatedIntervalsBySlot:
             session.add(orphaned_entity)
 
             # Add intervals for orphaned entity
+            area_name = db.coordinator.get_area_names()[0]
             interval1 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion_orphaned",
                 start_time=dt_util.utcnow(),
                 end_time=dt_util.utcnow() + timedelta(minutes=30),
@@ -2343,6 +2422,8 @@ class TestGetAggregatedIntervalsBySlot:
                 duration_seconds=1800,
             )
             interval2 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion_orphaned",
                 start_time=dt_util.utcnow() + timedelta(hours=1),
                 end_time=dt_util.utcnow() + timedelta(hours=1, minutes=30),
@@ -2477,8 +2558,11 @@ class TestGetAggregatedIntervalsBySlot:
                 session.add(orphaned_entity)
 
                 # Add 5 intervals per orphaned entity
+                area_name = db.coordinator.get_area_names()[0]
                 for j in range(5):
                     interval = db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
                         entity_id=f"binary_sensor.motion_orphaned{i}",
                         start_time=dt_util.utcnow() + timedelta(hours=j),
                         end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
@@ -2578,6 +2662,8 @@ class TestGetAggregatedIntervalsBySlot:
                 # Add 10 intervals per entity
                 for j in range(10):
                     interval = db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
                         entity_id=f"binary_sensor.motion{i}",
                         start_time=dt_util.utcnow() + timedelta(hours=j),
                         end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
@@ -3011,8 +3097,22 @@ class TestOccupiedIntervalsCache:
         # Retrieve them
         cached = db.get_occupied_intervals_cache(area_name)
         assert len(cached) == 1
-        assert cached[0][0] == intervals[0][0]
-        assert cached[0][1] == intervals[0][1]
+        # Normalize datetimes for comparison (database may return with/without tzinfo)
+        cached_start = cached[0][0]
+        cached_end = cached[0][1]
+        expected_start = intervals[0][0]
+        expected_end = intervals[0][1]
+        # Convert to UTC-naive for comparison if needed
+        if cached_start.tzinfo:
+            cached_start = cached_start.replace(tzinfo=None)
+        if cached_end.tzinfo:
+            cached_end = cached_end.replace(tzinfo=None)
+        if expected_start.tzinfo:
+            expected_start = expected_start.replace(tzinfo=None)
+        if expected_end.tzinfo:
+            expected_end = expected_end.replace(tzinfo=None)
+        assert cached_start == expected_start
+        assert cached_end == expected_end
 
     def test_is_occupied_intervals_cache_valid(self, test_db):
         """Test checking cache validity."""
