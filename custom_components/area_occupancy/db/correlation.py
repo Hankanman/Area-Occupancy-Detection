@@ -225,11 +225,13 @@ def analyze_numeric_correlation(
 
             # Calculate thresholds (mean ± 1 std for active/inactive)
             threshold_active = (
-                mean_occupied + std_occupied if mean_occupied and std_occupied else None
+                mean_occupied + std_occupied
+                if mean_occupied is not None and std_occupied is not None
+                else None
             )
             threshold_inactive = (
                 mean_unoccupied - std_unoccupied
-                if mean_unoccupied and std_unoccupied
+                if mean_unoccupied is not None and std_unoccupied is not None
                 else None
             )
 
