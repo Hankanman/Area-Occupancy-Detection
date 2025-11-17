@@ -84,32 +84,18 @@ async def load_data(db: AreaOccupancyDB) -> None:
             )
             if entities:
                 # Get the area's entity manager to check if entities exist
+                # Area is guaranteed to exist when area_name comes from get_area_names()
                 area_data = db.coordinator.get_area_or_default(area_name)
-                if area_data:
-                    for entity_obj in entities:
-                        # Check if entity exists in current coordinator config
-                        try:
-                            area_data.entities.get_entity(entity_obj.entity_id)
-                        except ValueError:
-                            # Entity not found in coordinator - identify if stale
-                            should_delete = False
-                            if hasattr(area_data.entities, "entity_ids"):
-                                current_entity_ids = set(area_data.entities.entity_ids)
-                                if entity_obj.entity_id not in current_entity_ids:
-                                    should_delete = True
-                            elif hasattr(area_data.entities, "entities"):
-                                # Fallback for mock objects that have entities dict
-                                current_entity_ids = set(
-                                    area_data.entities.entities.keys()
-                                )
-                                if entity_obj.entity_id not in current_entity_ids:
-                                    should_delete = True
-                            else:
-                                # Can't determine current config - assume entity is stale
-                                should_delete = True
-
-                            if should_delete:
-                                stale_entity_ids.append(entity_obj.entity_id)
+                for entity_obj in entities:
+                    # Check if entity exists in current coordinator config
+                    try:
+                        area_data.entities.get_entity(entity_obj.entity_id)
+                    except ValueError:
+                        # Entity not found in coordinator - check if it's stale
+                        # EntityManager always has entity_ids property
+                        current_entity_ids = set(area_data.entities.entity_ids)
+                        if entity_obj.entity_id not in current_entity_ids:
+                            stale_entity_ids.append(entity_obj.entity_id)
         return area, entities, stale_entity_ids
 
     def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
@@ -228,28 +214,15 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
 
         for area_name_item in areas_to_save:
             area_data_obj = db.coordinator.get_area_or_default(area_name_item)
-            if area_data_obj is None:
-                error_msg = f"Area '{area_name_item}' not found"
-                _LOGGER.error("%s, cannot insert area", error_msg)
-                failures.append((area_name_item, error_msg))
-                has_failures = True
-                continue
-
+            # Area is guaranteed to exist when area_name comes from get_area_names()
+            # or when area_name is validated before calling this function
             cfg = area_data_obj.config
 
-            # Get area_id from config
-            area_id = cfg.area_id
-            if not area_id:
-                error_msg = "area_id is missing"
-                _LOGGER.warning("Skipping area '%s': %s", area_name_item, error_msg)
-                failures.append((area_name_item, error_msg))
-                has_failures = True
-                continue
-
+            # area_id is validated in config flow before areas are created
             area_data = {
                 "entry_id": db.coordinator.entry_id,
                 "area_name": area_name_item,
-                "area_id": area_id,
+                "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
                 "updated_at": dt_util.utcnow(),
@@ -484,15 +457,8 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
             def _cleanup_operation(area_name: str, area_data: Any) -> int:
                 with db.get_session() as session:
                     # Get all entity IDs currently configured for this area
-                    # Handle cases where entities might be a SimpleNamespace or mock object
-                    if hasattr(area_data.entities, "entity_ids"):
-                        current_entity_ids = set(area_data.entities.entity_ids)
-                    elif hasattr(area_data.entities, "entities"):
-                        # Fallback for mock objects that have entities dict
-                        current_entity_ids = set(area_data.entities.entities.keys())
-                    else:
-                        # If we can't determine current entities, skip cleanup
-                        return 0
+                    # EntityManager always has entity_ids property
+                    current_entity_ids = set(area_data.entities.entity_ids)
 
                     # Query all entities for this area_name from database
                     db_entities = (
