@@ -10,12 +10,7 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import (
-    DataError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.util import dt as dt_util
 
@@ -213,20 +208,14 @@ class Prior:
                     .first()
                 )
                 return float(prior.prior_value) if prior else DEFAULT_PRIOR
-        except OperationalError as e:
-            _LOGGER.error("Database connection error getting time prior: %s", e)
-            return DEFAULT_PRIOR
-        except DataError as e:
-            _LOGGER.error("Database data error getting time prior: %s", e)
-            return DEFAULT_PRIOR
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error getting time prior: %s", e)
-            return DEFAULT_PRIOR
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error getting time prior: %s", e)
-            return DEFAULT_PRIOR
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error getting time prior: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error getting time prior: %s", e)
             return DEFAULT_PRIOR
 
     def get_occupied_intervals(

@@ -98,13 +98,14 @@ def save_area_relationship(
             _LOGGER.debug("Relationship saved successfully")
             return True
 
-    except (HomeAssistantError, SQLAlchemyError) as e:
-        _LOGGER.error("Database error saving relationship: %s", e)
-        if session is not None:
-            session.rollback()
-        return False
-    except (ValueError, TypeError, RuntimeError) as e:
-        _LOGGER.error("Unexpected error saving relationship: %s", e)
+    except (
+        HomeAssistantError,
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+    ) as e:
+        _LOGGER.error("Error saving relationship: %s", e)
         if session is not None:
             session.rollback()
         return False

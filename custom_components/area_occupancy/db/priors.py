@@ -15,12 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, union_all
-from sqlalchemy.exc import (
-    DataError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import literal
 
 from homeassistant.const import STATE_ON, STATE_PLAYING
@@ -123,12 +118,8 @@ def save_global_prior(
             _LOGGER.debug("Global prior saved successfully")
             return True
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error saving global prior: %s", e)
-        session.rollback()
-        return False
-    except (ValueError, TypeError, RuntimeError) as e:
-        _LOGGER.error("Unexpected error saving global prior: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving global prior: %s", e)
         session.rollback()
         return False
 
@@ -164,8 +155,8 @@ def get_global_prior(db: AreaOccupancyDB, area_name: str) -> dict[str, Any] | No
 
             return None
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error getting global prior: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting global prior: %s", e)
         return None
 
 
@@ -220,12 +211,8 @@ def save_occupied_intervals_cache(
             _LOGGER.debug("Occupied intervals cache saved successfully")
             return True
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error saving occupied intervals cache: %s", e)
-        session.rollback()
-        return False
-    except (ValueError, TypeError, RuntimeError) as e:
-        _LOGGER.error("Unexpected error saving occupied intervals cache: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving occupied intervals cache: %s", e)
         session.rollback()
         return False
 
@@ -269,8 +256,8 @@ def get_occupied_intervals_cache(
                 for interval in cached_intervals
             ]
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error getting occupied intervals cache: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting occupied intervals cache: %s", e)
         return []
 
 
@@ -317,8 +304,8 @@ def is_occupied_intervals_cache_valid(
             age = (now - calc_date).total_seconds() / 3600
             return age < max_age_hours
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error checking cache validity: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error checking cache validity: %s", e)
         return False
 
 
@@ -361,7 +348,7 @@ def get_total_occupied_seconds(
                     total_seconds,
                 )
                 return float(total_seconds)
-    except (SQLAlchemyError, AttributeError, TypeError) as e:
+    except (SQLAlchemyError, AttributeError, TypeError, ValueError, RuntimeError) as e:
         _LOGGER.debug(
             "SQL method failed with exception for total occupied seconds, falling back to Python: %s",
             e,
@@ -437,11 +424,15 @@ def get_occupied_intervals(
                 appliance_sensor_ids,
                 start_time,
             )
-    except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-        _LOGGER.error("Database error in get_occupied_intervals: %s", e)
-        return []
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error in get_occupied_intervals: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        _LOGGER.error("Error in get_occupied_intervals: %s", e)
         return []
 
 
@@ -459,11 +450,15 @@ def get_time_bounds(
             return get_time_bounds_from_session(
                 session, db, entry_id, area_name, entity_ids
             )
-    except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-        _LOGGER.error("Database error getting time bounds: %s", e)
-        return (None, None)
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error getting time bounds: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        _LOGGER.error("Error getting time bounds: %s", e)
         return (None, None)
 
 
@@ -529,11 +524,8 @@ def get_occupied_intervals_from_session(
             processing_time,
         )
 
-    except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-        _LOGGER.error("Database error getting occupied intervals: %s", e)
-        return []
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error getting occupied intervals: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting occupied intervals: %s", e)
         return []
     else:
         return extended_intervals

@@ -64,19 +64,22 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
                 e,
             )
             # Don't block startup - will attempt recovery in background
-            # Just log and continue
-        else:
-            # Database doesn't exist or is not initialized, create it
-            _LOGGER.debug(
-                "Database error during table check, initializing database: %s", e
-            )
-            try:
-                init_db(db)
-                set_db_version(db)
-            except (sa.exc.SQLAlchemyError, OSError, RuntimeError):
-                # If initialization fails, log and continue
-                # Will attempt recovery in background
-                _LOGGER.debug("Database initialization failed, will attempt recovery")
+            return
+
+        # Database doesn't exist or is not initialized, create it
+        _LOGGER.debug("Database error during table check, initializing database: %s", e)
+        try:
+            init_db(db)
+            set_db_version(db)
+        except (
+            sa.exc.SQLAlchemyError,
+            OSError,
+            RuntimeError,
+            PermissionError,
+        ):
+            # If initialization fails, log and continue
+            # Will attempt recovery in background
+            _LOGGER.debug("Database initialization failed, will attempt recovery")
 
 
 def check_database_integrity(db: AreaOccupancyDB) -> bool:
