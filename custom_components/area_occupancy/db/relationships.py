@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ def save_area_relationship(
         relationship_type,
     )
 
+    session = None
     try:
         with db.get_locked_session() as session:
             # Use default weight if not provided
@@ -96,13 +98,15 @@ def save_area_relationship(
             _LOGGER.debug("Relationship saved successfully")
             return True
 
-    except SQLAlchemyError as e:
+    except (HomeAssistantError, SQLAlchemyError) as e:
         _LOGGER.error("Database error saving relationship: %s", e)
-        session.rollback()
+        if session is not None:
+            session.rollback()
         return False
     except (ValueError, TypeError, RuntimeError) as e:
         _LOGGER.error("Unexpected error saving relationship: %s", e)
-        session.rollback()
+        if session is not None:
+            session.rollback()
         return False
 
 
