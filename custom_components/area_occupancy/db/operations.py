@@ -614,8 +614,11 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                         )
 
                     # Bulk delete all orphaned entities in a single query
+                    # Filter by both area_name and entity_id to avoid deleting entities
+                    # with the same ID in other areas
                     entities_deleted = (
                         session.query(db.Entities)
+                        .filter(db.Entities.area_name == area_name)
                         .filter(db.Entities.entity_id.in_(orphaned_entity_ids))
                         .delete(synchronize_session=False)
                     )
