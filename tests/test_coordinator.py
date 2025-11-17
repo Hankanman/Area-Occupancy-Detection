@@ -659,6 +659,7 @@ class TestAreaOccupancyCoordinator:
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
                 new=AsyncMock(),
             ),
+            patch.object(coordinator.db, "save_data", new=Mock()),
         ):
             # Start timers so shutdown has something to cancel (they will be None)
             coordinator._start_decay_timer()
@@ -701,6 +702,7 @@ class TestAreaOccupancyCoordinator:
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
                 new=AsyncMock(),
             ),
+            patch.object(coordinator.db, "save_data", new=Mock()),
         ):
             mock_entity_type = Mock()
             mock_entity_type.prob_true = 0.25
@@ -732,7 +734,8 @@ class TestAreaOccupancyCoordinator:
             patch.object(area.entities, "get_entity") as mock_get_entity,
             patch.object(area, "async_cleanup", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock(return_value=None)),
-            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=Mock()),
+            patch.object(coordinator.db, "save_area_data", new=Mock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(
                 coordinator,

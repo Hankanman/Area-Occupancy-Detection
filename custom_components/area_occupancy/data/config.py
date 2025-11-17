@@ -232,8 +232,8 @@ class AreaConfig:
                     )
                     self._load_config({})
             else:
-                # Legacy single-area format
-                self._load_config(merged)
+                # No areas found in config
+                self._load_config({})
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -251,10 +251,8 @@ class AreaConfig:
         # Get area_id from data
         self.area_id = data.get(CONF_AREA_ID)
         if not self.area_id:
-            # Legacy support: try to get from area_name (will be migrated)
-            # This should not happen in new configs
             _LOGGER.warning(
-                "Area config missing area_id for area '%s'. This is a legacy config.",
+                "Area config missing area_id for area '%s'.",
                 self.area_name,
             )
         # The canonical name is normally resolved from area_id via the coordinator,

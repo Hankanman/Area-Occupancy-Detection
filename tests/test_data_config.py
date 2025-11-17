@@ -435,43 +435,63 @@ class TestConfig:
         assert config.weights.motion == 0.9
 
     def test_initialization_with_missing_weights(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test Config initialization with missing weight values."""
-        # Create minimal data without weights
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        # Create minimal data without weights in CONF_AREAS format
         test_data = {
-            CONF_AREA_ID: "test_area",
-            CONF_THRESHOLD: 50,
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    CONF_THRESHOLD: 50,
+                }
+            ]
         }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         # Weights now use defaults if not provided, so no KeyError is raised
-        area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
         # Verify that default weights are used
         assert config.weights.motion == DEFAULT_WEIGHT_MOTION
         assert config.weights.media == DEFAULT_WEIGHT_MEDIA
 
     def test_initialization_with_string_threshold(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test Config initialization with string threshold value."""
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
         test_data = {
-            CONF_AREA_ID: "test_area",
-            CONF_THRESHOLD: "75",  # String instead of int
-            CONF_WEIGHT_MOTION: 0.9,
-            CONF_WEIGHT_MEDIA: 0.7,
-            CONF_WEIGHT_APPLIANCE: 0.6,
-            CONF_WEIGHT_DOOR: 0.5,
-            CONF_WEIGHT_WINDOW: 0.4,
-            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-            CONF_WASP_WEIGHT: 0.8,
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    CONF_THRESHOLD: "75",  # String instead of int
+                    CONF_WEIGHT_MOTION: 0.9,
+                    CONF_WEIGHT_MEDIA: 0.7,
+                    CONF_WEIGHT_APPLIANCE: 0.6,
+                    CONF_WEIGHT_DOOR: 0.5,
+                    CONF_WEIGHT_WINDOW: 0.4,
+                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                    CONF_WASP_WEIGHT: 0.8,
+                }
+            ]
         }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.threshold == 0.75  # Should convert string to float
 
@@ -503,25 +523,38 @@ class TestConfig:
 
         assert abs((time_value - expected_time).total_seconds()) < time_tolerance
 
-    def test_entity_ids_property(self, coordinator: AreaOccupancyCoordinator) -> None:
+    def test_entity_ids_property(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
         """Test entity_ids property."""
-        # Set up mock coordinator with sensor data
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        # Set up mock coordinator with sensor data in CONF_AREAS format
         test_data = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_MEDIA_DEVICES: ["media_player.tv"],
-            CONF_APPLIANCES: ["switch.computer"],
-            CONF_WEIGHT_MOTION: 0.9,
-            CONF_WEIGHT_MEDIA: 0.7,
-            CONF_WEIGHT_APPLIANCE: 0.6,
-            CONF_WEIGHT_DOOR: 0.5,
-            CONF_WEIGHT_WINDOW: 0.4,
-            CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-            CONF_WASP_WEIGHT: 0.8,
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                    CONF_MEDIA_DEVICES: ["media_player.tv"],
+                    CONF_APPLIANCES: ["switch.computer"],
+                    CONF_WEIGHT_MOTION: 0.9,
+                    CONF_WEIGHT_MEDIA: 0.7,
+                    CONF_WEIGHT_APPLIANCE: 0.6,
+                    CONF_WEIGHT_DOOR: 0.5,
+                    CONF_WEIGHT_WINDOW: 0.4,
+                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                    CONF_WASP_WEIGHT: 0.8,
+                }
+            ]
         }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
@@ -534,10 +567,14 @@ class TestConfig:
             assert entity_id in entity_ids
 
     def test_entity_ids_property_with_all_sensor_types(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test entity_ids property with all sensor types populated."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "binary_sensor.motion2"],
             CONF_MEDIA_DEVICES: ["media_player.tv", "media_player.speaker"],
             CONF_APPLIANCES: ["switch.computer", "switch.lamp"],
@@ -554,10 +591,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
@@ -583,10 +630,14 @@ class TestConfig:
             assert entity_id in entity_ids
 
     def test_entity_ids_property_with_empty_sensors(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test entity_ids property with empty sensor lists."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
             CONF_WEIGHT_APPLIANCE: 0.6,
@@ -595,10 +646,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
 
@@ -674,10 +735,14 @@ class TestConfig:
                 await config.update_config(options)
 
     def test_validate_entity_configuration_valid(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with valid configuration."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
@@ -687,20 +752,34 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
         assert errors == []
 
     def test_validate_entity_configuration_duplicate_entities(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with duplicate entity IDs."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.sensor1"],
             CONF_MEDIA_DEVICES: ["binary_sensor.sensor1"],  # Duplicate
             CONF_WEIGHT_MOTION: 0.9,
@@ -711,10 +790,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
@@ -723,10 +812,14 @@ class TestConfig:
         assert "binary_sensor.sensor1" in errors[0]
 
     def test_validate_entity_configuration_no_sensors(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with no motion, media, or appliance sensors."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_DOOR_SENSORS: ["binary_sensor.door1"],  # Only door sensors
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
@@ -736,10 +829,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
@@ -747,10 +850,14 @@ class TestConfig:
         assert "No motion, media, or appliance sensors configured" in errors[0]
 
     def test_validate_entity_configuration_invalid_entity_ids(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with invalid entity IDs."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", "", "   "],  # Invalid IDs
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
@@ -760,10 +867,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
@@ -771,10 +888,14 @@ class TestConfig:
         assert "Invalid motion sensor entity IDs" in errors[0]
 
     def test_validate_entity_configuration_non_string_entity_ids(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with non-string entity IDs."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1", 123, None],  # Non-string IDs
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
@@ -784,10 +905,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
@@ -795,10 +926,14 @@ class TestConfig:
         assert "Invalid motion sensor entity IDs" in errors[0]
 
     def test_validate_entity_configuration_multiple_errors(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test validate_entity_configuration with multiple validation errors."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.sensor1", ""],  # Invalid ID
             CONF_MEDIA_DEVICES: ["binary_sensor.sensor1"],  # Duplicate
             CONF_WEIGHT_MOTION: 0.9,
@@ -809,10 +944,20 @@ class TestConfig:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
 
@@ -930,10 +1075,14 @@ class TestConfigIntegration:
         assert isinstance(config.entity_ids, list)
 
     def test_config_with_all_sensor_types_and_validation(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
     ) -> None:
         """Test config with all sensor types and validation."""
-        test_data = {
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_MEDIA_DEVICES: ["media_player.tv"],
             CONF_APPLIANCES: ["switch.computer"],
@@ -950,10 +1099,20 @@ class TestConfigIntegration:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
 
         # Test validation passes
@@ -979,10 +1138,16 @@ class TestConfigIntegration:
         for entity_id in expected_entities:
             assert entity_id in entity_ids
 
-    def test_config_edge_cases(self, coordinator: AreaOccupancyCoordinator) -> None:
+    def test_config_edge_cases(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
         """Test config edge cases and boundary conditions."""
+        # Use actual area ID from registry
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
         # Test with minimal valid configuration
-        test_data = {
+        old_config = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_WEIGHT_MOTION: 0.9,
             CONF_WEIGHT_MEDIA: 0.7,
@@ -992,10 +1157,20 @@ class TestConfigIntegration:
             CONF_WEIGHT_ENVIRONMENTAL: 0.3,
             CONF_WASP_WEIGHT: 0.8,
         }
+        test_data = {
+            CONF_AREAS: [
+                {
+                    CONF_AREA_ID: area_id,
+                    **old_config,
+                }
+            ]
+        }
         coordinator.config_entry.data = test_data
         coordinator.config_entry.options = {}
 
-        area_name = coordinator.get_area_names()[0]
+        # Reload areas to pick up the new config
+        coordinator._load_areas_from_config()
+
         config = AreaConfig(coordinator, area_name=area_name)
 
         # Test with extreme threshold values

@@ -407,7 +407,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     area_name,
                 )
 
-            # Load data from database (legacy method - will need area-specific loading later)
+            # Load data from database
             await self.db.load_data()
 
             # Ensure areas exist in database and persist configuration/state
