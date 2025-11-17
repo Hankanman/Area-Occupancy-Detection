@@ -124,7 +124,7 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         area = coordinator.get_area_or_default(area_name)
 
         _LOGGER.info("Running analysis for area %s", area_name)
-        await coordinator.run_analysis()
+        await coordinator.run_analysis(area_name=area_name)
 
         result = _build_analysis_data(hass, area, area_name)
         result["update_timestamp"] = dt_util.utcnow().isoformat()
