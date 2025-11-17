@@ -92,7 +92,6 @@ def _states_to_intervals(
                     }
                 )
 
-    _LOGGER.debug("Created %d intervals from states", len(intervals))
     return intervals
 
 
@@ -120,12 +119,10 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                 minimal_response=False,
             )
         )
-        _LOGGER.debug("Found %d states", len(states))
 
         if states:
             # Convert states to proper intervals with correct duration calculation
             intervals = _states_to_intervals(db, states, end_time)  # type: ignore[arg-type]
-            _LOGGER.debug("Syncing %d intervals", len(intervals))
             if intervals:
                 with db.get_locked_session() as session:
                     # Pre-filter duplicates using a single query for better performance
@@ -192,31 +189,14 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                                 # Need to add entry_id and area_name to interval_data
                                 # Get area_name from entity_id by looking up in coordinator
                                 entity_id = interval_data["entity_id"]
-                                area_name = None
-                                for (
-                                    area_name_candidate
-                                ) in db.coordinator.get_area_names():
-                                    area_data = db.coordinator.get_area_or_default(
-                                        area_name_candidate
-                                    )
-                                    try:
-                                        area_data.entities.get_entity(entity_id)
-                                        area_name = area_name_candidate
-                                        break
-                                    except ValueError:
-                                        continue
+                                area_name = db.coordinator.find_area_for_entity(
+                                    entity_id
+                                )
 
                                 if area_name:
                                     interval_data["entry_id"] = db.coordinator.entry_id
                                     interval_data["area_name"] = area_name
                                     new_intervals.append(interval_data)
-                            else:
-                                _LOGGER.debug(
-                                    "Skipping duplicate interval: %s %s-%s",
-                                    interval_data["entity_id"],
-                                    start,
-                                    end,
-                                )
                     else:
                         # No existing intervals, all are new
                         new_intervals = intervals
@@ -241,19 +221,12 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
                     # Bulk insert new intervals
                     if new_intervals:
-                        _LOGGER.debug(
-                            "Inserting %d new intervals (filtered from %d total)",
-                            len(new_intervals),
-                            len(intervals),
-                        )
                         # Use bulk_insert_mappings for better performance
                         session.bulk_insert_mappings(db.Intervals, new_intervals)
                         session.commit()
                         _LOGGER.info(
                             "Synced %d new intervals from recorder", len(new_intervals)
                         )
-                    else:
-                        _LOGGER.debug("No new intervals to sync")
 
     except (
         sa.exc.SQLAlchemyError,

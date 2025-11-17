@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from ..const import (
@@ -129,17 +127,10 @@ class Area:
             SQLAlchemyError: If database operations fail
             Exception: For any other unexpected errors
         """
-        _LOGGER.debug("Running prior analysis for area: %s", self.area_name)
         try:
             await start_prior_analysis(self.coordinator, self.area_name, self.prior)
-        except (ValueError, TypeError, ZeroDivisionError):
-            _LOGGER.exception("Prior analysis failed due to data error")
-            raise
-        except SQLAlchemyError:
-            _LOGGER.exception("Prior analysis failed due to database error")
-            raise
         except Exception:
-            _LOGGER.exception("Prior analysis failed due to unexpected error")
+            _LOGGER.exception("Prior analysis failed for area: %s", self.area_name)
             raise
 
     async def run_likelihood_analysis(self) -> None:
@@ -156,19 +147,12 @@ class Area:
             SQLAlchemyError: If database operations fail
             Exception: For any other unexpected errors
         """
-        _LOGGER.debug("Running likelihood analysis for area: %s", self.area_name)
         try:
             await start_likelihood_analysis(
                 self.coordinator, self.area_name, self.entities
             )
-        except (ValueError, TypeError, ZeroDivisionError):
-            _LOGGER.exception("Likelihood analysis failed due to data error")
-            raise
-        except SQLAlchemyError:
-            _LOGGER.exception("Likelihood analysis failed due to database error")
-            raise
         except Exception:
-            _LOGGER.exception("Likelihood analysis failed due to unexpected error")
+            _LOGGER.exception("Likelihood analysis failed for area: %s", self.area_name)
             raise
 
     async def async_cleanup(self) -> None:
@@ -177,13 +161,11 @@ class Area:
         This should be called when the area is being removed or the
         integration is shutting down.
         """
-        _LOGGER.debug("Cleaning up area: %s", self.area_name)
         # Clear prior cache first to release cached data
         if self._prior is not None:
             self._prior.clear_cache()
         await self.entities.cleanup()
         self.purpose.cleanup()
-        _LOGGER.debug("Area cleanup completed: %s", self.area_name)
 
     def device_info(self) -> DeviceInfo:
         """Return device info for this area.
