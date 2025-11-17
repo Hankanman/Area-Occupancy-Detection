@@ -25,8 +25,7 @@ from sqlalchemy.exc import (
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
-from ..db import priors as priors_db
-from ..db.aggregation import aggregate_intervals_by_slot, get_interval_aggregates
+from ..db.aggregation import get_interval_aggregates
 from ..db.priors import (
     get_occupied_intervals,
     get_time_bounds,
@@ -607,87 +606,6 @@ class PriorAnalyzer:
             media_sensor_ids=self.media_sensor_ids,
             appliance_sensor_ids=self.appliance_sensor_ids,
             session_provider=self._session_provider,
-        )
-
-    def _get_interval_aggregates_python(
-        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
-    ) -> list[tuple[int, int, float]]:
-        """Legacy Python aggregation fallback retained for tests."""
-        intervals = self.get_occupied_intervals()
-        if not intervals:
-            return []
-        return aggregate_intervals_by_slot(intervals, slot_minutes)
-
-    def _build_base_filters(self, db: Any, lookback_date: datetime) -> list[Any]:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.build_base_filters(
-            db, self.entry_id, lookback_date, self.area_name
-        )
-
-    def _build_motion_query(
-        self, session: Any, db: Any, base_filters: list[Any]
-    ) -> Any:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.build_motion_query(session, db, base_filters)
-
-    def _build_media_query(
-        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
-    ) -> Any:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.build_media_query(session, db, base_filters, sensor_ids)
-
-    def _build_appliance_query(
-        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
-    ) -> Any:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.build_appliance_query(session, db, base_filters, sensor_ids)
-
-    def _execute_union_queries(
-        self, session: Any, db: Any, queries: list[Any]
-    ) -> list[tuple[datetime, datetime, str]]:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.execute_union_queries(session, db, queries)
-
-    def _process_query_results(
-        self, results: list[tuple[datetime, datetime, str]]
-    ) -> tuple[
-        list[tuple[datetime, datetime]], list[tuple[datetime, datetime]], int, int
-    ]:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.process_query_results(results)
-
-    def _get_time_bounds_from_session(
-        self, session: Any, db: Any, entity_ids: list[str] | None = None
-    ) -> tuple[datetime | None, datetime | None]:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.get_time_bounds_from_session(
-            session, db, self.entry_id, self.area_name, entity_ids
-        )
-
-    def _get_occupied_intervals_from_session(
-        self,
-        session: Any,
-        db: Any,
-        lookback_date: datetime,
-        include_media: bool,
-        include_appliance: bool,
-        start_time: datetime,
-    ) -> list[tuple[datetime, datetime]]:
-        """Legacy wrapper for test compatibility."""
-        return priors_db.get_occupied_intervals_from_session(
-            session=session,
-            db=db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            lookback_date=lookback_date,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
-            include_media=include_media,
-            include_appliance=include_appliance,
-            media_sensor_ids=self.media_sensor_ids if include_media else None,
-            appliance_sensor_ids=self.appliance_sensor_ids
-            if include_appliance
-            else None,
-            start_time=start_time,
         )
 
 

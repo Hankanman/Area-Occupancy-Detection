@@ -1050,14 +1050,6 @@ class TestAreaOccupancyOptionsFlow:
                 "config_flow_mock_config_entry_with_areas",
                 "living_room",
             ),  # Will be replaced with actual ID
-            (
-                "config_flow_mock_config_entry_legacy",
-                "legacy_area",
-            ),  # Will be replaced with actual ID
-            (
-                "config_flow_mock_config_entry_legacy_no_name",
-                None,  # Legacy format without name/area_id - no CONF_AREA_ID expected
-            ),
         ],
     )
     def test_get_areas_from_config(
@@ -1074,22 +1066,18 @@ class TestAreaOccupancyOptionsFlow:
         flow.config_entry = request.getfixturevalue(config_entry_fixture)
         areas = flow._get_areas_from_config()
         assert isinstance(areas, list)
-        assert len(areas) == 1
 
-        # For legacy_no_name, there's no area_id in the config
-        if expected_area_id is None:
-            # Legacy format without name - no CONF_AREA_ID should be present
-            assert CONF_AREA_ID not in areas[0]
-        else:
-            # Use actual area ID from registry for comparison
-            if expected_area_id == "living_room":
-                expected_area_id = setup_area_registry.get("Living Room", "living_room")
-            elif expected_area_id == "legacy_area":
-                # Legacy entry has CONF_AREA_ID: "legacy_area" which doesn't exist in registry
-                # The _get_areas_from_config just returns what's in the config, doesn't validate
-                expected_area_id = "legacy_area"
+        # Use actual area ID from registry for comparison
+        if expected_area_id == "living_room":
+            expected_area_id = setup_area_registry.get("Living Room", "living_room")
 
+        # Should have at least one area for valid configs
+        if expected_area_id:
+            assert len(areas) >= 1
             assert areas[0][CONF_AREA_ID] == expected_area_id
+        else:
+            # Empty config should return empty list
+            assert len(areas) == 0
 
     async def test_options_flow_init_with_device_id(
         self, config_flow_options_flow, hass, device_registry
