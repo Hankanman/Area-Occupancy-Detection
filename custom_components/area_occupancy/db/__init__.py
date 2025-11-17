@@ -5,7 +5,6 @@ from __future__ import annotations
 from .constants import (
     DB_NAME,
     DB_VERSION,
-    DEFAULT_AREA_PRIOR,
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT,
@@ -33,7 +32,6 @@ from .schema import (
 __all__ = [
     "DB_NAME",
     "DB_VERSION",
-    "DEFAULT_AREA_PRIOR",
     "DEFAULT_ENTITY_PROB_GIVEN_FALSE",
     "DEFAULT_ENTITY_PROB_GIVEN_TRUE",
     "DEFAULT_ENTITY_WEIGHT",

@@ -1230,37 +1230,6 @@ class LikelihoodAnalyzer:
         return False
 
 
-def _update_area_prior_in_db(
-    db: Any, entry_id: str, area_name: str, global_prior: float
-) -> None:
-    """Update area prior in database (synchronous helper for executor).
-
-    This function updates the area.area_prior field for backward compatibility.
-    The GlobalPriors table is updated separately by analyze_area_prior().
-
-    Args:
-        db: Database instance
-        entry_id: Config entry ID
-        area_name: Area name
-        global_prior: Calculated global prior value to write
-    """
-    with db.get_session() as session:
-        area = (
-            session.query(db.Areas)
-            .filter_by(entry_id=entry_id, area_name=area_name)
-            .first()
-        )
-        if area:
-            area.area_prior = global_prior
-            area.updated_at = dt_util.utcnow()
-        else:
-            _LOGGER.warning(
-                "Area '%s' not found in database, cannot update area_prior",
-                area_name,
-            )
-        session.commit()
-
-
 def _update_likelihoods_in_db(
     db: Any,
     entry_id: str,
@@ -1338,15 +1307,6 @@ async def start_prior_analysis(
             analyzer.analyze_area_prior, analyzer.sensor_ids
         )
         _LOGGER.debug("Area prior calculated: %.2f", global_prior)
-
-        # Write global prior to database (run in executor to avoid blocking event loop)
-        await coordinator.hass.async_add_executor_job(
-            _update_area_prior_in_db,
-            coordinator.db,
-            coordinator.entry_id,
-            area_name,
-            global_prior,
-        )
 
         # Calculate and write time priors
         await coordinator.hass.async_add_executor_job(analyzer.analyze_time_priors)
