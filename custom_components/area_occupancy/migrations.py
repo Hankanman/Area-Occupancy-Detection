@@ -519,8 +519,10 @@ def _drop_legacy_tables(engine: Any, session: Any) -> None:
     Args:
         engine: SQLAlchemy engine
         session: SQLAlchemy session
+
+    Note: Deprecated - use _drop_all_tables instead for version 5+
     """
-    _LOGGER.info("Dropping tables for schema migration")
+    _LOGGER.info("Dropping legacy tables for schema migration")
     _update_db_version(session, DB_VERSION)
     session.commit()
 
@@ -539,7 +541,48 @@ def _drop_legacy_tables(engine: Any, session: Any) -> None:
             except Exception as e:  # noqa: BLE001
                 _LOGGER.debug("Error dropping table %s: %s", table_name, e)
         conn.commit()
-        _LOGGER.info("All tables dropped successfully")
+        _LOGGER.info("All legacy tables dropped successfully")
+
+
+def _drop_all_tables(engine: Any, session: Any) -> None:
+    """Drop all database tables for complete schema reset.
+
+    Args:
+        engine: SQLAlchemy engine
+        session: SQLAlchemy session
+    """
+    _LOGGER.info("Dropping all tables for complete database reset")
+    _update_db_version(session, DB_VERSION)
+    session.commit()
+
+    with engine.connect() as conn:
+        # Drop all tables including new ones
+        tables_to_drop = [
+            "cross_area_stats",
+            "area_relationships",
+            "entity_statistics",
+            "numeric_correlations",
+            "numeric_aggregates",
+            "numeric_samples",
+            "global_priors",
+            "occupied_intervals_cache",
+            "interval_aggregates",
+            "intervals",
+            "priors",
+            "entities",
+            "areas",
+            "metadata",
+        ]
+        for table_name in tables_to_drop:
+            try:
+                conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                _LOGGER.debug("Dropped table: %s", table_name)
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.debug("Error dropping table %s: %s", table_name, e)
+        conn.commit()
+        _LOGGER.info(
+            "All tables dropped successfully - database will be recreated with new schema"
+        )
 
 
 def _drop_tables_locked(
@@ -548,21 +591,17 @@ def _drop_tables_locked(
     engine_factory: Any | None = None,
     session_factory: Any | None = None,
 ) -> None:
-    """Blocking helper: perform locked drop of legacy tables if needed.
+    """Blocking helper: perform locked drop of tables if DB version doesn't match.
 
     Args:
         storage_dir: Directory containing the database file
-        entry_major: Major version number of the entry
+        entry_major: Major version number of the entry (for compatibility, not used for DB version check)
         engine_factory: Optional factory function to create engine (for testing)
         session_factory: Optional factory function to create session (for testing)
     """
-    if entry_major >= 11:
-        _LOGGER.debug("Skipping table dropping for version %s", entry_major)
-        return
-
-    _LOGGER.info("Dropping tables for schema migration")
     db_path = storage_dir / DB_NAME
     if not db_path.exists():
+        _LOGGER.debug("Database file does not exist, no migration needed")
         return
 
     lock_path = storage_dir / (DB_NAME + ".lock")
@@ -589,8 +628,15 @@ def _drop_tables_locked(
             except Exception:  # noqa: BLE001
                 db_version = 0
 
-            if db_version < 3:
-                _drop_legacy_tables(engine, session)
+            # For DB_VERSION 5 (new schema), delete and recreate database if version doesn't match
+            if db_version != DB_VERSION:
+                _LOGGER.info(
+                    "Database version mismatch (found %d, expected %d). "
+                    "Deleting and recreating database with new schema.",
+                    db_version,
+                    DB_VERSION,
+                )
+                _drop_all_tables(engine, session)
 
             session.close()
             engine.dispose()
