@@ -173,8 +173,6 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
                 db_version,
                 DB_VERSION,
             )
-            # Close all connections before deleting
-            db.engine.dispose()
             delete_db(db)
             # Recreate database with new schema
             init_db(db)
@@ -189,7 +187,6 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
         # On error, delete and recreate to be safe
         _LOGGER.info("Recreating database due to schema check error")
         try:
-            db.engine.dispose()
             delete_db(db)
             init_db(db)
             set_db_version(db)
@@ -594,6 +591,14 @@ def get_db_version(db: AreaOccupancyDB) -> int:
 
 def delete_db(db: AreaOccupancyDB) -> None:
     """Delete the database file."""
+    # Dispose engine first to release any open file handles
+    engine = getattr(db, "engine", None)
+    if engine is not None:
+        try:
+            engine.dispose()
+        except SQLAlchemyError as e:
+            _LOGGER.debug("Failed to dispose engine before deleting DB: %s", e)
+
     if db.db_path and db.db_path.exists():
         try:
             db.db_path.unlink()
