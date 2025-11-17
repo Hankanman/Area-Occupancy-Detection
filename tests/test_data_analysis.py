@@ -20,7 +20,6 @@ from custom_components.area_occupancy.data.analysis import (
     IntervalData,
     LikelihoodAnalyzer,
     PriorAnalyzer,
-    _update_area_prior_in_db,
     _update_likelihoods_in_db,
     start_likelihood_analysis,
     start_prior_analysis,
@@ -561,6 +560,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -702,6 +703,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -773,6 +776,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -820,6 +825,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -829,6 +836,8 @@ class TestPriorAnalyzerWithRealDB:
         session.add(motion_interval)
 
         media_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -878,6 +887,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -887,6 +898,8 @@ class TestPriorAnalyzerWithRealDB:
         session.add(motion_interval)
 
         appliance_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="switch.test_appliance",
             state=STATE_ON,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -928,6 +941,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         interval1 = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start1.replace(tzinfo=UTC),
@@ -937,6 +952,8 @@ class TestPriorAnalyzerWithRealDB:
         session.add(interval1)
 
         interval2 = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start2.replace(tzinfo=UTC),
@@ -974,6 +991,8 @@ class TestPriorAnalyzerWithRealDB:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -1150,6 +1169,8 @@ class TestLikelihoodAnalyzerExtended:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -1222,6 +1243,8 @@ class TestLikelihoodAnalyzerExtended:
         session.commit()
 
         interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -1405,40 +1428,6 @@ class TestLikelihoodAnalyzerExtended:
 
 class TestAnalysisHelperFunctions:
     """Test helper functions in analysis module."""
-
-    def test_update_area_prior_in_db(
-        self, test_db: AreaOccupancyDB, db_test_session
-    ) -> None:
-        """Test _update_area_prior_in_db updates database."""
-        coordinator = test_db.coordinator
-        area_name = coordinator.get_area_names()[0]
-
-        # Ensure area exists in database by saving it
-        test_db.save_area_data(area_name)
-
-        # Update prior
-        _update_area_prior_in_db(test_db, coordinator.entry_id, area_name, 0.75)
-
-        # Verify update
-        session = db_test_session
-        updated_area = (
-            session.query(test_db.Areas)
-            .filter_by(entry_id=coordinator.entry_id)
-            .first()
-        )
-        assert updated_area is not None
-        assert updated_area.area_prior == 0.75
-
-    def test_update_area_prior_in_db_area_not_found(
-        self, test_db: AreaOccupancyDB
-    ) -> None:
-        """Test _update_area_prior_in_db handles missing area."""
-        coordinator = test_db.coordinator
-
-        # Update prior for non-existent area (should log warning but not crash)
-        _update_area_prior_in_db(
-            test_db, coordinator.entry_id, "Non-existent Area", 0.75
-        )
 
     def test_update_likelihoods_in_db(
         self, test_db: AreaOccupancyDB, db_test_session
@@ -1811,6 +1800,8 @@ class TestPriorAnalyzerEdgeCases:
         intervals = [
             # First interval
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="on",
                 start_time=start_time.replace(tzinfo=UTC),
@@ -1819,6 +1810,8 @@ class TestPriorAnalyzerEdgeCases:
             ),
             # Adjacent interval (should merge)
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="on",
                 start_time=(start_time + timedelta(minutes=30)).replace(tzinfo=UTC),
@@ -1827,6 +1820,8 @@ class TestPriorAnalyzerEdgeCases:
             ),
             # Overlapping interval (should merge)
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="on",
                 start_time=(start_time + timedelta(minutes=45)).replace(tzinfo=UTC),
@@ -1996,6 +1991,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Create intervals for all sensor types
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -2005,6 +2002,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(motion_interval)
 
         media_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -2014,6 +2013,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(media_interval)
 
         appliance_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="switch.test_appliance",
             state=STATE_ON,
             start_time=(start_time + timedelta(hours=2)).replace(tzinfo=UTC),
@@ -2066,6 +2067,8 @@ class TestPriorAnalyzerEdgeCases:
         # Create intervals: media before motion, motion, media after motion
         # This tests the "before motion", "motion segment", and "after motion" logic
         media_before = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=start_time.replace(tzinfo=UTC),
@@ -2075,6 +2078,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(media_before)
 
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=(start_time + timedelta(minutes=30)).replace(tzinfo=UTC),
@@ -2084,6 +2089,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(motion_interval)
 
         media_after = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -2144,6 +2151,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Create overlapping intervals from different sensor types
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -2154,6 +2163,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Media overlaps with motion
         media_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(minutes=30)).replace(tzinfo=UTC),
@@ -2164,6 +2175,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Appliance overlaps with media
         appliance_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="switch.test_appliance",
             state=STATE_ON,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -2214,6 +2227,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Create motion interval at one time
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -2224,6 +2239,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Create media interval at different time (no overlap)
         media_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(hours=2)).replace(tzinfo=UTC),
@@ -2284,6 +2301,8 @@ class TestPriorAnalyzerEdgeCases:
 
         # Create intervals for all sensor types - ensure they're within lookback
         motion_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -2293,6 +2312,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(motion_interval)
 
         media_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="media_player.test_tv",
             state=STATE_PLAYING,
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),
@@ -2302,6 +2323,8 @@ class TestPriorAnalyzerEdgeCases:
         session.add(media_interval)
 
         appliance_interval = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="switch.test_appliance",
             state=STATE_ON,
             start_time=(start_time + timedelta(hours=2)).replace(tzinfo=UTC),
@@ -2623,6 +2646,8 @@ class TestPriorAnalyzerEdgeCases:
         intervals = [
             # Active and occupied
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="on",
                 start_time=start_time.replace(tzinfo=UTC),
@@ -2631,6 +2656,8 @@ class TestPriorAnalyzerEdgeCases:
             ),
             # Active but empty (occupied period is different)
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="on",
                 start_time=(start_time + timedelta(hours=2)).replace(tzinfo=UTC),
@@ -2641,6 +2668,8 @@ class TestPriorAnalyzerEdgeCases:
             ),
             # Inactive but occupied (state is "off" but during occupied time)
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="off",
                 start_time=(start_time + timedelta(minutes=30)).replace(tzinfo=UTC),
@@ -2649,6 +2678,8 @@ class TestPriorAnalyzerEdgeCases:
             ),
             # Inactive and empty
             test_db.Intervals(
+                entry_id=coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.test_motion",
                 state="off",
                 start_time=(start_time + timedelta(hours=3)).replace(tzinfo=UTC),
@@ -3105,6 +3136,8 @@ class TestLikelihoodAnalyzerHelperMethods:
 
         # Create intervals for this entity
         interval1 = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="on",
             start_time=start_time.replace(tzinfo=UTC),
@@ -3112,6 +3145,8 @@ class TestLikelihoodAnalyzerHelperMethods:
             duration_seconds=3600.0,
         )
         interval2 = test_db.Intervals(
+            entry_id=coordinator.entry_id,
+            area_name=area_name,
             entity_id="binary_sensor.test_motion",
             state="off",
             start_time=(start_time + timedelta(hours=1)).replace(tzinfo=UTC),

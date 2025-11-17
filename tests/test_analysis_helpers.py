@@ -1,20 +1,18 @@
-"""Tests for data.analysis_helpers module.
-
-This module contains pure business logic functions that can be easily unit tested
-without database or mocks.
-"""
+"""Tests for interval and aggregation helper functions."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from custom_components.area_occupancy.data.analysis_helpers import (
+from custom_components.area_occupancy.data.analysis import is_timestamp_occupied
+from custom_components.area_occupancy.db.aggregation import (
     aggregate_intervals_by_slot,
+    calculate_time_slot,
+)
+from custom_components.area_occupancy.db.priors import (
     apply_motion_timeout,
     calculate_motion_union,
-    calculate_time_slot,
     find_overlapping_motion_intervals,
-    is_timestamp_occupied,
     merge_overlapping_intervals,
     segment_interval_with_motion,
 )
