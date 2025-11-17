@@ -290,6 +290,7 @@ def save_correlation_result(
         correlation_data["area_name"],
     )
 
+    session = None
     try:
         with db.get_locked_session() as session:
             # Check if correlation already exists for this period
@@ -334,11 +335,13 @@ def save_correlation_result(
 
     except SQLAlchemyError as e:
         _LOGGER.error("Database error saving correlation result: %s", e)
-        session.rollback()
+        if session is not None:
+            session.rollback()
         return False
     except (ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Unexpected error saving correlation result: %s", e)
-        session.rollback()
+        if session is not None:
+            session.rollback()
         return False
 
 
