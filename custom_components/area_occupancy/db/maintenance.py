@@ -365,6 +365,7 @@ def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
             f"sqlite:///{db.db_path}",
             echo=False,
             pool_pre_ping=True,
+            poolclass=sa.pool.NullPool,
             connect_args={
                 "check_same_thread": False,
                 "timeout": 60,  # Longer timeout for recovery
@@ -445,6 +446,7 @@ def restore_database_from_backup(db: AreaOccupancyDB) -> bool:
             f"sqlite:///{db.db_path}",
             echo=False,
             pool_pre_ping=True,
+            poolclass=sa.pool.NullPool,
             connect_args={
                 "check_same_thread": False,
                 "timeout": 30,
