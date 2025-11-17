@@ -24,7 +24,13 @@ from custom_components.area_occupancy.db import (
     maintenance,
     sync,
 )
-from custom_components.area_occupancy.db.priors import save_global_prior
+from custom_components.area_occupancy.db.priors import (
+    build_base_filters,
+    build_motion_query,
+    get_occupied_intervals,
+    get_time_bounds,
+    save_global_prior,
+)
 from homeassistant import helpers
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
@@ -3261,6 +3267,295 @@ class TestOccupiedIntervalsCache:
 
         # Cache should be valid now
         assert db.is_occupied_intervals_cache_valid(area_name) is True
+
+
+class TestIntervalAreaIsolation:
+    """Test that intervals from different areas are properly isolated."""
+
+    def test_get_occupied_intervals_isolates_areas_with_same_entity_id(
+        self, test_db: AreaOccupancyDB
+    ):
+        """Test that get_occupied_intervals returns only intervals for the requested area.
+
+        Creates the same entity_id in two different areas with distinct intervals
+        and verifies that queries only return intervals for the requested area.
+        """
+        db = test_db
+        entry_id = db.coordinator.entry_id
+
+        # Create two different areas
+        area1_name = "Kitchen"
+        area2_name = "Living Room"
+
+        now = dt_util.utcnow()
+
+        # Create distinct time ranges for each area
+        area1_start = now - timedelta(days=2, hours=8)
+        area1_end = now - timedelta(days=2, hours=6)
+        area2_start = now - timedelta(days=1, hours=12)
+        area2_end = now - timedelta(days=1, hours=10)
+
+        # Same entity_id for both areas
+        shared_entity_id = "binary_sensor.motion_sensor"
+
+        with db.get_locked_session() as session:
+            # Create Areas first (required for Entities foreign key)
+            area1 = db.Areas(
+                entry_id=entry_id,
+                area_name=area1_name,
+                area_id="kitchen",
+                purpose="kitchen",
+                threshold=0.5,
+            )
+            area2 = db.Areas(
+                entry_id=entry_id,
+                area_name=area2_name,
+                area_id="living_room",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add_all([area1, area2])
+            session.commit()
+
+            # Create entities in both areas with same entity_id
+            entity1 = db.Entities(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            entity2 = db.Entities(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            session.add_all([entity1, entity2])
+            session.commit()
+
+            # Create intervals for area1
+            interval1_area1 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area1_start,
+                end_time=area1_end,
+                duration_seconds=(area1_end - area1_start).total_seconds(),
+            )
+
+            # Create intervals for area2 with same entity_id but different times
+            interval1_area2 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area2_start,
+                end_time=area2_end,
+                duration_seconds=(area2_end - area2_start).total_seconds(),
+            )
+
+            session.add_all([interval1_area1, interval1_area2])
+            session.commit()
+
+        # Verify data was created correctly
+        with db.get_session() as session:
+            all_intervals = session.query(db.Intervals).all()
+            all_entities = session.query(db.Entities).all()
+            # Should have 2 intervals and 2 entities
+            assert len(all_intervals) == 2, (
+                f"Expected 2 intervals, got {len(all_intervals)}"
+            )
+            assert len(all_entities) == 2, (
+                f"Expected 2 entities, got {len(all_entities)}"
+            )
+
+            # Verify intervals are in correct areas
+            interval_areas = {i.area_name for i in all_intervals}
+            assert interval_areas == {area1_name, area2_name}, (
+                f"Interval areas: {interval_areas}"
+            )
+
+            # Verify entities are in correct areas
+            entity_areas = {e.area_name for e in all_entities}
+            assert entity_areas == {area1_name, area2_name}, (
+                f"Entity areas: {entity_areas}"
+            )
+
+        # Directly query to verify the join is working correctly
+        lookback_date = now - timedelta(days=7)
+
+        # Test the query directly for area1
+        with db.get_session() as session:
+            base_filters = build_base_filters(db, entry_id, lookback_date, area1_name)
+            motion_query = build_motion_query(session, db, base_filters)
+            # Execute and check results
+            results = motion_query.all()
+            # Should only return 1 interval for area1
+            assert len(results) == 1, (
+                f"Direct query returned {len(results)} results for {area1_name}: {results}"
+            )
+
+        # Test get_occupied_intervals for area1 - should only return area1 intervals
+        intervals_area1 = get_occupied_intervals(
+            db,
+            entry_id,
+            area1_name,
+            lookback_days=7,
+            motion_timeout_seconds=0,
+            include_media=False,
+            include_appliance=False,
+        )
+
+        assert len(intervals_area1) == 1, (
+            f"Expected 1 interval for {area1_name}, got {len(intervals_area1)}: {intervals_area1}"
+        )
+        assert intervals_area1[0][0].replace(tzinfo=None) == area1_start.replace(
+            tzinfo=None
+        ), f"Start time mismatch: {intervals_area1[0][0]} != {area1_start}"
+        assert intervals_area1[0][1].replace(tzinfo=None) == area1_end.replace(
+            tzinfo=None
+        ), f"End time mismatch: {intervals_area1[0][1]} != {area1_end}"
+
+        # Test get_occupied_intervals for area2 - should only return area2 intervals
+        intervals_area2 = get_occupied_intervals(
+            db,
+            entry_id,
+            area2_name,
+            lookback_days=7,
+            motion_timeout_seconds=0,
+            include_media=False,
+            include_appliance=False,
+        )
+
+        assert len(intervals_area2) == 1, (
+            f"Expected 1 interval for {area2_name}, got {len(intervals_area2)}: {intervals_area2}"
+        )
+        assert intervals_area2[0][0].replace(tzinfo=None) == area2_start.replace(
+            tzinfo=None
+        ), f"Start time mismatch: {intervals_area2[0][0]} != {area2_start}"
+        assert intervals_area2[0][1].replace(tzinfo=None) == area2_end.replace(
+            tzinfo=None
+        ), f"End time mismatch: {intervals_area2[0][1]} != {area2_end}"
+
+        # Verify intervals are different
+        assert intervals_area1[0][0] != intervals_area2[0][0]
+
+    def test_get_time_bounds_isolates_areas_with_same_entity_id(
+        self, test_db: AreaOccupancyDB
+    ):
+        """Test that get_time_bounds returns only bounds for the requested area.
+
+        Creates the same entity_id in two different areas with distinct intervals
+        and verifies that get_time_bounds only returns bounds for the requested area.
+        """
+        db = test_db
+        entry_id = db.coordinator.entry_id
+
+        # Create two different areas
+        area1_name = "Kitchen"
+        area2_name = "Living Room"
+
+        now = dt_util.utcnow()
+
+        # Create distinct time ranges for each area
+        area1_start = now - timedelta(days=3, hours=10)
+        area1_end = now - timedelta(days=3, hours=8)
+        area2_start = now - timedelta(days=1, hours=14)
+        area2_end = now - timedelta(days=1, hours=12)
+
+        # Same entity_id for both areas
+        shared_entity_id = "binary_sensor.motion_sensor"
+
+        with db.get_locked_session() as session:
+            # Create Areas first (required for Entities foreign key)
+            area1 = db.Areas(
+                entry_id=entry_id,
+                area_name=area1_name,
+                area_id="kitchen",
+                purpose="kitchen",
+                threshold=0.5,
+            )
+            area2 = db.Areas(
+                entry_id=entry_id,
+                area_name=area2_name,
+                area_id="living_room",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add_all([area1, area2])
+            session.commit()
+
+            # Create entities in both areas with same entity_id
+            entity1 = db.Entities(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            entity2 = db.Entities(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            session.add_all([entity1, entity2])
+            session.commit()
+
+            # Create intervals for area1
+            interval1_area1 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area1_start,
+                end_time=area1_end,
+                duration_seconds=(area1_end - area1_start).total_seconds(),
+            )
+
+            # Create intervals for area2 with same entity_id but different times
+            interval1_area2 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area2_start,
+                end_time=area2_end,
+                duration_seconds=(area2_end - area2_start).total_seconds(),
+            )
+
+            session.add_all([interval1_area1, interval1_area2])
+            session.commit()
+
+        # Test get_time_bounds for area1 - should only return area1 bounds
+        first1, last1 = get_time_bounds(db, entry_id, area1_name)
+
+        assert first1 is not None
+        assert last1 is not None
+        assert first1.replace(tzinfo=None) == area1_start.replace(tzinfo=None)
+        assert last1.replace(tzinfo=None) == area1_end.replace(tzinfo=None)
+
+        # Test get_time_bounds for area2 - should only return area2 bounds
+        first2, last2 = get_time_bounds(db, entry_id, area2_name)
+
+        assert first2 is not None
+        assert last2 is not None
+        assert first2.replace(tzinfo=None) == area2_start.replace(tzinfo=None)
+        assert last2.replace(tzinfo=None) == area2_end.replace(tzinfo=None)
+
+        # Verify bounds are different
+        assert first1 != first2
+        assert last1 != last2
+
+        # Test with entity_ids parameter - should still filter by area
+        first1_entity, last1_entity = get_time_bounds(
+            db, entry_id, area1_name, entity_ids=[shared_entity_id]
+        )
+
+        assert first1_entity is not None
+        assert last1_entity is not None
+        assert first1_entity.replace(tzinfo=None) == area1_start.replace(tzinfo=None)
+        assert last1_entity.replace(tzinfo=None) == area1_end.replace(tzinfo=None)
 
 
 class TestNumericCorrelation:

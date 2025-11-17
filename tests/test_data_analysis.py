@@ -2845,13 +2845,30 @@ class TestPriorAnalyzerHelperMethods:
 
         filters = analyzer._build_base_filters(db, lookback_date)
 
-        assert len(filters) == 3  # entry_id, start_time, area_name
+        assert (
+            len(filters) == 4
+        )  # entry_id, Entities.area_name, Intervals.area_name, start_time
         # Compare columns by key attribute since SQLAlchemy creates new objects
         # Note: right values are SQLAlchemy bind parameters, not the actual values
-        filter_keys = {getattr(f.left, "key", None) for f in filters}
-        assert "entry_id" in filter_keys
-        assert "start_time" in filter_keys
-        assert "area_name" in filter_keys
+        # Check for Entities table filters
+        entities_filters = [
+            f
+            for f in filters
+            if hasattr(f.left, "table") and f.left.table.name == "entities"
+        ]
+        entities_keys = {getattr(f.left, "key", None) for f in entities_filters}
+        assert "entry_id" in entities_keys
+        assert "area_name" in entities_keys
+
+        # Check for Intervals table filters
+        intervals_filters = [
+            f
+            for f in filters
+            if hasattr(f.left, "table") and f.left.table.name == "intervals"
+        ]
+        intervals_keys = {getattr(f.left, "key", None) for f in intervals_filters}
+        assert "area_name" in intervals_keys
+        assert "start_time" in intervals_keys
 
     def test_build_motion_query(
         self, coordinator: AreaOccupancyCoordinator, db_test_session

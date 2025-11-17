@@ -21,6 +21,7 @@ from sqlalchemy.exc import (
     ProgrammingError,
     SQLAlchemyError,
 )
+from sqlalchemy.sql import literal
 
 from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.util import dt as dt_util
@@ -545,6 +546,7 @@ def build_base_filters(
     return [
         db.Entities.entry_id == entry_id,
         db.Entities.area_name == area_name,
+        db.Intervals.area_name == area_name,
         db.Intervals.start_time >= lookback_date,
     ]
 
@@ -557,9 +559,13 @@ def build_motion_query(
         session.query(
             db.Intervals.start_time,
             db.Intervals.end_time,
-            func.literal("motion").label("sensor_type"),
+            literal("motion").label("sensor_type"),
         )
-        .join(db.Entities, db.Intervals.entity_id == db.Entities.entity_id)
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
         .filter(
             *base_filters,
             db.Entities.entity_type == InputType.MOTION.value,
@@ -579,9 +585,13 @@ def build_media_query(
         session.query(
             db.Intervals.start_time,
             db.Intervals.end_time,
-            func.literal("media").label("sensor_type"),
+            literal("media").label("sensor_type"),
         )
-        .join(db.Entities, db.Intervals.entity_id == db.Entities.entity_id)
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
         .filter(
             *base_filters,
             db.Entities.entity_type == InputType.MEDIA.value,
@@ -602,9 +612,13 @@ def build_appliance_query(
         session.query(
             db.Intervals.start_time,
             db.Intervals.end_time,
-            func.literal("appliance").label("sensor_type"),
+            literal("appliance").label("sensor_type"),
         )
-        .join(db.Entities, db.Intervals.entity_id == db.Entities.entity_id)
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
         .filter(
             *base_filters,
             db.Entities.entity_type == InputType.APPLIANCE.value,
@@ -665,10 +679,15 @@ def get_time_bounds_from_session(
     )
 
     if entity_ids is not None:
-        query = query.filter(db.Intervals.entity_id.in_(entity_ids))
+        query = query.filter(
+            db.Intervals.entity_id.in_(entity_ids),
+            db.Intervals.area_name == area_name,
+        )
     else:
         query = query.join(
-            db.Entities, db.Intervals.entity_id == db.Entities.entity_id
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
         ).filter(
             db.Entities.entry_id == entry_id,
             db.Entities.area_name == area_name,
