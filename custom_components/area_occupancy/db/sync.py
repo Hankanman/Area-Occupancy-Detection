@@ -203,17 +203,8 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                         # Add entry_id and area_name to each interval
                         for interval_data in new_intervals:
                             entity_id = interval_data["entity_id"]
-                            area_name = None
-                            for area_name_candidate in db.coordinator.get_area_names():
-                                area_data = db.coordinator.get_area_or_default(
-                                    area_name_candidate
-                                )
-                                try:
-                                    area_data.entities.get_entity(entity_id)
-                                    area_name = area_name_candidate
-                                    break
-                                except ValueError:
-                                    continue
+                            # Use find_area_for_entity which efficiently searches all areas
+                            area_name = db.coordinator.find_area_for_entity(entity_id)
 
                             if area_name:
                                 interval_data["entry_id"] = db.coordinator.entry_id

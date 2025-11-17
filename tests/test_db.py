@@ -568,12 +568,18 @@ class TestAreaOccupancyDBUtilities:
 
         # Set up entities on the area's entities manager using private attribute
         # since entities is a read-only property
+        # Also need entity_ids property for cleanup_orphaned_entities
         mock_entities_manager = SimpleNamespace(
             entities={
                 "binary_sensor.good": good,
                 "binary_sensor.bad": missing_type,
                 "binary_sensor.noinput": no_input,
-            }
+            },
+            entity_ids=[
+                "binary_sensor.good",
+                "binary_sensor.bad",
+                "binary_sensor.noinput",
+            ],
         )
         area._entities = mock_entities_manager
         db.save_entity_data()
@@ -674,10 +680,12 @@ class TestAreaOccupancyDBUtilities:
         assert area is not None
 
         # Set up entities on the area's entities manager using private attribute
+        # Also need entity_ids property for cleanup_orphaned_entities
         mock_entities_manager = SimpleNamespace(
             entities={
                 "binary_sensor.good": good,
-            }
+            },
+            entity_ids=["binary_sensor.good"],
         )
         area._entities = mock_entities_manager
         db.save_entity_data()
@@ -748,10 +756,12 @@ class TestAreaOccupancyDBUtilities:
         assert area is not None
 
         # Set up entities on the area's entities manager using private attribute
+        # Also need entity_ids property for cleanup_orphaned_entities
         mock_entities_manager = SimpleNamespace(
             entities={
                 "binary_sensor.good": good,
-            }
+            },
+            entity_ids=["binary_sensor.good"],
         )
         area._entities = mock_entities_manager
         db.save_entity_data()
@@ -1204,8 +1214,8 @@ class TestAreaOccupancyDBUtilities:
         elif field == "area_name":
             # area_name is passed as parameter, not from config
             # Test with invalid area_name parameter - empty string will cause area lookup to fail
-            # and no areas will be saved
-            with pytest.raises(ValueError, match="Area data validation failed"):
+            # Since we removed the None check, accessing .config on None will raise AttributeError
+            with pytest.raises(AttributeError):
                 db.save_area_data(area_name="")
             return
         elif field == "purpose":

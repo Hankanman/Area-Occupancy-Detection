@@ -243,11 +243,6 @@ def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool
     _LOGGER.debug("Syncing adjacent areas from config for area: %s", area_name)
 
     try:
-        area = db.coordinator.get_area_or_default(area_name)
-        if not area:
-            _LOGGER.warning("Area not found: %s", area_name)
-            return False
-
         # Get adjacent areas from area configuration (stored in Areas table)
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
