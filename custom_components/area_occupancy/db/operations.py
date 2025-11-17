@@ -139,17 +139,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
             # Update prior from GlobalPriors table
             global_prior_data = db.get_global_prior(area_name)
             if global_prior_data:
-                _LOGGER.debug(
-                    "Loading global_prior %s from GlobalPriors table for area %s",
-                    global_prior_data["prior_value"],
-                    area_name,
-                )
                 area_data.prior.set_global_prior(global_prior_data["prior_value"])
-            else:
-                _LOGGER.debug(
-                    "No global_prior found for area %s",
-                    area_name,
-                )
 
             # Process entities
             if entities:
@@ -184,11 +174,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                                 pass
                         existing_entity.last_updated = entity_obj.last_updated
                         existing_entity.previous_evidence = entity_obj.evidence
-                        _LOGGER.debug(
-                            "Updated existing entity %s with database values for area %s",
-                            entity_obj.entity_id,
-                            area_name,
-                        )
                     except ValueError:
                         # Entity should exist but doesn't - create it from database
                         # (This handles cases where we can't determine current config, like in tests)
@@ -205,8 +190,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 await db.hass.async_add_executor_job(
                     _delete_stale_operation, area_name, stale_ids
                 )
-
-        _LOGGER.debug("Loaded area occupancy data")
 
     except (
         sa.exc.SQLAlchemyError,
@@ -272,8 +255,6 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                 "updated_at": dt_util.utcnow(),
             }
 
-            _LOGGER.debug("Attempting to insert area data: %s", area_data)
-
             # Validate required fields using helper method
             validation_failures = _validate_area_data(db, area_data, area_name_item)
             if validation_failures:
@@ -330,7 +311,6 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                     db.last_area_save_ts = 0.0
                     raise
                 time.sleep(delay)
-        _LOGGER.debug("Saved area data")
     except Exception as err:
         _LOGGER.error("Failed to save area data: %s", err)
         raise
@@ -353,10 +333,6 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             try:
                 entities_iter = entities_container.values()
             except AttributeError:
-                _LOGGER.debug(
-                    "Entities container for area %s does not provide values(), skipping",
-                    area_name,
-                )
                 continue
 
             for entity in entities_iter:
@@ -464,7 +440,6 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
                     db.last_entities_save_ts = 0.0
                     raise
                 time.sleep(delay)
-        _LOGGER.debug("Saved entity data")
 
         # Clean up any orphaned entities after saving current ones
         try:
@@ -517,10 +492,6 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                         current_entity_ids = set(area_data.entities.entities.keys())
                     else:
                         # If we can't determine current entities, skip cleanup
-                        _LOGGER.debug(
-                            "Cannot determine current entity IDs for area %s, skipping cleanup",
-                            area_name,
-                        )
                         return 0
 
                     # Query all entities for this area_name from database
@@ -536,17 +507,12 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                     ]
 
                     if not orphaned_entities:
-                        _LOGGER.debug(
-                            "No orphaned entities found for area %s",
-                            area_name,
-                        )
                         return 0
 
                     # Collect orphaned entity IDs for bulk operations
                     orphaned_entity_ids = [
                         entity.entity_id for entity in orphaned_entities
                     ]
-                    orphaned_count = len(orphaned_entity_ids)
 
                     # Log orphaned entities being removed
                     for entity_id in orphaned_entity_ids:
@@ -565,14 +531,6 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                         .filter(db.Intervals.entity_id.in_(orphaned_entity_ids))
                         .delete(synchronize_session=False)
                     )
-
-                    if intervals_deleted > 0:
-                        _LOGGER.debug(
-                            "Bulk deleted %d intervals for %d orphaned entities in area %s",
-                            intervals_deleted,
-                            orphaned_count,
-                            area_name,
-                        )
 
                     # Bulk delete all orphaned entities in a single query
                     # Filter by both area_name and entity_id to avoid deleting entities
@@ -648,46 +606,21 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 query = query.filter(db.Intervals.entity_id.in_(entity_ids))
             intervals_deleted = query.delete(synchronize_session=False)
 
-            if intervals_deleted > 0:
-                _LOGGER.debug(
-                    "Bulk deleted %d intervals for entities in removed area %s",
-                    intervals_deleted,
-                    area_name,
-                )
-
             # Delete all entities for this area
             entities_deleted = (
                 session.query(db.Entities).filter_by(area_name=area_name).delete()
             )
             deleted_count = entities_deleted
-            if entities_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d entities for removed area %s",
-                    entities_deleted,
-                    area_name,
-                )
 
             # Delete priors for this area
             priors_deleted = (
                 session.query(db.Priors).filter_by(area_name=area_name).delete()
             )
-            if priors_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d priors for removed area %s",
-                    priors_deleted,
-                    area_name,
-                )
 
             # Delete global priors for this area
             global_priors_deleted = (
                 session.query(db.GlobalPriors).filter_by(area_name=area_name).delete()
             )
-            if global_priors_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d global priors for removed area %s",
-                    global_priors_deleted,
-                    area_name,
-                )
 
             # Delete occupied intervals cache for this area
             cache_deleted = (
@@ -695,19 +628,11 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 .filter_by(area_name=area_name)
                 .delete()
             )
-            if cache_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d occupied intervals cache entries for removed area %s",
-                    cache_deleted,
-                    area_name,
-                )
 
             # Delete the area record itself
             area_deleted = (
                 session.query(db.Areas).filter_by(area_name=area_name).delete()
             )
-            if area_deleted > 0:
-                _LOGGER.debug("Deleted area record for removed area %s", area_name)
 
             session.commit()
             _LOGGER.info(
