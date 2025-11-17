@@ -324,20 +324,24 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
         )
 
         if has_failures:
-            session.rollback()
             # Log concise summary of all failures
             failed_areas = [f"{area} ({error})" for area, error in failures]
             if all_missing_area_id:
-                # If all failures are due to missing area_id, log warning but don't raise
+                # If all failures are due to missing area_id, log warning but don't rollback
                 # This handles legacy configs and test scenarios gracefully
+                # Valid area objects should still be persisted
                 _LOGGER.warning(
                     "Skipped saving area data for %d area(s) due to missing area_id (legacy configs): %s",
                     len(failures),
                     "; ".join(failed_areas),
                 )
+                # Commit valid area objects if any were merged, otherwise just return True
+                if area_objects:
+                    session.commit()
                 # Return True to indicate "success" (no errors, just skipped areas)
                 return True
-            # Real validation errors - raise exception
+            # Real validation errors - rollback and return False
+            session.rollback()
             _LOGGER.error(
                 "Failed to save area data for %d area(s): %s",
                 len(failures),
