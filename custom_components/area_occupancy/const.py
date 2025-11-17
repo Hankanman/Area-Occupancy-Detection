@@ -117,11 +117,6 @@ MAX_WEIGHT: Final[float] = 0.99
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
-# Motion sensor defaults (deprecated - use DEFAULT_TYPES in entity_type.py)
-# MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25  # DEPRECATED
-# MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05  # DEPRECATED
-# MOTION_DEFAULT_PRIOR: Final[float] = 0.35  # DEPRECATED
-
 # Primary occupancy sensor defaults (optimized for ground truth reliability)
 PRIMARY_PROB_GIVEN_TRUE: Final[float] = (
     0.95  # Very high confidence when area is occupied
@@ -170,6 +165,52 @@ RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
 MIN_INTERVAL_SECONDS: Final = 5  # Exclude intervals shorter than 5 seconds
 MAX_INTERVAL_SECONDS: Final = (
     46800  # Exclude intervals longer than 13 hours (13 * 3600)
+)
+
+# Database retention and aggregation constants
+# Raw data retention (before aggregation)
+RETENTION_RAW_INTERVALS_DAYS: Final = 30  # Days to keep raw intervals
+RETENTION_RAW_NUMERIC_SAMPLES_DAYS: Final = 14  # Days to keep raw numeric samples
+
+# Aggregation retention periods
+RETENTION_DAILY_AGGREGATES_DAYS: Final = 90  # Days to keep daily aggregates
+RETENTION_WEEKLY_AGGREGATES_DAYS: Final = 365  # Days to keep weekly aggregates
+RETENTION_MONTHLY_AGGREGATES_YEARS: Final = (
+    5  # Years to keep monthly aggregates (indefinite for trends)
+)
+RETENTION_HOURLY_NUMERIC_DAYS: Final = 30  # Days to keep hourly numeric aggregates
+RETENTION_WEEKLY_NUMERIC_YEARS: Final = (
+    3  # Years to keep weekly numeric aggregates for seasonal analysis
+)
+
+# Aggregation period types
+AGGREGATION_PERIOD_HOURLY: Final = "hourly"
+AGGREGATION_PERIOD_DAILY: Final = "daily"
+AGGREGATION_PERIOD_WEEKLY: Final = "weekly"
+AGGREGATION_PERIOD_MONTHLY: Final = "monthly"
+AGGREGATION_PERIOD_YEARLY: Final = "yearly"
+AGGREGATION_LEVEL_RAW: Final = "raw"
+
+# Correlation analysis constants
+MIN_CORRELATION_SAMPLES: Final = 50  # Minimum samples needed for reliable correlation
+CORRELATION_CONFIDENCE_THRESHOLD: Final = (
+    0.7  # Minimum confidence for correlation to be considered significant
+)
+CORRELATION_STRONG_THRESHOLD: Final = (
+    0.7  # Strong correlation threshold (absolute value)
+)
+CORRELATION_MODERATE_THRESHOLD: Final = (
+    0.4  # Moderate correlation threshold (absolute value)
+)
+
+# Global prior retention
+GLOBAL_PRIOR_HISTORY_COUNT: Final = (
+    15  # Number of historical global prior calculations to keep
+)
+
+# Numeric correlation retention
+NUMERIC_CORRELATION_HISTORY_COUNT: Final = (
+    10  # Number of correlation analyses to keep per sensor
 )
 
 # Coordinator timer intervals

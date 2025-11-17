@@ -11,44 +11,26 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.const import (
-    CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
     CONF_AREAS,
-    CONF_DECAY_HALF_LIFE,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
     CONF_MOTION_SENSORS,
-    CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
-    CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
-    CONF_WINDOW_ACTIVE_STATE,
-    DEFAULT_DECAY_HALF_LIFE,
-    DEFAULT_MOTION_TIMEOUT,
-    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
     DOMAIN,
 )
 from custom_components.area_occupancy.migrations import (
-    CONF_DECAY_WINDOW_KEY,
-    CONF_HISTORICAL_ANALYSIS_ENABLED,
-    CONF_HISTORY_PERIOD,
-    CONF_LIGHTS_KEY,
-    DECAY_MIN_DELAY_KEY,
-    _add_default_if_missing,
     _check_database_tables_exist,
     _check_unique_id_conflict,
     _cleanup_orphaned_entity_registry_entries,
-    _drop_legacy_tables,
     _drop_tables_locked,
     _find_entities_by_prefix,
     _handle_entity_conflict,
     _migrate_database_for_consolidation,
     _migrate_device_registry_for_consolidation,
     _migrate_entity_registry_for_consolidation,
-    _remove_deprecated_keys,
     _resolve_area_from_entry,
     _restore_config_entry_state,
     _safe_database_operation,
@@ -56,24 +38,13 @@ from custom_components.area_occupancy.migrations import (
     _update_db_version,
     _update_entity_unique_id,
     async_migrate_entry,
-    async_migrate_storage,
     async_migrate_to_single_instance,
     async_migrate_unique_ids,
     async_reset_database_if_needed,
-    migrate_config,
-    migrate_decay_half_life,
-    migrate_motion_timeout,
-    migrate_primary_occupancy_sensor,
-    migrate_purpose_field,
-    remove_decay_min_delay,
-    remove_decay_window_key,
-    remove_history_keys,
-    remove_lights_key,
     validate_threshold,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 
 
 class TestAsyncMigrateUniqueIds:
@@ -167,160 +138,6 @@ class TestAsyncMigrateUniqueIds:
             mock_registry.async_update_entity.assert_not_called()
 
 
-class TestMigratePrimaryOccupancySensor:
-    """Test migrate_primary_occupancy_sensor function."""
-
-    @pytest.mark.parametrize(
-        ("config", "expected_primary"),
-        [
-            (
-                {
-                    CONF_MOTION_SENSORS: [
-                        "binary_sensor.motion1",
-                        "binary_sensor.motion2",
-                    ]
-                },
-                "binary_sensor.motion1",
-            ),
-            (
-                {
-                    CONF_MOTION_SENSORS: [
-                        "binary_sensor.motion1",
-                        "binary_sensor.motion2",
-                    ],
-                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion2",
-                },
-                "binary_sensor.motion2",
-            ),
-            ({}, None),  # No motion sensors
-            ({CONF_MOTION_SENSORS: []}, None),  # Empty motion sensors
-        ],
-    )
-    def test_migrate_primary_occupancy_sensor(
-        self, config: dict, expected_primary: str | None
-    ) -> None:
-        """Test primary occupancy sensor migration."""
-        result = migrate_primary_occupancy_sensor(config)
-
-        if expected_primary:
-            assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == expected_primary
-        else:
-            assert CONF_PRIMARY_OCCUPANCY_SENSOR not in result
-
-
-class TestMigratePurposeField:
-    """Test migrate_purpose_field function."""
-
-    @pytest.mark.parametrize(
-        ("config", "should_add_purpose"),
-        [
-            ({CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}, True),
-            (
-                {
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                    CONF_PURPOSE: "sleeping",
-                },
-                False,
-            ),
-            ({}, True),  # No sensors
-            ({"appliances": ["binary_sensor.appliance"]}, True),  # Other sensors
-            ({CONF_MOTION_SENSORS: []}, True),  # Empty sensors
-        ],
-    )
-    def test_migrate_purpose_field(
-        self, config: dict, should_add_purpose: bool
-    ) -> None:
-        """Test purpose field migration."""
-        result = migrate_purpose_field(config)
-
-        if should_add_purpose:
-            assert result[CONF_PURPOSE] == DEFAULT_PURPOSE
-        else:
-            assert result[CONF_PURPOSE] == "sleeping"
-
-
-class TestMigrateConfig:
-    """Test migrate_config function."""
-
-    def test_migrate_config_adds_primary_sensor(self) -> None:
-        """Test config migration adds primary sensor."""
-        config = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
-
-        result = migrate_config(config)
-
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
-
-    def test_migrate_config_preserves_existing(self) -> None:
-        """Test config migration preserves existing values."""
-        config = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
-            CONF_THRESHOLD: 70,
-            "other_key": "other_value",
-        }
-
-        result = migrate_config(config)
-
-        assert result[CONF_PRIMARY_OCCUPANCY_SENSOR] == "binary_sensor.motion1"
-        assert result[CONF_THRESHOLD] == 70
-        assert result["other_key"] == "other_value"
-
-    @pytest.mark.parametrize(
-        ("config", "expected_defaults"),
-        [
-            (
-                {},
-                {
-                    CONF_PURPOSE: DEFAULT_PURPOSE,
-                    "decay_half_life": 120,
-                    CONF_MOTION_TIMEOUT: DEFAULT_MOTION_TIMEOUT,
-                },
-            ),
-            (
-                {"other_key": "value"},
-                {
-                    "other_key": "value",
-                    CONF_PURPOSE: DEFAULT_PURPOSE,
-                    "decay_half_life": 120,
-                    CONF_MOTION_TIMEOUT: DEFAULT_MOTION_TIMEOUT,
-                },
-            ),
-        ],
-    )
-    def test_migrate_config_edge_cases(
-        self, config: dict, expected_defaults: dict
-    ) -> None:
-        """Test config migration edge cases."""
-        result = migrate_config(config)
-        assert result == expected_defaults
-
-
-class TestAsyncMigrateStorageBasic:
-    """Test async_migrate_storage function - basic tests."""
-
-    @pytest.mark.parametrize(
-        "load_side_effect",
-        [None, HomeAssistantError("Storage error")],
-    )
-    async def test_async_migrate_storage_basic(
-        self, hass: HomeAssistant, load_side_effect: Exception | None
-    ) -> None:
-        """Test storage migration with various scenarios."""
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                new_callable=AsyncMock,
-                side_effect=load_side_effect,
-            ),
-        ):
-            await async_migrate_storage(hass, "test_entry_id", 1)
-            # Should complete without error
-
-
 class TestAsyncMigrateEntry:
     """Test async_migrate_entry function."""
 
@@ -366,30 +183,23 @@ class TestAsyncMigrateEntry:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
-            mock_migrate_ids.return_value = None
             hass.config_entries.async_update_entry = Mock()
 
             result = await async_migrate_entry(hass, mock_config_entry_v1_0)
 
             assert result is True
+            mock_reset_db.assert_called_once_with(hass, 1)
             hass.config_entries.async_update_entry.assert_called_once()
 
             call_args = hass.config_entries.async_update_entry.call_args
             assert call_args[0][0] == mock_config_entry_v1_0
-            updated_data = call_args[1]["data"]
-            assert CONF_PRIMARY_OCCUPANCY_SENSOR in updated_data
+            # Version should be updated to current
+            assert call_args[1]["version"] == CONF_VERSION
+            assert call_args[1]["minor_version"] == CONF_VERSION_MINOR
 
     async def test_async_migrate_entry_already_current(
         self, hass: HomeAssistant, mock_config_entry_current: Mock
@@ -426,27 +236,13 @@ class TestAsyncMigrateEntry:
         hass.config_entries.async_entries = async_entries_mock
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 side_effect=Exception("Migration error"),
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
             ),
         ):
             hass.config_entries.async_update_entry = Mock()
 
-            # The migration code catches HomeAssistantError but not generic Exception
-            # So a generic Exception should propagate
+            # The migration code should propagate exceptions
             with pytest.raises(Exception, match="Migration error"):
                 await async_migrate_entry(hass, mock_config_entry_v1_0)
 
@@ -465,35 +261,21 @@ class TestAsyncMigrateEntry:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "homeassistant.helpers.storage.Store.async_load",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "homeassistant.helpers.storage.Store.async_save",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
-            mock_migrate_ids.return_value = None
             hass.config_entries.async_update_entry = Mock()
 
             result = await async_migrate_entry(hass, mock_config_entry_v1_0)
             assert result is True
 
-            # Check that async_update_entry was called
+            # Check that database was reset
+            mock_reset_db.assert_called_once_with(hass, 1)
+            # Check that async_update_entry was called to update version
             assert hass.config_entries.async_update_entry.called
             call_args = hass.config_entries.async_update_entry.call_args
-            if call_args:
-                updated_options = call_args[1].get("options", {})
-                # Threshold should be normalized to valid range (0-100)
-                assert updated_options.get(CONF_THRESHOLD) == DEFAULT_THRESHOLD
+            assert call_args[1]["version"] == CONF_VERSION
 
 
 class TestValidateThreshold:
@@ -757,238 +539,6 @@ class TestUpdateEntityUniqueId:
         )
 
 
-class TestRemoveDeprecatedKeys:
-    """Test _remove_deprecated_keys function."""
-
-    def test_remove_deprecated_keys_single_key(self) -> None:
-        """Test removing a single deprecated key."""
-        config = {"key1": "value1", "deprecated_key": "value2", "key2": "value3"}
-
-        result = _remove_deprecated_keys(config, ["deprecated_key"], "test key")
-
-        assert "deprecated_key" not in result
-        assert "key1" in result
-        assert "key2" in result
-
-    def test_remove_deprecated_keys_multiple_keys(self) -> None:
-        """Test removing multiple deprecated keys."""
-        config = {
-            "key1": "value1",
-            "deprecated_key1": "value2",
-            "deprecated_key2": "value3",
-            "key2": "value4",
-        }
-
-        result = _remove_deprecated_keys(
-            config, ["deprecated_key1", "deprecated_key2"], "test keys"
-        )
-
-        assert "deprecated_key1" not in result
-        assert "deprecated_key2" not in result
-        assert "key1" in result
-        assert "key2" in result
-
-    def test_remove_deprecated_keys_not_present(self) -> None:
-        """Test removing keys that don't exist."""
-        config = {"key1": "value1", "key2": "value2"}
-
-        result = _remove_deprecated_keys(config, ["deprecated_key"], "test key")
-
-        assert config == result
-        assert "key1" in result
-        assert "key2" in result
-
-    def test_remove_deprecated_keys_empty_description(self) -> None:
-        """Test removing keys with empty description."""
-        config = {"deprecated_key": "value1"}
-
-        result = _remove_deprecated_keys(config, ["deprecated_key"], "")
-
-        assert "deprecated_key" not in result
-
-
-class TestRemoveDecayMinDelay:
-    """Test remove_decay_min_delay function."""
-
-    def test_remove_decay_min_delay(self) -> None:
-        """Test removing decay_min_delay key."""
-        config = {"decay_min_delay": 60, "other_key": "value"}
-
-        result = remove_decay_min_delay(config)
-
-        assert DECAY_MIN_DELAY_KEY not in result
-        assert "other_key" in result
-
-
-class TestRemoveLightsKey:
-    """Test remove_lights_key function."""
-
-    def test_remove_lights_key(self) -> None:
-        """Test removing lights key."""
-        config = {CONF_LIGHTS_KEY: ["light1"], "other_key": "value"}
-
-        result = remove_lights_key(config)
-
-        assert CONF_LIGHTS_KEY not in result
-        assert "other_key" in result
-
-
-class TestRemoveDecayWindowKey:
-    """Test remove_decay_window_key function."""
-
-    def test_remove_decay_window_key(self) -> None:
-        """Test removing decay_window key."""
-        config = {CONF_DECAY_WINDOW_KEY: 300, "other_key": "value"}
-
-        result = remove_decay_window_key(config)
-
-        assert CONF_DECAY_WINDOW_KEY not in result
-        assert "other_key" in result
-
-
-class TestRemoveHistoryKeys:
-    """Test remove_history_keys function."""
-
-    def test_remove_history_keys(self) -> None:
-        """Test removing history keys."""
-        config = {
-            CONF_HISTORY_PERIOD: 30,
-            CONF_HISTORICAL_ANALYSIS_ENABLED: True,
-            "other_key": "value",
-        }
-
-        result = remove_history_keys(config)
-
-        assert CONF_HISTORY_PERIOD not in result
-        assert CONF_HISTORICAL_ANALYSIS_ENABLED not in result
-        assert "other_key" in result
-
-
-class TestAddDefaultIfMissing:
-    """Test _add_default_if_missing function."""
-
-    def test_add_default_if_missing_key_not_present(self) -> None:
-        """Test adding default when key is missing."""
-        config = {"key1": "value1"}
-
-        result = _add_default_if_missing(config, "new_key", "default_value", None)
-
-        assert result["new_key"] == "default_value"
-        assert "key1" in result
-
-    def test_add_default_if_missing_key_present(self) -> None:
-        """Test not adding default when key is present."""
-        config = {"key1": "value1", "new_key": "existing_value"}
-
-        result = _add_default_if_missing(config, "new_key", "default_value", None)
-
-        assert result["new_key"] == "existing_value"
-
-    def test_add_default_if_missing_with_log_message(self) -> None:
-        """Test adding default with custom log message."""
-        config = {"key1": "value1"}
-
-        result = _add_default_if_missing(
-            config, "new_key", "default_value", "Custom log message"
-        )
-
-        assert result["new_key"] == "default_value"
-
-
-class TestMigrateDecayHalfLife:
-    """Test migrate_decay_half_life function."""
-
-    def test_migrate_decay_half_life_adds_default(self) -> None:
-        """Test adding decay half life default."""
-        config = {"other_key": "value"}
-
-        result = migrate_decay_half_life(config)
-
-        assert result[CONF_DECAY_HALF_LIFE] == DEFAULT_DECAY_HALF_LIFE
-
-    def test_migrate_decay_half_life_preserves_existing(self) -> None:
-        """Test preserving existing decay half life."""
-        config = {CONF_DECAY_HALF_LIFE: 300.0}
-
-        result = migrate_decay_half_life(config)
-
-        assert result[CONF_DECAY_HALF_LIFE] == 300.0
-
-
-class TestMigrateMotionTimeout:
-    """Test migrate_motion_timeout function."""
-
-    def test_migrate_motion_timeout_adds_default(self) -> None:
-        """Test adding motion timeout default."""
-        config = {"other_key": "value"}
-
-        result = migrate_motion_timeout(config)
-
-        assert result[CONF_MOTION_TIMEOUT] == DEFAULT_MOTION_TIMEOUT
-
-    def test_migrate_motion_timeout_preserves_existing(self) -> None:
-        """Test preserving existing motion timeout."""
-        config = {CONF_MOTION_TIMEOUT: 120.0}
-
-        result = migrate_motion_timeout(config)
-
-        assert result[CONF_MOTION_TIMEOUT] == 120.0
-
-
-class TestAsyncMigrateStorage:
-    """Test async_migrate_storage function."""
-
-    async def test_async_migrate_storage_removes_legacy_file(
-        self, hass: HomeAssistant, tmp_path: Path
-    ) -> None:
-        """Test storage migration removes legacy file."""
-        storage_dir = tmp_path / ".storage"
-        storage_dir.mkdir()
-        legacy_file = storage_dir / "area_occupancy.storage"
-        legacy_file.write_text("test data")
-
-        hass.config.config_dir = str(tmp_path)
-
-        with patch(
-            "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
-            new_callable=AsyncMock,
-        ) as mock_reset:
-            await async_migrate_storage(hass, "test_entry_id", 1)
-
-            assert not legacy_file.exists()
-            mock_reset.assert_called_once_with(hass, 1)
-
-    async def test_async_migrate_storage_no_legacy_file(
-        self, hass: HomeAssistant, tmp_path: Path
-    ) -> None:
-        """Test storage migration when no legacy file exists."""
-        storage_dir = tmp_path / ".storage"
-        storage_dir.mkdir()
-
-        hass.config.config_dir = str(tmp_path)
-
-        with patch(
-            "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
-            new_callable=AsyncMock,
-        ) as mock_reset:
-            await async_migrate_storage(hass, "test_entry_id", 1)
-
-            mock_reset.assert_called_once_with(hass, 1)
-
-    async def test_async_migrate_storage_error_handling(
-        self, hass: HomeAssistant, tmp_path: Path
-    ) -> None:
-        """Test storage migration error handling."""
-        hass.config.config_dir = str(tmp_path)
-
-        with patch(
-            "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
-            side_effect=HomeAssistantError("Database error"),
-        ):
-            # Should not raise, just log error
-            await async_migrate_storage(hass, "test_entry_id", 1)
-
-
 class TestAsyncResetDatabaseIfNeeded:
     """Test async_reset_database_if_needed function."""
 
@@ -1024,9 +574,8 @@ class TestAsyncMigrateEntryAdditional:
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_AREA_ID: "area_123",
-            DECAY_MIN_DELAY_KEY: 60,
         }
-        entry.options = {DECAY_MIN_DELAY_KEY: 60}
+        entry.options = {}
 
         def async_entries_mock(domain=None):
             return [entry]
@@ -1035,30 +584,23 @@ class TestAsyncMigrateEntryAdditional:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
-            mock_migrate_ids.return_value = None
             hass.config_entries.async_update_entry = Mock()
 
             await async_migrate_entry(hass, entry)
 
+            mock_reset_db.assert_called_once_with(hass, 1)
             call_args = hass.config_entries.async_update_entry.call_args
-            updated_data = call_args[1]["data"]
-            updated_options = call_args[1]["options"]
+            # Version should be updated to current
+            assert call_args[1]["version"] == CONF_VERSION
 
-            assert CONF_AREA_ID not in updated_data
-            assert DECAY_MIN_DELAY_KEY not in updated_data
-            assert DECAY_MIN_DELAY_KEY not in updated_options
-
-    async def test_async_migrate_entry_adds_state_configs(
+    async def test_async_migrate_entry_database_reset(
         self, hass: HomeAssistant
     ) -> None:
-        """Test migration adds new state configurations."""
+        """Test migration resets database for old versions."""
         entry = Mock(spec=ConfigEntry)
         entry.version = 1
         entry.minor_version = 0
@@ -1074,106 +616,17 @@ class TestAsyncMigrateEntryAdditional:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
-            mock_migrate_ids.return_value = None
             hass.config_entries.async_update_entry = Mock()
-
-            await async_migrate_entry(hass, entry)
-
-            call_args = hass.config_entries.async_update_entry.call_args
-            updated_data = call_args[1]["data"]
-            updated_options = call_args[1]["options"]
-
-            # Multi-select states should be in data
-            assert CONF_MEDIA_ACTIVE_STATES in updated_data
-            assert CONF_APPLIANCE_ACTIVE_STATES in updated_data
-            # Single-select states should be in options
-            assert CONF_DOOR_ACTIVE_STATE in updated_options
-            assert CONF_WINDOW_ACTIVE_STATE in updated_options
-
-    async def test_async_migrate_entry_preserves_existing_state_configs(
-        self, hass: HomeAssistant
-    ) -> None:
-        """Test migration preserves existing state configurations."""
-        entry = Mock(spec=ConfigEntry)
-        entry.version = 1
-        entry.minor_version = 0
-        entry.entry_id = "test_entry_id"
-        entry.state = ConfigEntryState.LOADED
-        entry.data = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_MEDIA_ACTIVE_STATES: ["playing"],
-        }
-        entry.options = {CONF_DOOR_ACTIVE_STATE: "closed"}
-
-        def async_entries_mock(domain=None):
-            return [entry]
-
-        hass.config_entries.async_entries = async_entries_mock
-
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
-            ),
-        ):
-            mock_migrate_ids.return_value = None
-            hass.config_entries.async_update_entry = Mock()
-
-            await async_migrate_entry(hass, entry)
-
-            call_args = hass.config_entries.async_update_entry.call_args
-            updated_data = call_args[1]["data"]
-            updated_options = call_args[1]["options"]
-
-            # Should preserve existing values
-            assert updated_data[CONF_MEDIA_ACTIVE_STATES] == ["playing"]
-            assert updated_options[CONF_DOOR_ACTIVE_STATE] == "closed"
-
-    async def test_async_migrate_entry_config_migration_error(
-        self, hass: HomeAssistant
-    ) -> None:
-        """Test migration handles config migration errors."""
-        entry = Mock(spec=ConfigEntry)
-        entry.version = 1
-        entry.minor_version = 0
-        entry.entry_id = "test_entry_id"
-        entry.state = ConfigEntryState.LOADED
-        entry.data = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
-        entry.options = {}
-
-        def async_entries_mock(domain=None):
-            return [entry]
-
-        hass.config_entries.async_entries = async_entries_mock
-
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.migrate_config",
-                side_effect=ValueError("Config error"),
-            ),
-        ):
-            mock_migrate_ids.return_value = None
 
             result = await async_migrate_entry(hass, entry)
 
-            assert result is False
+            assert result is True
+            mock_reset_db.assert_called_once_with(hass, 1)
+            hass.config_entries.async_update_entry.assert_called_once()
 
     async def test_async_migrate_entry_consolidation_skipped(
         self, hass: HomeAssistant
@@ -1194,23 +647,17 @@ class TestAsyncMigrateEntryAdditional:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_to_single_instance"
-            ) as mock_consolidate,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
-            mock_migrate_ids.return_value = None
             hass.config_entries.async_update_entry = Mock()
 
             await async_migrate_entry(hass, entry)
 
-            # Consolidation should not be called for version >= 13
-            mock_consolidate.assert_not_called()
+            # For version >= 13, no migration should occur (no reset, no update)
+            mock_reset_db.assert_not_called()
+            hass.config_entries.async_update_entry.assert_not_called()
 
     async def test_async_migrate_entry_consolidation_entry_removed(
         self, hass: HomeAssistant
@@ -1232,23 +679,18 @@ class TestAsyncMigrateEntryAdditional:
 
         with (
             patch(
-                "custom_components.area_occupancy.migrations.async_migrate_to_single_instance",
-                return_value=True,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids"
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
                 new_callable=AsyncMock,
-            ),
+            ) as mock_reset_db,
         ):
+            hass.config_entries.async_update_entry = Mock()
+
             result = await async_migrate_entry(hass, entry)
 
-            # Should return True and skip individual migration
+            # Should reset database and update version for version < 13
             assert result is True
-            # Should not call migrate_unique_ids for removed entry
-            mock_migrate_ids.assert_not_called()
+            mock_reset_db.assert_called_once_with(hass, 12)
+            hass.config_entries.async_update_entry.assert_called_once()
 
 
 class TestAsyncMigrateToSingleInstance:
@@ -2564,126 +2006,6 @@ class TestMigrateDatabaseForConsolidationAdditional:
             )
 
 
-class TestAsyncMigrateEntryConsolidation:
-    """Test async_migrate_entry consolidation path."""
-
-    async def test_async_migrate_entry_triggers_consolidation(
-        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
-    ) -> None:
-        """Test that async_migrate_entry triggers consolidation for version < 13."""
-        testing_area_id = setup_area_registry.get("Testing", "test_area")
-        entry1 = Mock(spec=ConfigEntry)
-        entry1.version = 12
-        entry1.minor_version = 0
-        entry1.entry_id = "entry1"
-        entry1.state = ConfigEntryState.LOADED
-        entry1.data = {
-            CONF_AREA_ID: testing_area_id,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
-        entry1.options = {}
-
-        entry2 = Mock(spec=ConfigEntry)
-        entry2.version = 12
-        entry2.minor_version = 0
-        entry2.entry_id = "entry2"
-        entry2.state = ConfigEntryState.LOADED
-        entry2.data = {
-            CONF_AREA_ID: testing_area_id,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion2"],
-        }
-        entry2.options = {}
-
-        def async_entries_mock(domain=None):
-            return [entry1, entry2]
-
-        hass.config_entries.async_entries = async_entries_mock
-
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_to_single_instance",
-                return_value=True,
-            ) as mock_consolidate,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
-                new_callable=AsyncMock,
-            ) as mock_migrate_ids,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.migrate_config",
-                side_effect=lambda x: x,  # Return the config as-is
-            ),
-            patch.object(hass.config_entries, "async_update_entry", return_value=None),
-        ):
-            result = await async_migrate_entry(hass, entry1)
-
-            # Should trigger consolidation
-            mock_consolidate.assert_called_once()
-            # Should migrate unique IDs before consolidation
-            assert mock_migrate_ids.call_count > 0
-            assert result is True
-
-    async def test_async_migrate_entry_consolidation_unique_id_migration_error(
-        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
-    ) -> None:
-        """Test consolidation when unique ID migration fails."""
-        testing_area_id = setup_area_registry.get("Testing", "test_area")
-        entry1 = Mock(spec=ConfigEntry)
-        entry1.version = 12
-        entry1.minor_version = 0
-        entry1.entry_id = "entry1"
-        entry1.state = ConfigEntryState.LOADED
-        entry1.data = {
-            CONF_AREA_ID: testing_area_id,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        }
-        entry1.options = {}
-
-        entry2 = Mock(spec=ConfigEntry)
-        entry2.version = 12
-        entry2.minor_version = 0
-        entry2.entry_id = "entry2"
-        entry2.state = ConfigEntryState.LOADED
-        entry2.data = {
-            CONF_AREA_ID: testing_area_id,
-            CONF_MOTION_SENSORS: ["binary_sensor.motion2"],
-        }
-        entry2.options = {}
-
-        def async_entries_mock(domain=None):
-            return [entry1, entry2]
-
-        hass.config_entries.async_entries = async_entries_mock
-
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_unique_ids",
-                side_effect=HomeAssistantError("Migration error"),
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_to_single_instance",
-                return_value=True,
-            ) as mock_consolidate,
-            patch(
-                "custom_components.area_occupancy.migrations.async_migrate_storage",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "custom_components.area_occupancy.migrations.migrate_config",
-                side_effect=lambda x: x,  # Return the config as-is
-            ),
-            patch.object(hass.config_entries, "async_update_entry", return_value=None),
-        ):
-            result = await async_migrate_entry(hass, entry1)
-
-            # Should still continue with consolidation despite error
-            mock_consolidate.assert_called_once()
-            assert result is True
-
-
 class TestResolveAreaFromEntry:
     """Test _resolve_area_from_entry helper function."""
 
@@ -2796,48 +2118,6 @@ class TestUpdateDbVersion:
 
         # Should not raise
         _update_db_version(mock_session, 4)
-
-
-class TestDropLegacyTables:
-    """Test _drop_legacy_tables helper function."""
-
-    def test_drop_legacy_tables_success(self) -> None:
-        """Test successful table dropping."""
-        mock_engine = Mock()
-        mock_conn = Mock()
-        mock_engine.connect.return_value.__enter__ = Mock(return_value=mock_conn)
-        mock_engine.connect.return_value.__exit__ = Mock(return_value=None)
-        mock_session = Mock()
-
-        _drop_legacy_tables(mock_engine, mock_session)
-
-        # Should call commit on session
-        mock_session.commit.assert_called_once()
-        # Should call commit on connection
-        mock_conn.commit.assert_called_once()
-        # Should execute DROP TABLE for each table
-        assert mock_conn.execute.call_count == 5  # 5 tables to drop
-
-    def test_drop_legacy_tables_with_errors(self) -> None:
-        """Test table dropping with some errors."""
-        mock_engine = Mock()
-        mock_conn = Mock()
-        mock_engine.connect.return_value.__enter__ = Mock(return_value=mock_conn)
-        mock_engine.connect.return_value.__exit__ = Mock(return_value=None)
-        mock_session = Mock()
-        # First table drop succeeds, second fails, rest succeed
-        mock_conn.execute.side_effect = [
-            None,  # First table
-            Exception("Drop error"),  # Second table
-            None,  # Third table
-            None,  # Fourth table
-            None,  # Fifth table
-        ]
-
-        # Should not raise, should continue dropping other tables
-        _drop_legacy_tables(mock_engine, mock_session)
-
-        assert mock_conn.execute.call_count == 5
 
 
 class TestCheckDatabaseTablesExist:
