@@ -13,8 +13,6 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
-
-# Dispatcher imports removed - no longer needed without master election
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_time,
@@ -200,7 +198,39 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- Area Management ---
 
-    # Master election code removed - no longer needed with single-instance architecture
+    def _with_area_or_all_areas[T](
+        self,
+        area_name: str | None,
+        method_name: str,
+        default_value: T,
+        all_areas_method: str | None = None,
+    ) -> T:
+        """Helper method to reduce boilerplate in coordinator methods.
+
+        Handles the common pattern of checking for ALL_AREAS_IDENTIFIER,
+        getting the area, and calling the appropriate method with a default fallback.
+
+        Args:
+            area_name: Area name, None returns first area
+            method_name: Name of the method to call on the area object
+            default_value: Default value to return if area is None
+            all_areas_method: Optional method name to call on AllAreas (defaults to method_name)
+
+        Returns:
+            Result from area method or default_value if area is None
+        """
+        # Handle "All Areas" aggregation
+        if area_name == ALL_AREAS_IDENTIFIER:
+            all_areas = self.get_all_areas()
+            method = getattr(all_areas, all_areas_method or method_name)
+            return method()
+
+        area = self.get_area_or_default(area_name)
+        if area is None:
+            return default_value
+
+        method = getattr(area, method_name)
+        return method()
 
     def device_info(self, area_name: str | None = None) -> DeviceInfo:
         """Return device info for a specific area.
@@ -236,15 +266,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Probability value (0.0-1.0)
         """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            return self.get_all_areas().probability()
-
-        area = self.get_area_or_default(area_name)
-        if area is None:
-            return MIN_PROBABILITY
-
-        return area.probability()
+        return self._with_area_or_all_areas(area_name, "probability", MIN_PROBABILITY)
 
     def type_probabilities(self, area_name: str | None = None) -> dict[str, float]:
         """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
@@ -281,14 +303,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Prior probability (0.0-1.0)
         """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            return self.get_all_areas().area_prior()
-
-        area = self.get_area_or_default(area_name)
-        if area is None:
-            return MIN_PROBABILITY
-        return area.area_prior()
+        return self._with_area_or_all_areas(area_name, "area_prior", MIN_PROBABILITY)
 
     def decay(self, area_name: str | None = None) -> float:
         """Calculate the current decay probability (0.0-1.0) for an area.
@@ -299,15 +314,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Decay probability (0.0-1.0)
         """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            return self.get_all_areas().decay()
-
-        area = self.get_area_or_default(area_name)
-        if area is None:
-            return 1.0
-
-        return area.decay()
+        return self._with_area_or_all_areas(area_name, "decay", 1.0)
 
     def occupied(self, area_name: str | None = None) -> bool:
         """Return the current occupancy state (True/False) for an area.
@@ -318,14 +325,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             True if occupied, False otherwise
         """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            return self.get_all_areas().occupied()
-
-        area = self.get_area_or_default(area_name)
-        if area is None:
-            return False
-        return area.occupied()
+        return self._with_area_or_all_areas(area_name, "occupied", False)
 
     @property
     def setup_complete(self) -> bool:

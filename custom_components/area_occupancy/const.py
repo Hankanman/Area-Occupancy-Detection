@@ -220,7 +220,6 @@ ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
 # Database save debounce
 SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
 
-# Master coordination constants removed - no longer needed with single-instance architecture
 
 ########################################################
 # Virtual sensor constants
