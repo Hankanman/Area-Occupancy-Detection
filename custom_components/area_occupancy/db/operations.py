@@ -596,8 +596,11 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                         )
 
                     # Bulk delete all intervals for orphaned entities in a single query
+                    # Filter by both area_name and entity_id to avoid deleting intervals
+                    # for entities with the same ID in other areas
                     intervals_deleted = (
                         session.query(db.Intervals)
+                        .filter(db.Intervals.area_name == area_name)
                         .filter(db.Intervals.entity_id.in_(orphaned_entity_ids))
                         .delete(synchronize_session=False)
                     )
@@ -645,8 +648,11 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
 
     This includes:
     - All entities for the area
-    - All intervals for those entities
+    - All intervals for those entities (filtered by area_name to avoid
+      deleting intervals for entities with the same ID in other areas)
     - All priors for the area
+    - All global priors for the area
+    - All occupied intervals cache entries for the area
     - The area record itself
 
     Args:
@@ -669,14 +675,14 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
             ]
 
             # Bulk delete all intervals for entities in this area
+            # Filter by both area_name and entity_id to avoid deleting intervals
+            # for entities with the same ID in other areas
+            query = session.query(db.Intervals).filter(
+                db.Intervals.area_name == area_name
+            )
             if entity_ids:
-                intervals_deleted = (
-                    session.query(db.Intervals)
-                    .filter(db.Intervals.entity_id.in_(entity_ids))
-                    .delete(synchronize_session=False)
-                )
-            else:
-                intervals_deleted = 0
+                query = query.filter(db.Intervals.entity_id.in_(entity_ids))
+            intervals_deleted = query.delete(synchronize_session=False)
 
             if intervals_deleted > 0:
                 _LOGGER.debug(
@@ -708,6 +714,30 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                     area_name,
                 )
 
+            # Delete global priors for this area
+            global_priors_deleted = (
+                session.query(db.GlobalPriors).filter_by(area_name=area_name).delete()
+            )
+            if global_priors_deleted > 0:
+                _LOGGER.debug(
+                    "Deleted %d global priors for removed area %s",
+                    global_priors_deleted,
+                    area_name,
+                )
+
+            # Delete occupied intervals cache for this area
+            cache_deleted = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .delete()
+            )
+            if cache_deleted > 0:
+                _LOGGER.debug(
+                    "Deleted %d occupied intervals cache entries for removed area %s",
+                    cache_deleted,
+                    area_name,
+                )
+
             # Delete the area record itself
             area_deleted = (
                 session.query(db.Areas).filter_by(area_name=area_name).delete()
@@ -717,10 +747,13 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
 
             session.commit()
             _LOGGER.info(
-                "Deleted all data for removed area %s (%d entities, %d priors, %d area records)",
+                "Deleted all data for removed area %s (%d entities, %d intervals, %d priors, %d global priors, %d cache entries, %d area records)",
                 area_name,
                 deleted_count,
+                intervals_deleted,
                 priors_deleted,
+                global_priors_deleted,
+                cache_deleted,
                 area_deleted,
             )
     except (SQLAlchemyError, OSError) as err:
