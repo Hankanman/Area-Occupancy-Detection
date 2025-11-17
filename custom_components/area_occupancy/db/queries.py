@@ -214,7 +214,10 @@ def get_aggregated_intervals_by_slot(
                 )
                 .join(
                     db.Entities,
-                    db.Intervals.entity_id == db.Entities.entity_id,
+                    sa.and_(
+                        db.Intervals.entity_id == db.Entities.entity_id,
+                        db.Intervals.area_name == db.Entities.area_name,
+                    ),
                 )
                 .filter(
                     db.Entities.entry_id == entry_id,
@@ -328,7 +331,10 @@ def get_total_occupied_seconds_sql(
                 session.query(motion_sum_expr.label("total_seconds"))
                 .join(
                     db.Entities,
-                    db.Intervals.entity_id == db.Entities.entity_id,
+                    sa.and_(
+                        db.Intervals.entity_id == db.Entities.entity_id,
+                        db.Intervals.area_name == db.Entities.area_name,
+                    ),
                 )
                 .filter(
                     *base_filters,
@@ -348,7 +354,10 @@ def get_total_occupied_seconds_sql(
                     )
                     .join(
                         db.Entities,
-                        db.Intervals.entity_id == db.Entities.entity_id,
+                        sa.and_(
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                            db.Intervals.area_name == db.Entities.area_name,
+                        ),
                     )
                     .filter(
                         *base_filters,
@@ -367,7 +376,10 @@ def get_total_occupied_seconds_sql(
                     )
                     .join(
                         db.Entities,
-                        db.Intervals.entity_id == db.Entities.entity_id,
+                        sa.and_(
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                            db.Intervals.area_name == db.Entities.area_name,
+                        ),
                     )
                     .filter(
                         *base_filters,

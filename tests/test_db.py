@@ -2270,11 +2270,14 @@ class TestGetAggregatedIntervalsBySlot:
         base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
 
         with db.get_locked_session() as session:
+            # Get area_name from coordinator first (required for consistency)
+            area_name = db.coordinator.get_area_names()[0]
+
             # Add entity first (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(entity)
@@ -2285,8 +2288,6 @@ class TestGetAggregatedIntervalsBySlot:
                 days=base_time.weekday()
             )  # Get Monday of current week
             tuesday = monday + timedelta(days=1)
-
-            area_name = db.coordinator.get_area_names()[0]
             intervals = [
                 # Monday, 10:00-11:00 (slot 10 with 60min slots)
                 db.Intervals(
@@ -2324,7 +2325,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Test aggregation with 60-minute slots
         result = db.get_aggregated_intervals_by_slot(
-            "test_entry_id", slot_minutes=60, area_name="Test Area"
+            "test_entry_id", slot_minutes=60, area_name=area_name
         )
 
         # Should have aggregated data
