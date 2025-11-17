@@ -761,23 +761,6 @@ def _resolve_area_id_to_name(hass: HomeAssistant, area_id: str) -> str:
     return area_entry.name
 
 
-def _resolve_area_name_to_id(hass: HomeAssistant, area_name: str) -> str | None:
-    """Resolve area name to area ID (for legacy configs).
-
-    Args:
-        hass: Home Assistant instance
-        area_name: Area name to resolve
-
-    Returns:
-        Area ID if found, None otherwise
-    """
-    registry = ar.async_get(hass)
-    for area_entry in registry.async_list_areas():
-        if area_entry.name == area_name:
-            return area_entry.id
-    return None
-
-
 def _sanitize_area_name_for_option(area_name: str) -> str:
     """Sanitize area name for use in SelectOption value.
 
@@ -1001,30 +984,6 @@ def _find_area_by_id(
     return None
 
 
-def _find_area_by_name(
-    areas: list[dict[str, Any]], area_name: str
-) -> dict[str, Any] | None:
-    """Find an area by name in a list of areas (legacy support).
-
-    Args:
-        areas: List of area configuration dictionaries
-        area_name: Name of area to find
-
-    Returns:
-        Area configuration dictionary if found, None otherwise
-    """
-    # Try to find by resolving name to ID first
-    for area in areas:
-        area_id = area.get(CONF_AREA_ID)
-        if area_id:
-            # This is a new-format area, skip name-based lookup
-            continue
-        # Legacy format - check CONF_NAME
-        if area.get("name") == area_name:  # Use string literal for legacy
-            return area
-    return None
-
-
 def _update_area_in_list(
     areas: list[dict[str, Any]],
     updated_area: dict[str, Any],
@@ -1119,39 +1078,11 @@ def _create_area_selection_schema(
             continue
         area_id = area.get(CONF_AREA_ID)
         if not area_id:
-            # Legacy format - try to resolve from name
-            legacy_name = area.get("name")
-            if legacy_name and hass:
-                # Try to resolve legacy name to area_id
-                try:
-                    area_id = _resolve_area_name_to_id(hass, legacy_name)
-                    if area_id:
-                        _LOGGER.debug(
-                            "Resolved legacy area name '%s' to area_id '%s'",
-                            legacy_name,
-                            area_id,
-                        )
-                        # Update area dict with resolved area_id
-                        area[CONF_AREA_ID] = area_id
-                    else:
-                        _LOGGER.warning(
-                            "Could not resolve legacy area name '%s' to area_id, skipping",
-                            legacy_name,
-                        )
-                        continue
-                except (AttributeError, TypeError, KeyError) as err:
-                    _LOGGER.warning(
-                        "Error resolving legacy area name '%s': %s, skipping",
-                        legacy_name,
-                        err,
-                    )
-                    continue
-            else:
-                _LOGGER.warning(
-                    "Area config missing area_id and no legacy name found, skipping: %s",
-                    area,
-                )
-                continue
+            _LOGGER.warning(
+                "Area config missing area_id, skipping: %s",
+                area,
+            )
+            continue
 
         # Resolve area name from ID
         area_name = "Unknown"
@@ -1735,22 +1666,16 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         )
 
     def _get_areas_from_config(self) -> list[dict[str, Any]]:
-        """Get areas list from config entry, handling both legacy and new formats."""
+        """Get areas list from config entry."""
         merged = dict(self.config_entry.data)
         merged.update(self.config_entry.options)
 
-        # Check if we have the new multi-area format
+        # Get areas from CONF_AREAS
         if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
             return merged[CONF_AREAS]
 
-        # Legacy format: create area from existing config
-        # Legacy areas will be migrated in coordinator.setup()
-        legacy_area = {**merged}
-        # Check if it's already migrated (has CONF_AREA_ID)
-        if CONF_AREA_ID not in legacy_area:
-            # Legacy format - will be migrated
-            pass
-        return [legacy_area]
+        # If CONF_AREAS is not present, return empty list
+        return []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

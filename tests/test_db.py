@@ -1375,7 +1375,8 @@ class TestAreaOccupancyDBUtilities:
         assert area_entry is not None
         expected_area_id = area_entry.id
 
-        area.config.area_id = None
+        # Ensure area_id is set (legacy resolution removed, so we must have it)
+        area.config.area_id = expected_area_id
         db.save_area_data()
         with db.engine.connect() as conn:
             row = conn.execute(

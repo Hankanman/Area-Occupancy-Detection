@@ -192,8 +192,7 @@ class Area:
             DeviceInfo for this area
         """
         # Use area_id for device identifier (stable even if area is renamed)
-        # Fallback to area_name for legacy compatibility
-        device_identifier = self.config.area_id or self.area_name
+        device_identifier = self.config.area_id
         return DeviceInfo(
             identifiers={(DOMAIN, device_identifier)},
             name=self.config.name,

@@ -254,38 +254,14 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
 
             cfg = area_data_obj.config
 
-            # Resolve area_id if missing (legacy configs)
+            # Get area_id from config
             area_id = cfg.area_id
             if not area_id:
-                # Try to resolve from area name
-                if hasattr(db.coordinator, "hass") and db.coordinator.hass:
-                    try:
-                        area_reg = ar.async_get(db.coordinator.hass)
-                        for area_entry in area_reg.async_list_areas():
-                            if area_entry.name == area_name_item:
-                                area_id = area_entry.id
-                                _LOGGER.debug(
-                                    "Resolved area_id '%s' from area name '%s'",
-                                    area_id,
-                                    area_name_item,
-                                )
-                                break
-                    except (AttributeError, TypeError, KeyError, ValueError) as err:
-                        _LOGGER.warning(
-                            "Failed to resolve area_id for area '%s': %s",
-                            area_name_item,
-                            err,
-                        )
-
-                if not area_id:
-                    # Skip areas without area_id (legacy configs should be migrated)
-                    error_msg = (
-                        "area_id is missing and could not be resolved from area name"
-                    )
-                    _LOGGER.warning("Skipping area '%s': %s", area_name_item, error_msg)
-                    failures.append((area_name_item, error_msg))
-                    has_failures = True
-                    continue
+                error_msg = "area_id is missing"
+                _LOGGER.warning("Skipping area '%s': %s", area_name_item, error_msg)
+                failures.append((area_name_item, error_msg))
+                has_failures = True
+                continue
 
             area_data = {
                 "entry_id": db.coordinator.entry_id,
@@ -318,35 +294,16 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
         for area_obj in area_objects:
             session.merge(area_obj)
 
-        # If there are failures, check if they're all due to missing area_id (legacy configs)
-        all_missing_area_id = all(
-            "area_id is missing" in error for _, error in failures
-        )
-
         if has_failures:
             # Log concise summary of all failures
             failed_areas = [f"{area} ({error})" for area, error in failures]
-            if all_missing_area_id:
-                # If all failures are due to missing area_id, log warning but don't rollback
-                # This handles legacy configs and test scenarios gracefully
-                # Valid area objects should still be persisted
-                _LOGGER.warning(
-                    "Skipped saving area data for %d area(s) due to missing area_id (legacy configs): %s",
-                    len(failures),
-                    "; ".join(failed_areas),
-                )
-                # Commit valid area objects if any were merged, otherwise just return True
-                if area_objects:
-                    session.commit()
-                # Return True to indicate "success" (no errors, just skipped areas)
-                return True
-            # Real validation errors - rollback and return False
-            session.rollback()
             _LOGGER.error(
                 "Failed to save area data for %d area(s): %s",
                 len(failures),
                 "; ".join(failed_areas),
             )
+            # Rollback and return False
+            session.rollback()
             return False
 
         session.commit()
