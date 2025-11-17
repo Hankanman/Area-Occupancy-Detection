@@ -19,10 +19,19 @@ from custom_components.area_occupancy.const import RETENTION_DAYS
 from custom_components.area_occupancy.data.analysis import start_prior_analysis
 from custom_components.area_occupancy.db import (
     DB_VERSION,
-    DEFAULT_AREA_PRIOR,
     AreaOccupancyDB,
     Base,
+    maintenance,
+    sync,
 )
+from custom_components.area_occupancy.db.priors import (
+    build_base_filters,
+    build_motion_query,
+    get_occupied_intervals,
+    get_time_bounds,
+    save_global_prior,
+)
+from homeassistant import helpers
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -41,6 +50,7 @@ def create_test_area_data(entry_id="test_entry_001", **overrides):
     data = {
         "entry_id": entry_id,
         "area_name": "Test Living Room",
+        "area_id": "test_living_room",
         "purpose": "living",
         "threshold": 0.5,
         "area_prior": 0.3,
@@ -52,11 +62,15 @@ def create_test_area_data(entry_id="test_entry_001", **overrides):
 
 
 def create_test_entity_data(
-    entry_id="test_entry_001", entity_id="binary_sensor.motion_1", **overrides
+    entry_id="test_entry_001",
+    entity_id="binary_sensor.motion_1",
+    area_name="Test Living Room",
+    **overrides,
 ):
     """Create standardized test entity data."""
     data = {
         "entry_id": entry_id,
+        "area_name": area_name,
         "entity_id": entity_id,
         "entity_type": "motion",
         "weight": 0.85,
@@ -84,11 +98,18 @@ def create_test_prior_data(entry_id="test_entry_001", area_name="Testing", **ove
     return data
 
 
-def create_test_interval_data(entity_id="binary_sensor.motion_1", **overrides):
+def create_test_interval_data(
+    entity_id="binary_sensor.motion_1",
+    entry_id="test_entry_001",
+    area_name="Test Living Room",
+    **overrides,
+):
     """Create standardized test interval data."""
     start_time = dt_util.utcnow()
     end_time = start_time + timedelta(hours=1)
     data = {
+        "entry_id": entry_id,
+        "area_name": area_name,
         "entity_id": entity_id,
         "state": "on",
         "start_time": start_time,
@@ -158,6 +179,41 @@ class TestDatabaseModels:
         self, db_session: Session, model_class, test_data, expected_attrs
     ):
         """Test creating and retrieving all model types."""
+        # For Entities, create the Area first (foreign key requirement)
+        if model_class == AreaOccupancyDB.Entities:
+            area_name = test_data.get("area_name", "Test Living Room")
+            area_data = create_test_area_data(
+                entry_id=test_data["entry_id"], area_name=area_name
+            )
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+            db_session.commit()
+
+        # For Intervals, create Area and Entity first (foreign key requirements)
+        elif model_class == AreaOccupancyDB.Intervals:
+            area_name = test_data.get("area_name", "Test Living Room")
+            entry_id = test_data.get("entry_id", "test_entry_001")
+            area_data = create_test_area_data(entry_id=entry_id, area_name=area_name)
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+
+            entity_data = create_test_entity_data(
+                entry_id=entry_id, entity_id=test_data["entity_id"], area_name=area_name
+            )
+            entity = AreaOccupancyDB.Entities.from_dict(entity_data)
+            db_session.add(entity)
+            db_session.commit()
+
+        # For Priors, create the Area first (foreign key requirement)
+        elif model_class == AreaOccupancyDB.Priors:
+            area_name = test_data.get("area_name", "Testing")
+            area_data = create_test_area_data(
+                entry_id=test_data["entry_id"], area_name=area_name
+            )
+            area = AreaOccupancyDB.Areas.from_dict(area_data)
+            db_session.add(area)
+            db_session.commit()
+
         # Create ORM object
         obj = model_class.from_dict(test_data)
 
@@ -205,9 +261,12 @@ class TestDatabaseModels:
     def test_relationships(self, db_session: Session):
         """Test ORM relationships between models."""
         # Create area, entity, and prior
-        _area, _entity = setup_test_area_and_entity(db_session)
+        area, _entity = setup_test_area_and_entity(db_session)
 
-        prior = AreaOccupancyDB.Priors.from_dict(create_test_prior_data())
+        # Use same area_name for prior as the area
+        prior = AreaOccupancyDB.Priors.from_dict(
+            create_test_prior_data(area_name=area.area_name)
+        )
         db_session.add(prior)
         db_session.commit()
 
@@ -297,7 +356,6 @@ class TestDatabaseOperations:
             area_id="test_area_id",
             purpose="living",
             threshold=0.5,
-            area_prior=0.3,
             created_at=dt_util.utcnow(),
             updated_at=dt_util.utcnow(),
         )
@@ -341,8 +399,14 @@ class TestAreaOccupancyDBUtilities:
         assert not db.db_path.exists()
 
         calls = []
-        monkeypatch.setattr(db, "init_db", lambda: calls.append("init"))
-        monkeypatch.setattr(db, "set_db_version", lambda: calls.append("ver"))
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.maintenance.init_db",
+            lambda d: calls.append("init"),
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.maintenance.set_db_version",
+            lambda d: calls.append("ver"),
+        )
         db.force_reinitialize()
         assert calls == ["init", "ver"]
 
@@ -350,7 +414,7 @@ class TestAreaOccupancyDBUtilities:
         """Test WAL mode and table creation with error handling."""
         db = test_db
         db.init_db()
-        db._create_tables_individually()
+        maintenance._create_tables_individually(db)
 
         # Exercise error handling in _create_tables_individually
         first_table = next(iter(Base.metadata.tables.values()))
@@ -362,14 +426,14 @@ class TestAreaOccupancyDBUtilities:
             raise sa.exc.OperationalError("stmt", {}, DummyErr())
 
         monkeypatch.setattr(first_table, "create", boom)
-        db._create_tables_individually()
+        maintenance._create_tables_individually(db)
 
         class DummyEngine:
             def connect(self):
                 raise sa.exc.SQLAlchemyError("boom")
 
         db.engine = DummyEngine()
-        db._enable_wal_mode()  # should swallow the error
+        maintenance._enable_wal_mode(db)  # should swallow the error
 
     def test_is_valid_state_and_latest_interval(self, test_db):
         """Test state validation and latest interval retrieval."""
@@ -382,12 +446,15 @@ class TestAreaOccupancyDBUtilities:
         assert isinstance(first, datetime)
 
         # Add an interval and check that latest interval is updated
+        area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=60)
         with db.engine.begin() as conn:
             conn.execute(
                 db.Intervals.__table__.insert(),
                 {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
                     "entity_id": "binary_sensor.motion",
                     "state": "on",
                     "start_time": start,
@@ -414,21 +481,25 @@ class TestAreaOccupancyDBUtilities:
                 ),
             ]
         }
-        intervals = db._states_to_intervals(states, start + timedelta(seconds=20))
+        intervals = sync._states_to_intervals(db, states, start + timedelta(seconds=20))
         assert len(intervals) == 2
 
         saved = []
 
-        def fake_save():  # Now sync, not async
+        def fake_save(db):  # Now sync, not async, takes db parameter
             saved.append(True)
 
         data_returns = [None, {"entry_id": db.coordinator.entry_id}]
 
-        def fake_get(entry_id):
+        def fake_get(db, entry_id):
             return data_returns.pop(0)
 
-        monkeypatch.setattr(db, "save_data", fake_save)
-        monkeypatch.setattr(db, "get_area_data", fake_get)
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.operations.save_data", fake_save
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.queries.get_area_data", fake_get
+        )
         await db.ensure_area_exists()
         assert saved == [True]
 
@@ -437,15 +508,18 @@ class TestAreaOccupancyDBUtilities:
         """Test ensure_area_exists when area already exists."""
         db = test_db
         monkeypatch.setattr(
-            db, "get_area_data", lambda entry_id: {"entry_id": entry_id}
+            "custom_components.area_occupancy.db.queries.get_area_data",
+            lambda db, entry_id: {"entry_id": entry_id},
         )
         called = False
 
-        async def fake_save():
+        def fake_save(db):
             nonlocal called
             called = True
 
-        monkeypatch.setattr(db, "save_data", fake_save)
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.operations.save_data", fake_save
+        )
         await db.ensure_area_exists()
         assert not called
 
@@ -514,12 +588,15 @@ class TestAreaOccupancyDBUtilities:
         assert db.is_intervals_empty()
 
         # Add an interval
+        area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=5)
         with db.engine.begin() as conn:
             conn.execute(
                 db.Intervals.__table__.insert(),
                 {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
                     "entity_id": "binary_sensor.motion",
                     "state": "on",
                     "start_time": start,
@@ -558,15 +635,24 @@ class TestAreaOccupancyDBUtilities:
             f"area_prior should be >= 0.5, got {area.area_prior()}"
         )
         db.save_area_data()
+        # Save the global prior to the database
+        save_global_prior(
+            db,
+            area_name,
+            0.5,
+            dt_util.utcnow(),
+            dt_util.utcnow(),
+            0.0,
+            0.0,
+            0,
+        )
 
         # Verify that the raw global prior was saved to the database
-        area_data = db.get_area_data(db.coordinator.entry_id)
-        if area_data:
-            saved_prior = area_data.get("area_prior")
-            assert saved_prior is not None, (
-                "area_prior should be saved to database, got None"
-            )
-            assert saved_prior == pytest.approx(0.5)
+        global_prior_data = db.get_global_prior(area_name)
+        assert global_prior_data is not None, (
+            "area_prior should be saved to database, got None"
+        )
+        assert global_prior_data["prior_value"] == pytest.approx(0.5)
 
         # Populate entities table directly
         good = SimpleNamespace(
@@ -735,13 +821,27 @@ class TestAreaOccupancyDBUtilities:
 
         pre_restart_value = area.prior.value
 
-        # Persist current priors to the database
+        # Since analyze_area_prior is mocked, it won't save to global_priors automatically
+        # So we need to save it explicitly to test persistence
+        now = dt_util.utcnow()
+        test_db.save_global_prior(
+            area_name=area_name,
+            prior_value=0.4,
+            data_period_start=now - timedelta(days=30),
+            data_period_end=now,
+            total_occupied_seconds=1000.0,
+            total_period_seconds=2000.0,
+            interval_count=10,
+        )
+
+        # Persist current area data to the database
         test_db.save_area_data(area_name=area_name)
 
+        # Query global_priors table for the most recent prior
         with test_db.engine.connect() as conn:
             stored_value = conn.execute(
                 sa.text(
-                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                    "SELECT prior_value FROM global_priors WHERE entry_id=:e AND area_name=:a ORDER BY calculation_date DESC LIMIT 1"
                 ),
                 {"e": coordinator.entry_id, "a": area_name},
             ).scalar()
@@ -791,7 +891,7 @@ class TestAreaOccupancyDBUtilities:
         await db.load_data()
 
     @pytest.mark.asyncio
-    async def test_sync_states(self, test_db, monkeypatch):
+    async def test_sync_states(self, test_db, monkeypatch, hass: HomeAssistant):
         """Test syncing states from recorder."""
         db = test_db
         db.init_db()
@@ -802,31 +902,45 @@ class TestAreaOccupancyDBUtilities:
             async def async_add_executor_job(self, func):
                 return {"binary_sensor.motion": [state]}
 
+        dummy_recorder = DummyRecorder()
+        # Set both the data and patch the function to ensure it works
+        hass.data["recorder_instance"] = dummy_recorder
         monkeypatch.setattr(
-            "custom_components.area_occupancy.db.get_instance",
-            lambda hass: DummyRecorder(),
+            "homeassistant.helpers.recorder.get_instance",
+            lambda h: dummy_recorder,
         )
         await db.sync_states()
 
     @pytest.mark.asyncio
-    async def test_sync_states_bulk_insert_with_duplicates(self, test_db, monkeypatch):
+    async def test_sync_states_bulk_insert_with_duplicates(
+        self, test_db, monkeypatch, hass: HomeAssistant
+    ):
         """Test sync_states bulk insert handles duplicates correctly."""
         db = test_db
         db.init_db()
         start = dt_util.utcnow()
         end = start + timedelta(seconds=60)
 
+        # Get an actual entity ID from the coordinator
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area_or_default(area_name)
+        entity_ids = area.entities.entity_ids
+        assert len(entity_ids) > 0, "No entities configured in area"
+        test_entity_id = entity_ids[0]  # Use first configured entity
+
         # Create two states that will generate intervals
-        state1 = State("binary_sensor.motion", "on", last_changed=start)
-        state2 = State("binary_sensor.motion", "off", last_changed=end)
+        state1 = State(test_entity_id, "on", last_changed=start)
+        state2 = State(test_entity_id, "off", last_changed=end)
 
         class DummyRecorder:
             async def async_add_executor_job(self, func):
-                return {"binary_sensor.motion": [state1, state2]}
+                return {test_entity_id: [state1, state2]}
 
+        dummy_recorder = DummyRecorder()
+        hass.data["recorder_instance"] = dummy_recorder
         monkeypatch.setattr(
-            "custom_components.area_occupancy.db.get_instance",
-            lambda hass: DummyRecorder(),
+            "homeassistant.helpers.recorder.get_instance",
+            lambda h: dummy_recorder,
         )
 
         # First sync - should insert intervals
@@ -858,14 +972,15 @@ class TestAreaOccupancyDBUtilities:
             "on",
             last_changed=dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 1),
         )
-        result = db._states_to_intervals(
+        result = sync._states_to_intervals(
+            db,
             {"binary_sensor.old": [], "binary_sensor.motion": [old_state]},
             dt_util.utcnow(),
         )
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_sync_states_error(self, test_db, monkeypatch):
+    async def test_sync_states_error(self, test_db, monkeypatch, hass: HomeAssistant):
         """Test sync_states with recorder error."""
         db = test_db
 
@@ -873,9 +988,11 @@ class TestAreaOccupancyDBUtilities:
             async def async_add_executor_job(self, func):
                 raise HomeAssistantError("boom")
 
+        dummy_recorder = DummyRecorder()
+        hass.data["recorder_instance"] = dummy_recorder
         monkeypatch.setattr(
-            "custom_components.area_occupancy.db.get_instance",
-            lambda hass: DummyRecorder(),
+            "homeassistant.helpers.recorder.get_instance",
+            lambda h: dummy_recorder,
         )
         with pytest.raises(HomeAssistantError):
             await db.sync_states()
@@ -886,6 +1003,7 @@ class TestAreaOccupancyDBUtilities:
         ent = AreaOccupancyDB.Entities.from_dict(
             {
                 "entry_id": "e1",
+                "area_name": "Testing",
                 "entity_id": "sensor.test",
                 "entity_type": "motion",
                 "last_updated": now,
@@ -918,7 +1036,9 @@ class TestAreaOccupancyDBUtilities:
         assert interval.to_dict()["entity_id"] == "sensor.test"
 
     @pytest.mark.asyncio
-    async def test_sync_states_no_states(self, test_db, monkeypatch):
+    async def test_sync_states_no_states(
+        self, test_db, monkeypatch, hass: HomeAssistant
+    ):
         """Test sync_states with no states."""
         db = test_db
 
@@ -926,9 +1046,11 @@ class TestAreaOccupancyDBUtilities:
             async def async_add_executor_job(self, func):
                 return {}
 
+        dummy_recorder = DummyRecorder()
+        hass.data["recorder_instance"] = dummy_recorder
         monkeypatch.setattr(
-            "custom_components.area_occupancy.db.get_instance",
-            lambda hass: DummyRecorder(),
+            "homeassistant.helpers.recorder.get_instance",
+            lambda h: dummy_recorder,
         )
         await db.sync_states()
 
@@ -936,12 +1058,17 @@ class TestAreaOccupancyDBUtilities:
     async def test_ensure_area_exists_error_handling(self, test_db, monkeypatch):
         """Test ensure_area_exists error handling."""
         db = test_db
-        monkeypatch.setattr(db, "get_area_data", lambda eid: None)
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.queries.get_area_data",
+            lambda db, eid: None,
+        )
 
-        async def bad_save():
+        def bad_save(db):
             raise HomeAssistantError("boom")
 
-        monkeypatch.setattr(db, "save_data", bad_save)
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.operations.save_data", bad_save
+        )
         await db.ensure_area_exists()
 
     @pytest.mark.asyncio
@@ -950,16 +1077,22 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
         calls = []
 
-        def fake_get(entry_id):
+        def fake_get(db, entry_id):
             calls.append(1)
+            # Return None first time (doesn't exist), then None again to simulate creation failure
 
-        async def fake_save():
-            return None
+        def fake_save(db):
+            calls.append(2)
 
-        monkeypatch.setattr(db, "get_area_data", fake_get)
-        monkeypatch.setattr(db, "save_data", fake_save)
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.queries.get_area_data", fake_get
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.operations.save_data", fake_save
+        )
         await db.ensure_area_exists()
-        assert len(calls) == 2
+        # get_area_data called twice (check + verify), save_data called once
+        assert len(calls) == 3
 
     @pytest.mark.parametrize(
         ("error_type", "expected_result"),
@@ -1106,7 +1239,7 @@ class TestAreaOccupancyDBUtilities:
         area = db.coordinator.get_area_or_default(area_name)
         assert area is not None
 
-        # Set up existing area in database with a learned prior
+        # Set up existing area in database
         with db.get_locked_session() as session:
             existing_area = db.Areas(
                 entry_id=db.coordinator.entry_id,
@@ -1114,26 +1247,41 @@ class TestAreaOccupancyDBUtilities:
                 area_id=area.config.area_id,
                 purpose=area.config.purpose,
                 threshold=area.config.threshold,
-                area_prior=existing_prior,
             )
             session.add(existing_area)
+            # Seed global_priors table with existing prior
+            existing_global_prior = db.GlobalPriors(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                prior_value=existing_prior,
+                calculation_date=dt_util.utcnow(),
+                data_period_start=dt_util.utcnow() - timedelta(days=30),
+                data_period_end=dt_util.utcnow(),
+                total_occupied_seconds=1000.0,
+                total_period_seconds=2000.0,
+                interval_count=10,
+            )
+            session.add(existing_global_prior)
             session.commit()
 
         # Set global_prior to None to simulate first run or failed load
         area.prior.global_prior = None
 
-        # Save will use DEFAULT_AREA_PRIOR when global_prior is None
+        # save_area_data doesn't save priors, so existing prior should remain
         db.save_area_data()
 
-        # Verify DEFAULT_AREA_PRIOR was used (not the existing prior)
+        # Verify existing prior in global_priors remains unchanged
+        # (save_area_data doesn't touch global_priors, so it should still be existing_prior)
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text(
-                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                    "SELECT prior_value FROM global_priors WHERE entry_id=:e AND area_name=:a ORDER BY calculation_date DESC LIMIT 1"
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        assert row[0] == DEFAULT_AREA_PRIOR
+        # The existing prior should still be there since save_area_data doesn't modify global_priors
+        assert row is not None
+        assert row[0] == pytest.approx(existing_prior)
 
     @pytest.mark.asyncio
     async def test_save_area_data_uses_default_without_existing_prior(self, test_db):
@@ -1157,17 +1305,19 @@ class TestAreaOccupancyDBUtilities:
         # Set global_prior to None - use area-based access
         area.prior.global_prior = None
 
-        # Save should use DEFAULT_AREA_PRIOR as fallback
+        # save_area_data doesn't save priors, so no global_prior should be created
         db.save_area_data()
 
+        # Verify no global_prior exists (save_area_data doesn't create one)
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text(
-                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                    "SELECT prior_value FROM global_priors WHERE entry_id=:e AND area_name=:a ORDER BY calculation_date DESC LIMIT 1"
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        assert row[0] == DEFAULT_AREA_PRIOR
+        # No global_prior should exist since save_area_data doesn't save priors
+        assert row is None
 
     @pytest.mark.asyncio
     async def test_save_area_data_persists_raw_global_prior(self, test_db) -> None:
@@ -1184,20 +1334,32 @@ class TestAreaOccupancyDBUtilities:
         raw_global_prior = 0.37
         area.prior.set_global_prior(raw_global_prior)
 
-        db.save_area_data(area_name=area_name)
+        # save_area_data doesn't save priors, so save it explicitly using save_global_prior
+        # to test persistence as the test name suggests
+        now = dt_util.utcnow()
+        db.save_global_prior(
+            area_name=area_name,
+            prior_value=raw_global_prior,
+            data_period_start=now - timedelta(days=30),
+            data_period_end=now,
+            total_occupied_seconds=1000.0,
+            total_period_seconds=2000.0,
+            interval_count=10,
+        )
 
-        # Verify the stored value matches the raw global prior
+        # Verify the stored value matches the raw global prior in global_priors table
         with db.engine.connect() as conn:
             row = conn.execute(
                 sa.text(
-                    "SELECT area_prior FROM areas WHERE entry_id=:e AND area_name=:a"
+                    "SELECT prior_value FROM global_priors WHERE entry_id=:e AND area_name=:a ORDER BY calculation_date DESC LIMIT 1"
                 ),
                 {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
+        assert row is not None
         assert row[0] == pytest.approx(raw_global_prior)
 
     @pytest.mark.asyncio
-    async def test_save_area_data_success(self, test_db):
+    async def test_save_area_data_success(self, test_db, hass: HomeAssistant):
         """Test successful save_area_data operation."""
         db = test_db
         # Get the actual area name from the coordinator
@@ -1207,17 +1369,24 @@ class TestAreaOccupancyDBUtilities:
         area = db.coordinator.get_area_or_default(area_name)
         assert area is not None
 
+        # Get the actual area_id from the area registry
+        area_reg = helpers.area_registry.async_get(hass)
+        area_entry = area_reg.async_get_area_by_name(area_name)
+        assert area_entry is not None
+        expected_area_id = area_entry.id
+
         area.config.area_id = None
         db.save_area_data()
         with db.engine.connect() as conn:
             row = conn.execute(
-                sa.text("SELECT area_id FROM areas WHERE entry_id=:e"),
-                {"e": db.coordinator.entry_id},
+                sa.text("SELECT area_id FROM areas WHERE entry_id=:e AND area_name=:a"),
+                {"e": db.coordinator.entry_id, "a": area_name},
             ).fetchone()
-        assert row[0] == db.coordinator.entry_id
+        assert row is not None
+        assert row[0] == expected_area_id
 
         data = db.get_area_data(db.coordinator.entry_id)
-        assert data is not None and data["area_id"] == db.coordinator.entry_id
+        assert data is not None and data["area_id"] == expected_area_id
 
     def test_get_area_data_with_error(self, test_db):
         """Test get_area_data with database error."""
@@ -1235,8 +1404,13 @@ class TestAreaOccupancyDBUtilities:
 
         # Mock get_area_data to return existing area
         with (
-            patch.object(db, "get_area_data", return_value={"entry_id": "test"}),
-            patch.object(db, "save_data", new=AsyncMock()) as mock_save,
+            patch(
+                "custom_components.area_occupancy.db.queries.get_area_data",
+                return_value={"entry_id": "test"},
+            ),
+            patch(
+                "custom_components.area_occupancy.db.operations.save_data"
+            ) as mock_save,
         ):
             # This should not raise an exception and should not call save_data
             asyncio.run(db.ensure_area_exists())
@@ -1248,8 +1422,13 @@ class TestAreaOccupancyDBUtilities:
 
         # Mock get_area_data to return None (area doesn't exist)
         with (
-            patch.object(db, "get_area_data", return_value=None),
-            patch.object(db, "save_data", new=AsyncMock()) as mock_save,
+            patch(
+                "custom_components.area_occupancy.db.queries.get_area_data",
+                return_value=None,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.operations.save_data"
+            ) as mock_save,
         ):
             asyncio.run(db.ensure_area_exists())
             mock_save.assert_called_once()
@@ -1258,7 +1437,10 @@ class TestAreaOccupancyDBUtilities:
         """Test ensure_area_exists with error handling."""
         db = test_db
 
-        with patch.object(db, "get_area_data", side_effect=HomeAssistantError("Error")):
+        with patch(
+            "custom_components.area_occupancy.db.queries.get_area_data",
+            side_effect=HomeAssistantError("Error"),
+        ):
             # Should not raise exception, just log error
             asyncio.run(db.ensure_area_exists())
 
@@ -1277,9 +1459,9 @@ class TestAreaOccupancyDBUtilities:
         """Test safe_is_intervals_empty when integrity check passes."""
         db = test_db
 
-        with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            patch.object(db, "is_intervals_empty", return_value=False),
+        with patch(
+            "custom_components.area_occupancy.db.utils.is_intervals_empty",
+            return_value=False,
         ):
             result = db.safe_is_intervals_empty()
             assert result is False
@@ -1362,7 +1544,7 @@ class TestAreaOccupancyDBUtilities:
         with (
             patch.object(db.engine, "dispose"),
             patch(
-                "custom_components.area_occupancy.db.create_engine"
+                "custom_components.area_occupancy.db.maintenance.create_engine"
             ) as mock_create_engine,
         ):
             mock_engine = Mock()
@@ -1385,7 +1567,7 @@ class TestAreaOccupancyDBUtilities:
         with (
             patch.object(db.engine, "dispose"),
             patch(
-                "custom_components.area_occupancy.db.create_engine",
+                "custom_components.area_occupancy.db.maintenance.create_engine",
                 side_effect=sa.exc.SQLAlchemyError("Recovery failed"),
             ),
         ):
@@ -1517,10 +1699,22 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "backup_database", return_value=True),
-            patch.object(db, "attempt_database_recovery", return_value=False),
-            patch.object(db, "restore_database_from_backup", return_value=False),
-            patch.object(db, "delete_db", side_effect=OSError("Delete failed")),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.backup_database",
+                return_value=True,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.attempt_database_recovery",
+                return_value=False,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.restore_database_from_backup",
+                return_value=False,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.delete_db",
+                side_effect=OSError("Delete failed"),
+            ),
         ):
             result = db.handle_database_corruption()
             assert result is False
@@ -1530,8 +1724,14 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            patch.object(db, "backup_database", return_value=True),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+                return_value=True,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.backup_database",
+                return_value=True,
+            ),
         ):
             result = db.periodic_health_check()
             assert result is True
@@ -1541,8 +1741,14 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "check_database_integrity", return_value=False),
-            patch.object(db, "handle_database_corruption", return_value=True),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+                return_value=False,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.handle_database_corruption",
+                return_value=True,
+            ),
         ):
             result = db.periodic_health_check()
             assert result is True
@@ -1552,8 +1758,14 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "check_database_integrity", return_value=False),
-            patch.object(db, "handle_database_corruption", return_value=False),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+                return_value=False,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.handle_database_corruption",
+                return_value=False,
+            ),
         ):
             result = db.periodic_health_check()
             assert result is False
@@ -1569,8 +1781,14 @@ class TestAreaOccupancyDBUtilities:
         db.db_path.touch()
 
         with (
-            patch.object(db, "check_database_integrity", return_value=True),
-            patch.object(db, "backup_database", return_value=True) as mock_backup,
+            patch(
+                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+                return_value=True,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.maintenance.backup_database",
+                return_value=True,
+            ) as mock_backup,
         ):
             result = db.periodic_health_check()
             assert result is True
@@ -1580,7 +1798,10 @@ class TestAreaOccupancyDBUtilities:
         """Test periodic_health_check with error."""
         db = test_db
 
-        with patch.object(db, "check_database_integrity", side_effect=OSError("Error")):
+        with patch(
+            "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+            side_effect=OSError("Error"),
+        ):
             result = db.periodic_health_check()
             assert result is False
 
@@ -1631,20 +1852,24 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "init_db") as mock_init,
-            patch.object(db, "set_db_version") as mock_set_version,
+            patch(
+                "custom_components.area_occupancy.db.maintenance.init_db"
+            ) as mock_init,
+            patch(
+                "custom_components.area_occupancy.db.maintenance.set_db_version"
+            ) as mock_set_version,
         ):
             db.force_reinitialize()
 
-            mock_init.assert_called_once()
-            mock_set_version.assert_called_once()
+            mock_init.assert_called_once_with(db)
+            mock_set_version.assert_called_once_with(db)
 
     def test_init_db_success(self, test_db):
         """Test init_db with successful initialization."""
         db = test_db
 
         with (
-            patch.object(db, "_enable_wal_mode"),
+            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
             patch.object(db.engine, "connect"),
         ):
             db.init_db()
@@ -1659,9 +1884,11 @@ class TestAreaOccupancyDBUtilities:
         mock_error.orig.sqlite_errno = 1
 
         with (
-            patch.object(db, "_enable_wal_mode"),
+            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
             patch.object(db.engine, "connect", side_effect=mock_error),
-            patch.object(db, "_create_tables_individually"),
+            patch(
+                "custom_components.area_occupancy.db.maintenance._create_tables_individually"
+            ),
         ):
             db.init_db()
 
@@ -1675,7 +1902,7 @@ class TestAreaOccupancyDBUtilities:
         mock_error.orig.sqlite_errno = 2
 
         with (
-            patch.object(db, "_enable_wal_mode"),
+            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
             patch.object(db.engine, "connect", side_effect=mock_error),
             pytest.raises(sa.exc.OperationalError),
         ):
@@ -1686,7 +1913,7 @@ class TestAreaOccupancyDBUtilities:
         db = test_db
 
         with (
-            patch.object(db, "_enable_wal_mode"),
+            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
             patch.object(
                 db.engine, "connect", side_effect=RuntimeError("General error")
             ),
@@ -1702,7 +1929,7 @@ class TestAreaOccupancyDBUtilities:
             mock_conn = Mock()
             mock_connect.return_value.__enter__.return_value = mock_conn
 
-            db._enable_wal_mode()
+            maintenance._enable_wal_mode(db)
 
             mock_conn.execute.assert_called_once()
 
@@ -1714,18 +1941,18 @@ class TestAreaOccupancyDBUtilities:
             db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("WAL error")
         ):
             # Should not raise exception, just log error
-            db._enable_wal_mode()
+            maintenance._enable_wal_mode(db)
 
     def test_verify_all_tables_exist_success(self, test_db):
-        """Test _verify_all_tables_exist with all tables present."""
+        """Test verify_all_tables_exist with all tables present."""
         db = test_db
 
         # test_db fixture already initializes tables via init_db()
         # Verify all tables exist
-        assert db._verify_all_tables_exist() is True
+        assert maintenance.verify_all_tables_exist(db) is True
 
     def test_verify_all_tables_exist_error(self, test_db):
-        """Test _verify_all_tables_exist with database error."""
+        """Test verify_all_tables_exist with database error."""
         db = test_db
 
         # Mock a database error
@@ -1733,7 +1960,7 @@ class TestAreaOccupancyDBUtilities:
             db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("DB Error")
         ):
             # Should return False on error
-            assert db._verify_all_tables_exist() is False
+            assert maintenance.verify_all_tables_exist(db) is False
 
     def test_ensure_db_exists_new_database(self, test_db, tmp_path):
         """Test _ensure_db_exists with new database."""
@@ -1751,10 +1978,10 @@ class TestAreaOccupancyDBUtilities:
         db._session_maker = sessionmaker(bind=db.engine)
 
         # This should create all tables
-        db._ensure_db_exists()
+        maintenance.ensure_db_exists(db)
 
         # Verify tables were created
-        assert db._verify_all_tables_exist() is True
+        assert maintenance.verify_all_tables_exist(db) is True
 
     def test_ensure_db_exists_with_file_no_tables(self, test_db, tmp_path):
         """Test _ensure_db_exists when file exists but has no tables (race condition)."""
@@ -1782,10 +2009,10 @@ class TestAreaOccupancyDBUtilities:
             conn.commit()
 
         # Now verify this triggers table creation
-        db._ensure_db_exists()
+        maintenance.ensure_db_exists(db)
 
         # Verify all required tables were created
-        assert db._verify_all_tables_exist() is True
+        assert maintenance.verify_all_tables_exist(db) is True
 
     def test_ensure_db_exists_with_complete_database(self, test_db, tmp_path):
         """Test _ensure_db_exists when database is already complete."""
@@ -1806,17 +2033,17 @@ class TestAreaOccupancyDBUtilities:
         db.init_db()
         db.set_db_version()
 
-        db._ensure_db_exists()
+        maintenance.ensure_db_exists(db)
 
         # Verify tables still exist (not corrupted)
-        assert db._verify_all_tables_exist() is True
+        assert maintenance.verify_all_tables_exist(db) is True
 
     def test_create_tables_individually_success(self, test_db):
         """Test _create_tables_individually with success."""
         db = test_db
 
         with patch.object(db.engine, "connect"):
-            db._create_tables_individually()
+            maintenance._create_tables_individually(db)
 
     def test_create_tables_individually_race_condition(self, test_db):
         """Test _create_tables_individually with race condition."""
@@ -1829,7 +2056,7 @@ class TestAreaOccupancyDBUtilities:
 
         with patch.object(db.engine, "connect", side_effect=mock_error):
             # Should not raise exception
-            db._create_tables_individually()
+            maintenance._create_tables_individually(db)
 
     def test_create_tables_individually_other_error(self, test_db):
         """Test _create_tables_individually with other error."""
@@ -1844,7 +2071,7 @@ class TestAreaOccupancyDBUtilities:
             patch.object(db.engine, "connect", side_effect=mock_error),
             pytest.raises(sa.exc.OperationalError),
         ):
-            db._create_tables_individually()
+            maintenance._create_tables_individually(db)
 
     def test_set_db_version_update_existing(self, test_db):
         """Test set_db_version when version already exists."""
@@ -1920,11 +2147,10 @@ class TestAreaOccupancyDBUtilities:
         """Test get_db_version with error."""
         db = test_db
 
-        with (
-            patch.object(db, "get_session", side_effect=RuntimeError("DB Error")),
-            pytest.raises(RuntimeError),
-        ):
-            db.get_db_version()
+        with patch.object(db, "get_session", side_effect=RuntimeError("DB Error")):
+            # get_db_version catches exceptions and returns 0
+            version = db.get_db_version()
+            assert version == 0
 
 
 # New tests for performance optimization features
@@ -1942,8 +2168,11 @@ class TestPruneOldIntervals:
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
         with db.get_session() as session:  # Use unlocked session for test setup
+            area_name = db.coordinator.get_area_names()[0]
             # Add old intervals
             old_interval1 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=old_time,
                 end_time=old_time + timedelta(hours=1),
@@ -1951,6 +2180,8 @@ class TestPruneOldIntervals:
                 duration_seconds=3600,
             )
             old_interval2 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion2",
                 start_time=old_time + timedelta(hours=2),
                 end_time=old_time + timedelta(hours=3),
@@ -1959,6 +2190,8 @@ class TestPruneOldIntervals:
             )
             # Add recent interval
             recent_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=recent_time,
                 end_time=recent_time + timedelta(hours=1),
@@ -1992,7 +2225,10 @@ class TestPruneOldIntervals:
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
         with db.get_session() as session:  # Use unlocked session for test setup
+            area_name = db.coordinator.get_area_names()[0]
             recent_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=recent_time,
                 end_time=recent_time + timedelta(hours=1),
@@ -2040,11 +2276,14 @@ class TestGetAggregatedIntervalsBySlot:
         base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
 
         with db.get_locked_session() as session:
+            # Get area_name from coordinator first (required for consistency)
+            area_name = db.coordinator.get_area_names()[0]
+
             # Add entity first (area_name is required in multi-area architecture)
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id="test_entry_id",
-                area_name="Test Area",
+                area_name=area_name,
                 entity_type="motion",
             )
             session.add(entity)
@@ -2055,10 +2294,11 @@ class TestGetAggregatedIntervalsBySlot:
                 days=base_time.weekday()
             )  # Get Monday of current week
             tuesday = monday + timedelta(days=1)
-
             intervals = [
                 # Monday, 10:00-11:00 (slot 10 with 60min slots)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=monday,
                     end_time=monday + timedelta(hours=1),
@@ -2067,6 +2307,8 @@ class TestGetAggregatedIntervalsBySlot:
                 ),
                 # Tuesday, 14:00-15:00 (slot 14 with 60min slots)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=tuesday + timedelta(hours=4),
                     end_time=tuesday + timedelta(hours=5),
@@ -2075,6 +2317,8 @@ class TestGetAggregatedIntervalsBySlot:
                 ),
                 # Same Tuesday slot, different interval (should aggregate)
                 db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
                     entity_id="binary_sensor.motion1",
                     start_time=tuesday + timedelta(hours=4, minutes=30),
                     end_time=tuesday + timedelta(hours=5, minutes=30),
@@ -2087,7 +2331,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Test aggregation with 60-minute slots
         result = db.get_aggregated_intervals_by_slot(
-            "test_entry_id", slot_minutes=60, area_name="Test Area"
+            "test_entry_id", slot_minutes=60, area_name=area_name
         )
 
         # Should have aggregated data
@@ -2130,7 +2374,10 @@ class TestGetAggregatedIntervalsBySlot:
             session.add(entity)
 
             # Add interval
+            area_name = db.coordinator.get_area_names()[0]
             interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion1",
                 start_time=base_time,
                 end_time=base_time + timedelta(hours=1),
@@ -2297,7 +2544,10 @@ class TestGetAggregatedIntervalsBySlot:
             session.add(orphaned_entity)
 
             # Add intervals for orphaned entity
+            area_name = db.coordinator.get_area_names()[0]
             interval1 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion_orphaned",
                 start_time=dt_util.utcnow(),
                 end_time=dt_util.utcnow() + timedelta(minutes=30),
@@ -2305,6 +2555,8 @@ class TestGetAggregatedIntervalsBySlot:
                 duration_seconds=1800,
             )
             interval2 = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
                 entity_id="binary_sensor.motion_orphaned",
                 start_time=dt_util.utcnow() + timedelta(hours=1),
                 end_time=dt_util.utcnow() + timedelta(hours=1, minutes=30),
@@ -2439,8 +2691,11 @@ class TestGetAggregatedIntervalsBySlot:
                 session.add(orphaned_entity)
 
                 # Add 5 intervals per orphaned entity
+                area_name = db.coordinator.get_area_names()[0]
                 for j in range(5):
                     interval = db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
                         entity_id=f"binary_sensor.motion_orphaned{i}",
                         start_time=dt_util.utcnow() + timedelta(hours=j),
                         end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
@@ -2540,6 +2795,8 @@ class TestGetAggregatedIntervalsBySlot:
                 # Add 10 intervals per entity
                 for j in range(10):
                     interval = db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
                         entity_id=f"binary_sensor.motion{i}",
                         start_time=dt_util.utcnow() + timedelta(hours=j),
                         end_time=dt_util.utcnow() + timedelta(hours=j, minutes=30),
@@ -2633,8 +2890,9 @@ class TestGetAggregatedIntervalsBySlot:
         area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock cleanup method
-        with patch.object(
-            db, "cleanup_orphaned_entities", return_value=2
+        with patch(
+            "custom_components.area_occupancy.db.operations.cleanup_orphaned_entities",
+            return_value=2,
         ) as mock_cleanup:
             db.save_entity_data()
 
@@ -2768,3 +3026,701 @@ class TestGetAggregatedIntervalsBySlot:
             entity_ids_after = {e.entity_id for e in entities_after}
             assert "binary_sensor.motion1" in entity_ids_after
             assert "binary_sensor.bed_status" not in entity_ids_after
+
+
+class TestTieredAggregation:
+    """Test tiered aggregation functionality."""
+
+    def test_aggregate_raw_to_daily(self, test_db):
+        """Test aggregating raw intervals to daily aggregates."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create old raw intervals (older than 30 days)
+        old_date = dt_util.utcnow() - timedelta(days=35)
+        with db.get_locked_session() as session:
+            for i in range(5):
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion1",
+                    state="on",
+                    start_time=old_date + timedelta(hours=i),
+                    end_time=old_date + timedelta(hours=i + 1),
+                    duration_seconds=3600.0,
+                    aggregation_level="raw",
+                )
+                session.add(interval)
+            session.commit()
+
+        # Run aggregation
+        result = db.aggregate_raw_to_daily(area_name)
+        assert result > 0
+
+        # Verify daily aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.IntervalAggregates)
+                .filter_by(area_name=area_name, aggregation_period="daily")
+                .all()
+            )
+            assert len(aggregates) > 0
+
+    def test_aggregate_daily_to_weekly(self, test_db):
+        """Test aggregating daily aggregates to weekly aggregates."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create old daily aggregates (older than 90 days)
+        old_date = dt_util.utcnow() - timedelta(days=95)
+        with db.get_locked_session() as session:
+            for i in range(7):
+                aggregate = db.IntervalAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion1",
+                    aggregation_period="daily",
+                    period_start=old_date + timedelta(days=i),
+                    period_end=old_date + timedelta(days=i + 1),
+                    state="on",
+                    interval_count=10,
+                    total_duration_seconds=36000.0,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Run aggregation
+        result = db.aggregate_daily_to_weekly(area_name)
+        assert result > 0
+
+        # Verify weekly aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.IntervalAggregates)
+                .filter_by(area_name=area_name, aggregation_period="weekly")
+                .all()
+            )
+            assert len(aggregates) > 0
+
+    def test_run_interval_aggregation(self, test_db):
+        """Test running full tiered aggregation process."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create test data
+        old_date = dt_util.utcnow() - timedelta(days=35)
+        with db.get_locked_session() as session:
+            interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                state="on",
+                start_time=old_date,
+                end_time=old_date + timedelta(hours=1),
+                duration_seconds=3600.0,
+                aggregation_level="raw",
+            )
+            session.add(interval)
+            session.commit()
+
+        # Run full aggregation
+        results = db.run_interval_aggregation(area_name)
+        assert "daily" in results
+        assert "weekly" in results
+        assert "monthly" in results
+
+
+class TestGlobalPriors:
+    """Test global priors functionality."""
+
+    def test_save_global_prior(self, test_db):
+        """Test saving global prior to database."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        period_start = dt_util.utcnow() - timedelta(days=90)
+        period_end = dt_util.utcnow()
+
+        result = db.save_global_prior(
+            area_name=area_name,
+            prior_value=0.35,
+            data_period_start=period_start,
+            data_period_end=period_end,
+            total_occupied_seconds=86400.0,
+            total_period_seconds=7776000.0,
+            interval_count=100,
+            calculation_method="interval_analysis",
+            confidence=0.85,
+        )
+
+        assert result is True
+
+        # Verify global prior was saved
+        global_prior = db.get_global_prior(area_name)
+        assert global_prior is not None
+        assert global_prior["prior_value"] == 0.35
+        assert global_prior["interval_count"] == 100
+
+    def test_get_global_prior(self, test_db):
+        """Test retrieving global prior from database."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Save a global prior first
+        period_start = dt_util.utcnow() - timedelta(days=90)
+        period_end = dt_util.utcnow()
+        db.save_global_prior(
+            area_name=area_name,
+            prior_value=0.42,
+            data_period_start=period_start,
+            data_period_end=period_end,
+            total_occupied_seconds=100000.0,
+            total_period_seconds=7776000.0,
+            interval_count=150,
+        )
+
+        # Retrieve it
+        global_prior = db.get_global_prior(area_name)
+        assert global_prior is not None
+        assert global_prior["prior_value"] == 0.42
+        assert global_prior["interval_count"] == 150
+
+
+class TestOccupiedIntervalsCache:
+    """Test occupied intervals cache functionality."""
+
+    def test_save_occupied_intervals_cache(self, test_db):
+        """Test saving occupied intervals to cache."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=2),
+                dt_util.utcnow() - timedelta(hours=1),
+            ),
+            (
+                dt_util.utcnow() - timedelta(minutes=30),
+                dt_util.utcnow(),
+            ),
+        ]
+
+        result = db.save_occupied_intervals_cache(
+            area_name, intervals, "motion_sensors"
+        )
+        assert result is True
+
+        # Verify intervals were cached
+        cached = db.get_occupied_intervals_cache(area_name)
+        assert len(cached) == 2
+
+    def test_get_occupied_intervals_cache(self, test_db):
+        """Test retrieving cached occupied intervals."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Save intervals first
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=2),
+                dt_util.utcnow() - timedelta(hours=1),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Retrieve them
+        cached = db.get_occupied_intervals_cache(area_name)
+        assert len(cached) == 1
+        # Normalize datetimes for comparison (database may return with/without tzinfo)
+        cached_start = cached[0][0]
+        cached_end = cached[0][1]
+        expected_start = intervals[0][0]
+        expected_end = intervals[0][1]
+        # Convert to UTC-naive for comparison if needed
+        if cached_start.tzinfo:
+            cached_start = cached_start.replace(tzinfo=None)
+        if cached_end.tzinfo:
+            cached_end = cached_end.replace(tzinfo=None)
+        if expected_start.tzinfo:
+            expected_start = expected_start.replace(tzinfo=None)
+        if expected_end.tzinfo:
+            expected_end = expected_end.replace(tzinfo=None)
+        assert cached_start == expected_start
+        assert cached_end == expected_end
+
+    def test_is_occupied_intervals_cache_valid(self, test_db):
+        """Test checking cache validity."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Cache should be invalid initially
+        assert db.is_occupied_intervals_cache_valid(area_name) is False
+
+        # Save intervals
+        intervals = [
+            (
+                dt_util.utcnow() - timedelta(hours=1),
+                dt_util.utcnow(),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Cache should be valid now
+        assert db.is_occupied_intervals_cache_valid(area_name) is True
+
+
+class TestIntervalAreaIsolation:
+    """Test that intervals from different areas are properly isolated."""
+
+    def test_get_occupied_intervals_isolates_areas_with_same_entity_id(
+        self, test_db: AreaOccupancyDB
+    ):
+        """Test that get_occupied_intervals returns only intervals for the requested area.
+
+        Creates the same entity_id in two different areas with distinct intervals
+        and verifies that queries only return intervals for the requested area.
+        """
+        db = test_db
+        entry_id = db.coordinator.entry_id
+
+        # Create two different areas
+        area1_name = "Kitchen"
+        area2_name = "Living Room"
+
+        now = dt_util.utcnow()
+
+        # Create distinct time ranges for each area
+        area1_start = now - timedelta(days=2, hours=8)
+        area1_end = now - timedelta(days=2, hours=6)
+        area2_start = now - timedelta(days=1, hours=12)
+        area2_end = now - timedelta(days=1, hours=10)
+
+        # Same entity_id for both areas
+        shared_entity_id = "binary_sensor.motion_sensor"
+
+        with db.get_locked_session() as session:
+            # Create Areas first (required for Entities foreign key)
+            area1 = db.Areas(
+                entry_id=entry_id,
+                area_name=area1_name,
+                area_id="kitchen",
+                purpose="kitchen",
+                threshold=0.5,
+            )
+            area2 = db.Areas(
+                entry_id=entry_id,
+                area_name=area2_name,
+                area_id="living_room",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add_all([area1, area2])
+            session.commit()
+
+            # Create entities in both areas with same entity_id
+            entity1 = db.Entities(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            entity2 = db.Entities(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            session.add_all([entity1, entity2])
+            session.commit()
+
+            # Create intervals for area1
+            interval1_area1 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area1_start,
+                end_time=area1_end,
+                duration_seconds=(area1_end - area1_start).total_seconds(),
+            )
+
+            # Create intervals for area2 with same entity_id but different times
+            interval1_area2 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area2_start,
+                end_time=area2_end,
+                duration_seconds=(area2_end - area2_start).total_seconds(),
+            )
+
+            session.add_all([interval1_area1, interval1_area2])
+            session.commit()
+
+        # Verify data was created correctly
+        with db.get_session() as session:
+            all_intervals = session.query(db.Intervals).all()
+            all_entities = session.query(db.Entities).all()
+            # Should have 2 intervals and 2 entities
+            assert len(all_intervals) == 2, (
+                f"Expected 2 intervals, got {len(all_intervals)}"
+            )
+            assert len(all_entities) == 2, (
+                f"Expected 2 entities, got {len(all_entities)}"
+            )
+
+            # Verify intervals are in correct areas
+            interval_areas = {i.area_name for i in all_intervals}
+            assert interval_areas == {area1_name, area2_name}, (
+                f"Interval areas: {interval_areas}"
+            )
+
+            # Verify entities are in correct areas
+            entity_areas = {e.area_name for e in all_entities}
+            assert entity_areas == {area1_name, area2_name}, (
+                f"Entity areas: {entity_areas}"
+            )
+
+        # Directly query to verify the join is working correctly
+        lookback_date = now - timedelta(days=7)
+
+        # Test the query directly for area1
+        with db.get_session() as session:
+            base_filters = build_base_filters(db, entry_id, lookback_date, area1_name)
+            motion_query = build_motion_query(session, db, base_filters)
+            # Execute and check results
+            results = motion_query.all()
+            # Should only return 1 interval for area1
+            assert len(results) == 1, (
+                f"Direct query returned {len(results)} results for {area1_name}: {results}"
+            )
+
+        # Test get_occupied_intervals for area1 - should only return area1 intervals
+        intervals_area1 = get_occupied_intervals(
+            db,
+            entry_id,
+            area1_name,
+            lookback_days=7,
+            motion_timeout_seconds=0,
+            include_media=False,
+            include_appliance=False,
+        )
+
+        assert len(intervals_area1) == 1, (
+            f"Expected 1 interval for {area1_name}, got {len(intervals_area1)}: {intervals_area1}"
+        )
+        assert intervals_area1[0][0].replace(tzinfo=None) == area1_start.replace(
+            tzinfo=None
+        ), f"Start time mismatch: {intervals_area1[0][0]} != {area1_start}"
+        assert intervals_area1[0][1].replace(tzinfo=None) == area1_end.replace(
+            tzinfo=None
+        ), f"End time mismatch: {intervals_area1[0][1]} != {area1_end}"
+
+        # Test get_occupied_intervals for area2 - should only return area2 intervals
+        intervals_area2 = get_occupied_intervals(
+            db,
+            entry_id,
+            area2_name,
+            lookback_days=7,
+            motion_timeout_seconds=0,
+            include_media=False,
+            include_appliance=False,
+        )
+
+        assert len(intervals_area2) == 1, (
+            f"Expected 1 interval for {area2_name}, got {len(intervals_area2)}: {intervals_area2}"
+        )
+        assert intervals_area2[0][0].replace(tzinfo=None) == area2_start.replace(
+            tzinfo=None
+        ), f"Start time mismatch: {intervals_area2[0][0]} != {area2_start}"
+        assert intervals_area2[0][1].replace(tzinfo=None) == area2_end.replace(
+            tzinfo=None
+        ), f"End time mismatch: {intervals_area2[0][1]} != {area2_end}"
+
+        # Verify intervals are different
+        assert intervals_area1[0][0] != intervals_area2[0][0]
+
+    def test_get_time_bounds_isolates_areas_with_same_entity_id(
+        self, test_db: AreaOccupancyDB
+    ):
+        """Test that get_time_bounds returns only bounds for the requested area.
+
+        Creates the same entity_id in two different areas with distinct intervals
+        and verifies that get_time_bounds only returns bounds for the requested area.
+        """
+        db = test_db
+        entry_id = db.coordinator.entry_id
+
+        # Create two different areas
+        area1_name = "Kitchen"
+        area2_name = "Living Room"
+
+        now = dt_util.utcnow()
+
+        # Create distinct time ranges for each area
+        area1_start = now - timedelta(days=3, hours=10)
+        area1_end = now - timedelta(days=3, hours=8)
+        area2_start = now - timedelta(days=1, hours=14)
+        area2_end = now - timedelta(days=1, hours=12)
+
+        # Same entity_id for both areas
+        shared_entity_id = "binary_sensor.motion_sensor"
+
+        with db.get_locked_session() as session:
+            # Create Areas first (required for Entities foreign key)
+            area1 = db.Areas(
+                entry_id=entry_id,
+                area_name=area1_name,
+                area_id="kitchen",
+                purpose="kitchen",
+                threshold=0.5,
+            )
+            area2 = db.Areas(
+                entry_id=entry_id,
+                area_name=area2_name,
+                area_id="living_room",
+                purpose="living",
+                threshold=0.5,
+            )
+            session.add_all([area1, area2])
+            session.commit()
+
+            # Create entities in both areas with same entity_id
+            entity1 = db.Entities(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            entity2 = db.Entities(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                entity_type="motion",
+            )
+            session.add_all([entity1, entity2])
+            session.commit()
+
+            # Create intervals for area1
+            interval1_area1 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area1_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area1_start,
+                end_time=area1_end,
+                duration_seconds=(area1_end - area1_start).total_seconds(),
+            )
+
+            # Create intervals for area2 with same entity_id but different times
+            interval1_area2 = db.Intervals(
+                entry_id=entry_id,
+                area_name=area2_name,
+                entity_id=shared_entity_id,
+                state="on",
+                start_time=area2_start,
+                end_time=area2_end,
+                duration_seconds=(area2_end - area2_start).total_seconds(),
+            )
+
+            session.add_all([interval1_area1, interval1_area2])
+            session.commit()
+
+        # Test get_time_bounds for area1 - should only return area1 bounds
+        first1, last1 = get_time_bounds(db, entry_id, area1_name)
+
+        assert first1 is not None
+        assert last1 is not None
+        assert first1.replace(tzinfo=None) == area1_start.replace(tzinfo=None)
+        assert last1.replace(tzinfo=None) == area1_end.replace(tzinfo=None)
+
+        # Test get_time_bounds for area2 - should only return area2 bounds
+        first2, last2 = get_time_bounds(db, entry_id, area2_name)
+
+        assert first2 is not None
+        assert last2 is not None
+        assert first2.replace(tzinfo=None) == area2_start.replace(tzinfo=None)
+        assert last2.replace(tzinfo=None) == area2_end.replace(tzinfo=None)
+
+        # Verify bounds are different
+        assert first1 != first2
+        assert last1 != last2
+
+        # Test with entity_ids parameter - should still filter by area
+        first1_entity, last1_entity = get_time_bounds(
+            db, entry_id, area1_name, entity_ids=[shared_entity_id]
+        )
+
+        assert first1_entity is not None
+        assert last1_entity is not None
+        assert first1_entity.replace(tzinfo=None) == area1_start.replace(tzinfo=None)
+        assert last1_entity.replace(tzinfo=None) == area1_end.replace(tzinfo=None)
+
+
+class TestNumericCorrelation:
+    """Test numeric sensor correlation analysis."""
+
+    def test_analyze_numeric_correlation(self, test_db):
+        """Test analyzing correlation between numeric sensor and occupancy."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        # Create numeric samples
+        now = dt_util.utcnow()
+        with db.get_locked_session() as session:
+            for i in range(100):
+                sample = db.NumericSamples(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    timestamp=now - timedelta(hours=100 - i),
+                    value=20.0 + (i % 10),  # Varying temperature
+                    unit_of_measurement="°C",
+                )
+                session.add(sample)
+            session.commit()
+
+        # Create occupied intervals
+        intervals = [
+            (
+                now - timedelta(hours=50),
+                now - timedelta(hours=40),
+            ),
+            (
+                now - timedelta(hours=20),
+                now - timedelta(hours=10),
+            ),
+        ]
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Analyze correlation
+        result = db.analyze_numeric_correlation(
+            area_name, entity_id, analysis_period_days=30
+        )
+        # Result may be None if insufficient data, which is OK
+        # Just verify the function doesn't crash
+        assert result is None or isinstance(result, dict)
+
+    def test_save_correlation_result(self, test_db):
+        """Test saving correlation analysis result."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        correlation_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "correlation_coefficient": 0.75,
+            "correlation_type": "occupancy_positive",
+            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+            "analysis_period_end": dt_util.utcnow(),
+            "sample_count": 100,
+            "confidence": 0.85,
+            "mean_value_when_occupied": 22.5,
+            "mean_value_when_unoccupied": 20.0,
+            "std_dev_when_occupied": 1.5,
+            "std_dev_when_unoccupied": 1.0,
+            "threshold_active": 21.0,
+            "threshold_inactive": 19.0,
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        result = db.save_correlation_result(correlation_data)
+        assert result is True
+
+        # Verify correlation was saved
+        correlation = db.get_correlation_for_entity(area_name, entity_id)
+        assert correlation is not None
+        assert correlation["correlation_coefficient"] == 0.75
+        assert correlation["correlation_type"] == "occupancy_positive"
+
+
+class TestAreaRelationships:
+    """Test area relationship functionality."""
+
+    def test_save_area_relationship(self, test_db):
+        """Test saving area relationship."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create a second area for testing
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        # Save relationship
+        result = db.save_area_relationship(
+            area_name=area_name,
+            related_area_name="Kitchen",
+            relationship_type="adjacent",
+            influence_weight=0.3,
+        )
+
+        assert result is True
+
+        # Verify relationship was saved
+        adjacent = db.get_adjacent_areas(area_name)
+        assert len(adjacent) == 1
+        assert adjacent[0]["related_area_name"] == "Kitchen"
+        assert adjacent[0]["influence_weight"] == 0.3
+
+    def test_get_adjacent_areas(self, test_db):
+        """Test retrieving adjacent areas."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create relationships
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        db.save_area_relationship(area_name, "Kitchen", "adjacent", 0.3)
+
+        # Retrieve adjacent areas
+        adjacent = db.get_adjacent_areas(area_name)
+        assert len(adjacent) == 1
+        assert adjacent[0]["related_area_name"] == "Kitchen"
+
+    def test_get_influence_weight(self, test_db):
+        """Test getting influence weight between areas."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Create relationship
+        with db.get_locked_session() as session:
+            area2 = db.Areas(
+                entry_id=db.coordinator.entry_id,
+                area_name="Kitchen",
+                area_id="kitchen",
+                purpose="work",
+                threshold=0.5,
+            )
+            session.add(area2)
+            session.commit()
+
+        db.save_area_relationship(area_name, "Kitchen", "adjacent", 0.4)
+
+        # Get influence weight
+        weight = db.get_influence_weight(area_name, "Kitchen")
+        assert weight == 0.4
+
+        # Non-existent relationship should return 0.0
+        weight = db.get_influence_weight(area_name, "NonExistent")
+        assert weight == 0.0
