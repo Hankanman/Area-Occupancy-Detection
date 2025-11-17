@@ -6,6 +6,7 @@ separating analysis logic from state management in Prior and EntityManager class
 
 from __future__ import annotations
 
+import bisect
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -13,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy import func, union_all
 from sqlalchemy.exc import (
     DataError,
     IntegrityError,
@@ -22,17 +22,16 @@ from sqlalchemy.exc import (
     SQLAlchemyError,
 )
 
-from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
-from ..data.analysis_helpers import (
-    aggregate_intervals_by_slot,
-    apply_motion_timeout,
-    is_timestamp_occupied,
-    merge_overlapping_intervals,
+from ..db import priors as priors_db
+from ..db.aggregation import aggregate_intervals_by_slot, get_interval_aggregates
+from ..db.priors import (
+    get_occupied_intervals,
+    get_time_bounds,
+    get_total_occupied_seconds,
 )
-from ..data.entity_type import InputType
 from ..utils import clamp_probability
 
 if TYPE_CHECKING:
@@ -67,6 +66,23 @@ DAYS_PER_WEEK = 7
 # SQLite strftime('%w'): 0=Sunday, 1=Monday, ..., 6=Saturday
 # Python: 0=Monday, 1=Tuesday, ..., 6=Sunday
 SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
+
+
+def is_timestamp_occupied(
+    timestamp: datetime, occupied_intervals: list[tuple[datetime, datetime]]
+) -> bool:
+    """Check if timestamp falls within any occupied interval using binary search."""
+    if not occupied_intervals:
+        return False
+
+    idx = bisect.bisect_right([start for start, _ in occupied_intervals], timestamp)
+
+    if idx > 0:
+        start, end = occupied_intervals[idx - 1]
+        if start <= timestamp < end:
+            return True
+
+    return False
 
 
 class PriorAnalyzer:
@@ -122,14 +138,27 @@ class PriorAnalyzer:
             return DEFAULT_PRIOR
 
         # Step 1: Calculate prior from motion sensors only
-        total_occupied_seconds = self.get_total_occupied_seconds(
-            include_media=False, include_appliance=False
+        total_occupied_seconds = get_total_occupied_seconds(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            include_media=False,
+            include_appliance=False,
+            session_provider=self._session_provider,
         )
 
         lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
 
         # Get total time period from motion sensors
-        first_time, last_time = self.get_time_bounds(entity_ids)
+        first_time, last_time = get_time_bounds(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            entity_ids=entity_ids,
+            session_provider=self._session_provider,
+        )
 
         if not first_time or not last_time:
             _LOGGER.debug("No time bounds available, using default prior")
@@ -211,8 +240,19 @@ class PriorAnalyzer:
                 )
             else:
                 # Get total occupied time from all sensor types
-                all_intervals = self.get_occupied_intervals(
-                    include_media=include_media, include_appliance=include_appliance
+                all_intervals = get_occupied_intervals(
+                    db=self.db,
+                    entry_id=self.entry_id,
+                    area_name=self.area_name,
+                    lookback_days=DEFAULT_LOOKBACK_DAYS,
+                    motion_timeout_seconds=self.config.sensors.motion_timeout,
+                    include_media=include_media,
+                    include_appliance=include_appliance,
+                    media_sensor_ids=self.media_sensor_ids if include_media else None,
+                    appliance_sensor_ids=self.appliance_sensor_ids
+                    if include_appliance
+                    else None,
+                    session_provider=self._session_provider,
                 )
 
                 if not all_intervals:
@@ -272,8 +312,15 @@ class PriorAnalyzer:
             else:
                 # Motion-only, get intervals for cache
                 if all_intervals is None:
-                    all_intervals = self.get_occupied_intervals(
-                        include_media=False, include_appliance=False
+                    all_intervals = get_occupied_intervals(
+                        db=self.db,
+                        entry_id=self.entry_id,
+                        area_name=self.area_name,
+                        lookback_days=DEFAULT_LOOKBACK_DAYS,
+                        motion_timeout_seconds=self.config.sensors.motion_timeout,
+                        include_media=False,
+                        include_appliance=False,
+                        session_provider=self._session_provider,
                     )
                 interval_count = len(all_intervals) if all_intervals else 0
                 final_occupied_seconds = total_occupied_seconds
@@ -330,10 +377,25 @@ class PriorAnalyzer:
             slot_minutes = DEFAULT_SLOT_MINUTES
 
         # Get aggregated interval data
-        interval_aggregates = self.get_interval_aggregates(slot_minutes)
+        interval_aggregates = get_interval_aggregates(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            slot_minutes=slot_minutes,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            media_sensor_ids=self.media_sensor_ids,
+            appliance_sensor_ids=self.appliance_sensor_ids,
+            session_provider=self._session_provider,
+        )
 
         # Get time bounds
-        first_time, last_time = self.get_time_bounds()
+        first_time, last_time = get_time_bounds(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            session_provider=self._session_provider,
+        )
 
         if not first_time or not last_time:
             _LOGGER.warning("No time bounds available for time prior calculation")
@@ -478,453 +540,129 @@ class PriorAnalyzer:
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Unexpected error during time prior computation: %s", e)
 
-    def get_interval_aggregates(
-        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
-    ) -> list[tuple[int, int, float]]:
-        """Get aggregated interval data for time prior computation using SQL optimization.
-
-        Args:
-            slot_minutes: Time slot size in minutes
-
-        Returns:
-            List of (day_of_week, time_slot, total_occupied_seconds) tuples
-        """
-        _LOGGER.debug("Getting interval aggregates using SQL GROUP BY optimization")
-
-        # Use the new SQL-based aggregation method for much better performance
-        try:
-            start_time = dt_util.utcnow()
-            result = self.db.get_aggregated_intervals_by_slot(
-                self.entry_id, slot_minutes, self.area_name
-            )
-            query_time = (dt_util.utcnow() - start_time).total_seconds()
-            _LOGGER.debug(
-                "SQL aggregation completed in %.3f seconds, returned %d slots",
-                query_time,
-                len(result),
-            )
-        except (
-            SQLAlchemyError,
-            OperationalError,
-            DataError,
-            ProgrammingError,
-            ValueError,
-            TypeError,
-            RuntimeError,
-            OSError,
-        ) as e:
-            _LOGGER.error(
-                "SQL aggregation failed, falling back to Python method: %s", e
-            )
-            # Fallback to the original Python method if SQL fails
-            result = self._get_interval_aggregates_python(slot_minutes)
-
-        return result
-
-    def _get_interval_aggregates_python(
-        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
-    ) -> list[tuple[int, int, float]]:
-        """Fallback Python implementation for interval aggregation.
-
-        Args:
-            slot_minutes: Time slot size in minutes
-
-        Returns:
-            List of (day_of_week, time_slot, total_occupied_seconds) tuples
-        """
-        _LOGGER.debug("Using Python fallback for interval aggregation")
-
-        # Use the unified method to get occupied intervals
-        extended_intervals = self.get_occupied_intervals()
-
-        if not extended_intervals:
-            return []
-
-        # Aggregate extended intervals by time slots using helper function
-        return aggregate_intervals_by_slot(extended_intervals, slot_minutes)
-
-    def _build_base_filters(self, db: Any, lookback_date: datetime) -> list[Any]:
-        """Build base filter conditions for interval queries.
-
-        Args:
-            db: Database instance to access table definitions
-            lookback_date: Minimum start_time for intervals
-
-        Returns:
-            List of filter conditions
-        """
-        base_filters = [
-            db.Entities.entry_id == self.entry_id,
-            db.Intervals.start_time >= lookback_date,
-        ]
-        if hasattr(self, "area_name") and self.area_name is not None:
-            base_filters.append(db.Entities.area_name == self.area_name)
-        return base_filters
-
-    def _build_motion_query(
-        self, session: Any, db: Any, base_filters: list[Any]
-    ) -> Any:
-        """Build motion sensor query with sensor_type indicator.
-
-        Args:
-            session: SQLAlchemy session
-            db: Database instance to access table definitions
-            base_filters: List of base filter conditions
-
-        Returns:
-            SQLAlchemy query object
-        """
-        return (
-            session.query(
-                db.Intervals.start_time,
-                db.Intervals.end_time,
-                func.literal("motion").label("sensor_type"),
-            )
-            .join(
-                db.Entities,
-                db.Intervals.entity_id == db.Entities.entity_id,
-            )
-            .filter(
-                *base_filters,
-                db.Entities.entity_type == InputType.MOTION.value,
-                db.Intervals.state == "on",
-            )
-        )
-
-    def _build_media_query(
-        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
-    ) -> Any:
-        """Build media player query with sensor_type indicator.
-
-        Args:
-            session: SQLAlchemy session
-            db: Database instance to access table definitions
-            base_filters: List of base filter conditions
-            sensor_ids: List of media sensor entity IDs to include
-
-        Returns:
-            SQLAlchemy query object
-        """
-        return (
-            session.query(
-                db.Intervals.start_time,
-                db.Intervals.end_time,
-                func.literal("media").label("sensor_type"),
-            )
-            .join(
-                db.Entities,
-                db.Intervals.entity_id == db.Entities.entity_id,
-            )
-            .filter(
-                *base_filters,
-                db.Entities.entity_type == InputType.MEDIA.value,
-                db.Intervals.entity_id.in_(sensor_ids),
-                db.Intervals.state == STATE_PLAYING,
-            )
-        )
-
-    def _build_appliance_query(
-        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
-    ) -> Any:
-        """Build appliance query with sensor_type indicator.
-
-        Args:
-            session: SQLAlchemy session
-            db: Database instance to access table definitions
-            base_filters: List of base filter conditions
-            sensor_ids: List of appliance sensor entity IDs to include
-
-        Returns:
-            SQLAlchemy query object
-        """
-        return (
-            session.query(
-                db.Intervals.start_time,
-                db.Intervals.end_time,
-                func.literal("appliance").label("sensor_type"),
-            )
-            .join(
-                db.Entities,
-                db.Intervals.entity_id == db.Entities.entity_id,
-            )
-            .filter(
-                *base_filters,
-                db.Entities.entity_type == InputType.APPLIANCE.value,
-                db.Intervals.entity_id.in_(sensor_ids),
-                db.Intervals.state == STATE_ON,
-            )
-        )
-
-    def _execute_union_queries(
-        self, session: Any, db: Any, queries: list[Any]
-    ) -> list[tuple[datetime, datetime, str]]:
-        """Execute a list of queries using UNION ALL or single query.
-
-        Args:
-            session: SQLAlchemy session
-            db: Database instance to access table definitions
-            queries: List of SQLAlchemy query objects
-
-        Returns:
-            List of (start_time, end_time, sensor_type) tuples
-        """
-        if len(queries) == 1:
-            combined_query = queries[0].order_by(db.Intervals.start_time)
-            all_results = combined_query.all()
-        else:
-            # Create union of all subqueries
-            union_query = union_all(*[q.subquery() for q in queries])
-            # Query the union result
-            combined_query = session.query(
-                union_query.c.start_time,
-                union_query.c.end_time,
-                union_query.c.sensor_type,
-            ).order_by(union_query.c.start_time)
-            all_results = combined_query.all()
-
-        return all_results
-
-    def _process_query_results(
-        self, results: list[tuple[datetime, datetime, str]]
-    ) -> tuple[
-        list[tuple[datetime, datetime]], list[tuple[datetime, datetime]], int, int
-    ]:
-        """Process query results and separate by sensor type.
-
-        Args:
-            results: List of (start_time, end_time, sensor_type) tuples
-
-        Returns:
-            Tuple of (all_intervals, motion_intervals, media_count, appliance_count)
-        """
-        motion_raw: list[tuple[datetime, datetime]] = []
-        all_intervals: list[tuple[datetime, datetime]] = []
-        media_count = 0
-        appliance_count = 0
-
-        for start, end, sensor_type in results:
-            interval = (start, end)
-            all_intervals.append(interval)
-            if sensor_type == "motion":
-                motion_raw.append(interval)
-            elif sensor_type == "media":
-                media_count += 1
-            elif sensor_type == "appliance":
-                appliance_count += 1
-
-        return (all_intervals, motion_raw, media_count, appliance_count)
-
-    def get_time_bounds(
-        self, entity_ids: list[str] | None = None, session: Any | None = None
-    ) -> tuple[datetime | None, datetime | None]:
-        """Get time bounds for specific entities or a specific area.
-
-        Args:
-            entity_ids: List of entity IDs to get bounds for. If None, uses all entities for the area.
-            session: Optional database session. If None, creates a new session.
-
-        Returns:
-            Tuple of (first_time, last_time) or (None, None) if no data
-        """
-        _LOGGER.debug("Getting time bounds")
-
-        try:
-            if session is not None:
-                # Use provided session (don't use context manager)
-                return self._get_time_bounds_from_session(session, self.db, entity_ids)
-
-            # Create new session
-            with self._session_provider() as new_session:
-                return self._get_time_bounds_from_session(
-                    new_session, self.db, entity_ids
-                )
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error in get_time_bounds: %s", e)
-            return (None, None)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error in get_time_bounds: %s", e)
-            return (None, None)
-
-    def _get_time_bounds_from_session(
-        self, session: Any, db: Any, entity_ids: list[str] | None = None
-    ) -> tuple[datetime | None, datetime | None]:
-        """Get time bounds using an existing session."""
-        try:
-            query = session.query(
-                func.min(db.Intervals.start_time).label("first"),
-                func.max(db.Intervals.end_time).label("last"),
-            )
-
-            if entity_ids is not None:
-                # Filter by specific entity IDs
-                query = query.filter(db.Intervals.entity_id.in_(entity_ids))
-            else:
-                # Filter by area entry_id and area_name
-                query = query.join(
-                    db.Entities,
-                    db.Intervals.entity_id == db.Entities.entity_id,
-                ).filter(
-                    db.Entities.entry_id == self.entry_id,
-                    db.Entities.area_name == self.area_name,
-                )
-
-            time_bounds = query.first()
-        except OperationalError as e:
-            _LOGGER.error("Database connection error getting time bounds: %s", e)
-            return (None, None)
-        except DataError as e:
-            _LOGGER.error("Database data error getting time bounds: %s", e)
-            return (None, None)
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error getting time bounds: %s", e)
-            return (None, None)
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error getting time bounds: %s", e)
-            return (None, None)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error getting time bounds: %s", e)
-            return (None, None)
-        else:
-            return (
-                (time_bounds.first, time_bounds.last) if time_bounds else (None, None)
-            )
-
     def get_total_occupied_seconds(
         self, include_media: bool = False, include_appliance: bool = False
     ) -> float:
-        """Get total occupied seconds using SQL optimization with Python fallback.
-
-        Args:
-            include_media: If True, include media player intervals (playing state only)
-            include_appliance: If True, include appliance intervals (on state only)
-
-        Returns:
-            Total occupied seconds from motion sensors (and optionally media/appliance)
-        """
-        _LOGGER.debug(
-            "Getting total occupied seconds (media: %s, appliance: %s)",
-            include_media,
-            include_appliance,
+        """Thin wrapper over database helper for backwards compatibility."""
+        return get_total_occupied_seconds(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            include_media=include_media,
+            include_appliance=include_appliance,
+            media_sensor_ids=self.media_sensor_ids if include_media else None,
+            appliance_sensor_ids=self.appliance_sensor_ids
+            if include_appliance
+            else None,
+            session_provider=self._session_provider,
         )
-
-        # Try SQL method first only when safe (no timeout/media/appliance)
-        try:
-            timeout_seconds = self.config.sensors.motion_timeout
-            if timeout_seconds == 0 and not include_media and not include_appliance:
-                total_seconds = self.db.get_total_occupied_seconds_sql(
-                    entry_id=self.entry_id,
-                    area_name=self.area_name,
-                    lookback_days=DEFAULT_LOOKBACK_DAYS,
-                    motion_timeout_seconds=0,
-                    include_media=False,
-                    include_appliance=False,
-                    media_sensor_ids=None,
-                    appliance_sensor_ids=None,
-                )
-                if total_seconds > 0:
-                    _LOGGER.debug("Total occupied seconds (SQL): %.1f", total_seconds)
-                    return total_seconds
-        except (SQLAlchemyError, AttributeError, TypeError) as e:
-            _LOGGER.debug(
-                "SQL method failed, falling back to Python: %s", e, exc_info=True
-            )
-
-        # Fallback to Python method for complex cases or if SQL fails
-        _LOGGER.debug("Using Python method for total occupied seconds")
-        occupied_intervals = self.get_occupied_intervals(
-            include_media=include_media, include_appliance=include_appliance
-        )
-
-        if not occupied_intervals:
-            return DEFAULT_OCCUPIED_SECONDS
-
-        # Calculate total duration from occupied intervals
-        total_seconds = 0.0
-        for start_time, end_time in occupied_intervals:
-            duration = (end_time - start_time).total_seconds()
-            total_seconds += duration
-
-        _LOGGER.debug("Total occupied seconds (Python): %.1f", total_seconds)
-        return total_seconds
 
     def get_occupied_intervals(
         self,
         lookback_days: int = DEFAULT_LOOKBACK_DAYS,
         include_media: bool = False,
         include_appliance: bool = False,
-        session: Any | None = None,
     ) -> list[tuple[datetime, datetime]]:
-        """Get occupied time intervals from motion sensors using unified logic.
-
-        This method provides a single source of truth for determining occupancy
-        intervals that can be used by both prior and likelihood calculations.
-
-        Args:
-            lookback_days: Number of days to look back for interval data (default: 90)
-            include_media: If True, include media player intervals (playing state only)
-            include_appliance: If True, include appliance intervals (on state only)
-            session: Optional database session. If None, creates a new session.
-
-        Returns:
-            List of (start_time, end_time) tuples representing occupied periods
-        """
-        _LOGGER.debug(
-            "Getting occupied intervals with unified logic (lookback: %d days, media: %s, appliance: %s)",
-            lookback_days,
-            include_media,
-            include_appliance,
+        """Thin wrapper over database helper for backwards compatibility."""
+        return get_occupied_intervals(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            lookback_days=lookback_days,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            include_media=include_media,
+            include_appliance=include_appliance,
+            media_sensor_ids=self.media_sensor_ids if include_media else None,
+            appliance_sensor_ids=self.appliance_sensor_ids
+            if include_appliance
+            else None,
+            session_provider=self._session_provider,
         )
 
-        # Calculate lookback date
-        now = dt_util.utcnow()
-        lookback_date = now - timedelta(days=lookback_days)
+    def get_time_bounds(
+        self, entity_ids: list[str] | None = None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Thin wrapper over database helper for backwards compatibility."""
+        return get_time_bounds(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            entity_ids=entity_ids,
+            session_provider=self._session_provider,
+        )
 
-        # Try to use cached intervals first (only if not including media/appliance)
-        # Cache is only valid for motion-only intervals
-        if not include_media and not include_appliance:
-            if self.db.is_occupied_intervals_cache_valid(
-                self.area_name, max_age_hours=24
-            ):
-                cached_intervals = self.db.get_occupied_intervals_cache(
-                    self.area_name, period_start=lookback_date, period_end=now
-                )
-                if cached_intervals:
-                    _LOGGER.debug(
-                        "Using cached occupied intervals: %d intervals",
-                        len(cached_intervals),
-                    )
-                    return cached_intervals
+    def get_interval_aggregates(
+        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
+    ) -> list[tuple[int, int, float]]:
+        """Thin wrapper over database helper for backwards compatibility."""
+        return get_interval_aggregates(
+            db=self.db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            slot_minutes=slot_minutes,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            media_sensor_ids=self.media_sensor_ids,
+            appliance_sensor_ids=self.appliance_sensor_ids,
+            session_provider=self._session_provider,
+        )
 
-        # Cache not available or stale, calculate from raw intervals
-        try:
-            start_time = dt_util.utcnow()
-            if session is not None:
-                # Use provided session (don't use context manager)
-                return self._get_occupied_intervals_from_session(
-                    session,
-                    self.db,
-                    lookback_date,
-                    include_media,
-                    include_appliance,
-                    start_time,
-                )
-
-            # Create new session
-            with self._session_provider() as new_session:
-                return self._get_occupied_intervals_from_session(
-                    new_session,
-                    self.db,
-                    lookback_date,
-                    include_media,
-                    include_appliance,
-                    start_time,
-                )
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error in get_occupied_intervals: %s", e)
+    def _get_interval_aggregates_python(
+        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
+    ) -> list[tuple[int, int, float]]:
+        """Legacy Python aggregation fallback retained for tests."""
+        intervals = self.get_occupied_intervals()
+        if not intervals:
             return []
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error in get_occupied_intervals: %s", e)
-            return []
+        return aggregate_intervals_by_slot(intervals, slot_minutes)
+
+    def _build_base_filters(self, db: Any, lookback_date: datetime) -> list[Any]:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.build_base_filters(
+            db, self.entry_id, lookback_date, self.area_name
+        )
+
+    def _build_motion_query(
+        self, session: Any, db: Any, base_filters: list[Any]
+    ) -> Any:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.build_motion_query(session, db, base_filters)
+
+    def _build_media_query(
+        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
+    ) -> Any:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.build_media_query(session, db, base_filters, sensor_ids)
+
+    def _build_appliance_query(
+        self, session: Any, db: Any, base_filters: list[Any], sensor_ids: list[str]
+    ) -> Any:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.build_appliance_query(session, db, base_filters, sensor_ids)
+
+    def _execute_union_queries(
+        self, session: Any, db: Any, queries: list[Any]
+    ) -> list[tuple[datetime, datetime, str]]:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.execute_union_queries(session, db, queries)
+
+    def _process_query_results(
+        self, results: list[tuple[datetime, datetime, str]]
+    ) -> tuple[
+        list[tuple[datetime, datetime]], list[tuple[datetime, datetime]], int, int
+    ]:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.process_query_results(results)
+
+    def _get_time_bounds_from_session(
+        self, session: Any, db: Any, entity_ids: list[str] | None = None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Legacy wrapper for test compatibility."""
+        return priors_db.get_time_bounds_from_session(
+            session, db, self.entry_id, self.area_name, entity_ids
+        )
 
     def _get_occupied_intervals_from_session(
         self,
@@ -935,82 +673,22 @@ class PriorAnalyzer:
         include_appliance: bool,
         start_time: datetime,
     ) -> list[tuple[datetime, datetime]]:
-        """Get occupied intervals using an existing session."""
-        try:
-            # Build base filter conditions
-            base_filters = self._build_base_filters(db, lookback_date)
-
-            # Build motion sensor query
-            motion_query = self._build_motion_query(session, db, base_filters)
-
-            # Build queries list starting with motion
-            queries = [motion_query]
-
-            # Add media player query if requested
-            if include_media and self.media_sensor_ids:
-                media_query = self._build_media_query(
-                    session, db, base_filters, self.media_sensor_ids
-                )
-                queries.append(media_query)
-
-            # Add appliance query if requested
-            if include_appliance and self.appliance_sensor_ids:
-                appliance_query = self._build_appliance_query(
-                    session, db, base_filters, self.appliance_sensor_ids
-                )
-                queries.append(appliance_query)
-
-            # Execute queries using UNION ALL
-            all_results = self._execute_union_queries(session, db, queries)
-
-            # Process results and separate by sensor type
-            all_intervals, motion_raw, media_count, appliance_count = (
-                self._process_query_results(all_results)
-            )
-
-            query_time = (dt_util.utcnow() - start_time).total_seconds()
-            _LOGGER.debug(
-                "Query executed in %.3f seconds, found %d total intervals (motion: %d, media: %d, appliance: %d)",
-                query_time,
-                len(all_intervals),
-                len(motion_raw),
-                media_count,
-                appliance_count,
-            )
-
-            if not all_intervals:
-                _LOGGER.debug("No intervals found for occupancy calculation")
-                return []
-
-            # Merge overlapping intervals using helper function
-            merged_intervals = merge_overlapping_intervals(all_intervals)
-
-            # Apply motion timeout only to motion sensor intervals
-            # For media/appliances, we use the raw intervals directly
-            # We need to split merged intervals at motion boundaries to avoid
-            # incorrectly applying timeout to media/appliance portions
-            timeout_seconds = self.config.sensors.motion_timeout
-            extended_intervals = apply_motion_timeout(
-                merged_intervals, motion_raw, timeout_seconds
-            )
-
-            processing_time = (dt_util.utcnow() - start_time).total_seconds()
-
-            _LOGGER.debug(
-                "Unified occupancy calculation: %d raw intervals -> %d merged intervals (processing: %.3fs)",
-                len(all_intervals),
-                len(extended_intervals),
-                processing_time,
-            )
-
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error getting occupied intervals: %s", e)
-            return []
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error getting occupied intervals: %s", e)
-            return []
-        else:
-            return extended_intervals
+        """Legacy wrapper for test compatibility."""
+        return priors_db.get_occupied_intervals_from_session(
+            session=session,
+            db=db,
+            entry_id=self.entry_id,
+            area_name=self.area_name,
+            lookback_date=lookback_date,
+            motion_timeout_seconds=self.config.sensors.motion_timeout,
+            include_media=include_media,
+            include_appliance=include_appliance,
+            media_sensor_ids=self.media_sensor_ids if include_media else None,
+            appliance_sensor_ids=self.appliance_sensor_ids
+            if include_appliance
+            else None,
+            start_time=start_time,
+        )
 
 
 class LikelihoodAnalyzer:

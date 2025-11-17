@@ -6,11 +6,19 @@ aggregates, and implements retention policies to prevent database bloat.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import (
+    DataError,
+    OperationalError,
+    ProgrammingError,
+    SQLAlchemyError,
+)
 
 from homeassistant.util import dt as dt_util
 
@@ -25,11 +33,116 @@ from ..const import (
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
     RETENTION_WEEKLY_AGGREGATES_DAYS,
 )
+from .priors import get_occupied_intervals
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
+
+MINUTES_PER_HOUR = 60
+HOURS_PER_DAY = 24
+MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR
+
+
+def calculate_time_slot(timestamp: datetime, slot_minutes: int) -> int:
+    """Calculate the time slot number for a given timestamp."""
+    hour = timestamp.hour
+    minute = timestamp.minute
+    return (hour * MINUTES_PER_HOUR + minute) // slot_minutes
+
+
+def aggregate_intervals_by_slot(
+    intervals: list[tuple[datetime, datetime]],
+    slot_minutes: int,
+) -> list[tuple[int, int, float]]:
+    """Aggregate time intervals by day of week and time slot."""
+    slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
+
+    for start_time, end_time in intervals:
+        current_time = start_time
+        while current_time < end_time:
+            day_of_week = current_time.weekday()
+            slot = calculate_time_slot(current_time, slot_minutes)
+
+            day_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            slot_start = day_start + timedelta(minutes=slot * slot_minutes)
+            slot_end = slot_start + timedelta(minutes=slot_minutes)
+
+            overlap_start = max(current_time, slot_start)
+            overlap_end = min(end_time, slot_end)
+            overlap_duration = (overlap_end - overlap_start).total_seconds()
+
+            if overlap_duration > 0:
+                slot_seconds[(day_of_week, slot)] += overlap_duration
+
+            current_time = slot_end
+
+    result = []
+    for (day, slot), seconds in slot_seconds.items():
+        result.append((day, slot, seconds))
+
+    return result
+
+
+def get_interval_aggregates(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    slot_minutes: int,
+    lookback_days: int,
+    motion_timeout_seconds: int,
+    media_sensor_ids: list[str] | None,
+    appliance_sensor_ids: list[str] | None,
+    session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
+) -> list[tuple[int, int, float]]:
+    """Fetch interval aggregates via SQL with Python fallback."""
+    session_provider = session_provider or db.get_session
+    try:
+        start_time = dt_util.utcnow()
+        result = db.get_aggregated_intervals_by_slot(
+            entry_id=entry_id,
+            slot_minutes=slot_minutes,
+            area_name=area_name,
+        )
+        query_time = (dt_util.utcnow() - start_time).total_seconds()
+        _LOGGER.debug(
+            "SQL aggregation completed in %.3fs for %s (slots=%d)",
+            query_time,
+            area_name,
+            len(result),
+        )
+    except (
+        SQLAlchemyError,
+        OperationalError,
+        DataError,
+        ProgrammingError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error(
+            "SQL aggregation failed for %s, falling back to Python: %s",
+            area_name,
+            e,
+        )
+    else:
+        return result
+
+    intervals = get_occupied_intervals(
+        db=db,
+        entry_id=entry_id,
+        area_name=area_name,
+        lookback_days=lookback_days,
+        motion_timeout_seconds=motion_timeout_seconds,
+        include_media=bool(media_sensor_ids),
+        include_appliance=bool(appliance_sensor_ids),
+        media_sensor_ids=media_sensor_ids,
+        appliance_sensor_ids=appliance_sensor_ids,
+        session_provider=session_provider,
+    )
+    return aggregate_intervals_by_slot(intervals, slot_minutes)
 
 
 def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) -> int:
