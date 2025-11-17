@@ -102,23 +102,34 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
     Returns:
         Number of intervals deleted
     """
-    # Skip if pruned recently (within last hour) unless forced
-    if not force:
-        last_prune = maintenance.get_last_prune_time(db)
-        if last_prune:
-            time_since_prune = (dt_util.utcnow() - last_prune).total_seconds()
-            if time_since_prune < 3600:  # 1 hour
-                _LOGGER.debug(
-                    "Skipping prune - last run was %d minutes ago",
-                    int(time_since_prune / 60),
-                )
-                return 0
-
     cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
     _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
 
     try:
-        with db.get_session() as session:
+        with db.get_locked_session() as session:
+            # Re-check last_prune inside locked session to prevent concurrent bypass
+            # This ensures the throttle cannot be bypassed by concurrent instances
+            if not force:
+                result = (
+                    session.query(db.Metadata).filter_by(key="last_prune_time").first()
+                )
+                if result:
+                    try:
+                        last_prune = datetime.fromisoformat(result.value)
+                        time_since_prune = (
+                            dt_util.utcnow() - last_prune
+                        ).total_seconds()
+                        if time_since_prune < 3600:  # 1 hour
+                            _LOGGER.debug(
+                                "Skipping prune - last run was %d minutes ago",
+                                int(time_since_prune / 60),
+                            )
+                            return 0
+                    except (ValueError, AttributeError) as e:
+                        _LOGGER.debug(
+                            "Failed to parse last prune time, proceeding: %s", e
+                        )
+
             # Count intervals to be deleted for logging
             count_query = session.query(func.count(db.Intervals.id)).filter(
                 db.Intervals.start_time < cutoff_date
