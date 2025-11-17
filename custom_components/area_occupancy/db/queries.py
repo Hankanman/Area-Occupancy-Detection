@@ -8,12 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy import func
-from sqlalchemy.exc import (
-    DataError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.exceptions import HomeAssistantError
@@ -37,7 +32,7 @@ def get_area_data(db: AreaOccupancyDB, entry_id: str) -> dict[str, Any] | None:
             if area:
                 return dict(area.to_dict())
             return None
-    except sa.exc.SQLAlchemyError as e:
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Failed to get area data: %s", e)
         return None
 
@@ -69,7 +64,15 @@ async def ensure_area_exists(db: AreaOccupancyDB) -> None:
                 "Failed to create area for entry_id: %s", db.coordinator.entry_id
             )
 
-    except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+    except (
+        SQLAlchemyError,
+        HomeAssistantError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
         _LOGGER.error("Error ensuring area exists: %s", e)
 
 
@@ -83,7 +86,14 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
             if result:
                 return result - timedelta(hours=1)
             return dt_util.now() - timedelta(days=10)
-    except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
         # If table doesn't exist or any other error, return a default time
         if "no such table" in str(e).lower():
             _LOGGER.debug("Intervals table doesn't exist yet, using default time")
@@ -162,20 +172,8 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
 
             return deleted_count
 
-    except OperationalError as e:
-        _LOGGER.error("Database connection error during interval pruning: %s", e)
-        return 0
-    except DataError as e:
-        _LOGGER.error("Database data error during interval pruning: %s", e)
-        return 0
-    except ProgrammingError as e:
-        _LOGGER.error("Database query error during interval pruning: %s", e)
-        return 0
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error during interval pruning: %s", e)
-        return 0
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error during interval pruning: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error during interval pruning: %s", e)
         return 0
 
 
@@ -271,20 +269,8 @@ def get_aggregated_intervals_by_slot(
             )
             return converted_results
 
-    except OperationalError as e:
-        _LOGGER.error("Database connection error during interval aggregation: %s", e)
-        return []
-    except DataError as e:
-        _LOGGER.error("Database data error during interval aggregation: %s", e)
-        return []
-    except ProgrammingError as e:
-        _LOGGER.error("Database query error during interval aggregation: %s", e)
-        return []
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error during interval aggregation: %s", e)
-        return []
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error during interval aggregation: %s", e)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error during interval aggregation: %s", e)
         return []
 
 
@@ -414,20 +400,13 @@ def get_total_occupied_seconds_sql(
             )
             return total_seconds
 
-    except OperationalError as e:
-        _LOGGER.error(
-            "Database connection error during total seconds calculation: %s", e
-        )
-        return None
-    except DataError as e:
-        _LOGGER.error("Database data error during total seconds calculation: %s", e)
-        return None
-    except ProgrammingError as e:
-        _LOGGER.error("Database query error during total seconds calculation: %s", e)
-        return None
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error during total seconds calculation: %s", e)
-        return None
-    except (ValueError, TypeError, RuntimeError, OSError, ImportError) as e:
-        _LOGGER.error("Unexpected error during total seconds calculation: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        ImportError,
+    ) as e:
+        _LOGGER.error("Error during total seconds calculation: %s", e)
         return None

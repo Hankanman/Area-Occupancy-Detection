@@ -264,11 +264,14 @@ def analyze_numeric_correlation(
 
             return result
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error during correlation analysis: %s", e)
-        return None
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error during correlation analysis: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error during correlation analysis: %s", e)
         return None
 
 
@@ -333,13 +336,14 @@ def save_correlation_result(
             _LOGGER.debug("Correlation result saved successfully")
             return True
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error saving correlation result: %s", e)
-        if session is not None:
-            session.rollback()
-        return False
-    except (ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Unexpected error saving correlation result: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error saving correlation result: %s", e)
         if session is not None:
             session.rollback()
         return False
@@ -380,7 +384,13 @@ def _prune_old_correlations(
                 entity_id,
             )
 
-    except (SQLAlchemyError, ValueError, TypeError, RuntimeError) as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.warning("Error pruning old correlations: %s", e)
         # Don't raise - this is cleanup, not critical
 
@@ -453,6 +463,12 @@ def get_correlation_for_entity(
 
             return None
 
-    except SQLAlchemyError as e:
-        _LOGGER.error("Database error getting correlation: %s", e)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting correlation: %s", e)
         return None

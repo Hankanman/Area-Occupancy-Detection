@@ -26,7 +26,13 @@ def is_intervals_empty(db: Any) -> bool:
         with db.get_session() as session:
             count = session.query(db.Intervals).count()
             return bool(count == 0)
-    except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+    except (
+        sa.exc.SQLAlchemyError,
+        HomeAssistantError,
+        TimeoutError,
+        OSError,
+        RuntimeError,
+    ) as e:
         # If table doesn't exist, it's considered empty
         if "no such table" in str(e).lower():
             _LOGGER.debug("Intervals table doesn't exist yet, considering empty")
@@ -49,7 +55,13 @@ def safe_is_intervals_empty(db: Any) -> bool:
         # Quick check - assume database is healthy during startup
         # Integrity checks will be performed by background health check task
         return is_intervals_empty(db)
-    except (sa.exc.SQLAlchemyError, HomeAssistantError, TimeoutError, OSError) as e:
+    except (
+        sa.exc.SQLAlchemyError,
+        HomeAssistantError,
+        TimeoutError,
+        OSError,
+        RuntimeError,
+    ) as e:
         # If we hit a corruption error, log it but don't block startup
         if maintenance.is_database_corrupted(db, e):
             _LOGGER.warning(
@@ -58,7 +70,7 @@ def safe_is_intervals_empty(db: Any) -> bool:
                 e,
             )
         else:
-            _LOGGER.error("Unexpected error checking intervals: %s", e)
+            _LOGGER.error("Error checking intervals: %s", e)
 
         # Assume empty to trigger data population, but don't block startup
         return True

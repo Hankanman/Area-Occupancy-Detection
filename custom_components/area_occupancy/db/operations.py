@@ -284,7 +284,13 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                     db.last_area_save_ts = 0.0
                     raise
                 time.sleep(delay)
-    except Exception as err:
+    except (
+        sa.exc.SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as err:
         _LOGGER.error("Failed to save area data: %s", err)
         raise
 
@@ -426,10 +432,17 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             HomeAssistantError,
             TimeoutError,
             OSError,
+            RuntimeError,
         ) as cleanup_err:
             _LOGGER.error("Failed to cleanup orphaned entities: %s", cleanup_err)
 
-    except Exception as err:
+    except (
+        sa.exc.SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as err:
         _LOGGER.error("Failed to save entity data: %s", err)
         raise
 

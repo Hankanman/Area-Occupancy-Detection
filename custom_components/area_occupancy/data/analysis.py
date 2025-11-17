@@ -14,13 +14,7 @@ from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy.exc import (
-    DataError,
-    IntegrityError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.util import dt as dt_util
 
@@ -522,22 +516,14 @@ class PriorAnalyzer:
                     days,
                     slots_per_day,
                 )
-        except OperationalError as e:
-            _LOGGER.error(
-                "Database connection error during time prior computation: %s", e
-            )
-        except DataError as e:
-            _LOGGER.error("Database data error during time prior computation: %s", e)
-        except IntegrityError as e:
-            _LOGGER.error(
-                "Database integrity error during time prior computation: %s", e
-            )
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error during time prior computation: %s", e)
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error during time prior computation: %s", e)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error during time prior computation: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error during time prior computation: %s", e)
 
     def get_total_occupied_seconds(
         self, include_media: bool = False, include_appliance: bool = False
@@ -669,11 +655,14 @@ class LikelihoodAnalyzer:
                 return self._analyze_likelihoods_from_session(
                     new_session, occupied_times, entity_manager
                 )
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error in analyze_likelihoods: %s", e)
-            return {}
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error in analyze_likelihoods: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error in analyze_likelihoods: %s", e)
             return {}
 
     def _analyze_likelihoods_from_session(
@@ -699,10 +688,14 @@ class LikelihoodAnalyzer:
                 likelihoods[entity_id] = (prob_given_true, prob_given_false)
 
             _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error analyzing likelihoods: %s", e)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error analyzing likelihoods: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error analyzing likelihoods: %s", e)
 
         return likelihoods
 
@@ -913,14 +906,15 @@ async def start_prior_analysis(
 
         _LOGGER.debug("Prior analysis completed successfully for area: %s", area_name)
 
-    except (ValueError, TypeError, ZeroDivisionError):
-        _LOGGER.exception("Prior calculation failed due to data error")
-        raise
-    except SQLAlchemyError:
-        _LOGGER.exception("Prior calculation failed due to database error")
-        raise
-    except Exception:
-        _LOGGER.exception("Prior calculation failed due to unexpected error")
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        ZeroDivisionError,
+        RuntimeError,
+        OSError,
+    ):
+        _LOGGER.exception("Prior calculation failed")
         raise
 
 
@@ -1005,12 +999,13 @@ async def start_likelihood_analysis(
             area_name,
         )
 
-    except (ValueError, TypeError, ZeroDivisionError):
-        _LOGGER.exception("Likelihood calculation failed due to data error")
-        raise
-    except SQLAlchemyError:
-        _LOGGER.exception("Likelihood calculation failed due to database error")
-        raise
-    except Exception:
-        _LOGGER.exception("Likelihood calculation failed due to unexpected error")
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        ZeroDivisionError,
+        RuntimeError,
+        OSError,
+    ):
+        _LOGGER.exception("Likelihood calculation failed")
         raise
