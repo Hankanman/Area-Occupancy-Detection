@@ -293,7 +293,7 @@ class AreaOccupancyDB:
         include_appliance: bool = False,
         media_sensor_ids: list[str] | None = None,
         appliance_sensor_ids: list[str] | None = None,
-    ) -> float:
+    ) -> float | None:
         """Get total occupied seconds using SQL aggregation for better performance."""
         return queries.get_total_occupied_seconds_sql(
             self,

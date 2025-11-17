@@ -284,7 +284,7 @@ def get_total_occupied_seconds_sql(
     include_appliance: bool = False,
     media_sensor_ids: list[str] | None = None,
     appliance_sensor_ids: list[str] | None = None,
-) -> float:
+) -> float | None:
     """Get total occupied seconds using SQL aggregation for better performance.
 
     This is a simplified SQL version that calculates the sum directly in the database.
@@ -302,7 +302,7 @@ def get_total_occupied_seconds_sql(
         appliance_sensor_ids: List of appliance sensor entity IDs to include
 
     Returns:
-        Total occupied seconds as float
+        Total occupied seconds as float, or None if an error occurred
 
     """
     cutoff_date = dt_util.utcnow() - timedelta(days=lookback_days)
@@ -395,16 +395,16 @@ def get_total_occupied_seconds_sql(
         _LOGGER.error(
             "Database connection error during total seconds calculation: %s", e
         )
-        return 0.0
+        return None
     except DataError as e:
         _LOGGER.error("Database data error during total seconds calculation: %s", e)
-        return 0.0
+        return None
     except ProgrammingError as e:
         _LOGGER.error("Database query error during total seconds calculation: %s", e)
-        return 0.0
+        return None
     except SQLAlchemyError as e:
         _LOGGER.error("Database error during total seconds calculation: %s", e)
-        return 0.0
+        return None
     except (ValueError, TypeError, RuntimeError, OSError, ImportError) as e:
         _LOGGER.error("Unexpected error during total seconds calculation: %s", e)
-        return 0.0
+        return None

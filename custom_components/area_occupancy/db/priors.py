@@ -348,7 +348,12 @@ def get_total_occupied_seconds(
                 media_sensor_ids=None,
                 appliance_sensor_ids=None,
             )
-            if total_seconds > 0:
+            if total_seconds is None:
+                _LOGGER.debug(
+                    "SQL method returned None (error occurred) for total occupied seconds, falling back to Python interval logic for %s",
+                    area_name,
+                )
+            elif total_seconds >= 0:
                 _LOGGER.debug(
                     "Total occupied seconds (SQL) for %s: %.1f",
                     area_name,
@@ -357,7 +362,7 @@ def get_total_occupied_seconds(
                 return float(total_seconds)
     except (SQLAlchemyError, AttributeError, TypeError) as e:
         _LOGGER.debug(
-            "SQL method failed for total occupied seconds, falling back to Python: %s",
+            "SQL method failed with exception for total occupied seconds, falling back to Python: %s",
             e,
             exc_info=True,
         )
