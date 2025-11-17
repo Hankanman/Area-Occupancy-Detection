@@ -199,12 +199,12 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                                     area_data = db.coordinator.get_area_or_default(
                                         area_name_candidate
                                     )
-                                try:
-                                    area_data.entities.get_entity(entity_id)
-                                    area_name = area_name_candidate
-                                    break
-                                except ValueError:
-                                    continue
+                                    try:
+                                        area_data.entities.get_entity(entity_id)
+                                        area_name = area_name_candidate
+                                        break
+                                    except ValueError:
+                                        continue
 
                                 if area_name:
                                     interval_data["entry_id"] = db.coordinator.entry_id
