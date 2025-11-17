@@ -27,7 +27,6 @@ Stores area configuration and metadata.
 | `area_id` | String | Home Assistant area ID |
 | `purpose` | String | Area purpose (e.g., "social", "work", "sleep") |
 | `threshold` | Float | Occupancy probability threshold (0.0-1.0) |
-| `area_prior` | Float | Base prior probability for the area |
 | `adjacent_areas` | JSON | Array of adjacent area names |
 | `created_at` | DateTime | Creation timestamp |
 | `updated_at` | DateTime | Last update timestamp |
@@ -183,7 +182,7 @@ Stores precomputed occupied intervals for fast prior calculations.
 
 ### `global_priors`
 
-Stores global prior values with calculation metadata and history.
+Stores global prior values with calculation metadata and history. **This is the only source of truth for global priors** - the `areas` table no longer contains an `area_prior` field.
 
 | Column | Type | Description |
 |--------|------|-------------|

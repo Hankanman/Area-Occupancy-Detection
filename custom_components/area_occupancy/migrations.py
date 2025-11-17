@@ -24,31 +24,13 @@ from homeassistant.helpers import (
 
 from .binary_sensor import NAME_BINARY_SENSOR
 from .const import (
-    CONF_APPLIANCE_ACTIVE_STATES,
     CONF_AREA_ID,
     CONF_AREAS,
-    CONF_DECAY_HALF_LIFE,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_MOTION_SENSORS,
-    CONF_MOTION_TIMEOUT,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
-    CONF_PURPOSE,
-    CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
-    CONF_WINDOW_ACTIVE_STATE,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_DECAY_HALF_LIFE,
-    DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_MOTION_TIMEOUT,
     DEFAULT_NAME,
-    DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
-    DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
-    PLATFORMS,
 )
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
@@ -217,12 +199,6 @@ def _update_entity_unique_id(
 # Configuration Migration Constants and Helpers
 # ============================================================================
 
-DECAY_MIN_DELAY_KEY = "decay_min_delay"
-CONF_LIGHTS_KEY = "lights"
-CONF_DECAY_WINDOW_KEY = "decay_window"
-CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
-CONF_HISTORY_PERIOD = "history_period"
-
 
 # Configuration Migration Helper Functions
 # ==========================================
@@ -266,225 +242,6 @@ def _safe_database_operation(operation: Callable[[], Any], error_message: str) -
         return True
 
 
-def _remove_deprecated_keys(
-    config: dict[str, Any], keys: list[str], description: str = ""
-) -> dict[str, Any]:
-    """Remove deprecated keys from config.
-
-    Args:
-        config: The configuration dictionary to modify
-        keys: List of keys to remove
-        description: Optional description for logging (if empty, uses key names)
-
-    Returns:
-        The modified configuration dictionary
-    """
-    removed_keys = []
-    for key in keys:
-        if key in config:
-            config.pop(key)
-            removed_keys.append(key)
-            log_description = description or f"deprecated {key}"
-            _LOGGER.debug("Removed %s from config", log_description)
-    return config
-
-
-# Configuration Migration Functions
-# ==========================================
-
-
-def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay delay option from config."""
-    return _remove_deprecated_keys(
-        config, [DECAY_MIN_DELAY_KEY], "deprecated decay_min_delay"
-    )
-
-
-def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated lights key from config."""
-    return _remove_deprecated_keys(config, [CONF_LIGHTS_KEY], "deprecated lights key")
-
-
-def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay window key from config."""
-    return _remove_deprecated_keys(
-        config, [CONF_DECAY_WINDOW_KEY], "deprecated decay window key"
-    )
-
-
-def remove_history_keys(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated history period key from config."""
-    return _remove_deprecated_keys(
-        config,
-        [CONF_HISTORY_PERIOD, CONF_HISTORICAL_ANALYSIS_ENABLED],
-        "deprecated history keys",
-    )
-
-
-def _add_default_if_missing(
-    config: dict[str, Any],
-    key: str,
-    default_value: Any,
-    log_message: str | None = None,
-) -> dict[str, Any]:
-    """Add a default value to config if key is missing.
-
-    Args:
-        config: The configuration dictionary to modify
-        key: The configuration key to check/add
-        default_value: The default value to use if key is missing
-        log_message: Optional custom log message (if None, uses default format)
-
-    Returns:
-        The modified configuration dictionary
-    """
-    if key not in config:
-        config[key] = default_value
-        if log_message:
-            _LOGGER.debug(log_message)
-        else:
-            _LOGGER.debug(
-                "Added %s to config with default value: %s", key, default_value
-            )
-    return config
-
-
-def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add decay half life."""
-    return _add_default_if_missing(
-        config,
-        CONF_DECAY_HALF_LIFE,
-        DEFAULT_DECAY_HALF_LIFE,
-        "Added decay half life to config",
-    )
-
-
-def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add primary occupancy sensor.
-
-    This migration:
-    1. Takes the first motion sensor as the primary occupancy sensor if none is set
-    2. Preserves any existing primary occupancy sensor setting
-    3. Logs the migration for debugging
-
-    Args:
-        config: The configuration to migrate
-
-    Returns:
-        The migrated configuration
-
-    """
-    if CONF_PRIMARY_OCCUPANCY_SENSOR not in config:
-        motion_sensors = config.get(CONF_MOTION_SENSORS, [])
-        if motion_sensors:
-            config[CONF_PRIMARY_OCCUPANCY_SENSOR] = motion_sensors[0]
-            _LOGGER.debug(
-                "Migrated primary occupancy sensor to first motion sensor: %s",
-                motion_sensors[0],
-            )
-        else:
-            _LOGGER.debug(
-                "No motion sensors found for primary occupancy sensor migration"
-            )
-
-    return config
-
-
-def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add purpose field with default value.
-
-    This migration:
-    1. Adds the purpose field with default value if it doesn't exist
-    2. Preserves any existing purpose setting
-    3. Logs the migration for debugging
-
-    Args:
-        config: The configuration to migrate
-
-    Returns:
-        The migrated configuration
-
-    """
-    return _add_default_if_missing(
-        config,
-        CONF_PURPOSE,
-        DEFAULT_PURPOSE,
-        f"Migrated purpose field to default value: {DEFAULT_PURPOSE}",
-    )
-
-
-def migrate_motion_timeout(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add motion timeout."""
-    return _add_default_if_missing(
-        config,
-        CONF_MOTION_TIMEOUT,
-        DEFAULT_MOTION_TIMEOUT,
-        f"Added motion timeout to config: {DEFAULT_MOTION_TIMEOUT}",
-    )
-
-
-# Configuration Migration Orchestration
-# ==========================================
-
-
-def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to latest version.
-
-    Args:
-        config: The configuration to migrate
-
-    Returns:
-        The migrated configuration
-
-    """
-    # Apply migrations in order
-    config = remove_decay_min_delay(config)
-    config = migrate_primary_occupancy_sensor(config)
-    config = migrate_decay_half_life(config)
-    config = remove_decay_window_key(config)
-    config = remove_lights_key(config)
-    config = remove_history_keys(config)
-    config = migrate_purpose_field(config)
-    return migrate_motion_timeout(config)
-
-
-# ============================================================================
-# Storage Migrations
-# ============================================================================
-
-LEGACY_STORAGE_KEY = "area_occupancy.storage"
-
-
-async def async_migrate_storage(
-    hass: HomeAssistant, entry_id: str, entry_major: int
-) -> None:
-    """Migrate legacy multi-instance storage to per-entry storage format."""
-    try:
-        _LOGGER.debug("Starting storage migration for entry %s", entry_id)
-
-        # Check for and clean up legacy multi-instance storage using direct file operations
-        storage_dir = Path(hass.config.config_dir) / ".storage"
-        legacy_file = storage_dir / LEGACY_STORAGE_KEY
-
-        if legacy_file.exists():
-            _LOGGER.info(
-                "Found legacy storage file %s, removing it for fresh start",
-                legacy_file.name,
-            )
-            if _safe_file_operation(
-                lambda: legacy_file.unlink(),
-                f"Error removing legacy storage file {legacy_file}",
-            ):
-                _LOGGER.info("Successfully removed legacy storage file")
-
-        # Reset database for version < 11
-        await async_reset_database_if_needed(hass, entry_major)
-
-        _LOGGER.debug("Storage migration completed for entry %s", entry_id)
-    except (HomeAssistantError, OSError, ValueError) as err:
-        _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
-
-
 # ============================================================================
 # Database Migrations
 # ============================================================================
@@ -511,37 +268,6 @@ def _update_db_version(session: Any, version: int) -> None:
             )
     except Exception:  # noqa: BLE001
         pass
-
-
-def _drop_legacy_tables(engine: Any, session: Any) -> None:
-    """Drop legacy database tables.
-
-    Args:
-        engine: SQLAlchemy engine
-        session: SQLAlchemy session
-
-    Note: Deprecated - use _drop_all_tables instead for version 5+
-    """
-    _LOGGER.info("Dropping legacy tables for schema migration")
-    _update_db_version(session, DB_VERSION)
-    session.commit()
-
-    with engine.connect() as conn:
-        tables_to_drop = [
-            "intervals",
-            "priors",
-            "entities",
-            "areas",
-            "metadata",
-        ]
-        for table_name in tables_to_drop:
-            try:
-                conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
-                _LOGGER.debug("Dropped table: %s", table_name)
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.debug("Error dropping table %s: %s", table_name, e)
-        conn.commit()
-        _LOGGER.info("All legacy tables dropped successfully")
 
 
 def _drop_all_tables(engine: Any, session: Any) -> None:
@@ -628,13 +354,12 @@ def _drop_tables_locked(
             except Exception:  # noqa: BLE001
                 db_version = 0
 
-            # For DB_VERSION 5 (new schema), delete and recreate database if version doesn't match
-            if db_version != DB_VERSION:
+            # If version < 13, delete and recreate database
+            if db_version < 13:
                 _LOGGER.info(
-                    "Database version mismatch (found %d, expected %d). "
+                    "Database version %d is older than 13. "
                     "Deleting and recreating database with new schema.",
                     db_version,
-                    DB_VERSION,
                 )
                 _drop_all_tables(engine, session)
 
@@ -1552,160 +1277,30 @@ async def _migrate_database_for_consolidation(
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate old entry to the new version."""
-    current_major = CONF_VERSION
-    current_minor = CONF_VERSION_MINOR
+    """Migrate old entry to the new version.
+
+    If version < 13, delete database and recreate with new structure.
+    """
     entry_major = config_entry.version
-    entry_minor = getattr(
-        config_entry, "minor_version", 0
-    )  # Use 0 if minor_version doesn't exist
 
-    if entry_major > current_major or (
-        entry_major == current_major and entry_minor >= current_minor
-    ):
-        # Stored version is same or newer, no migration needed
-        _LOGGER.debug(
-            "Skipping migration for %s: Stored version (%s.%s) >= Current version (%s.%s)",
-            config_entry.entry_id,
-            entry_major,
-            entry_minor,
-            current_major,
-            current_minor,
-        )
-        return True  # Indicate successful (skipped) migration
-
-    _LOGGER.info(
-        "Migrating Area Occupancy entry %s from version %s.%s to %s.%s",
-        config_entry.entry_id,
-        entry_major,
-        entry_minor,
-        current_major,
-        current_minor,
-    )
-
-    # Check if we need to consolidate multiple entries (for version < 13)
     if entry_major < 13:
-        _LOGGER.info("Checking for multiple entries that need consolidation...")
-        # Find all entries that would be consolidated
-        entries_to_consolidate = [
-            entry
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.version < 13
-        ]
-
-        # Migrate unique IDs for all entries that will be consolidated BEFORE consolidation
-        # This ensures consolidation migration can find entities with the expected prefix format
-        if len(entries_to_consolidate) > 1:
-            _LOGGER.info(
-                "Migrating unique IDs for %d entries before consolidation",
-                len(entries_to_consolidate),
-            )
-            for entry_to_migrate in entries_to_consolidate:
-                try:
-                    _LOGGER.debug(
-                        "Migrating unique IDs for entry %s before consolidation",
-                        entry_to_migrate.entry_id,
-                    )
-                    for platform in PLATFORMS:
-                        await async_migrate_unique_ids(hass, entry_to_migrate, platform)
-                except HomeAssistantError as err:
-                    _LOGGER.warning(
-                        "Error migrating unique IDs for entry %s before consolidation: %s",
-                        entry_to_migrate.entry_id,
-                        err,
-                    )
-
-        consolidation_result = await async_migrate_to_single_instance(hass)
-        if not consolidation_result:
-            _LOGGER.error("Single-instance consolidation failed")
-            # Continue with per-entry migration anyway
-        # If consolidation happened, the entry might have been removed
-        # Check if this entry still exists
-        if config_entry.entry_id not in [
-            e.entry_id for e in hass.config_entries.async_entries(DOMAIN)
-        ]:
-            _LOGGER.info("Entry was consolidated, skipping individual migration")
-            return True
-
-    # --- Run Storage File Migration First ---
-    _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)
-    await async_migrate_storage(hass, config_entry.entry_id, entry_major)
-    _LOGGER.debug("Storage migration completed for %s", config_entry.entry_id)
-    # --------------------------------------
-
-    # Get existing data
-    _LOGGER.debug("Getting existing config data for %s", config_entry.entry_id)
-    data = {**config_entry.data}
-    options = {**config_entry.options}
-
-    try:
-        # Run the unique ID migrations (for entries that weren't consolidated)
-        _LOGGER.debug("Starting unique ID migrations for %s", config_entry.entry_id)
-        for platform in PLATFORMS:
-            _LOGGER.debug("Migrating unique IDs for platform %s", platform)
-            await async_migrate_unique_ids(hass, config_entry, platform)
-        _LOGGER.debug("Unique ID migrations completed for %s", config_entry.entry_id)
-    except HomeAssistantError as err:
-        _LOGGER.error("Error during unique ID migration: %s", err)
-
-    # Remove deprecated fields
-    _LOGGER.debug("Removing deprecated fields for %s", config_entry.entry_id)
-    if CONF_AREA_ID in data:
-        data.pop(CONF_AREA_ID)
-        _LOGGER.debug("Removed deprecated CONF_AREA_ID")
-
-    if DECAY_MIN_DELAY_KEY in data:
-        data.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from data")
-    if DECAY_MIN_DELAY_KEY in options:
-        options.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from options")
-
-    # Ensure new state configuration values are present with defaults
-    _LOGGER.debug("Adding new state configurations for %s", config_entry.entry_id)
-    new_configs = {
-        CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
-        CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
-        CONF_MEDIA_ACTIVE_STATES: DEFAULT_MEDIA_ACTIVE_STATES,
-        CONF_APPLIANCE_ACTIVE_STATES: DEFAULT_APPLIANCE_ACTIVE_STATES,
-    }
-
-    # Update data with new state configurations if not present
-    for key, default_value in new_configs.items():
-        if key not in data and key not in options:
-            _LOGGER.info("Adding new configuration %s with default value", key)
-            # For multi-select states, add to data
-            if isinstance(default_value, list):
-                data[key] = default_value
-            # For single-select states, add to options
-            else:
-                options[key] = default_value
-
-    try:
-        # Apply configuration migrations
-        _LOGGER.debug("Applying configuration migrations for %s", config_entry.entry_id)
-        data = migrate_config(data)
-        options = migrate_config(options)
-
-        # Handle threshold value with default if not present
-        threshold = options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-        options[CONF_THRESHOLD] = validate_threshold(threshold)
-
-        # Update the config entry with new data and options
-        _LOGGER.debug("Updating config entry for %s", config_entry.entry_id)
+        _LOGGER.info(
+            "Entry version %d is older than 13. Deleting database and recreating with new structure.",
+            entry_major,
+        )
+        # Delete database and recreate
+        await async_reset_database_if_needed(hass, entry_major)
+        # Update entry version
         hass.config_entries.async_update_entry(
             config_entry,
-            data=data,
-            options=options,
             version=CONF_VERSION,
             minor_version=CONF_VERSION_MINOR,
         )
         _LOGGER.info("Successfully migrated config entry %s", config_entry.entry_id)
-    except (ValueError, KeyError, HomeAssistantError) as err:
-        _LOGGER.error("Error during config migration: %s", err)
-        return False
-    else:
         return True
+
+    # No migration needed
+    return True
 
 
 # ============================================================================

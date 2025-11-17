@@ -117,11 +117,6 @@ MAX_WEIGHT: Final[float] = 0.99
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
 
-# Motion sensor defaults (deprecated - use DEFAULT_TYPES in entity_type.py)
-# MOTION_PROB_GIVEN_TRUE: Final[float] = 0.25  # DEPRECATED
-# MOTION_PROB_GIVEN_FALSE: Final[float] = 0.05  # DEPRECATED
-# MOTION_DEFAULT_PRIOR: Final[float] = 0.35  # DEPRECATED
-
 # Primary occupancy sensor defaults (optimized for ground truth reliability)
 PRIMARY_PROB_GIVEN_TRUE: Final[float] = (
     0.95  # Very high confidence when area is occupied

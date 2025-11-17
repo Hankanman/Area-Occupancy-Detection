@@ -33,41 +33,6 @@ def _get_coordinator(hass: HomeAssistant) -> "AreaOccupancyCoordinator":
     return coordinator
 
 
-def _get_area_name_from_service_call(hass: HomeAssistant, call: ServiceCall) -> str:
-    """Extract area_name from service call, handling backward compatibility with entry_id.
-
-    Args:
-        hass: Home Assistant instance
-        call: The service call
-
-    Returns:
-        str: The area name (or ALL_AREAS_IDENTIFIER for "all")
-    """
-    # Check for deprecated entry_id parameter
-    if "entry_id" in call.data:
-        _LOGGER.warning(
-            "The 'entry_id' parameter is deprecated and will be removed in a future version. "
-            "Use 'area_name' instead. For backward compatibility, using first area."
-        )
-        # For backward compatibility, use first area
-        coordinator = _get_coordinator(hass)
-        area_names = coordinator.get_area_names()
-        if area_names:
-            area_name = area_names[0]
-            _LOGGER.debug(
-                "Using first area '%s' for deprecated entry_id parameter", area_name
-            )
-            return area_name
-        # Fallback to "all" if no areas
-        return ALL_AREAS_IDENTIFIER
-
-    # Normal parameter handling
-    area_name = call.data.get("area_name", "all")
-    if area_name == "all":
-        area_name = ALL_AREAS_IDENTIFIER
-    return area_name
-
-
 def _validate_area_exists(
     coordinator: "AreaOccupancyCoordinator", area_name: str
 ) -> None:
@@ -93,10 +58,10 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     runs analysis for all areas.
-
-    Backward compatibility: Supports deprecated 'entry_id' parameter.
     """
-    area_name = _get_area_name_from_service_call(hass, call)
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
 
     try:
         coordinator = _get_coordinator(hass)
@@ -193,10 +158,10 @@ async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     resets entities for all areas.
-
-    Backward compatibility: Supports deprecated 'entry_id' parameter.
     """
-    area_name = _get_area_name_from_service_call(hass, call)
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
 
     try:
         coordinator = _get_coordinator(hass)
@@ -228,10 +193,10 @@ async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns metrics for all areas.
-
-    Backward compatibility: Supports deprecated 'entry_id' parameter.
     """
-    area_name = _get_area_name_from_service_call(hass, call)
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
 
     try:
         coordinator = _get_coordinator(hass)
@@ -318,10 +283,10 @@ async def _get_problematic_entities(
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns problematic entities for all areas.
-
-    Backward compatibility: Supports deprecated 'entry_id' parameter.
     """
-    area_name = _get_area_name_from_service_call(hass, call)
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
 
     try:
         coordinator = _get_coordinator(hass)
@@ -386,10 +351,10 @@ async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 
     Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
     returns status for all areas.
-
-    Backward compatibility: Supports deprecated 'entry_id' parameter.
     """
-    area_name = _get_area_name_from_service_call(hass, call)
+    area_name = call.data.get("area_name", "all")
+    if area_name == "all":
+        area_name = ALL_AREAS_IDENTIFIER
 
     try:
         coordinator = _get_coordinator(hass)
@@ -539,7 +504,6 @@ def _create_area_selector_schema(hass: HomeAssistant) -> vol.Schema:
             vol.Optional("area_name", default="all"): SelectSelector(
                 SelectSelectorConfig(options=options, mode=SelectSelectorMode.DROPDOWN)
             ),
-            vol.Optional("entry_id"): str,  # Deprecated, for backward compatibility
         }
     )
 

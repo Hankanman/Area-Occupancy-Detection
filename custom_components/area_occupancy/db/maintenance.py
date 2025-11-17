@@ -162,11 +162,9 @@ def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
 def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
     """Ensure database schema matches current version.
 
-    For DB_VERSION 5+, if version doesn't match, delete and recreate from scratch.
+    If version doesn't match DB_VERSION, delete and recreate from scratch.
     """
     try:
-        # First check: DB version must match DB_VERSION (5)
-        # This is the primary check - if version doesn't match, delete and recreate
         db_version = get_db_version(db)
         if db_version != DB_VERSION:
             _LOGGER.info(
@@ -184,82 +182,6 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             _LOGGER.info(
                 "Database recreated with DB_VERSION %d schema. All previous data has been cleared.",
                 DB_VERSION,
-            )
-            return
-
-        # Second check: Verify required columns exist (safety net)
-        # This catches cases where version matches but schema is incomplete
-        inspector = sa.inspect(db.engine)
-        schema_mismatch = False
-
-        # Check areas table for required DB_VERSION 5 columns
-        if "areas" in inspector.get_table_names():
-            columns = [col["name"] for col in inspector.get_columns("areas")]
-            required_columns = {"adjacent_areas"}
-            missing = required_columns - set(columns)
-            if missing:
-                _LOGGER.info(
-                    "Areas table missing required columns for DB_VERSION 5: %s", missing
-                )
-                schema_mismatch = True
-
-        # Check entities table for required DB_VERSION 5 columns
-        if "entities" in inspector.get_table_names():
-            columns = [col["name"] for col in inspector.get_columns("entities")]
-            required_columns = {"area_name", "is_shared", "shared_with_areas"}
-            missing = required_columns - set(columns)
-            if missing:
-                _LOGGER.info(
-                    "Entities table missing required columns for DB_VERSION 5: %s",
-                    missing,
-                )
-                schema_mismatch = True
-
-        # Check priors table for required DB_VERSION 5 columns
-        if "priors" in inspector.get_table_names():
-            columns = [col["name"] for col in inspector.get_columns("priors")]
-            required_columns = {
-                "area_name",
-                "confidence",
-                "last_calculation_date",
-                "sample_period_start",
-                "sample_period_end",
-                "calculation_method",
-            }
-            missing = required_columns - set(columns)
-            if missing:
-                _LOGGER.info(
-                    "Priors table missing required columns for DB_VERSION 5: %s",
-                    missing,
-                )
-                schema_mismatch = True
-
-        # Check intervals table for required DB_VERSION 5 columns
-        if "intervals" in inspector.get_table_names():
-            columns = [col["name"] for col in inspector.get_columns("intervals")]
-            required_columns = {"entry_id", "area_name", "aggregation_level"}
-            missing = required_columns - set(columns)
-            if missing:
-                _LOGGER.info(
-                    "Intervals table missing required columns for DB_VERSION 5: %s",
-                    missing,
-                )
-                schema_mismatch = True
-
-        # If schema doesn't match, delete and recreate from scratch
-        if schema_mismatch:
-            _LOGGER.info(
-                "Database schema mismatch detected for DB_VERSION 5. "
-                "Deleting existing database and recreating from scratch."
-            )
-            # Close all connections before deleting
-            db.engine.dispose()
-            delete_db(db)
-            # Recreate database with new schema
-            init_db(db)
-            set_db_version(db)
-            _LOGGER.info(
-                "Database recreated with DB_VERSION 5 schema. All previous data has been cleared."
             )
 
     except (SQLAlchemyError, OSError, RuntimeError) as e:

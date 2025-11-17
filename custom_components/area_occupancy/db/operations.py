@@ -16,7 +16,6 @@ from homeassistant.util import dt as dt_util
 from ..const import MAX_PROBABILITY, MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
 from . import maintenance
 from .constants import (
-    DEFAULT_AREA_PRIOR,
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT,
@@ -55,7 +54,7 @@ def _validate_area_data(
     return failures
 
 
-async def load_data(db: AreaOccupancyDB) -> None:  # noqa: C901
+async def load_data(db: AreaOccupancyDB) -> None:
     """Load the data from the database for all areas.
 
     This method iterates over all configured areas and loads data for each.
@@ -128,11 +127,11 @@ async def load_data(db: AreaOccupancyDB) -> None:  # noqa: C901
             area_data = db.coordinator.get_area_or_default(area_name)
 
             # Phase 1: Read without lock (all instances in parallel)
-            area, entities, stale_ids = await db.hass.async_add_executor_job(
+            _area, entities, stale_ids = await db.hass.async_add_executor_job(
                 _read_data_operation, area_name
             )
 
-            # Update prior from GlobalPriors table (preferred) or area.area_prior (backward compatibility)
+            # Update prior from GlobalPriors table
             global_prior_data = db.get_global_prior(area_name)
             if global_prior_data:
                 _LOGGER.debug(
@@ -141,19 +140,10 @@ async def load_data(db: AreaOccupancyDB) -> None:  # noqa: C901
                     area_name,
                 )
                 area_data.prior.set_global_prior(global_prior_data["prior_value"])
-            elif area and area.area_prior is not None:
-                _LOGGER.debug(
-                    "Loading area_prior %s from Areas table for area %s (fallback)",
-                    area.area_prior,
-                    area_name,
-                )
-                area_data.prior.set_global_prior(area.area_prior)
             else:
                 _LOGGER.debug(
-                    "No global_prior found for area %s (area=%s, area_prior=%s)",
+                    "No global_prior found for area %s",
                     area_name,
-                    area,
-                    area.area_prior if area else None,
                 )
 
             # Process entities
@@ -259,18 +249,12 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
 
             cfg = area_data_obj.config
 
-            # Persist the raw global prior value rather than the
-            # time-adjusted prior returned by area.area_prior().
-            area = db.coordinator.get_area_or_default(area_name_item)
-            area_prior_value = getattr(area.prior, "global_prior", None)
-
             area_data = {
                 "entry_id": db.coordinator.entry_id,
                 "area_name": area_name_item,
                 "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
-                "area_prior": area_prior_value,
                 "updated_at": dt_util.utcnow(),
             }
 
@@ -286,23 +270,6 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                 failures.extend(validation_failures)
                 has_failures = True
                 continue
-
-            # Handle area_prior - use DEFAULT_AREA_PRIOR as fallback if None
-            if area_data["area_prior"] is None:
-                _LOGGER.warning(
-                    "Global prior missing for area '%s', using DEFAULT_AREA_PRIOR (%s) as fallback",
-                    area_name_item,
-                    DEFAULT_AREA_PRIOR,
-                )
-                area_data["area_prior"] = DEFAULT_AREA_PRIOR
-
-            # Handle area_id - use entry_id as fallback if area_id is None or empty
-            if not area_data.get("area_id"):
-                _LOGGER.info(
-                    "area_id is None or empty, using entry_id as fallback: %s",
-                    area_data["entry_id"],
-                )
-                area_data["area_id"] = area_data["entry_id"]
 
             # Collect area object for batch merge
             area_obj = db.Areas.from_dict(area_data)

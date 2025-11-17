@@ -21,7 +21,6 @@ from sqlalchemy.orm import declarative_base, relationship
 from homeassistant.util import dt as dt_util
 
 from .constants import (
-    DEFAULT_AREA_PRIOR,
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT,
@@ -46,12 +45,6 @@ class Areas(Base):
     area_id = Column(String, nullable=False)
     purpose = Column(String, nullable=False)
     threshold = Column(Float, nullable=False)
-    area_prior = Column(
-        Float(precision=10),
-        nullable=False,
-        default=DEFAULT_AREA_PRIOR,
-        server_default=str(DEFAULT_AREA_PRIOR),
-    )
     adjacent_areas = Column(JSON, nullable=True)  # JSON array of adjacent area names
     created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
@@ -66,7 +59,6 @@ class Areas(Base):
             "area_id": self.area_id,
             "purpose": self.purpose,
             "threshold": self.threshold,
-            "area_prior": self.area_prior,
             "adjacent_areas": self.adjacent_areas,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -75,18 +67,12 @@ class Areas(Base):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Any:
         """Create an Areas instance from a dictionary."""
-        # Handle area_id fallback - use entry_id if area_id is None or empty
-        area_id = data.get("area_id")
-        if not area_id:
-            area_id = data["entry_id"]
-
         return cls(
             entry_id=data["entry_id"],
             area_name=data["area_name"],
-            area_id=area_id,
+            area_id=data["area_id"],
             purpose=data["purpose"],
             threshold=data["threshold"],
-            area_prior=data.get("area_prior", DEFAULT_AREA_PRIOR),
             adjacent_areas=data.get("adjacent_areas"),
             created_at=data.get("created_at", dt_util.utcnow()),
             updated_at=data.get("updated_at", dt_util.utcnow()),
@@ -168,9 +154,7 @@ class Entities(Base):
         """Create an Entities instance from a dictionary."""
         return cls(
             entry_id=data["entry_id"],
-            area_name=data.get(
-                "area_name", ""
-            ),  # Default to empty string if not provided (for backward compatibility)
+            area_name=data["area_name"],
             entity_id=data["entity_id"],
             entity_type=data["entity_type"],
             weight=data.get("weight", DEFAULT_ENTITY_WEIGHT),
@@ -248,9 +232,7 @@ class Priors(Base):
         """Create a Priors instance from a dictionary."""
         return cls(
             entry_id=data["entry_id"],
-            area_name=data.get(
-                "area_name", ""
-            ),  # Default to empty string for backward compatibility
+            area_name=data["area_name"],
             day_of_week=data["day_of_week"],
             time_slot=data["time_slot"],
             prior_value=data["prior_value"],
