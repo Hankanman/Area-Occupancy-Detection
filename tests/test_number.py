@@ -215,6 +215,37 @@ class TestThreshold:
             assert mock_update_config.call_count == 2
             mock_update_config.assert_called_with({"threshold": 75.0})
 
+    async def test_async_set_native_value_missing_area(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when area is missing."""
+
+        # Mock get_area to return None
+        with patch.object(threshold_entity.coordinator, "get_area", return_value=None):
+            # Should handle gracefully and return without error
+            await threshold_entity.async_set_native_value(75.0)
+
+    async def test_async_set_native_value_update_config_error(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when update_config raises error."""
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+
+        # Mock update_config to raise error
+        with (
+            patch.object(
+                area.config, "update_config", side_effect=RuntimeError("Update failed")
+            ),
+            pytest.raises(RuntimeError, match="Update failed"),
+        ):
+            # Should propagate error
+            await threshold_entity.async_set_native_value(75.0)
+
 
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
