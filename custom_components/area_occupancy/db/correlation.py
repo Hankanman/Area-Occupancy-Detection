@@ -72,13 +72,24 @@ def calculate_pearson_correlation(
         n = len(x_values)
         if n < 3:
             p_value = 1.0
+        elif abs(abs(correlation) - 1.0) < 1e-10:
+            # Handle perfect correlation (correlation = ±1.0)
+            # When correlation is exactly 1.0 or -1.0, p-value should be very small (near 0)
+            p_value = 0.0  # Perfect correlation has p-value near 0
         else:
             # t-statistic
-            t_stat = correlation * np.sqrt((n - 2) / (1 - correlation**2))
-            # Approximate p-value (two-tailed)
-            # For simplicity, use a rough approximation
-            # In production, use scipy.stats.pearsonr for accurate p-values
-            p_value = 2 * (1 - abs(t_stat) / np.sqrt(n))
+            # Avoid division by zero when correlation is very close to ±1.0
+            denominator = 1 - correlation**2
+            if abs(denominator) < 1e-10:
+                p_value = 0.0  # Very strong correlation
+            else:
+                t_stat = correlation * np.sqrt((n - 2) / denominator)
+                # Approximate p-value (two-tailed)
+                # Use a more robust approximation that ensures p-value is in [0, 1]
+                # For large n, p-value ≈ 2 * (1 - Φ(|t|)) where Φ is standard normal CDF
+                # Simplified approximation: clamp to valid range
+                p_approx = 2 * (1 - min(1.0, abs(t_stat) / np.sqrt(n)))
+                p_value = max(0.0, min(1.0, p_approx))
 
         return (float(correlation), float(p_value))
 
@@ -320,6 +331,9 @@ def save_correlation_result(
                 existing.updated_at = dt_util.utcnow()
             else:
                 # Create new record
+                # Ensure calculation_date is set if not provided
+                if "calculation_date" not in correlation_data:
+                    correlation_data["calculation_date"] = dt_util.utcnow()
                 correlation = db.NumericCorrelations(**correlation_data)
                 session.add(correlation)
 

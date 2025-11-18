@@ -111,7 +111,8 @@ class Entities(Base):
     is_decaying = Column(Boolean, nullable=False, default=False)
     decay_start = Column(DateTime(timezone=True), nullable=True)
     evidence = Column(Boolean, nullable=False, default=False)
-    intervals = relationship("Intervals", back_populates="entity")
+    # Relationship removed - SQLite doesn't support composite FKs properly
+    # Use manual joins in queries instead (see db/queries.py)
     area = relationship("Areas", back_populates="entities")
 
     __table_args__ = (
@@ -255,7 +256,9 @@ class Intervals(Base):
     area_name = Column(
         String, nullable=False, index=True
     )  # For efficient area-based queries
-    entity_id = Column(String, ForeignKey("entities.entity_id"), nullable=False)
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False)
     state = Column(String, nullable=False)
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
@@ -264,7 +267,8 @@ class Intervals(Base):
         String, nullable=False, default="raw"
     )  # 'raw', 'daily', 'weekly', 'monthly'
     created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
-    entity = relationship("Entities", back_populates="intervals")
+    # Relationship removed - SQLite doesn't support composite FKs properly
+    # Use manual joins in queries instead (see db/queries.py)
 
     # Add unique constraint on (entity_id, start_time, end_time, aggregation_level)
     __table_args__ = (
@@ -340,9 +344,9 @@ class IntervalAggregates(Base):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
-    entity_id = Column(
-        String, ForeignKey("entities.entity_id"), nullable=False, index=True
-    )
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False, index=True)
     aggregation_period = Column(
         String, nullable=False
     )  # 'daily', 'weekly', 'monthly', 'yearly'
@@ -452,9 +456,9 @@ class NumericSamples(Base):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
-    entity_id = Column(
-        String, ForeignKey("entities.entity_id"), nullable=False, index=True
-    )
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     value = Column(Float, nullable=False)
     unit_of_measurement = Column(String, nullable=True)
@@ -488,9 +492,9 @@ class NumericAggregates(Base):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
-    entity_id = Column(
-        String, ForeignKey("entities.entity_id"), nullable=False, index=True
-    )
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False, index=True)
     aggregation_period = Column(
         String, nullable=False
     )  # 'hourly', 'daily', 'weekly', 'monthly', 'yearly'
@@ -536,9 +540,9 @@ class NumericCorrelations(Base):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
-    entity_id = Column(
-        String, ForeignKey("entities.entity_id"), nullable=False, index=True
-    )
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False, index=True)
     correlation_coefficient = Column(
         Float, nullable=False
     )  # Pearson correlation (-1 to 1)
@@ -592,9 +596,9 @@ class EntityStatistics(Base):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
-    entity_id = Column(
-        String, ForeignKey("entities.entity_id"), nullable=False, index=True
-    )
+    # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
+    # Relationships are validated at application level through joins
+    entity_id = Column(String, nullable=False, index=True)
     statistic_type = Column(String, nullable=False)  # 'operational' or 'bayesian'
     statistic_name = Column(
         String, nullable=False

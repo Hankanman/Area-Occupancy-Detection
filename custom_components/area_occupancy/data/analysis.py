@@ -191,12 +191,7 @@ class PriorAnalyzer:
             return DEFAULT_PRIOR
 
         # Step 1: Calculate prior from motion sensors only
-        total_occupied_seconds = get_total_occupied_seconds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
+        total_occupied_seconds = self.get_total_occupied_seconds(
             include_media=False,
             include_appliance=False,
         )
@@ -204,12 +199,7 @@ class PriorAnalyzer:
         lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
 
         # Get total time period from motion sensors
-        first_time, last_time = get_time_bounds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            entity_ids=entity_ids,
-        )
+        first_time, last_time = self.get_time_bounds(entity_ids=entity_ids)
 
         if not first_time or not last_time:
             _LOGGER.debug("No time bounds available, using default prior")
@@ -291,18 +281,10 @@ class PriorAnalyzer:
                 )
             else:
                 # Get total occupied time from all sensor types
-                all_intervals = get_occupied_intervals(
-                    db=self.db,
-                    entry_id=self.entry_id,
-                    area_name=self.area_name,
+                all_intervals = self.get_occupied_intervals(
                     lookback_days=DEFAULT_LOOKBACK_DAYS,
-                    motion_timeout_seconds=self.config.sensors.motion_timeout,
                     include_media=include_media,
                     include_appliance=include_appliance,
-                    media_sensor_ids=self.media_sensor_ids if include_media else None,
-                    appliance_sensor_ids=self.appliance_sensor_ids
-                    if include_appliance
-                    else None,
                 )
 
                 if not all_intervals:
@@ -362,12 +344,8 @@ class PriorAnalyzer:
             else:
                 # Motion-only, get intervals for cache
                 if all_intervals is None:
-                    all_intervals = get_occupied_intervals(
-                        db=self.db,
-                        entry_id=self.entry_id,
-                        area_name=self.area_name,
+                    all_intervals = self.get_occupied_intervals(
                         lookback_days=DEFAULT_LOOKBACK_DAYS,
-                        motion_timeout_seconds=self.config.sensors.motion_timeout,
                         include_media=False,
                         include_appliance=False,
                     )
@@ -426,23 +404,10 @@ class PriorAnalyzer:
             slot_minutes = DEFAULT_SLOT_MINUTES
 
         # Get aggregated interval data
-        interval_aggregates = get_interval_aggregates(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            slot_minutes=slot_minutes,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
-            media_sensor_ids=self.media_sensor_ids,
-            appliance_sensor_ids=self.appliance_sensor_ids,
-        )
+        interval_aggregates = self.get_interval_aggregates(slot_minutes=slot_minutes)
 
         # Get time bounds
-        first_time, last_time = get_time_bounds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-        )
+        first_time, last_time = self.get_time_bounds()
 
         if not first_time or not last_time:
             _LOGGER.warning("No time bounds available for time prior calculation")

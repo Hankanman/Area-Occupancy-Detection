@@ -1941,6 +1941,13 @@ def db_engine() -> Generator[Any]:
         pool_reset_on_return="commit",
     )
 
+    # Enable foreign key constraints for SQLite
+    @sa.event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     # Create all tables
     Base.metadata.create_all(engine)
 

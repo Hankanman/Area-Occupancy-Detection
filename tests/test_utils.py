@@ -179,15 +179,16 @@ class TestApplyMotionTimeout:
 
     def test_apply_motion_timeout_empty_list(self) -> None:
         """Test apply_motion_timeout with empty intervals list."""
-        result = apply_motion_timeout([], 60)
+        result = apply_motion_timeout([], [], 60)
         assert result == []
 
     def test_apply_motion_timeout_single_interval(self) -> None:
         """Test apply_motion_timeout with single interval."""
         base_time = datetime(2024, 1, 1, 12, 0, 0)
         intervals = [(base_time, base_time + timedelta(minutes=5))]
+        motion_intervals = [(base_time, base_time + timedelta(minutes=5))]
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -201,8 +202,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # First interval
@@ -219,8 +221,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=3), base_time + timedelta(minutes=8)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -234,8 +237,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=5), base_time + timedelta(minutes=10)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -249,8 +253,9 @@ class TestApplyMotionTimeout:
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
             (base_time, base_time + timedelta(minutes=5)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # Should be sorted by start time
@@ -266,8 +271,9 @@ class TestApplyMotionTimeout:
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
             (base_time + timedelta(minutes=14), base_time + timedelta(minutes=20)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # First merged interval
@@ -281,8 +287,9 @@ class TestApplyMotionTimeout:
         """Test apply_motion_timeout with zero timeout."""
         base_time = datetime(2024, 1, 1, 12, 0, 0)
         intervals = [(base_time, base_time + timedelta(minutes=5))]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 0)
+        result = apply_motion_timeout(intervals, motion_intervals, 0)
 
         assert len(result) == 1
         start, end = result[0]

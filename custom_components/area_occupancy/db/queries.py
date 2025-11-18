@@ -359,6 +359,11 @@ def get_occupied_intervals(
     """
     now = dt_util.utcnow()
     lookback_date = now - timedelta(days=lookback_days)
+    all_intervals: list[tuple[datetime, datetime]] = []
+    motion_raw: list[tuple[datetime, datetime]] = []
+    media_count = 0
+    appliance_count = 0
+    extended_intervals: list[tuple[datetime, datetime]] = []
 
     try:
         start_time = dt_util.utcnow()
