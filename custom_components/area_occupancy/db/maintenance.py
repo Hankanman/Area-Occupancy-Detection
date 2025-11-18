@@ -126,17 +126,13 @@ def check_database_accessibility(db: AreaOccupancyDB) -> bool:
         return True
 
 
-def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
-    """Verify all required tables exist in the database.
-
-    Uses SQLAlchemy's inspector to ensure consistent connection handling,
-    avoiding race conditions with in-memory databases where different
-    connections might not see tables created by other connections.
+def _get_required_tables() -> set[str]:
+    """Get the set of required table names.
 
     Returns:
-        bool: True if all required tables exist, False otherwise
+        set[str]: Set of required table names
     """
-    required_tables = {
+    return {
         "areas",
         "entities",
         "intervals",
@@ -152,6 +148,19 @@ def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
         "area_relationships",
         "cross_area_stats",
     }
+
+
+def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
+    """Verify all required tables exist in the database.
+
+    Uses SQLAlchemy's inspector to ensure consistent connection handling,
+    avoiding race conditions with in-memory databases where different
+    connections might not see tables created by other connections.
+
+    Returns:
+        bool: True if all required tables exist, False otherwise
+    """
+    required_tables = _get_required_tables()
     try:
         # Use inspector instead of raw connection to ensure consistent
         # connection pool usage (same as init_db uses Base.metadata.create_all)
@@ -160,6 +169,25 @@ def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
         return required_tables.issubset(existing_tables)
     except sa.exc.SQLAlchemyError:
         return False
+
+
+def get_missing_tables(db: AreaOccupancyDB) -> set[str]:
+    """Get the set of missing required tables.
+
+    Args:
+        db: Database instance
+
+    Returns:
+        set[str]: Set of missing table names, empty if all tables exist
+    """
+    required_tables = _get_required_tables()
+    try:
+        inspector = sa.inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+        return required_tables - existing_tables
+    except sa.exc.SQLAlchemyError:
+        # If we can't inspect, assume all tables are missing
+        return required_tables
 
 
 def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
@@ -522,6 +550,35 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
                 return True
             _LOGGER.error("Failed to recover database during periodic health check")
             return False
+
+        # Verify all required tables exist
+        missing_tables = get_missing_tables(db)
+        if missing_tables:
+            _LOGGER.warning(
+                "Periodic health check found missing tables: %s",
+                ", ".join(sorted(missing_tables)),
+            )
+            # Attempt recovery using the same path as ensure_db_exists
+            try:
+                init_db(db)
+                set_db_version(db)
+                _LOGGER.info(
+                    "Database tables recovered during periodic health check. "
+                    "Recreated missing tables: %s",
+                    ", ".join(sorted(missing_tables)),
+                )
+            except (
+                sa.exc.SQLAlchemyError,
+                OSError,
+                RuntimeError,
+                PermissionError,
+            ) as recovery_err:
+                _LOGGER.error(
+                    "Failed to recover missing tables during periodic health check: %s",
+                    recovery_err,
+                )
+                # Defer recovery - will attempt again on next health check
+                return False
 
         # Create periodic backup if enabled
         if db.enable_periodic_backups and db.db_path:
