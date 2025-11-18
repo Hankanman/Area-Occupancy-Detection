@@ -25,20 +25,14 @@ def _setup_coordinator_test(
     hass.data[DOMAIN] = coordinator
 
 
-def _create_service_call(area_name: str | None = None, **kwargs) -> Mock:
+def _create_service_call(**kwargs) -> Mock:
     """Create a mock service call with common data.
 
     Args:
-        area_name: Area name to use (defaults to None for backward compatibility tests)
         **kwargs: Additional data to include in service call
     """
     mock_call = Mock(spec=ServiceCall)
-    # Support both new area_name and deprecated entry_id for backward compatibility
-    if area_name is not None:
-        mock_call.data = {"area_name": area_name, **kwargs}
-    else:
-        # For backward compatibility tests, use entry_id
-        mock_call.data = {"entry_id": "test_entry_id", **kwargs}
+    mock_call.data = kwargs
     return mock_call
 
 
@@ -74,20 +68,18 @@ class TestRunAnalysis:
         )()
         coordinator_with_areas.db.import_stats = {"binary_sensor.motion1": 100}
 
-        # Mock run_analysis method - it's now area-based, so we need to mock it properly
-        # The service calls coordinator.run_analysis(area_name) which calls area.run_analysis()
-        area.run_analysis = AsyncMock(return_value={"status": "success"})
-        coordinator_with_areas.run_analysis = AsyncMock(
-            return_value={"status": "success"}
-        )
+        # Mock run_analysis method - it always runs for all areas
+        coordinator_with_areas.run_analysis = AsyncMock()
 
         _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
-        mock_service_call = _create_service_call(area_name=area_name)
+        mock_service_call = _create_service_call()
 
         result = await _run_analysis(hass, mock_service_call)
 
         assert isinstance(result, dict)
-        assert len(result) > 0
+        assert "areas" in result
+        assert "update_timestamp" in result
+        assert isinstance(result["areas"], dict)
 
     async def test_run_analysis_missing_entry_id(self, hass: HomeAssistant) -> None:
         """Test analysis run with missing entry_id (backward compatibility)."""
@@ -112,8 +104,7 @@ class TestRunAnalysis:
         )
 
         _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
-        area_name = coordinator_with_areas.get_area_names()[0]
-        mock_service_call = _create_service_call(area_name=area_name)
+        mock_service_call = _create_service_call()
 
         with pytest.raises(
             HomeAssistantError,
@@ -140,3 +131,7 @@ class TestAsyncSetupServices:
         assert "get_entity_metrics" not in services
         assert "get_problematic_entities" not in services
         assert "get_area_status" not in services
+
+        # Verify service has no schema (no parameters)
+        service = services["run_analysis"]
+        assert service.schema is None
