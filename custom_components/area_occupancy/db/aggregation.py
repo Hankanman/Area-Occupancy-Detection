@@ -542,6 +542,7 @@ def aggregate_weekly_to_monthly(
 
             # Calculate averages and create aggregate records
             created_count = 0
+            new_aggregates = []
             for agg_data in aggregates.values():
                 # Calculate average duration
                 if agg_data["interval_count"] > 0:
@@ -563,8 +564,13 @@ def aggregate_weekly_to_monthly(
 
                 if not existing:
                     aggregate = db.IntervalAggregates(**agg_data)
-                    session.add(aggregate)
+                    new_aggregates.append(aggregate)
                     created_count += 1
+
+            # Add all new aggregates at once
+            if new_aggregates:
+                session.add_all(new_aggregates)
+                session.flush()  # Flush before deleting to avoid identity map conflicts
 
             # Delete weekly aggregates that were aggregated
             aggregate_ids = [weekly.id for weekly in weekly_aggregates]
