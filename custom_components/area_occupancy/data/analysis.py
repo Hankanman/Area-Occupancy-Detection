@@ -945,7 +945,7 @@ async def start_likelihood_analysis(
     _LOGGER.debug("Starting likelihood analysis for area: %s", area_name)
 
     # Get the area's prior for this EntityManager's area
-    area = coordinator.get_area_or_default(area_name)
+    area = coordinator.get_area(area_name)
     if area is None:
         error_msg = f"Cannot update likelihoods: area '{area_name}' not found"
         _LOGGER.warning(error_msg)

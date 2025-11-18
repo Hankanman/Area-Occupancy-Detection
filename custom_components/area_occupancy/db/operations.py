@@ -85,7 +85,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
             if entities:
                 # Get the area's entity manager to check if entities exist
                 # Area is guaranteed to exist when area_name comes from get_area_names()
-                area_data = db.coordinator.get_area_or_default(area_name)
+                area_data = db.coordinator.get_area(area_name)
                 for entity_obj in entities:
                     # Check if entity exists in current coordinator config
                     try:
@@ -115,7 +115,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
     try:
         # Load data for each configured area
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
 
             # Phase 1: Read without lock (all instances in parallel)
             _area, entities, stale_ids = await db.hass.async_add_executor_job(
@@ -213,7 +213,7 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
         area_objects = []  # Collect all area objects for batch merge
 
         for area_name_item in areas_to_save:
-            area_data_obj = db.coordinator.get_area_or_default(area_name_item)
+            area_data_obj = db.coordinator.get_area(area_name_item)
             # Area is guaranteed to exist when area_name comes from get_area_names()
             # or when area_name is validated before calling this function
             cfg = area_data_obj.config
@@ -304,7 +304,7 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
     def _iter_area_entities() -> Iterable[tuple[str, Any]]:
         """Yield (area_name, entity) tuples for all configured areas."""
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
             entities_container = getattr(area_data.entities, "entities", None)
             if not entities_container:
                 continue
@@ -465,7 +465,7 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     total_cleaned = 0
     try:
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
 
             def _cleanup_operation(area_name: str, area_data: Any) -> int:
                 with db.get_session() as session:

@@ -163,7 +163,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Note: self.hass is automatically set by Home Assistant when entity is added
         self._coordinator = coordinator
         self._area_name = area_name
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         self._config = area.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
         self._weight = self._config.wasp_in_box.weight
@@ -177,7 +177,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         )
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         self._attr_device_info = area.device_info()
         self._attr_available = True
         self._attr_is_on = False
@@ -721,7 +721,7 @@ async def async_setup_entry(
         entities.append(Occupancy(coordinator=coordinator, area_name=area_name))
 
         # Create Wasp in Box sensor if enabled for this area
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         if area and area.config.wasp_in_box.enabled:
             _LOGGER.debug(
                 "Wasp in Box sensor enabled for area %s, creating sensor", area_name
