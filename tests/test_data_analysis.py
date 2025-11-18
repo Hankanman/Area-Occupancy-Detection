@@ -325,8 +325,8 @@ class TestPriorAnalyzer:
 
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock()
-            # Patch the analyzer's _session_provider since it's set during __init__
-            with patch.object(analyzer, "_session_provider", return_value=mock_session):
+            # Patch db.get_session to return our mock session
+            with patch.object(analyzer.db, "get_session", return_value=mock_session):
                 result = analyzer.get_time_bounds(entity_ids)
                 assert result == expected_result
 
@@ -419,11 +419,11 @@ class TestPriorAnalyzer:
                 side_effect=(OperationalError("Database error", None, None)),
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals_from_session",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -478,7 +478,7 @@ class TestPriorAnalyzer:
                 coordinator.db, "get_session", return_value=mock_context_manager
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -501,11 +501,11 @@ class TestPriorAnalyzer:
         # We'll mock the database to avoid complex SQLAlchemy mocking
         with (
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals_from_session",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[],
             ),
         ):
@@ -1044,7 +1044,7 @@ class TestPriorAnalyzerWithRealDB:
                 side_effect=SQLAlchemyError("Test error"),
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1053,7 +1053,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -1080,7 +1080,7 @@ class TestPriorAnalyzerWithRealDB:
                 return_value=3600.0,
             ) as mock_sql,
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1089,7 +1089,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -1118,7 +1118,7 @@ class TestPriorAnalyzerWithRealDB:
                 return_value=3600.0,
             ) as mock_sql,
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1127,7 +1127,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):

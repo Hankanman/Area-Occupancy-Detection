@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import bisect
 from collections import defaultdict
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -20,10 +18,12 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
 from ..db.aggregation import get_interval_aggregates
-from ..db.priors import (
+from ..db.queries import (
     get_occupied_intervals,
+    get_occupied_intervals_cache,
     get_time_bounds,
     get_total_occupied_seconds,
+    is_occupied_intervals_cache_valid,
 )
 from ..utils import clamp_probability
 
@@ -61,6 +61,70 @@ DAYS_PER_WEEK = 7
 SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
 
 
+def get_occupied_intervals_with_cache(
+    db: Any,
+    entry_id: str,
+    area_name: str,
+    lookback_days: int,
+    motion_timeout_seconds: int,
+    include_media: bool = False,
+    include_appliance: bool = False,
+    media_sensor_ids: list[str] | None = None,
+    appliance_sensor_ids: list[str] | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Fetch occupied intervals with caching and Python fallback.
+
+    This function wraps the query function from queries module with prior-specific caching.
+    Business logic for cache validation and retrieval is handled here.
+
+    Args:
+        db: Database instance
+        entry_id: Entry ID
+        area_name: Area name
+        lookback_days: Number of days to look back
+        motion_timeout_seconds: Motion timeout in seconds
+        include_media: Whether to include media sensors
+        include_appliance: Whether to include appliance sensors
+        media_sensor_ids: List of media sensor IDs
+        appliance_sensor_ids: List of appliance sensor IDs
+
+    Returns:
+        List of occupied intervals
+    """
+    now = dt_util.utcnow()
+    lookback_date = now - timedelta(days=lookback_days)
+
+    # Check cache only for motion-only queries (business logic decision)
+    if not include_media and not include_appliance:
+        if is_occupied_intervals_cache_valid(db, area_name, max_age_hours=24):
+            cached_intervals = get_occupied_intervals_cache(
+                db,
+                area_name,
+                period_start=lookback_date,
+                period_end=now,
+            )
+            if cached_intervals:
+                _LOGGER.debug(
+                    "Using cached occupied intervals for %s: %d intervals",
+                    area_name,
+                    len(cached_intervals),
+                )
+                return cached_intervals
+
+    # Cache miss or media/appliance included - use direct query
+    return get_occupied_intervals(
+        db=db,
+        entry_id=entry_id,
+        area_name=area_name,
+        lookback_days=lookback_days,
+        motion_timeout_seconds=motion_timeout_seconds,
+        include_media=include_media,
+        include_appliance=include_appliance,
+        media_sensor_ids=media_sensor_ids,
+        appliance_sensor_ids=appliance_sensor_ids,
+    )
+
+
 def is_timestamp_occupied(
     timestamp: datetime, occupied_intervals: list[tuple[datetime, datetime]]
 ) -> bool:
@@ -85,15 +149,12 @@ class PriorAnalyzer:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         """Initialize the PriorAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
-            session_provider: Optional callable that returns a context manager for sessions.
-                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -109,7 +170,6 @@ class PriorAnalyzer:
         self.media_sensor_ids = self.config.sensors.media
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
-        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
@@ -139,7 +199,6 @@ class PriorAnalyzer:
             motion_timeout_seconds=self.config.sensors.motion_timeout,
             include_media=False,
             include_appliance=False,
-            session_provider=self._session_provider,
         )
 
         lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
@@ -150,7 +209,6 @@ class PriorAnalyzer:
             entry_id=self.entry_id,
             area_name=self.area_name,
             entity_ids=entity_ids,
-            session_provider=self._session_provider,
         )
 
         if not first_time or not last_time:
@@ -245,7 +303,6 @@ class PriorAnalyzer:
                     appliance_sensor_ids=self.appliance_sensor_ids
                     if include_appliance
                     else None,
-                    session_provider=self._session_provider,
                 )
 
                 if not all_intervals:
@@ -313,7 +370,6 @@ class PriorAnalyzer:
                         motion_timeout_seconds=self.config.sensors.motion_timeout,
                         include_media=False,
                         include_appliance=False,
-                        session_provider=self._session_provider,
                     )
                 interval_count = len(all_intervals) if all_intervals else 0
                 final_occupied_seconds = total_occupied_seconds
@@ -379,7 +435,6 @@ class PriorAnalyzer:
             motion_timeout_seconds=self.config.sensors.motion_timeout,
             media_sensor_ids=self.media_sensor_ids,
             appliance_sensor_ids=self.appliance_sensor_ids,
-            session_provider=self._session_provider,
         )
 
         # Get time bounds
@@ -387,7 +442,6 @@ class PriorAnalyzer:
             db=self.db,
             entry_id=self.entry_id,
             area_name=self.area_name,
-            session_provider=self._session_provider,
         )
 
         if not first_time or not last_time:
@@ -460,7 +514,7 @@ class PriorAnalyzer:
         db = self.db
 
         try:
-            with self._session_provider() as session:
+            with self.db.get_session() as session:
                 for day in range(DAYS_PER_WEEK):
                     for slot in range(slots_per_day):
                         total_slot_seconds = days * slot_duration_seconds
@@ -541,7 +595,6 @@ class PriorAnalyzer:
             appliance_sensor_ids=self.appliance_sensor_ids
             if include_appliance
             else None,
-            session_provider=self._session_provider,
         )
 
     def get_occupied_intervals(
@@ -550,8 +603,11 @@ class PriorAnalyzer:
         include_media: bool = False,
         include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
-        """Thin wrapper over database helper for backwards compatibility."""
-        return get_occupied_intervals(
+        """Get occupied intervals with caching logic.
+
+        This method wraps the query function with prior-specific caching logic.
+        """
+        return get_occupied_intervals_with_cache(
             db=self.db,
             entry_id=self.entry_id,
             area_name=self.area_name,
@@ -563,7 +619,6 @@ class PriorAnalyzer:
             appliance_sensor_ids=self.appliance_sensor_ids
             if include_appliance
             else None,
-            session_provider=self._session_provider,
         )
 
     def get_time_bounds(
@@ -575,7 +630,6 @@ class PriorAnalyzer:
             entry_id=self.entry_id,
             area_name=self.area_name,
             entity_ids=entity_ids,
-            session_provider=self._session_provider,
         )
 
     def get_interval_aggregates(
@@ -591,7 +645,6 @@ class PriorAnalyzer:
             motion_timeout_seconds=self.config.sensors.motion_timeout,
             media_sensor_ids=self.media_sensor_ids,
             appliance_sensor_ids=self.appliance_sensor_ids,
-            session_provider=self._session_provider,
         )
 
 
@@ -602,15 +655,12 @@ class LikelihoodAnalyzer:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         """Initialize the LikelihoodAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
-            session_provider: Optional callable that returns a context manager for sessions.
-                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -623,7 +673,6 @@ class LikelihoodAnalyzer:
             )
         self.config = coordinator.areas[area_name].config
         self.entry_id = coordinator.entry_id
-        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_likelihoods(
         self,
@@ -651,7 +700,7 @@ class LikelihoodAnalyzer:
                 )
 
             # Create new session
-            with self._session_provider() as new_session:
+            with self.db.get_session() as new_session:
                 return self._analyze_likelihoods_from_session(
                     new_session, occupied_times, entity_manager
                 )

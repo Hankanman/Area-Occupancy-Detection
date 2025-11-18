@@ -28,7 +28,6 @@ from . import (
     correlation,
     maintenance,
     operations,
-    priors,
     queries,
     relationships,
     sync,
@@ -262,7 +261,7 @@ class AreaOccupancyDB:
 
     async def ensure_area_exists(self) -> None:
         """Ensure that the area record exists in the database."""
-        await queries.ensure_area_exists(self)
+        await operations.ensure_area_exists(self)
 
     def get_latest_interval(self) -> datetime:
         """Return the latest interval end time minus 1 hour, or default window if none."""
@@ -270,7 +269,7 @@ class AreaOccupancyDB:
 
     def prune_old_intervals(self, force: bool = False) -> int:
         """Delete intervals older than RETENTION_DAYS."""
-        return queries.prune_old_intervals(self, force)
+        return operations.prune_old_intervals(self, force)
 
     def get_aggregated_intervals_by_slot(
         self,
@@ -305,6 +304,33 @@ class AreaOccupancyDB:
             include_appliance,
             media_sensor_ids,
             appliance_sensor_ids,
+        )
+
+    def get_time_prior(
+        self,
+        area_name: str,
+        day_of_week: int,
+        time_slot: int,
+        default_prior: float = 0.5,
+    ) -> float:
+        """Get the time prior for a specific time slot.
+
+        Args:
+            area_name: The area name to filter by
+            day_of_week: Day of week (0=Monday, 6=Sunday)
+            time_slot: Time slot index
+            default_prior: Default prior value if not found
+
+        Returns:
+            Time prior value or default if not found
+        """
+        return queries.get_time_prior(
+            self,
+            self.coordinator.entry_id,
+            area_name,
+            day_of_week,
+            time_slot,
+            default_prior,
         )
 
     # Attach sync methods
@@ -425,7 +451,7 @@ class AreaOccupancyDB:
         confidence: float | None = None,
     ) -> bool:
         """Save global prior calculation to GlobalPriors table."""
-        return priors.save_global_prior(
+        return operations.save_global_prior(
             self,
             area_name,
             prior_value,
@@ -440,7 +466,7 @@ class AreaOccupancyDB:
 
     def get_global_prior(self, area_name: str) -> dict[str, Any] | None:
         """Get the most recent global prior for an area."""
-        return priors.get_global_prior(self, area_name)
+        return queries.get_global_prior(self, area_name)
 
     def save_occupied_intervals_cache(
         self,
@@ -449,7 +475,7 @@ class AreaOccupancyDB:
         data_source: str = "merged",
     ) -> bool:
         """Save occupied intervals to OccupiedIntervalsCache table."""
-        return priors.save_occupied_intervals_cache(
+        return operations.save_occupied_intervals_cache(
             self, area_name, intervals, data_source
         )
 
@@ -460,7 +486,7 @@ class AreaOccupancyDB:
         period_end: datetime | None = None,
     ) -> list[tuple[datetime, datetime]]:
         """Get occupied intervals from OccupiedIntervalsCache table."""
-        return priors.get_occupied_intervals_cache(
+        return queries.get_occupied_intervals_cache(
             self, area_name, period_start, period_end
         )
 
@@ -468,7 +494,7 @@ class AreaOccupancyDB:
         self, area_name: str, max_age_hours: int = 24
     ) -> bool:
         """Check if cached occupied intervals are still valid."""
-        return priors.is_occupied_intervals_cache_valid(self, area_name, max_age_hours)
+        return queries.is_occupied_intervals_cache_valid(self, area_name, max_age_hours)
 
     @contextmanager
     def get_session(self) -> Any:

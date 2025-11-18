@@ -7,8 +7,6 @@ aggregates, and implements retention policies to prevent database bloat.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -28,7 +26,7 @@ from ..const import (
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
     RETENTION_WEEKLY_AGGREGATES_DAYS,
 )
-from .priors import get_occupied_intervals
+from .queries import get_occupied_intervals
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -89,10 +87,8 @@ def get_interval_aggregates(
     motion_timeout_seconds: int,
     media_sensor_ids: list[str] | None,
     appliance_sensor_ids: list[str] | None,
-    session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> list[tuple[int, int, float]]:
     """Fetch interval aggregates via SQL with Python fallback."""
-    session_provider = session_provider or db.get_session
     try:
         start_time = dt_util.utcnow()
         result = db.get_aggregated_intervals_by_slot(
@@ -132,7 +128,6 @@ def get_interval_aggregates(
         include_appliance=bool(appliance_sensor_ids),
         media_sensor_ids=media_sensor_ids,
         appliance_sensor_ids=appliance_sensor_ids,
-        session_provider=session_provider,
     )
     return aggregate_intervals_by_slot(intervals, slot_minutes)
 

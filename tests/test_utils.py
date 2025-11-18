@@ -5,8 +5,8 @@ import math
 from unittest.mock import Mock
 
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
+from custom_components.area_occupancy.db.utils import apply_motion_timeout
 from custom_components.area_occupancy.utils import (
-    apply_motion_timeout,
     bayesian_probability,
     clamp_probability,
     combine_priors,

@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timedelta
+import hashlib
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant import helpers
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_PROBABILITY, MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
-from . import maintenance
+from ..const import (
+    GLOBAL_PRIOR_HISTORY_COUNT,
+    MAX_PROBABILITY,
+    MAX_WEIGHT,
+    MIN_PROBABILITY,
+    MIN_WEIGHT,
+    RETENTION_DAYS,
+)
+from . import maintenance, queries
 from .constants import (
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
@@ -627,3 +638,339 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
     except (SQLAlchemyError, OSError) as err:
         _LOGGER.error("Failed to delete data for removed area %s: %s", area_name, err)
     return deleted_count
+
+
+def _create_data_hash(
+    area_name: str,
+    period_start: datetime,
+    period_end: datetime,
+    total_occupied: float,
+    interval_count: int,
+) -> str:
+    """Create a hash of underlying data for validation.
+
+    Args:
+        area_name: Area name
+        period_start: Period start time
+        period_end: Period end time
+        total_occupied: Total occupied seconds
+        interval_count: Number of intervals
+
+    Returns:
+        Hash string
+    """
+    data = {
+        "area_name": area_name,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "total_occupied": total_occupied,
+        "interval_count": interval_count,
+    }
+    data_str = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(data_str.encode()).hexdigest()
+
+
+def _prune_old_global_priors(
+    db: AreaOccupancyDB,
+    session: Any,
+    area_name: str,
+) -> None:
+    """Prune old global prior calculations, keeping only the most recent N.
+
+    Args:
+        db: Database instance
+        session: Database session
+        area_name: Area name
+    """
+    try:
+        # Get all global priors for this area, ordered by calculation date
+        # Note: GlobalPriors has unique constraint on area_name, so there's only one
+        # But we keep this function for future use if we change to allow history
+        priors = (
+            session.query(db.GlobalPriors)
+            .filter_by(area_name=area_name)
+            .order_by(db.GlobalPriors.calculation_date.desc())
+            .all()
+        )
+
+        # Keep only the most recent N calculations
+        if len(priors) > GLOBAL_PRIOR_HISTORY_COUNT:
+            to_delete = priors[GLOBAL_PRIOR_HISTORY_COUNT:]
+            for prior in to_delete:
+                session.delete(prior)
+            session.commit()
+            _LOGGER.debug(
+                "Pruned %d old global prior calculations for %s",
+                len(to_delete),
+                area_name,
+            )
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError) as e:
+        _LOGGER.warning("Error pruning old global priors: %s", e)
+        # Don't raise - this is cleanup, not critical
+
+
+async def ensure_area_exists(db: AreaOccupancyDB) -> None:
+    """Ensure that the area record exists in the database."""
+    try:
+        # Check if area exists
+        existing_area = queries.get_area_data(db, db.coordinator.entry_id)
+        if existing_area:
+            _LOGGER.debug(
+                "Area already exists for entry_id: %s", db.coordinator.entry_id
+            )
+            return
+
+        # Area doesn't exist, force create it
+        _LOGGER.info(
+            "Area not found, forcing creation for entry_id: %s",
+            db.coordinator.entry_id,
+        )
+        # Call save_area_data directly to avoid circular dependency
+        save_area_data(db)
+
+        # Verify it was created
+        new_area = queries.get_area_data(db, db.coordinator.entry_id)
+        if new_area:
+            _LOGGER.info("Successfully created area: %s", new_area)
+        else:
+            _LOGGER.error(
+                "Failed to create area for entry_id: %s", db.coordinator.entry_id
+            )
+
+    except (
+        SQLAlchemyError,
+        HomeAssistantError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        _LOGGER.error("Error ensuring area exists: %s", e)
+
+
+def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
+    """Delete intervals older than RETENTION_DAYS (coordinated across instances).
+
+    Args:
+        db: Database instance
+        force: If True, skip the recent-prune check
+
+    Returns:
+        Number of intervals deleted
+    """
+    cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+    _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
+
+    try:
+        with db.get_locked_session() as session:
+            # Re-check last_prune inside locked session to prevent concurrent bypass
+            # This ensures the throttle cannot be bypassed by concurrent instances
+            if not force:
+                result = (
+                    session.query(db.Metadata).filter_by(key="last_prune_time").first()
+                )
+                if result:
+                    try:
+                        last_prune = datetime.fromisoformat(result.value)
+                        time_since_prune = (
+                            dt_util.utcnow() - last_prune
+                        ).total_seconds()
+                        if time_since_prune < 3600:  # 1 hour
+                            _LOGGER.debug(
+                                "Skipping prune - last run was %d minutes ago",
+                                int(time_since_prune / 60),
+                            )
+                            return 0
+                    except (ValueError, AttributeError) as e:
+                        _LOGGER.debug(
+                            "Failed to parse last prune time, proceeding: %s", e
+                        )
+
+            # Count intervals to be deleted for logging
+            count_query = session.query(func.count(db.Intervals.id)).filter(
+                db.Intervals.start_time < cutoff_date
+            )
+            intervals_to_delete = count_query.scalar() or 0
+
+            if intervals_to_delete == 0:
+                _LOGGER.debug("No old intervals to prune")
+                # Still record the prune attempt to prevent other instances from trying
+                maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+                return 0
+
+            # Delete old intervals
+            delete_query = session.query(db.Intervals).filter(
+                db.Intervals.start_time < cutoff_date
+            )
+            deleted_count = delete_query.delete(synchronize_session=False)
+
+            session.commit()
+
+            _LOGGER.info(
+                "Pruned %d intervals older than %d days (cutoff: %s)",
+                deleted_count,
+                RETENTION_DAYS,
+                cutoff_date,
+            )
+
+            # Record successful prune
+            maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+
+            return deleted_count
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error during interval pruning: %s", e)
+        return 0
+
+
+def save_global_prior(
+    db: AreaOccupancyDB,
+    area_name: str,
+    prior_value: float,
+    data_period_start: datetime,
+    data_period_end: datetime,
+    total_occupied_seconds: float,
+    total_period_seconds: float,
+    interval_count: int,
+    calculation_method: str = "interval_analysis",
+    confidence: float | None = None,
+) -> bool:
+    """Save global prior calculation to GlobalPriors table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        prior_value: Calculated prior probability
+        data_period_start: Start of data period used
+        data_period_end: End of data period used
+        total_occupied_seconds: Total occupied time in period
+        total_period_seconds: Total period duration
+        interval_count: Number of intervals used
+        calculation_method: Method used for calculation
+        confidence: Confidence in calculation (0.0-1.0)
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving global prior for area: %s, value: %.4f", area_name, prior_value
+    )
+
+    try:
+        with db.get_locked_session() as session:
+            # Create hash of underlying data for validation
+            data_hash = _create_data_hash(
+                area_name,
+                data_period_start,
+                data_period_end,
+                total_occupied_seconds,
+                interval_count,
+            )
+
+            # Check if global prior already exists for this area
+            existing = (
+                session.query(db.GlobalPriors).filter_by(area_name=area_name).first()
+            )
+
+            if existing:
+                # Update existing record
+                existing.prior_value = prior_value
+                existing.calculation_date = dt_util.utcnow()
+                existing.data_period_start = data_period_start
+                existing.data_period_end = data_period_end
+                existing.total_occupied_seconds = total_occupied_seconds
+                existing.total_period_seconds = total_period_seconds
+                existing.interval_count = interval_count
+                existing.confidence = confidence
+                existing.calculation_method = calculation_method
+                existing.underlying_data_hash = data_hash
+                existing.updated_at = dt_util.utcnow()
+            else:
+                # Create new record
+                global_prior = db.GlobalPriors(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    prior_value=prior_value,
+                    calculation_date=dt_util.utcnow(),
+                    data_period_start=data_period_start,
+                    data_period_end=data_period_end,
+                    total_occupied_seconds=total_occupied_seconds,
+                    total_period_seconds=total_period_seconds,
+                    interval_count=interval_count,
+                    confidence=confidence,
+                    calculation_method=calculation_method,
+                    underlying_data_hash=data_hash,
+                )
+                session.add(global_prior)
+
+            session.commit()
+
+            # Prune old global prior history (keep only last N)
+            _prune_old_global_priors(db, session, area_name)
+
+            _LOGGER.debug("Global prior saved successfully")
+            return True
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving global prior: %s", e)
+        session.rollback()
+        return False
+
+
+def save_occupied_intervals_cache(
+    db: AreaOccupancyDB,
+    area_name: str,
+    intervals: list[tuple[datetime, datetime]],
+    data_source: str = "merged",
+) -> bool:
+    """Save occupied intervals to OccupiedIntervalsCache table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        intervals: List of (start_time, end_time) tuples
+        data_source: Source of intervals ('primary_sensor', 'motion_sensors', 'merged')
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving %d occupied intervals to cache for area: %s",
+        len(intervals),
+        area_name,
+    )
+
+    try:
+        with db.get_locked_session() as session:
+            calculation_date = dt_util.utcnow()
+
+            # Delete existing cached intervals for this area
+            session.query(db.OccupiedIntervalsCache).filter_by(
+                area_name=area_name
+            ).delete(synchronize_session=False)
+
+            # Insert new intervals
+            for start_time, end_time in intervals:
+                duration_seconds = (end_time - start_time).total_seconds()
+
+                cached_interval = db.OccupiedIntervalsCache(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_seconds=duration_seconds,
+                    calculation_date=calculation_date,
+                    data_source=data_source,
+                )
+                session.add(cached_interval)
+
+            session.commit()
+            _LOGGER.debug("Occupied intervals cache saved successfully")
+            return True
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving occupied intervals cache: %s", e)
+        session.rollback()
+        return False

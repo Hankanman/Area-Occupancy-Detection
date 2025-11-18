@@ -10,8 +10,6 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -193,30 +191,12 @@ class Prior:
 
         """
         _LOGGER.debug("Getting time prior")
-        db = self.db
-
-        try:
-            with db.get_session() as session:
-                prior = (
-                    session.query(db.Priors)
-                    .filter_by(
-                        entry_id=self.coordinator.entry_id,
-                        area_name=self.area_name,
-                        day_of_week=self.day_of_week,
-                        time_slot=self.time_slot,
-                    )
-                    .first()
-                )
-                return float(prior.prior_value) if prior else DEFAULT_PRIOR
-        except (
-            SQLAlchemyError,
-            ValueError,
-            TypeError,
-            RuntimeError,
-            OSError,
-        ) as e:
-            _LOGGER.error("Error getting time prior: %s", e)
-            return DEFAULT_PRIOR
+        return self.db.get_time_prior(
+            area_name=self.area_name,
+            day_of_week=self.day_of_week,
+            time_slot=self.time_slot,
+            default_prior=DEFAULT_PRIOR,
+        )
 
     def get_occupied_intervals(
         self,
