@@ -55,7 +55,7 @@ class TestRunAnalysis:
         """Test successful analysis run."""
         # Set up coordinator with test data - use area-based access
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
 
         # Create test entity
         mock_entity = Mock()

@@ -137,7 +137,7 @@ class TestPercentageSensors:
     ) -> None:
         """Test percentage conversion for different input values."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         sensor = sensor_class(coordinator_with_areas, area_name)
         # Mock area methods
         if coordinator_attr == "area_prior":
@@ -176,7 +176,7 @@ class TestEvidenceSensor:
     ) -> None:
         """Test native_value when no entities."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area._entities = type("obj", (object,), {"entities": {}})()
         sensor = EvidenceSensor(coordinator_with_areas, area_name)
         assert sensor.native_value == 0
@@ -187,7 +187,7 @@ class TestEvidenceSensor:
         """Test extra_state_attributes property."""
         coordinator_with_areas_with_sensors.data = {"test": "data"}
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         area.entities.active_entities = []
         area.entities.inactive_entities = []
 
@@ -253,7 +253,7 @@ class TestDecaySensor:
     ) -> None:
         """Test native_value property with different decay values."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         sensor = DecaySensor(coordinator_with_areas, area_name)
         # Mock area.decay method
         area.decay = Mock(return_value=decay_value)
@@ -287,7 +287,7 @@ class TestDecaySensor:
     ) -> None:
         """Test extra_state_attributes with empty entities."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         # Patch decaying_entities property to return empty list
         with patch.object(
             type(area.entities),
@@ -389,7 +389,7 @@ class TestSensorIntegration:
     ) -> None:
         """Test all sensors with comprehensive coordinator data."""
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         # Mock area methods
         area.area_prior = Mock(return_value=0.35)
         area.probability = Mock(return_value=0.65)
@@ -431,7 +431,7 @@ class TestSensorIntegration:
     ) -> None:
         """Test sensor value updates when coordinator data changes."""
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         probability_sensor = ProbabilitySensor(
             coordinator_with_areas_with_sensors, area_name
         )
@@ -463,7 +463,7 @@ class TestSensorIntegration:
 
         coordinator_with_areas_with_sensors.data = {"ready": True}
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
 
         combined_value = 0.47
         area.area_prior = Mock(return_value=combined_value)
@@ -494,7 +494,7 @@ class TestSensorIntegration:
     ) -> None:
         """Test evidence sensor with dynamic entity updates."""
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         # Entities are already set up by the fixture
         evidence_sensor = EvidenceSensor(coordinator_with_areas_with_sensors, area_name)
         assert evidence_sensor.native_value == 4
@@ -516,7 +516,7 @@ class TestSensorIntegration:
         mock_entity1.decay.decay_factor = 0.8
 
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         area.entities.decaying_entities = [mock_entity1]
 
         decay_sensor = DecaySensor(coordinator_with_areas_with_sensors, area_name)
@@ -541,7 +541,7 @@ class TestSensorIntegration:
         """Test sensor error handling scenarios."""
         # Test evidence sensor error handling
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         area.entities.entities = Mock()
         area.entities.entities.__len__ = Mock(side_effect=TypeError("Test error"))
         evidence_sensor = EvidenceSensor(coordinator_with_areas_with_sensors, area_name)
@@ -551,7 +551,7 @@ class TestSensorIntegration:
 
         # Test decay sensor error handling
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
         area.entities.decaying_entities = Mock(side_effect=Exception("Test error"))
         decay_sensor = DecaySensor(coordinator_with_areas_with_sensors, area_name)
         assert decay_sensor.extra_state_attributes == {}

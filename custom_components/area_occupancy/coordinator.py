@@ -34,7 +34,7 @@ from .const import (
     MIN_PROBABILITY,
     SAVE_INTERVAL,
 )
-from .data.integration_config import IntegrationConfig
+from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)

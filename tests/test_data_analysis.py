@@ -582,7 +582,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test analyze_area_prior supplements with media/appliance when motion prior is low."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Set up media and appliance sensors
         area.config.sensors.media = ["media_player.test_tv"]
@@ -655,7 +655,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test analyze_area_prior applies minimum prior override."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.min_prior_override = 0.3
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -798,7 +798,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_occupied_intervals with media sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -860,7 +860,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_occupied_intervals with appliance sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.appliance = ["switch.test_appliance"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -1013,7 +1013,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds uses SQL path."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout to 0 to enable SQL path (guard condition)
@@ -1066,7 +1066,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds skips SQL path when timeout > 0."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout > 0 to disable SQL path (guard condition)
@@ -1104,7 +1104,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds skips SQL path when include_media=True."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout to 0 but include media to disable SQL path (guard condition)
@@ -1160,7 +1160,7 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods with real database data."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Create test entity and interval
@@ -1201,7 +1201,7 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods with no sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock no sensors
@@ -1423,7 +1423,7 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods handles database errors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock database error
@@ -1513,7 +1513,7 @@ class TestAnalysisHelperFunctions:
         """Test start_prior_analysis orchestrates prior calculation."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer methods
         with (
@@ -1541,7 +1541,7 @@ class TestAnalysisHelperFunctions:
         """Test start_prior_analysis handles errors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer to raise error
         with (
@@ -1566,7 +1566,7 @@ class TestAnalysisHelperFunctions:
         """Test start_likelihood_analysis orchestrates likelihood calculation."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1616,7 +1616,7 @@ class TestAnalysisHelperFunctions:
         """Test start_likelihood_analysis handles no likelihoods."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(return_value=[])
@@ -1669,7 +1669,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_area_prior when no media/appliance sensors configured."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = []
         area.config.sensors.appliance = []
 
@@ -1774,7 +1774,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals with complex interval merging and timeout."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.motion_timeout = 300  # 5 minutes
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -1859,7 +1859,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_likelihoods handles exceptions."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock database exception
@@ -1878,7 +1878,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles exceptions."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1912,7 +1912,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles entity not found in manager."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1950,7 +1950,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals uses UNION ALL path with multiple sensor types."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
@@ -2033,7 +2033,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals segments intervals for motion timeout correctly."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.motion_timeout = 600  # 10 minutes
 
@@ -2110,7 +2110,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals with mixed sensor types and complex overlaps."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
@@ -2195,7 +2195,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals handles media/appliance intervals with no motion overlap."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -2259,7 +2259,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals UNION ALL path returns results with sensor_type."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
@@ -2622,7 +2622,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_likelihoods completes full path for all branches."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Create test entities and intervals with various states
@@ -2705,7 +2705,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_prior_analysis handles SQLAlchemyError."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer to raise SQLAlchemyError
         with (
@@ -2730,7 +2730,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles ValueError and TypeError."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(

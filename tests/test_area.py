@@ -198,7 +198,7 @@ class TestAreaMethodsIntegration:
     ) -> None:
         """Test probability method with real coordinator."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
 
         prob = area.probability()
         assert 0.0 <= prob <= 1.0
@@ -208,7 +208,7 @@ class TestAreaMethodsIntegration:
     ) -> None:
         """Test occupied method with real coordinator."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
 
         occupied = area.occupied()
         assert isinstance(occupied, bool)
@@ -218,7 +218,7 @@ class TestAreaMethodsIntegration:
     ) -> None:
         """Test device_info method with real coordinator."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
 
         device_info = area.device_info()
         assert device_info is not None

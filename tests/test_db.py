@@ -563,7 +563,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Set up entities on the area's entities manager using private attribute
@@ -633,7 +633,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set area_prior so it will be saved and loaded
         area.prior.set_global_prior(0.5)
         # Verify area_prior is set correctly
@@ -676,7 +676,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Set up entities on the area's entities manager using private attribute
@@ -752,7 +752,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Set up entities on the area's entities manager using private attribute
@@ -805,7 +805,7 @@ class TestAreaOccupancyDBUtilities:
 
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         assert area is not None
 
         mock_analyzer = Mock()
@@ -893,7 +893,7 @@ class TestAreaOccupancyDBUtilities:
         )
 
         # Set up coordinator to return the mock area
-        db.coordinator.get_area_or_default = Mock(return_value=mock_area)
+        db.coordinator.get_area = Mock(return_value=mock_area)
         db.coordinator.get_area_names = Mock(return_value=["Test Area"])
         db.coordinator.areas = {"Test Area": mock_area}
 
@@ -933,7 +933,7 @@ class TestAreaOccupancyDBUtilities:
 
         # Get an actual entity ID from the coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         entity_ids = area.entities.entity_ids
         assert len(entity_ids) > 0, "No entities configured in area"
         test_entity_id = entity_ids[0]  # Use first configured entity
@@ -1203,7 +1203,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0, "Coordinator should have at least one area"
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None, f"Area '{area_name}' should exist"
 
         if field == "entry_id":
@@ -1246,7 +1246,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Set up existing area in database
@@ -1302,7 +1302,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Ensure no existing area in database
@@ -1338,7 +1338,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         raw_global_prior = 0.37
@@ -1376,7 +1376,7 @@ class TestAreaOccupancyDBUtilities:
         area_names = db.coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         assert area is not None
 
         # Get the actual area_id from the area registry
@@ -2434,7 +2434,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
@@ -2483,7 +2483,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2528,7 +2528,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2615,7 +2615,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2672,7 +2672,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2765,7 +2765,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2897,7 +2897,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         area.entities._entities = {"binary_sensor.motion1": mock_entity}
 
         # Mock cleanup method
@@ -2916,7 +2916,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
@@ -2977,7 +2977,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         # Get actual area name from coordinator
         area_name = db.coordinator.get_area_names()[0]
-        area = db.coordinator.get_area_or_default(area_name)
+        area = db.coordinator.get_area(area_name)
         # Set up entities directly using _entities (entities property is read-only)
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion1"
