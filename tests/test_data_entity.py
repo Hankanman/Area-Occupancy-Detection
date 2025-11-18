@@ -595,7 +595,7 @@ class TestEntityPropertiesAndMethods:
 
             # Mock config - get area for config access
             area_name = coordinator_with_areas.get_area_names()[0]
-            area = coordinator_with_areas.get_area_or_default(area_name)
+            area = coordinator_with_areas.get_area(area_name)
             area.config.decay.half_life = 300.0
 
             # EntityFactory requires area_name
@@ -778,7 +778,7 @@ class TestEntityFactory:
 
         # Mock config with sensors - use area config if available
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.config.sensors.motion = ["binary_sensor.motion1"]
         area.config.sensors.media = ["media_player.tv"]
         # EntityFactory requires area_name

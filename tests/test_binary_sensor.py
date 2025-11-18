@@ -53,7 +53,7 @@ class TestOccupancy:
             mock_parent.assert_called_once()
 
         # Should set occupancy entity ID in area
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         assert area.occupancy_entity_id == entity.entity_id
 
     async def test_async_will_remove_from_hass(
@@ -66,7 +66,7 @@ class TestOccupancy:
         entity.entity_id = (
             f"binary_sensor.{area_name.lower().replace(' ', '_')}_occupancy_status"
         )
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.occupancy_entity_id = entity.entity_id
 
         await entity.async_will_remove_from_hass()
@@ -90,7 +90,7 @@ class TestOccupancy:
     ) -> None:
         """Test icon and is_on properties based on occupancy state."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         entity = Occupancy(coordinator_with_areas, area_name)
         # Mock area.occupied method
         area.occupied = Mock(return_value=occupied)
@@ -107,7 +107,7 @@ def wasp_coordinator(
     """Create a coordinator with wasp-specific configuration."""
     # Customize the coordinator for wasp tests - use area-based access
     area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area_or_default(area_name)
+    area = coordinator_with_areas.get_area(area_name)
     area.config.wasp_in_box = Mock()
     area.config.wasp_in_box.enabled = True
     area.config.wasp_in_box.motion_timeout = 60
@@ -194,7 +194,7 @@ class TestWaspInBoxSensor:
 
         # Should set wasp entity ID in area
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         assert area.wasp_entity_id == entity.entity_id
 
     @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ class TestWaspInBoxSensor:
         listener_mock = Mock()
         entity._remove_state_listener = listener_mock
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         area.wasp_entity_id = entity.entity_id
 
         await entity.async_will_remove_from_hass()
@@ -268,7 +268,7 @@ class TestWaspInBoxSensor:
         if listener_mock:
             listener_mock.assert_called_once()
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         assert area.wasp_entity_id is None
 
     def test_extra_state_attributes(
@@ -556,7 +556,7 @@ class TestAsyncSetupEntry:
         mock_config_entry.runtime_data = coordinator_with_areas
         # Configure wasp setting on the area
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.config.wasp_in_box = Mock()
         area.config.wasp_in_box.enabled = True
         return mock_config_entry
@@ -588,7 +588,7 @@ class TestAsyncSetupEntry:
         # Configure wasp setting on the area
         coordinator = setup_config_entry.runtime_data
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.wasp_in_box.enabled = wasp_enabled
 
         mock_async_add_entities = Mock()
@@ -759,7 +759,7 @@ class TestWaspMultiSensorAggregation:
         """Create a coordinator with multiple door and motion sensors."""
         # Use area-based access
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.config.wasp_in_box = Mock()
         area.config.wasp_in_box.enabled = True
         area.config.wasp_in_box.motion_timeout = 60
@@ -981,7 +981,7 @@ class TestWaspMultiSensorAggregation:
         """Test aggregate door state when no door sensors are configured."""
         # Configure no door sensors - use area-based access
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        area = multi_sensor_coordinator.get_area_or_default(area_name)
+        area = multi_sensor_coordinator.get_area(area_name)
         area.config.sensors.door = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
@@ -1000,7 +1000,7 @@ class TestWaspMultiSensorAggregation:
         """Test aggregate motion state when no motion sensors are configured."""
         # Configure no motion sensors
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        area = multi_sensor_coordinator.get_area_or_default(area_name)
+        area = multi_sensor_coordinator.get_area(area_name)
         area.config.sensors.motion = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]

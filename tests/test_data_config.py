@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
+    ANALYSIS_INTERVAL,
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
@@ -24,6 +25,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_SENSORS,
+    DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
@@ -45,6 +47,7 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.config import (
     AreaConfig,
     Decay,
+    IntegrationConfig,
     Sensors,
     SensorStates,
     WaspInBox,
@@ -368,7 +371,7 @@ class TestConfig:
         assert config.name == "Testing"
         # area_id should be the area ID from the config entry, not the area name
         # Get the area from coordinator to find its area_id
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         expected_area_id = area.config.area_id if area else None
         assert config.area_id == expected_area_id
         # Threshold comes from options (52.0) or data (50.0), check what's actually set
@@ -1235,3 +1238,48 @@ class TestConfigIntegration:
         # Name comes from area registry, not from config (it's resolved from area_id)
         assert config.name == "Testing"  # Area name from registry
         assert config.threshold == 0.75  # 75 / 100 (from options, overriding data's 50)
+
+
+class TestIntegrationConfig:
+    """Test IntegrationConfig class."""
+
+    def test_initialization(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test IntegrationConfig initialization."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert integration_config.coordinator == coordinator
+        assert integration_config.config_entry == mock_realistic_config_entry
+        assert integration_config.hass == hass
+        assert integration_config.integration_name == mock_realistic_config_entry.title
+
+    def test_timing_intervals(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test timing interval properties."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert integration_config.analysis_interval == ANALYSIS_INTERVAL
+        assert integration_config.decay_interval == DECAY_INTERVAL
+
+    def test_repr(self, hass: HomeAssistant, mock_realistic_config_entry: Mock) -> None:
+        """Test IntegrationConfig string representation."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        repr_str = repr(integration_config)
+        assert "IntegrationConfig" in repr_str
+        assert integration_config.integration_name in repr_str
+
+    def test_integration_name_from_config_entry(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that integration_name comes from config entry title."""
+        mock_realistic_config_entry.title = "Test Integration"
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert integration_config.integration_name == "Test Integration"

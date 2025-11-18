@@ -36,7 +36,7 @@ from homeassistant.util import dt as dt_util
 def test_initialization(coordinator_with_areas: AreaOccupancyCoordinator):
     """Test Prior initialization with real coordinator."""
     area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area_or_default(area_name)
+    area = coordinator_with_areas.get_area(area_name)
     prior = Prior(coordinator_with_areas, area_name=area_name)
     # Check that sensor_ids matches the area config
     assert prior.sensor_ids == area.config.sensors.motion
