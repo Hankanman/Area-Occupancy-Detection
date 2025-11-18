@@ -3,19 +3,12 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
-
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.selector import (
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
-)
 from homeassistant.util import dt as dt_util
 
-from .const import ALL_AREAS_IDENTIFIER, DOMAIN
-from .utils import get_coordinator, normalize_area_name, validate_area_exists
+from .const import DOMAIN
+from .utils import get_coordinator
 
 if TYPE_CHECKING:
     from .area.area import Area
@@ -94,92 +87,34 @@ def _build_analysis_data(
 async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Manually trigger an update of sensor likelihoods.
 
-    Supports area_name parameter. If area_name is "all" or ALL_AREAS_IDENTIFIER,
-    runs analysis for all areas.
+    Always runs analysis for all areas.
     """
-    area_name = normalize_area_name(call.data.get("area_name", "all"))
-
     try:
         coordinator = get_coordinator(hass)
 
-        if area_name == ALL_AREAS_IDENTIFIER:
-            _LOGGER.info("Running analysis for all areas")
-            await coordinator.run_analysis()
+        _LOGGER.info("Running analysis for all areas")
+        await coordinator.run_analysis()
 
-            # Aggregate data from all areas
-            all_areas_data = {}
-            for area_name_item in coordinator.get_area_names():
-                area = coordinator.get_area_or_default(area_name_item)
-                all_areas_data[area_name_item] = _build_analysis_data(
-                    hass, area, area_name_item
-                )
+        # Aggregate data from all areas
+        all_areas_data = {}
+        for area_name_item in coordinator.get_area_names():
+            area = coordinator.get_area_or_default(area_name_item)
+            all_areas_data[area_name_item] = _build_analysis_data(
+                hass, area, area_name_item
+            )
 
-            return {
-                "areas": all_areas_data,
-                "update_timestamp": dt_util.utcnow().isoformat(),
-            }
-
-        # Run for specific area
-        validate_area_exists(coordinator, area_name)
-        area = coordinator.get_area_or_default(area_name)
-
-        _LOGGER.info("Running analysis for area %s", area_name)
-        await coordinator.run_analysis(area_name=area_name)
-
-        result = _build_analysis_data(hass, area, area_name)
-        result["update_timestamp"] = dt_util.utcnow().isoformat()
+        return {
+            "areas": all_areas_data,
+            "update_timestamp": dt_util.utcnow().isoformat(),
+        }
     except Exception as err:
-        error_msg = f"Failed to run analysis for {area_name}: {err}"
+        error_msg = f"Failed to run analysis: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
-    else:
-        return result
-
-
-def _create_area_selector_schema(hass: HomeAssistant) -> vol.Schema:
-    """Create dynamic schema with area selector options.
-
-    Gets area names from coordinator if available, otherwise falls back to
-    simple text field with "all" option.
-
-    Args:
-        hass: Home Assistant instance
-
-    Returns:
-        vol.Schema with SelectSelector for area_name field
-    """
-    # Try to get coordinator to build dynamic options
-    coordinator = hass.data.get(DOMAIN)
-    options = [{"value": "all", "label": "All Areas"}]
-
-    if coordinator is not None:
-        try:
-            area_names = coordinator.get_area_names()
-            options.extend(
-                [{"value": area_name, "label": area_name} for area_name in area_names]
-            )
-        except (AttributeError, RuntimeError, ValueError) as err:
-            # If coordinator exists but get_area_names fails, use fallback
-            _LOGGER.debug(
-                "Could not get area names from coordinator, using fallback schema: %s",
-                err,
-            )
-
-    return vol.Schema(
-        {
-            vol.Optional("area_name", default="all"): SelectSelector(
-                SelectSelectorConfig(options=options, mode=SelectSelectorMode.DROPDOWN)
-            ),
-        }
-    )
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
-
-    # Create dynamic schema with area selector options
-    # Schema will be populated with actual area names from coordinator
-    area_name_schema = _create_area_selector_schema(hass)
 
     # Create async wrapper function to properly handle the service call
     async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
@@ -190,7 +125,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         "run_analysis",
         handle_run_analysis,
-        schema=area_name_schema,
+        schema=None,
         supports_response=SupportsResponse.ONLY,
     )
 

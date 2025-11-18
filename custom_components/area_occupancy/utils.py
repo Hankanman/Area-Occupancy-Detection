@@ -11,13 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import (
-    ALL_AREAS_IDENTIFIER,
-    DOMAIN,
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
-    ROUNDING_PRECISION,
-)
+from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -299,35 +293,3 @@ def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
             "Area Occupancy coordinator not found. Ensure integration is configured."
         )
     return coordinator
-
-
-# ────────────────────────────────────── Area Name Utilities ───────────────────────────
-
-
-def normalize_area_name(area_name: str) -> str:
-    """Normalize area name, converting 'all' to ALL_AREAS_IDENTIFIER.
-
-    Args:
-        area_name: The area name to normalize
-
-    Returns:
-        Normalized area name (ALL_AREAS_IDENTIFIER if input was 'all')
-    """
-    if area_name == "all":
-        return ALL_AREAS_IDENTIFIER
-    return area_name
-
-
-def validate_area_exists(coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
-    """Validate that the area exists.
-
-    Args:
-        coordinator: The area occupancy coordinator
-        area_name: The area name to validate
-
-    Raises:
-        HomeAssistantError: If area does not exist
-    """
-    area = coordinator.get_area_or_default(area_name)
-    if area is None:
-        raise HomeAssistantError(f"Area '{area_name}' not found")
