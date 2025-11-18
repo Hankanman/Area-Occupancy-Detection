@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import math
 from typing import TYPE_CHECKING
@@ -222,54 +222,6 @@ def combine_priors(
     combined_prior = logit_to_prob(combined_logit)
 
     return clamp_probability(combined_prior)
-
-
-def apply_motion_timeout(
-    intervals: list[tuple[datetime, datetime]], timeout_seconds: int
-) -> list[tuple[datetime, datetime]]:
-    """Apply timeout to motion intervals to extend their duration.
-
-    This function merges overlapping or adjacent intervals and extends each interval
-    by the specified timeout duration to ensure continuous coverage.
-
-    Args:
-        intervals: List of (start_time, end_time) tuples
-        timeout_seconds: Timeout duration in seconds to extend each interval
-
-    Returns:
-        List of merged and extended intervals
-
-    """
-    if not intervals:
-        return []
-
-    # Sort intervals by start time
-    sorted_intervals = sorted(intervals, key=lambda x: x[0])
-
-    # Apply timeout to each interval
-    extended_intervals = []
-    for start_time, end_time in sorted_intervals:
-        # Extend the end time by the timeout duration
-        extended_end = end_time + timedelta(seconds=timeout_seconds)
-        extended_intervals.append((start_time, extended_end))
-
-    # Merge overlapping or adjacent intervals
-    merged_intervals = []
-    current_start, current_end = extended_intervals[0]
-
-    for start_time, end_time in extended_intervals[1:]:
-        # If current interval overlaps or is adjacent to next interval, merge them
-        if start_time <= current_end:
-            current_end = max(current_end, end_time)
-        else:
-            # No overlap, add current interval and start new one
-            merged_intervals.append((current_start, current_end))
-            current_start, current_end = start_time, end_time
-
-    # Add the last interval
-    merged_intervals.append((current_start, current_end))
-
-    return merged_intervals
 
 
 # ────────────────────────────────────── Coordinator Utilities ───────────────────────────

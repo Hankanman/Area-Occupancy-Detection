@@ -122,7 +122,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
         if states:
             # Convert states to proper intervals with correct duration calculation
-            intervals = _states_to_intervals(db, states, end_time)  # type: ignore[arg-type]
+            intervals = _states_to_intervals(db, states, end_time)
             if intervals:
                 with db.get_locked_session() as session:
                     # Pre-filter duplicates using a single query for better performance

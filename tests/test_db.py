@@ -24,12 +24,12 @@ from custom_components.area_occupancy.db import (
     maintenance,
     sync,
 )
-from custom_components.area_occupancy.db.priors import (
+from custom_components.area_occupancy.db.operations import save_global_prior
+from custom_components.area_occupancy.db.queries import (
     build_base_filters,
     build_motion_query,
     get_occupied_intervals,
     get_time_bounds,
-    save_global_prior,
 )
 from homeassistant import helpers
 from homeassistant.core import HomeAssistant, State
