@@ -1,5 +1,6 @@
 """Tests for coordinator module."""
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -1735,3 +1736,239 @@ class TestRunAnalysisWithPruning:
             coordinator.async_refresh.assert_not_called()
             coordinator.db.save_data.assert_not_called()
             assert coordinator._analysis_timer is None
+
+
+class TestCoordinatorTimerCallbacks:
+    """Test coordinator timer callback error handling."""
+
+    async def test_handle_save_timer_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_save_timer with database error."""
+        with (
+            patch.object(
+                coordinator.db, "save_data", side_effect=RuntimeError("Save failed")
+            ),
+            patch.object(coordinator, "_start_save_timer") as mock_start,
+        ):
+            # Should handle error gracefully and reschedule
+            await coordinator._handle_save_timer(datetime.now())
+            mock_start.assert_called_once()
+
+    async def test_handle_save_timer_success(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_save_timer successful save."""
+        with (
+            patch.object(coordinator.db, "save_data") as mock_save,
+            patch.object(coordinator, "_start_save_timer") as mock_start,
+        ):
+            await coordinator._handle_save_timer(datetime.now())
+            mock_save.assert_called_once()
+            mock_start.assert_called_once()
+
+    async def test_handle_decay_timer_with_decay_enabled(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_decay_timer when decay is enabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.decay.enabled = True
+
+        with (
+            patch.object(coordinator, "async_refresh") as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_start,
+        ):
+            await coordinator._handle_decay_timer(datetime.now())
+            mock_refresh.assert_called_once()
+            mock_start.assert_called_once()
+
+    async def test_handle_decay_timer_with_decay_disabled(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_decay_timer when decay is disabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.decay.enabled = False
+
+        with (
+            patch.object(coordinator, "async_refresh") as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_start,
+        ):
+            await coordinator._handle_decay_timer(datetime.now())
+            # Should not refresh when decay is disabled
+            mock_refresh.assert_not_called()
+            mock_start.assert_called_once()
+
+    async def test_run_analysis_sync_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test run_analysis with sync_states error."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        with (
+            patch.object(
+                coordinator.db, "sync_states", side_effect=RuntimeError("Sync failed")
+            ),
+            patch.object(coordinator.db, "periodic_health_check", return_value=True),
+            patch.object(area, "run_prior_analysis", new=AsyncMock()),
+            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data"),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            # Should handle error gracefully
+            await coordinator.run_analysis(datetime.now())
+
+    async def test_run_analysis_health_check_failure(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test run_analysis with health check failure."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.db, "periodic_health_check", return_value=False),
+            patch.object(area, "run_prior_analysis", new=AsyncMock()),
+            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data"),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            # Should continue despite health check failure
+            await coordinator.run_analysis(datetime.now())
+
+
+class TestCoordinatorAreaRemoval:
+    """Test coordinator area removal scenarios."""
+
+    async def test_async_update_options_remove_area(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test async_update_options when removing an area."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Update config_entry.data to remove the area
+        original_data = coordinator.config_entry.data.copy()
+        coordinator.config_entry.data = {
+            "areas": {
+                "New Area": {
+                    "motion": ["binary_sensor.new_motion"],
+                    "threshold": 50,
+                }
+            }
+        }
+
+        try:
+            with (
+                patch.object(area, "async_cleanup", new=AsyncMock()) as mock_cleanup,
+                patch.object(coordinator.db, "delete_area_data") as mock_delete,
+                patch.object(
+                    coordinator, "track_entity_state_changes", new=AsyncMock()
+                ),
+            ):
+                # Mock entity registry
+                entity_registry = Mock()
+                entity_registry.entities = {}
+                with patch(
+                    "custom_components.area_occupancy.coordinator.er.async_get",
+                    return_value=entity_registry,
+                ):
+                    await coordinator.async_update_options(
+                        coordinator.config_entry.data
+                    )
+
+                # Verify cleanup was called
+                mock_cleanup.assert_called_once()
+                # Verify database deletion was attempted
+                mock_delete.assert_called_once_with(area_name)
+        finally:
+            # Restore original data
+            coordinator.config_entry.data = original_data
+
+    async def test_async_update_options_remove_area_db_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test async_update_options when database deletion fails."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Update config_entry.data to remove the area
+        original_data = coordinator.config_entry.data.copy()
+        coordinator.config_entry.data = {
+            "areas": {
+                "New Area": {
+                    "motion": ["binary_sensor.new_motion"],
+                    "threshold": 50,
+                }
+            }
+        }
+
+        try:
+            with (
+                patch.object(area, "async_cleanup", new=AsyncMock()),
+                patch.object(
+                    coordinator.db,
+                    "delete_area_data",
+                    side_effect=OSError("DB deletion failed"),
+                ),
+                patch.object(
+                    coordinator, "track_entity_state_changes", new=AsyncMock()
+                ),
+            ):
+                # Mock entity registry
+                entity_registry = Mock()
+                entity_registry.entities = {}
+                with patch(
+                    "custom_components.area_occupancy.coordinator.er.async_get",
+                    return_value=entity_registry,
+                ):
+                    # Should handle error gracefully
+                    await coordinator.async_update_options(
+                        coordinator.config_entry.data
+                    )
+        finally:
+            # Restore original data
+            coordinator.config_entry.data = original_data
+
+
+class TestCoordinatorFindAreaForEntity:
+    """Test coordinator find_area_for_entity edge cases."""
+
+    def test_find_area_for_entity_not_found(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity when entity is not found."""
+        result = coordinator.find_area_for_entity("binary_sensor.nonexistent")
+        assert result is None
+
+    def test_find_area_for_entity_multiple_areas(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity with multiple areas."""
+        # Create additional area
+        create_test_area(
+            coordinator,
+            area_name="Kitchen",
+            entity_ids=["binary_sensor.kitchen_motion"],
+        )
+
+        # Entity should be found in the correct area
+        result = coordinator.find_area_for_entity("binary_sensor.kitchen_motion")
+        assert result == "Kitchen"
+
+    def test_find_area_for_entity_empty_entity_id(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity with empty entity_id."""
+        result = coordinator.find_area_for_entity("")
+        assert result is None

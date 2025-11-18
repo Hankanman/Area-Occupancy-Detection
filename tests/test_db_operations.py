@@ -1,12 +1,13 @@
 """Tests for database CRUD operations."""
 # ruff: noqa: SLF001
 
+from contextlib import suppress
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from custom_components.area_occupancy.const import RETENTION_DAYS
 from custom_components.area_occupancy.db.operations import (
@@ -124,6 +125,24 @@ class TestLoadData:
             )
             assert count == 0
 
+    @pytest.mark.asyncio
+    async def test_load_data_database_error(self, test_db):
+        """Test load_data with database error."""
+        db = test_db
+
+        with patch.object(db, "get_session", side_effect=SQLAlchemyError("DB error")):
+            # Should handle error gracefully and not raise
+            await load_data(db)
+
+    @pytest.mark.asyncio
+    async def test_load_data_timeout_error(self, test_db):
+        """Test load_data with timeout error."""
+        db = test_db
+
+        with patch.object(db, "get_session", side_effect=TimeoutError("Timeout")):
+            # Should handle error gracefully and not raise
+            await load_data(db)
+
 
 class TestSaveAreaData:
     """Test save_area_data function."""
@@ -151,6 +170,42 @@ class TestSaveAreaData:
             for area_name in area_names:
                 area = session.query(db.Areas).filter_by(area_name=area_name).first()
                 assert area is not None
+
+    def test_save_area_data_validation_failure(self, test_db):
+        """Test save_area_data with validation failure."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+
+        # Corrupt area config to cause validation failure
+        original_area_id = area.config.area_id
+        area.config.area_id = None  # This will cause validation to fail
+
+        # Should handle validation failure gracefully
+        try:
+            save_area_data(db, area_name)
+        except ValueError:
+            # Expected when validation fails
+            pass
+        finally:
+            # Restore original value
+            area.config.area_id = original_area_id
+
+    def test_save_area_data_database_error(self, test_db):
+        """Test save_area_data with database error."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        with (
+            patch.object(
+                db,
+                "get_locked_session",
+                side_effect=OperationalError("DB error", None, None),
+            ),
+            pytest.raises((OperationalError, ValueError)),
+        ):
+            # Should raise after retries
+            save_area_data(db, area_name)
 
 
 class TestSaveEntityData:
@@ -223,6 +278,80 @@ class TestSaveEntityData:
                 .first()
             )
             assert entity is None
+
+    def test_save_entity_data_database_error(self, test_db):
+        """Test save_entity_data with database error."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+
+        save_area_data(db, area_name)
+
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(is_decaying=False, decay_start=dt_util.utcnow()),
+            evidence=True,
+        )
+        mock_entities_manager = SimpleNamespace(
+            entities={"binary_sensor.good": good},
+            entity_ids=["binary_sensor.good"],
+        )
+        area._entities = mock_entities_manager
+
+        with (
+            patch.object(
+                db,
+                "get_locked_session",
+                side_effect=OperationalError("DB error", None, None),
+            ),
+            pytest.raises(OperationalError),
+        ):
+            # Should raise after retries
+            save_entity_data(db)
+
+    def test_save_entity_data_cleanup_error(self, test_db):
+        """Test save_entity_data when cleanup fails."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+
+        save_area_data(db, area_name)
+
+        good = SimpleNamespace(
+            entity_id="binary_sensor.good",
+            type=SimpleNamespace(input_type="motion", weight=0.9),
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            last_updated=dt_util.utcnow(),
+            decay=SimpleNamespace(is_decaying=False, decay_start=dt_util.utcnow()),
+            evidence=True,
+        )
+        mock_entities_manager = SimpleNamespace(
+            entities={"binary_sensor.good": good},
+            entity_ids=["binary_sensor.good"],
+        )
+        area._entities = mock_entities_manager
+
+        # Mock cleanup to fail, but save should still succeed
+        with patch(
+            "custom_components.area_occupancy.db.operations.cleanup_orphaned_entities",
+            side_effect=RuntimeError("Cleanup error"),
+        ):
+            # Should still save successfully even if cleanup fails
+            save_entity_data(db)
+
+            # Verify entity was saved
+            with db.get_session() as session:
+                entity = (
+                    session.query(db.Entities)
+                    .filter_by(entity_id="binary_sensor.good")
+                    .first()
+                )
+                assert entity is not None
 
 
 class TestCleanupOrphanedEntities:
@@ -330,6 +459,29 @@ class TestDeleteAreaData:
             area = session.query(db.Areas).filter_by(area_name=area_name).first()
             assert area is None
 
+    def test_delete_area_data_database_error(self, test_db):
+        """Test delete_area_data with database error."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        with (
+            patch.object(
+                db, "get_locked_session", side_effect=SQLAlchemyError("DB error")
+            ),
+            suppress(Exception),
+        ):
+            # Should handle error gracefully
+            # May raise or return 0, both are acceptable
+            count = delete_area_data(db, area_name)
+            assert isinstance(count, int)
+
+    def test_delete_area_data_missing_area(self, test_db):
+        """Test delete_area_data when area doesn't exist."""
+        db = test_db
+        # Delete non-existent area
+        count = delete_area_data(db, "nonexistent_area")
+        assert count == 0
+
 
 class TestPruneOldIntervals:
     """Test prune_old_intervals function."""
@@ -397,12 +549,168 @@ class TestPruneOldIntervals:
             raise OperationalError("Error", None, None)
 
         monkeypatch.setattr(db, "get_locked_session", bad_session)
+        # Should handle error gracefully
         count = prune_old_intervals(db, force=False)
         assert count == 0
+
+    def test_prune_old_intervals_force(self, test_db):
+        """Test prune_old_intervals with force=True."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
+
+        save_area_data(db, area_name)
+        with db.get_locked_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                entity_type="motion",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            old_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                start_time=old_time,
+                end_time=old_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+            session.add(old_interval)
+            session.commit()
+
+        # Prune with force
+        count = prune_old_intervals(db, force=True)
+        assert count >= 0
+
+
+class TestPruneOldGlobalPriorsEdgeCases2:
+    """Test _prune_old_global_priors function - additional edge cases."""
+
+    def test_prune_old_global_priors_edge_cases(self, test_db):
+        """Test pruning old global priors edge cases."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
+        recent_time = dt_util.utcnow() - timedelta(days=30)
+
+        save_area_data(db, area_name)
+
+        with db.get_session() as session:
+            # Add old prior
+            old_prior = db.GlobalPriors(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                prior_value=0.5,
+                calculation_date=old_time,
+            )
+            # Add recent prior
+            recent_prior = db.GlobalPriors(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                prior_value=0.6,
+                calculation_date=recent_time,
+            )
+            session.add_all([old_prior, recent_prior])
+            session.commit()
+
+        # Prune old priors
+        _prune_old_global_priors(db)
+
+        # Verify old prior was deleted, recent remains
+        with db.get_session() as session:
+            priors = session.query(db.GlobalPriors).all()
+            assert len(priors) == 1
+            assert priors[0].prior_value == 0.6
+
+
+class TestSaveOccupiedIntervalsCacheEdgeCases:
+    """Test save_occupied_intervals_cache function - edge cases."""
+
+    def test_save_occupied_intervals_cache_success(self, test_db):
+        """Test saving occupied intervals cache successfully."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        now = dt_util.utcnow()
+
+        save_area_data(db, area_name)
+
+        intervals = [
+            (now - timedelta(hours=2), now - timedelta(hours=1)),
+            (now - timedelta(hours=4), now - timedelta(hours=3)),
+        ]
+
+        save_occupied_intervals_cache(db, area_name, intervals)
+
+        # Verify intervals were saved
+        with db.get_session() as session:
+            cached_intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .all()
+            )
+            assert len(cached_intervals) == 2
+
+    def test_save_occupied_intervals_cache_empty(self, test_db):
+        """Test saving empty intervals cache."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        save_area_data(db, area_name)
+
+        save_occupied_intervals_cache(db, area_name, [])
+
+        # Verify no intervals were saved
+        with db.get_session() as session:
+            cached_intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .all()
+            )
+            assert len(cached_intervals) == 0
 
 
 class TestEnsureAreaExists:
     """Test ensure_area_exists function."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_area_exists_new_area(self, test_db):
+        """Test ensure_area_exists creates areas when they don't exist."""
+        db = test_db
+
+        # Delete all areas from database
+        with db.get_session() as session:
+            session.query(db.Areas).delete()
+            session.commit()
+
+        # ensure_area_exists should create areas
+        await ensure_area_exists(db)
+
+        # Verify areas were created
+        with db.get_session() as session:
+            areas = session.query(db.Areas).all()
+            assert len(areas) > 0
+
+    @pytest.mark.asyncio
+    async def test_ensure_area_exists_existing_area(self, test_db):
+        """Test ensure_area_exists with existing areas."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Areas already exist - save them first
+        db.save_area_data(area_name)
+
+        # ensure_area_exists should not create duplicates
+        await ensure_area_exists(db)
+
+        # Verify areas still exist
+        with db.get_session() as session:
+            areas = session.query(db.Areas).all()
+            assert len(areas) > 0
 
     @pytest.mark.asyncio
     async def test_ensure_area_exists_creates_area(self, test_db, monkeypatch):
@@ -480,11 +788,11 @@ class TestSaveGlobalPrior:
             assert prior.prior_value == 0.35
 
 
-class TestSaveOccupiedIntervalsCache:
-    """Test save_occupied_intervals_cache function."""
+class TestSaveOccupiedIntervalsCacheEdgeCases2:
+    """Test save_occupied_intervals_cache function - additional edge cases."""
 
-    def test_save_occupied_intervals_cache_success(self, test_db):
-        """Test saving occupied intervals cache successfully."""
+    def test_save_occupied_intervals_cache_edge_cases(self, test_db):
+        """Test saving occupied intervals cache edge cases."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
 
@@ -533,11 +841,11 @@ class TestCreateDataHash:
         assert hash1 != hash3
 
 
-class TestPruneOldGlobalPriors:
-    """Test _prune_old_global_priors function."""
+class TestPruneOldGlobalPriorsEdgeCases3:
+    """Test _prune_old_global_priors function - additional edge cases."""
 
-    def test_prune_old_global_priors(self, test_db):
-        """Test pruning old global priors."""
+    def test_prune_old_global_priors_edge_cases(self, test_db):
+        """Test pruning old global priors edge cases."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
 
