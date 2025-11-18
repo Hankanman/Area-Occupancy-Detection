@@ -132,7 +132,7 @@ class PriorsSensor(AreaOccupancySensorBase):
                     }
                 }
             else:
-                area = self.coordinator.get_area_or_default(self._area_name)
+                area = self.coordinator.get_area(self._area_name)
                 combined_prior = area.area_prior() if area else None
                 attrs = {
                     "global_prior": area.prior.global_prior if area else None,
@@ -206,7 +206,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> int | None:
         """Return the number of entities."""
-        area = self.coordinator.get_area_or_default(self._area_name)
+        area = self.coordinator.get_area(self._area_name)
         if area is None:
             return None
         return len(area.entities.entities)
@@ -217,7 +217,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            area = self.coordinator.get_area_or_default(self._area_name)
+            area = self.coordinator.get_area(self._area_name)
             active_entity_names = ", ".join(
                 [entity.name for entity in area.entities.active_entities if entity.name]
             )
@@ -287,7 +287,7 @@ class DecaySensor(AreaOccupancySensorBase):
                 area_names = self.coordinator.get_area_names()
                 all_decaying = []
                 for area_name in area_names:
-                    area = self.coordinator.get_area_or_default(area_name)
+                    area = self.coordinator.get_area(area_name)
                     all_decaying.extend(
                         [
                             {
@@ -299,7 +299,7 @@ class DecaySensor(AreaOccupancySensorBase):
                         ]
                     )
                 return {"decaying": all_decaying}
-            area = self.coordinator.get_area_or_default(self._area_name)
+            area = self.coordinator.get_area(self._area_name)
             return {
                 "decaying": [
                     {

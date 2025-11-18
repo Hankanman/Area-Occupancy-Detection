@@ -14,7 +14,6 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
-    async_call_later,
     async_track_point_in_time,
     async_track_state_change_event,
 )
@@ -33,6 +32,7 @@ from .const import (
     DEVICE_SW_VERSION,
     DOMAIN,
     MIN_PROBABILITY,
+    SAVE_INTERVAL,
 )
 from .data.integration_config import IntegrationConfig
 from .db import AreaOccupancyDB
@@ -164,7 +164,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(areas_to_remove),
             )
 
-    def get_area_or_default(self, area_name: str | None = None) -> Area | None:
+    def get_area(self, area_name: str | None = None) -> Area | None:
         """Get area by name, or return first area if None.
 
         Args:
@@ -216,7 +216,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- Area Management ---
 
-    def _with_area_or_all_areas[T](
+    def _with_area[T](
         self,
         area_name: str | None,
         method_name: str,
@@ -243,7 +243,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             method = getattr(all_areas, all_areas_method or method_name)
             return method()
 
-        area = self.get_area_or_default(area_name)
+        area = self.get_area(area_name)
         if area is None:
             return default_value
 
@@ -263,7 +263,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if area_name == ALL_AREAS_IDENTIFIER:
             return self.get_all_areas().device_info()
 
-        area = self.get_area_or_default(area_name)
+        area = self.get_area(area_name)
         if area is None:
             return DeviceInfo(
                 identifiers={(DOMAIN, self.entry_id)},
@@ -284,7 +284,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Probability value (0.0-1.0)
         """
-        return self._with_area_or_all_areas(area_name, "probability", MIN_PROBABILITY)
+        return self._with_area(area_name, "probability", MIN_PROBABILITY)
 
     def type_probabilities(self, area_name: str | None = None) -> dict[str, float]:
         """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
@@ -304,7 +304,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "type_probabilities is not supported for 'All Areas' aggregation"
             )
 
-        area = self.get_area_or_default(area_name)
+        area = self.get_area(area_name)
         if area is None:
             return {}
 
@@ -321,7 +321,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Prior probability (0.0-1.0)
         """
-        return self._with_area_or_all_areas(area_name, "area_prior", MIN_PROBABILITY)
+        return self._with_area(area_name, "area_prior", MIN_PROBABILITY)
 
     def decay(self, area_name: str | None = None) -> float:
         """Calculate the current decay probability (0.0-1.0) for an area.
@@ -332,7 +332,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Decay probability (0.0-1.0)
         """
-        return self._with_area_or_all_areas(area_name, "decay", 1.0)
+        return self._with_area(area_name, "decay", 1.0)
 
     def occupied(self, area_name: str | None = None) -> bool:
         """Return the current occupancy state (True/False) for an area.
@@ -343,7 +343,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             True if occupied, False otherwise
         """
-        return self._with_area_or_all_areas(area_name, "occupied", False)
+        return self._with_area(area_name, "occupied", False)
 
     @property
     def setup_complete(self) -> bool:
@@ -359,7 +359,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Threshold value (0.0-1.0)
         """
-        area = self.get_area_or_default(area_name)
+        area = self.get_area(area_name)
         if area is None:
             return 0.5
         return area.threshold()
@@ -371,35 +371,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             Comma-separated string of area names, or "no areas" if empty
         """
         return ", ".join(self.get_area_names()) if self.areas else "no areas"
-
-    def _verify_setup_complete(self) -> bool:
-        """Verify that critical initialization components have started successfully.
-
-        Returns:
-            True if all critical components are initialized, False otherwise
-        """
-        # Check if hass is available
-        if not self.hass:
-            _LOGGER.error("Home Assistant instance not available")
-            return False
-
-        # Check if decay timer started
-        if self._global_decay_timer is None:
-            _LOGGER.warning(
-                "Decay timer not started for areas: %s",
-                self._format_area_names_for_logging(),
-            )
-            return False
-
-        # Check if analysis timer started (or is scheduled)
-        if self._analysis_timer is None:
-            _LOGGER.warning(
-                "Analysis timer not started for areas: %s",
-                self._format_area_names_for_logging(),
-            )
-            return False
-
-        return True
 
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
@@ -465,17 +436,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Start timers only after everything is ready
             self._start_decay_timer()
+            self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
-
-            # Verify critical initialization succeeded before marking complete
-            if not self._verify_setup_complete():
-                _LOGGER.error(
-                    "Critical initialization failed for areas: %s",
-                    self._format_area_names_for_logging(),
-                )
-                error_msg = "Failed to start critical timers"
-                raise HomeAssistantError(error_msg)  # noqa: TRY301
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -501,18 +464,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 # Start basic timers
                 self._start_decay_timer()
+                self._start_save_timer()
                 # Analysis timer is async and runs in background
                 await self._start_analysis_timer()
 
-                # Verify critical initialization succeeded
-                if not self._verify_setup_complete():
-                    _LOGGER.error(
-                        "Failed to start critical timers for areas: %s after retry",
-                        self._format_area_names_for_logging(),
-                    )
-                    # Still set complete to allow partial functionality
-                    # but log the issue for debugging
-                # Mark complete regardless of verification result to allow partial functionality
                 self._setup_complete = True
 
             except (HomeAssistantError, OSError, RuntimeError) as timer_err:
@@ -525,9 +480,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data (in-memory only).
-
-        Database saves are debounced to avoid blocking on every state change.
-        See _schedule_save() for the actual save logic.
 
         Returns:
             Dictionary with area data keyed by area name
@@ -559,46 +511,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["last_updated"] = dt_util.utcnow()
         return result
 
-    def _schedule_save(self) -> None:
-        """Schedule a debounced database save.
-
-        Cancels any pending save and schedules a new one. This ensures that
-        rapid state changes result in a single database write after the
-        activity settles.
-
-        Note: No master check needed - single instance always saves.
-        """
-        # Cancel existing timer if any
-        if self._save_timer is not None:
-            self._save_timer()
-            self._save_timer = None
-
-        # Schedule new save after debounce period
-        async def _do_save(_now: datetime) -> None:
-            """Perform the actual save operation."""
-            self._save_timer = None
-            try:
-                await self.hass.async_add_executor_job(self.db.save_data)
-                _LOGGER.debug(
-                    "Debounced database save completed for areas: %s",
-                    self._format_area_names_for_logging(),
-                )
-            except (HomeAssistantError, OSError, RuntimeError) as err:
-                _LOGGER.error(
-                    "Failed to save data for areas: %s: %s",
-                    self._format_area_names_for_logging(),
-                    err,
-                )
-
-        self._save_timer = async_call_later(
-            self.hass, self.integration_config.save_debounce, _do_save
-        )
-        _LOGGER.debug(
-            "Database save scheduled in %d seconds for areas: %s",
-            self.integration_config.save_debounce,
-            self._format_area_names_for_logging(),
-        )
-
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator.
 
@@ -615,7 +527,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._format_area_names_for_logging(),
         )
 
-        # Step 1: Cancel pending save timer before cleanup and perform final save
+        # Step 1: Cancel periodic save timer before cleanup and perform final save
         if self._save_timer is not None:
             self._save_timer()
             self._save_timer = None
@@ -649,7 +561,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer()
             self._analysis_timer = None
 
-        # Step 6: Clean up save timer (defensive check)
+        # Step 6: Clean up periodic save timer (defensive check)
         if self._save_timer is not None:
             self._save_timer()
             self._save_timer = None
@@ -834,8 +746,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # If entity affects any area and setup is complete, refresh
                 if affected_areas and self.setup_complete:
                     await self.async_refresh()
-                    # Schedule debounced save
-                    self._schedule_save()
 
             # Create single listener for all entities (more efficient than per-area listeners)
             listener = async_track_state_change_event(
@@ -843,6 +753,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             # Store listener (using a single key since we have one listener for all)
             self._area_state_listeners["_all"] = listener
+
+    # --- Save Timer Handling ---
+    def _start_save_timer(self) -> None:
+        """Start the periodic database save timer (runs every 10 minutes)."""
+        if self._save_timer is not None or not self.hass:
+            return
+
+        next_save = dt_util.utcnow() + timedelta(seconds=SAVE_INTERVAL)
+
+        self._save_timer = async_track_point_in_time(
+            self.hass, self._handle_save_timer, next_save
+        )
+
+    async def _handle_save_timer(self, _now: datetime) -> None:
+        """Handle periodic save timer firing - save data and reschedule."""
+        self._save_timer = None
+
+        try:
+            await self.hass.async_add_executor_job(self.db.save_data)
+            _LOGGER.debug(
+                "Periodic database save completed for areas: %s",
+                self._format_area_names_for_logging(),
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.error(
+                "Failed periodic save for areas: %s: %s",
+                self._format_area_names_for_logging(),
+                err,
+            )
+
+        # Reschedule the timer
+        self._start_save_timer()
 
     # --- Decay Timer Handling ---
     def _start_decay_timer(self) -> None:
@@ -866,12 +808,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         decay_enabled = any(area.config.decay.enabled for area in self.areas.values())
         if decay_enabled:
             await self.async_refresh()
-            self._schedule_save()  # Schedule save after decay update
 
         # Reschedule the timer
         self._start_decay_timer()
 
-    # --- Historical Timer Handling ---
+    # --- Analysis Timer Handling ---
     async def _start_analysis_timer(self) -> None:
         """Start the historical data import timer.
 

@@ -197,7 +197,7 @@ def calculate_adjacent_influence(
         total_weight = 0.0
 
         for adj in adjacent_areas:
-            related_area = db.coordinator.get_area_or_default(adj["related_area_name"])
+            related_area = db.coordinator.get_area(adj["related_area_name"])
             if related_area:
                 # Get current probability of adjacent area
                 adj_prob = related_area.probability()

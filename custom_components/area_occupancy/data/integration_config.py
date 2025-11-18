@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
 
-from ..const import ANALYSIS_INTERVAL, DECAY_INTERVAL, SAVE_DEBOUNCE_SECONDS
+from ..const import ANALYSIS_INTERVAL, DECAY_INTERVAL
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -43,7 +43,6 @@ class IntegrationConfig:
 
         # Timing and performance settings
         self.analysis_interval = ANALYSIS_INTERVAL
-        self.save_debounce = SAVE_DEBOUNCE_SECONDS
         self.decay_interval = DECAY_INTERVAL
 
         # Database and storage settings
