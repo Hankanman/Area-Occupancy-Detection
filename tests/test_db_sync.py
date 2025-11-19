@@ -35,6 +35,9 @@ class TestStatesToIntervals:
         assert len(intervals) == 1
         assert intervals[0]["entity_id"] == "binary_sensor.motion"
         assert intervals[0]["state"] == "off"
+        assert intervals[0]["start_time"] == start
+        assert intervals[0]["end_time"] == end_time
+        assert intervals[0]["duration_seconds"] == (end_time - start).total_seconds()
 
     def test_states_to_intervals_multiple_states(self, test_db):
         """Test converting multiple states to intervals."""
