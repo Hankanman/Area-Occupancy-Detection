@@ -231,7 +231,8 @@ async def sync_states(db: AreaOccupancyDB) -> None:
     all_entity_ids = []
     for area_name in db.coordinator.get_area_names():
         area_data = db.coordinator.get_area(area_name)
-        all_entity_ids.extend(area_data.entities.entity_ids)
+        if area_data is not None:
+            all_entity_ids.extend(area_data.entities.entity_ids)
     entity_ids = list(set(all_entity_ids))  # Remove duplicates
 
     try:
