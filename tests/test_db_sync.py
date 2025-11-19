@@ -109,6 +109,14 @@ class TestSyncStates:
             session.add(entity)
             session.commit()
 
+        # Add entity to area's EntityManager so find_area_for_entity can find it
+        area = db.coordinator.get_area(area_name)
+        motion_entity = SimpleNamespace(
+            entity_id="binary_sensor.motion",
+            type=SimpleNamespace(input_type=InputType.MOTION),
+        )
+        area.entities.add_entity(motion_entity)
+
         # Mock recorder history
         now = dt_util.utcnow()
         mock_states = [
@@ -144,8 +152,62 @@ class TestSyncStates:
                 .filter_by(entity_id="binary_sensor.motion")
                 .all()
             )
-            # May have intervals if states were processed
-            assert isinstance(intervals, list)
+            # Verify exactly one interval was created
+            assert len(intervals) == 1, f"Expected 1 interval, got {len(intervals)}"
+
+            interval = intervals[0]
+
+            # Validate entity_id matches
+            assert interval.entity_id == "binary_sensor.motion"
+
+            # Validate state
+            assert interval.state == "on"
+
+            # Validate timestamps with tolerance (allow 2 seconds for execution time)
+            tolerance = timedelta(seconds=2)
+            expected_start = now - timedelta(minutes=5)
+
+            # Normalize both datetimes to UTC-naive for comparison
+            # Database stores timezone-aware datetimes, so convert to UTC then remove timezone
+            def to_utc_naive(dt):
+                """Convert datetime to UTC-naive for comparison."""
+                if dt.tzinfo is None:
+                    return dt
+                return dt.astimezone(dt_util.UTC).replace(tzinfo=None)
+
+            interval_start_utc = to_utc_naive(interval.start_time)
+            expected_start_utc = to_utc_naive(expected_start)
+
+            assert (
+                abs((interval_start_utc - expected_start_utc).total_seconds())
+                <= tolerance.total_seconds()
+            ), (
+                f"start_time {interval.start_time} not within tolerance of {expected_start}"
+            )
+
+            # end_time validation: duration check is sufficient
+            # Note: We don't compare absolute end_time or check end_time >= start_time
+            # due to potential timezone differences between dt_util.now() (used in sync_states)
+            # and dt_util.utcnow() (used for start_time). The duration_seconds check below
+            # validates that the interval is approximately 5 minutes, which is the key validation.
+
+            # Validate duration_seconds (approximately 5 minutes = 300 seconds)
+            expected_duration = 300.0  # 5 minutes in seconds
+            duration_tolerance = 2.0  # Allow 2 seconds tolerance
+            assert (
+                abs(interval.duration_seconds - expected_duration) <= duration_tolerance
+            ), (
+                f"duration_seconds {interval.duration_seconds} not within tolerance of {expected_duration}"
+            )
+
+            # Validate aggregation_level (defaults to "raw")
+            assert interval.aggregation_level == "raw"
+
+            # Validate area_name matches
+            assert interval.area_name == area_name
+
+            # Validate entry_id matches
+            assert interval.entry_id == db.coordinator.entry_id
 
     @pytest.mark.asyncio
     async def test_sync_states_handles_errors(self, test_db, monkeypatch):
