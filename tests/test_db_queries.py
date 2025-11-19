@@ -345,6 +345,86 @@ class TestGetOccupiedIntervals:
         )
         assert result == []
 
+    def test_get_occupied_intervals_with_media_and_appliance(self, test_db):
+        """Test retrieval including media/appliance union path."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        start = now - timedelta(hours=2)
+
+        with db.get_locked_session() as session:
+            entities = [
+                db.Entities(
+                    entity_id="binary_sensor.motion1",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="motion",
+                ),
+                db.Entities(
+                    entity_id="media_player.tv",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="media",
+                ),
+                db.Entities(
+                    entity_id="switch.appliance1",
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="appliance",
+                ),
+            ]
+            session.add_all(entities)
+            session.commit()
+
+        with db.get_locked_session() as session:
+            intervals = [
+                db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion1",
+                    start_time=start,
+                    end_time=start + timedelta(minutes=30),
+                    state="on",
+                    duration_seconds=1800,
+                ),
+                db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="media_player.tv",
+                    start_time=start + timedelta(minutes=40),
+                    end_time=start + timedelta(minutes=80),
+                    state="playing",
+                    duration_seconds=2400,
+                ),
+                db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="switch.appliance1",
+                    start_time=start + timedelta(minutes=90),
+                    end_time=start + timedelta(minutes=120),
+                    state="on",
+                    duration_seconds=1800,
+                ),
+            ]
+            session.add_all(intervals)
+            session.commit()
+
+        result = get_occupied_intervals(
+            db,
+            db.coordinator.entry_id,
+            area_name,
+            lookback_days=1,
+            motion_timeout_seconds=0,
+            include_media=True,
+            include_appliance=True,
+            media_sensor_ids=["media_player.tv"],
+            appliance_sensor_ids=["switch.appliance1"],
+        )
+
+        assert len(result) == 3
+
 
 class TestGetTimeBounds:
     """Test get_time_bounds function."""

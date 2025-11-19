@@ -2,10 +2,12 @@
 
 from contextlib import suppress
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.sync import (
     _get_existing_interval_keys,
     _states_to_intervals,
@@ -221,6 +223,64 @@ class TestSyncStates:
             # Verify area_name is set correctly if intervals exist
             for interval in intervals:
                 assert interval.area_name == area_name
+
+    @pytest.mark.asyncio
+    async def test_sync_states_records_numeric_samples(self, test_db, monkeypatch):
+        """Ensure numeric states are stored in NumericSamples."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        area = db.coordinator.get_area(area_name)
+        numeric_entity_id = "sensor.numeric"
+        numeric_entity = SimpleNamespace(
+            entity_id=numeric_entity_id,
+            type=SimpleNamespace(input_type=InputType.TEMPERATURE),
+        )
+        area.entities.add_entity(numeric_entity)
+
+        now = dt_util.utcnow()
+        mock_states = [
+            State(
+                numeric_entity_id,
+                "23.5",
+                {"unit_of_measurement": "°C"},
+                last_changed=now - timedelta(minutes=5),
+            ),
+            State(
+                numeric_entity_id,
+                "24.1",
+                {"unit_of_measurement": "°C"},
+                last_changed=now - timedelta(minutes=3),
+            ),
+        ]
+
+        def mock_get_significant_states(*args, **kwargs):
+            return {numeric_entity_id: mock_states}
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_significant_states",
+            mock_get_significant_states,
+        )
+
+        mock_recorder = Mock()
+        mock_recorder.async_add_executor_job = AsyncMock(
+            side_effect=lambda func: func()
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_instance",
+            lambda hass: mock_recorder,
+        )
+
+        await sync_states(db)
+
+        with db.get_session() as session:
+            samples = (
+                session.query(db.NumericSamples)
+                .filter_by(entity_id=numeric_entity_id)
+                .all()
+            )
+            assert len(samples) == 2
 
 
 class TestIntervalLookup:

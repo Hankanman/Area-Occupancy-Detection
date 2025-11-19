@@ -16,6 +16,7 @@ from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
+from ..data.entity_type import InputType
 from . import queries, utils
 
 if TYPE_CHECKING:
@@ -23,7 +24,14 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL_LOOKUP_BATCH = 250
+_NUMERIC_SAMPLE_LOOKUP_BATCH = 250
 T = TypeVar("T")
+_NUMERIC_INPUT_TYPES = {
+    InputType.TEMPERATURE,
+    InputType.HUMIDITY,
+    InputType.ILLUMINANCE,
+    InputType.ENVIRONMENTAL,
+}
 
 
 def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
@@ -68,6 +76,79 @@ def _get_existing_interval_keys(
             existing_keys.add((interval.entity_id, start, end))
 
     return existing_keys
+
+
+def _get_existing_numeric_sample_keys(
+    session: sa.orm.Session,
+    db: AreaOccupancyDB,
+    sample_keys: set[tuple[str, datetime]],
+) -> set[tuple[str, datetime]]:
+    """Return numeric samples already stored using batched tuple lookups."""
+    if not sample_keys:
+        return set()
+
+    keys_list = list(sample_keys)
+    sample_tuple = sa.tuple_(db.NumericSamples.entity_id, db.NumericSamples.timestamp)
+    existing_keys: set[tuple[str, datetime]] = set()
+
+    for chunk in _chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
+        matches = session.query(db.NumericSamples).filter(sample_tuple.in_(chunk)).all()
+        for sample in matches:
+            timestamp = _normalize_datetime(sample.timestamp)
+            existing_keys.add((sample.entity_id, timestamp))
+
+    return existing_keys
+
+
+def _get_numeric_entity_map(db: AreaOccupancyDB) -> dict[str, str]:
+    """Return mapping of numeric entity_id to area_name."""
+    numeric_entities: dict[str, str] = {}
+    for area_name, area in db.coordinator.areas.items():
+        entities_container = getattr(area.entities, "entities", {})
+        for entity_id, entity in entities_container.items():
+            entity_type = getattr(entity, "type", None)
+            input_type = getattr(entity_type, "input_type", None)
+            if input_type in _NUMERIC_INPUT_TYPES:
+                numeric_entities[entity_id] = area_name
+    return numeric_entities
+
+
+def _states_to_numeric_samples(
+    db: AreaOccupancyDB, states: dict[str, list[State]]
+) -> list[dict[str, Any]]:
+    """Convert numeric states to sample rows."""
+    numeric_entities = _get_numeric_entity_map(db)
+    if not numeric_entities:
+        return []
+
+    samples = []
+    current_ts = dt_util.utcnow()
+
+    for entity_id, state_list in states.items():
+        area_name = numeric_entities.get(entity_id)
+        if not area_name or not state_list:
+            continue
+
+        for state in state_list:
+            try:
+                value = float(state.state)
+            except (TypeError, ValueError):
+                continue
+
+            samples.append(
+                {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "timestamp": state.last_changed,
+                    "value": value,
+                    "unit_of_measurement": state.attributes.get("unit_of_measurement"),
+                    "state": state.state,
+                    "created_at": current_ts,
+                }
+            )
+
+    return samples
 
 
 def _states_to_intervals(
@@ -167,58 +248,88 @@ async def sync_states(db: AreaOccupancyDB) -> None:
             )
         )
 
-        if states:
-            # Convert states to proper intervals with correct duration calculation
-            intervals = _states_to_intervals(db, states, end_time)
-            if intervals:
-                with db.get_locked_session() as session:
-                    # Pre-filter duplicates using a single query for better performance
-                    # Build a set of (entity_id, start_time, end_time) tuples from intervals
-                    interval_keys = {
-                        (
-                            interval_data["entity_id"],
-                            interval_data["start_time"],
-                            interval_data["end_time"],
-                        )
-                        for interval_data in intervals
-                    }
+        if not states:
+            return
 
-                    # Query existing intervals matching these keys in a single query
-                    if interval_keys:
-                        existing_keys = _get_existing_interval_keys(
-                            session, db, interval_keys
-                        )
-                    else:
-                        existing_keys = set()
+        # Convert states to proper intervals with correct duration calculation
+        intervals = _states_to_intervals(db, states, end_time)
+        if intervals:
+            with db.get_locked_session() as session:
+                interval_keys = {
+                    (
+                        interval_data["entity_id"],
+                        interval_data["start_time"],
+                        interval_data["end_time"],
+                    )
+                    for interval_data in intervals
+                }
 
-                    # Filter out intervals that already exist
-                    new_intervals = []
-                    for interval_data in intervals:
-                        start = _normalize_datetime(interval_data["start_time"])
-                        end = _normalize_datetime(interval_data["end_time"])
-                        if (
-                            interval_data["entity_id"],
-                            start,
-                            end,
-                        ) in existing_keys:
-                            continue
+                if interval_keys:
+                    existing_keys = _get_existing_interval_keys(
+                        session, db, interval_keys
+                    )
+                else:
+                    existing_keys = set()
 
-                        entity_id = interval_data["entity_id"]
-                        area_name = db.coordinator.find_area_for_entity(entity_id)
+                new_intervals = []
+                for interval_data in intervals:
+                    start = _normalize_datetime(interval_data["start_time"])
+                    end = _normalize_datetime(interval_data["end_time"])
+                    if (
+                        interval_data["entity_id"],
+                        start,
+                        end,
+                    ) in existing_keys:
+                        continue
 
-                        if area_name:
-                            interval_data["entry_id"] = db.coordinator.entry_id
-                            interval_data["area_name"] = area_name
-                            new_intervals.append(interval_data)
+                    entity_id = interval_data["entity_id"]
+                    area_name = db.coordinator.find_area_for_entity(entity_id)
 
-                    # Bulk insert new intervals
-                    if new_intervals:
-                        # Use bulk_insert_mappings for better performance
-                        session.bulk_insert_mappings(db.Intervals, new_intervals)
-                        session.commit()
-                        _LOGGER.info(
-                            "Synced %d new intervals from recorder", len(new_intervals)
-                        )
+                    if area_name:
+                        interval_data["entry_id"] = db.coordinator.entry_id
+                        interval_data["area_name"] = area_name
+                        new_intervals.append(interval_data)
+
+                if new_intervals:
+                    session.bulk_insert_mappings(db.Intervals, new_intervals)
+                    session.commit()
+                    _LOGGER.info(
+                        "Synced %d new intervals from recorder", len(new_intervals)
+                    )
+
+        numeric_samples = _states_to_numeric_samples(db, states)
+        if numeric_samples:
+            with db.get_locked_session() as session:
+                sample_keys = {
+                    (
+                        sample_data["entity_id"],
+                        sample_data["timestamp"],
+                    )
+                    for sample_data in numeric_samples
+                }
+
+                if sample_keys:
+                    existing_samples = _get_existing_numeric_sample_keys(
+                        session, db, sample_keys
+                    )
+                else:
+                    existing_samples = set()
+
+                new_samples = []
+                for sample_data in numeric_samples:
+                    timestamp = _normalize_datetime(sample_data["timestamp"])
+                    if (sample_data["entity_id"], timestamp) in existing_samples:
+                        continue
+
+                    sample_data["timestamp"] = timestamp
+                    new_samples.append(sample_data)
+
+                if new_samples:
+                    session.bulk_insert_mappings(db.NumericSamples, new_samples)
+                    session.commit()
+                    _LOGGER.info(
+                        "Synced %d numeric samples from recorder", len(new_samples)
+                    )
 
     except (
         sa.exc.SQLAlchemyError,
