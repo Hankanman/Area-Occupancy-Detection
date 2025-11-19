@@ -58,7 +58,11 @@ class TestStatesToIntervals:
         intervals = _states_to_intervals(db, states, end_time)
         assert len(intervals) == 2
         assert intervals[0]["state"] == "off"
+        assert intervals[0]["start_time"] == start
+        assert intervals[0]["end_time"] == start + timedelta(seconds=10)
         assert intervals[1]["state"] == "on"
+        assert intervals[1]["start_time"] == start + timedelta(seconds=10)
+        assert intervals[1]["end_time"] == end_time
 
     def test_states_to_intervals_filters_invalid_states(self, test_db):
         """Test that invalid states are filtered out."""
