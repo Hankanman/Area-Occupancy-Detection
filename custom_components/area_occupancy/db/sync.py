@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import sqlalchemy as sa
 
@@ -21,6 +22,52 @@ if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
+_INTERVAL_LOOKUP_BATCH = 250
+T = TypeVar("T")
+
+
+def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
+    """Yield lists of at most `size` items from the iterable."""
+    chunk: list[T] = []
+    for item in items:
+        chunk.append(item)
+        if len(chunk) == size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def _normalize_datetime(value: datetime) -> datetime:
+    """Strip timezone info for consistent comparison."""
+    if value.tzinfo is not None:
+        return value.replace(tzinfo=None)
+    return value
+
+
+def _get_existing_interval_keys(
+    session: sa.orm.Session,
+    db: AreaOccupancyDB,
+    interval_keys: set[tuple[str, datetime, datetime]],
+) -> set[tuple[str, datetime, datetime]]:
+    """Return keys already stored in the database using batched tuple lookups."""
+    if not interval_keys:
+        return set()
+
+    keys_list = list(interval_keys)
+    interval_tuple = sa.tuple_(
+        db.Intervals.entity_id, db.Intervals.start_time, db.Intervals.end_time
+    )
+    existing_keys: set[tuple[str, datetime, datetime]] = set()
+
+    for chunk in _chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
+        matches = session.query(db.Intervals).filter(interval_tuple.in_(chunk)).all()
+        for interval in matches:
+            start = _normalize_datetime(interval.start_time)
+            end = _normalize_datetime(interval.end_time)
+            existing_keys.add((interval.entity_id, start, end))
+
+    return existing_keys
 
 
 def _states_to_intervals(
@@ -138,77 +185,31 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
                     # Query existing intervals matching these keys in a single query
                     if interval_keys:
-                        # Build OR conditions for all interval keys
-                        existing_conditions = []
-                        for entity_id, start_time, end_time in interval_keys:
-                            existing_conditions.append(
-                                sa.and_(
-                                    db.Intervals.entity_id == entity_id,
-                                    db.Intervals.start_time == start_time,
-                                    db.Intervals.end_time == end_time,
-                                )
-                            )
-
-                        # Query all existing intervals matching any of our keys
-                        existing_intervals = (
-                            session.query(db.Intervals)
-                            .filter(sa.or_(*existing_conditions))
-                            .all()
+                        existing_keys = _get_existing_interval_keys(
+                            session, db, interval_keys
                         )
-
-                        # Build set of existing keys for fast lookup
-                        # Normalize datetimes to UTC naive for comparison
-                        existing_keys = set()
-                        for interval in existing_intervals:
-                            # Normalize start_time and end_time to UTC naive datetime
-                            start = interval.start_time
-                            end = interval.end_time
-                            if start.tzinfo is not None:
-                                start = start.replace(tzinfo=None)
-                            if end.tzinfo is not None:
-                                end = end.replace(tzinfo=None)
-                            existing_keys.add((interval.entity_id, start, end))
-
-                        # Filter out intervals that already exist
-                        # Normalize datetimes in interval_data for comparison
-                        new_intervals = []
-                        for interval_data in intervals:
-                            # Normalize start_time and end_time to UTC naive datetime
-                            start = interval_data["start_time"]
-                            end = interval_data["end_time"]
-                            if start.tzinfo is not None:
-                                start = start.replace(tzinfo=None)
-                            if end.tzinfo is not None:
-                                end = end.replace(tzinfo=None)
-
-                            if (
-                                interval_data["entity_id"],
-                                start,
-                                end,
-                            ) not in existing_keys:
-                                # Need to add entry_id and area_name to interval_data
-                                # Get area_name from entity_id by looking up in coordinator
-                                entity_id = interval_data["entity_id"]
-                                area_name = db.coordinator.find_area_for_entity(
-                                    entity_id
-                                )
-
-                                if area_name:
-                                    interval_data["entry_id"] = db.coordinator.entry_id
-                                    interval_data["area_name"] = area_name
-                                    new_intervals.append(interval_data)
                     else:
-                        # No existing intervals, all are new
-                        new_intervals = intervals
-                        # Add entry_id and area_name to each interval
-                        for interval_data in new_intervals:
-                            entity_id = interval_data["entity_id"]
-                            # Use find_area_for_entity which efficiently searches all areas
-                            area_name = db.coordinator.find_area_for_entity(entity_id)
+                        existing_keys = set()
 
-                            if area_name:
-                                interval_data["entry_id"] = db.coordinator.entry_id
-                                interval_data["area_name"] = area_name
+                    # Filter out intervals that already exist
+                    new_intervals = []
+                    for interval_data in intervals:
+                        start = _normalize_datetime(interval_data["start_time"])
+                        end = _normalize_datetime(interval_data["end_time"])
+                        if (
+                            interval_data["entity_id"],
+                            start,
+                            end,
+                        ) in existing_keys:
+                            continue
+
+                        entity_id = interval_data["entity_id"]
+                        area_name = db.coordinator.find_area_for_entity(entity_id)
+
+                        if area_name:
+                            interval_data["entry_id"] = db.coordinator.entry_id
+                            interval_data["area_name"] = area_name
+                            new_intervals.append(interval_data)
 
                     # Bulk insert new intervals
                     if new_intervals:

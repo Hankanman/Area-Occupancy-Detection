@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.area_occupancy.db.sync import _states_to_intervals, sync_states
+from custom_components.area_occupancy.db.sync import (
+    _get_existing_interval_keys,
+    _states_to_intervals,
+    sync_states,
+)
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
@@ -217,3 +221,60 @@ class TestSyncStates:
             # Verify area_name is set correctly if intervals exist
             for interval in intervals:
                 assert interval.area_name == area_name
+
+
+class TestIntervalLookup:
+    """Tests for helper functions used during sync."""
+
+    def test_get_existing_interval_keys_batches(self, test_db, monkeypatch):
+        """Existing intervals should be found in batch-sized queries."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        interval_defs = []
+        with db.get_locked_session() as session:
+            for idx in range(2):
+                start = now + timedelta(minutes=idx)
+                end = start + timedelta(minutes=5)
+                session.add(
+                    db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        entity_id=f"binary_sensor.motion_{idx}",
+                        state="on",
+                        start_time=start,
+                        end_time=end,
+                        duration_seconds=(end - start).total_seconds(),
+                    )
+                )
+                interval_defs.append((f"binary_sensor.motion_{idx}", start, end))
+            session.commit()
+
+        interval_keys = set(interval_defs)
+        # Add a non-existing key to ensure it's ignored
+        interval_keys.add(
+            (
+                "binary_sensor.motion_new",
+                now + timedelta(hours=1),
+                now + timedelta(hours=1, minutes=5),
+            )
+        )
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync._INTERVAL_LOOKUP_BATCH",
+            1,
+        )
+
+        def normalize(dt_obj):
+            return dt_obj.replace(tzinfo=None)
+
+        with db.get_session() as session:
+            existing = _get_existing_interval_keys(session, db, interval_keys)
+
+        expected = {
+            (entity_id, normalize(start), normalize(end))
+            for entity_id, start, end in interval_defs
+        }
+        assert existing == expected
