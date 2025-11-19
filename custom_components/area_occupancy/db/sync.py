@@ -104,11 +104,8 @@ def _get_numeric_entity_map(db: AreaOccupancyDB) -> dict[str, str]:
     """Return mapping of numeric entity_id to area_name."""
     numeric_entities: dict[str, str] = {}
     for area_name, area in db.coordinator.areas.items():
-        entities_container = getattr(area.entities, "entities", {})
-        for entity_id, entity in entities_container.items():
-            entity_type = getattr(entity, "type", None)
-            input_type = getattr(entity_type, "input_type", None)
-            if input_type in _NUMERIC_INPUT_TYPES:
+        for entity_id, entity in area.entities.entities.items():
+            if entity.type.input_type in _NUMERIC_INPUT_TYPES:
                 numeric_entities[entity_id] = area_name
     return numeric_entities
 
