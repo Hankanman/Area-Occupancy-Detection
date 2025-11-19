@@ -216,7 +216,7 @@ class TestSyncStates:
         # Mock get_instance to return a mock recorder
         mock_recorder = Mock()
         mock_recorder.async_add_executor_job = AsyncMock(
-            side_effect=Exception("Recorder error")  # Raise error when called
+            side_effect=RuntimeError("Recorder error")  # Raise error when called
         )
         monkeypatch.setattr(
             "custom_components.area_occupancy.db.sync.get_instance",
