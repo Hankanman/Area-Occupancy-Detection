@@ -1,6 +1,5 @@
 """Tests for database state synchronization."""
 
-from contextlib import suppress
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -224,12 +223,10 @@ class TestSyncStates:
             lambda hass: mock_recorder,
         )
 
-        # Should not raise exception - errors are caught and logged
-        # The function catches exceptions and logs them
-        # If exception is raised, that's also acceptable - the function may raise
-        # The important thing is that it handles the error gracefully
-        with suppress(Exception):
-            await sync_states(db)
+        # This test asserts that no exception is raised - errors must be handled
+        # internally and not re-raised. If sync_states raises an exception here,
+        # the test will fail, which is the desired behavior.
+        await sync_states(db)
 
     @pytest.mark.asyncio
     async def test_sync_states_multi_area_isolation(self, test_db, monkeypatch):
