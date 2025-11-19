@@ -6,7 +6,11 @@ import pytest
 
 from custom_components.area_occupancy.const import DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.service import _run_analysis, async_setup_services
+from custom_components.area_occupancy.service import (
+    _run_analysis,
+    _run_interval_aggregation,
+    async_setup_services,
+)
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 
@@ -113,20 +117,81 @@ class TestRunAnalysis:
             await _run_analysis(hass, mock_service_call)
 
 
+class TestRunIntervalAggregation:
+    """Test _run_interval_aggregation service function."""
+
+    async def test_run_interval_aggregation_success(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test successful interval aggregation run."""
+        aggregator_result = {"daily": 1, "weekly": 0, "monthly": 0}
+
+        coordinator_with_areas.db.run_interval_aggregation = Mock(
+            return_value=aggregator_result
+        )
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        mock_service_call = _create_service_call()
+
+        result = await _run_interval_aggregation(hass, mock_service_call)
+
+        assert result["results"] == aggregator_result
+        coordinator_with_areas.db.run_interval_aggregation.assert_called_once()
+        hass.async_add_executor_job.assert_called_once()
+
+    async def test_run_interval_aggregation_error(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test interval aggregation error handling."""
+
+        def _raise_error():
+            raise RuntimeError("Aggregation failed")
+
+        coordinator_with_areas.db.run_interval_aggregation = Mock(
+            side_effect=_raise_error
+        )
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        mock_service_call = _create_service_call()
+
+        with pytest.raises(
+            HomeAssistantError,
+            match="Failed to run interval aggregation.*Aggregation failed",
+        ):
+            await _run_interval_aggregation(hass, mock_service_call)
+
+
 class TestAsyncSetupServices:
     """Test async_setup_services function."""
 
-    async def test_async_setup_services_registers_one_service(
+    async def test_async_setup_services_registers_services(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test that only run_analysis service is registered."""
+        """Test that services are registered."""
 
         hass.data[DOMAIN] = coordinator
         await async_setup_services(hass)
 
-        # Verify only run_analysis service is registered
+        # Verify services are registered
         services = hass.services.async_services().get(DOMAIN, {})
         assert "run_analysis" in services
+        assert "run_interval_aggregation" in services
         assert "reset_entities" not in services
         assert "get_entity_metrics" not in services
         assert "get_problematic_entities" not in services
@@ -135,3 +200,5 @@ class TestAsyncSetupServices:
         # Verify service has no schema (no parameters)
         service = services["run_analysis"]
         assert service.schema is None
+        interval_service = services["run_interval_aggregation"]
+        assert interval_service.schema is None

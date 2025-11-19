@@ -113,12 +113,37 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         raise HomeAssistantError(error_msg) from err
 
 
+async def _run_interval_aggregation(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Manually trigger interval aggregation for all areas."""
+    try:
+        coordinator = get_coordinator(hass)
+
+        _LOGGER.info("Running interval aggregation for all areas")
+        results = await hass.async_add_executor_job(
+            coordinator.db.run_interval_aggregation
+        )
+
+        return {
+            "results": results,
+            "update_timestamp": dt_util.utcnow().isoformat(),
+        }
+    except Exception as err:
+        error_msg = f"Failed to run interval aggregation: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
     # Create async wrapper function to properly handle the service call
     async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
         return await _run_analysis(hass, call)
+
+    async def handle_run_interval_aggregation(call: ServiceCall) -> dict[str, Any]:
+        return await _run_interval_aggregation(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -129,4 +154,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    _LOGGER.info("Registered %d service for %s integration", 1, DOMAIN)
+    hass.services.async_register(
+        DOMAIN,
+        "run_interval_aggregation",
+        handle_run_interval_aggregation,
+        schema=None,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    _LOGGER.info("Registered %d service for %s integration", 2, DOMAIN)
