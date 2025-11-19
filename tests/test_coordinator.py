@@ -1262,6 +1262,7 @@ class TestAreaOccupancyCoordinator:
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", return_value=None),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
             patch.object(
                 coordinator, "run_analysis", new=AsyncMock()

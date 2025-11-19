@@ -591,10 +591,11 @@ class TestPruneOldIntervals:
 class TestPruneOldGlobalPriorsEdgeCases2:
     """Test _prune_old_global_priors function - additional edge cases."""
 
-    def test_prune_old_global_priors_edge_cases(self, test_db):
+    def test_prune_old_global_priors_edge_cases(self, test_db, monkeypatch):
         """Test pruning old global priors edge cases."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
+        old_area_name = f"{area_name}_stale"
         old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
         recent_time = dt_util.utcnow() - timedelta(days=30)
 
@@ -604,9 +605,14 @@ class TestPruneOldGlobalPriorsEdgeCases2:
             # Add old prior
             old_prior = db.GlobalPriors(
                 entry_id=db.coordinator.entry_id,
-                area_name=area_name,
+                area_name=old_area_name,
                 prior_value=0.5,
                 calculation_date=old_time,
+                data_period_start=old_time - timedelta(days=7),
+                data_period_end=old_time,
+                total_occupied_seconds=7200.0,
+                total_period_seconds=86400.0,
+                interval_count=10,
             )
             # Add recent prior
             recent_prior = db.GlobalPriors(
@@ -614,12 +620,22 @@ class TestPruneOldGlobalPriorsEdgeCases2:
                 area_name=area_name,
                 prior_value=0.6,
                 calculation_date=recent_time,
+                data_period_start=recent_time - timedelta(days=7),
+                data_period_end=recent_time,
+                total_occupied_seconds=10800.0,
+                total_period_seconds=86400.0,
+                interval_count=12,
             )
             session.add_all([old_prior, recent_prior])
             session.commit()
 
-        # Prune old priors
-        _prune_old_global_priors(db)
+        # Force pruning to remove all but the most recent calculation
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.operations.GLOBAL_PRIOR_HISTORY_COUNT",
+            0,
+        )
+        with db.get_session() as session:
+            _prune_old_global_priors(db, session, old_area_name)
 
         # Verify old prior was deleted, recent remains
         with db.get_session() as session:
