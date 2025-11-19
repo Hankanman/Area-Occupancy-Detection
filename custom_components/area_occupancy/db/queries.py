@@ -571,7 +571,8 @@ def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any])
         combined_query = queries[0].order_by(db.Intervals.start_time)
         return combined_query.all()
 
-    union_query = union_all(*[q.subquery() for q in queries])
+    select_statements = [query.statement for query in queries]
+    union_query = union_all(*select_statements).subquery()
     combined_query = session.query(
         union_query.c.start_time,
         union_query.c.end_time,

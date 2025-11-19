@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
+from custom_components.area_occupancy.data.entity_type import InputType
+
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -71,7 +73,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
-        self._interval_aggregation_timer: CALLBACK_TYPE | None = None
+        self._nightly_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
 
     async def async_init_database(self) -> None:
@@ -440,7 +442,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
-            self._start_interval_aggregation_timer()
+            self._start_nightly_timer()
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -469,7 +471,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_save_timer()
                 # Analysis timer is async and runs in background
                 await self._start_analysis_timer()
-                self._start_interval_aggregation_timer()
+                self._start_nightly_timer()
 
                 self._setup_complete = True
 
@@ -564,9 +566,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer()
             self._analysis_timer = None
 
-        if self._interval_aggregation_timer is not None:
-            self._interval_aggregation_timer()
-            self._interval_aggregation_timer = None
+        if self._nightly_timer is not None:
+            self._nightly_timer()
+            self._nightly_timer = None
 
         # Step 6: Clean up periodic save timer (defensive check)
         if self._save_timer is not None:
@@ -900,14 +902,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.run_analysis, next_update
             )
 
-    # --- Interval Aggregation Timer Handling ---
-    def _start_interval_aggregation_timer(self) -> None:
+    # --- Nightly Timer Handling ---
+    def _start_nightly_timer(self) -> None:
         """Start nightly interval aggregation timer (02:00 local time)."""
-        if self._interval_aggregation_timer is not None or not self.hass:
+        if self._nightly_timer is not None or not self.hass:
             return
 
         next_run = self._next_interval_aggregation_run()
-        self._interval_aggregation_timer = async_track_point_in_time(
+        self._nightly_timer = async_track_point_in_time(
             self.hass, self.run_interval_aggregation_job, next_run
         )
 
@@ -924,28 +926,106 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return dt_util.as_utc(target_time)
 
-    async def run_interval_aggregation_job(self, _now: datetime) -> None:
+    def _get_numeric_entities_by_area(self) -> dict[str, list[str]]:
+        """Return mapping of area_name to numeric entity IDs."""
+        numeric_inputs = {
+            InputType.TEMPERATURE,
+            InputType.HUMIDITY,
+            InputType.ILLUMINANCE,
+            InputType.ENVIRONMENTAL,
+        }
+        numeric_entities: dict[str, list[str]] = {}
+
+        for area_name, area in self.areas.items():
+            entities_container = getattr(area.entities, "entities", {})
+            area_numeric: list[str] = []
+            for entity_id, entity in entities_container.items():
+                entity_type = getattr(entity, "type", None)
+                input_type = getattr(entity_type, "input_type", None)
+                if input_type in numeric_inputs:
+                    area_numeric.append(entity_id)
+            if area_numeric:
+                numeric_entities[area_name] = area_numeric
+
+        return numeric_entities
+
+    async def run_interval_aggregation_job(
+        self, _now: datetime | None = None
+    ) -> dict[str, Any]:
         """Handle nightly interval aggregation timer firing."""
-        self._interval_aggregation_timer = None
+        self._nightly_timer = None
+        if _now is None:
+            _now = dt_util.utcnow()
+
+        summary: dict[str, Any] = {
+            "aggregation": None,
+            "correlations": [],
+            "errors": [],
+        }
 
         try:
             results = await self.hass.async_add_executor_job(
                 self.db.run_interval_aggregation
             )
+            summary["aggregation"] = results
             _LOGGER.info(
                 "Interval aggregation completed for areas %s: %s",
                 self._format_area_names_for_logging(),
                 results,
             )
+
+            numeric_entities = self._get_numeric_entities_by_area()
+            if numeric_entities:
+                _LOGGER.info(
+                    "Starting numeric correlation analysis for %d area(s)",
+                    len(numeric_entities),
+                )
+                for area_name, entity_ids in numeric_entities.items():
+                    for entity_id in entity_ids:
+                        try:
+                            correlation_result = await self.hass.async_add_executor_job(
+                                self.db.analyze_and_save_correlation,
+                                area_name,
+                                entity_id,
+                            )
+                            summary["correlations"].append(
+                                {
+                                    "area": area_name,
+                                    "entity_id": entity_id,
+                                    "success": bool(correlation_result),
+                                }
+                            )
+                        except Exception as err:  # noqa: BLE001
+                            _LOGGER.error(
+                                "Correlation analysis failed for %s (%s): %s",
+                                area_name,
+                                entity_id,
+                                err,
+                            )
+                            summary["correlations"].append(
+                                {
+                                    "area": area_name,
+                                    "entity_id": entity_id,
+                                    "success": False,
+                                    "error": str(err),
+                                }
+                            )
+            else:
+                _LOGGER.debug(
+                    "Skipping numeric correlation analysis - no numeric entities configured"
+                )
+
         except Exception as err:  # noqa: BLE001
             _LOGGER.error(
                 "Interval aggregation failed for areas %s: %s",
                 self._format_area_names_for_logging(),
                 err,
             )
+            summary["errors"].append(str(err))
 
         next_reference_local = dt_util.as_local(_now)
         next_run = self._next_interval_aggregation_run(next_reference_local)
-        self._interval_aggregation_timer = async_track_point_in_time(
+        self._nightly_timer = async_track_point_in_time(
             self.hass, self.run_interval_aggregation_job, next_run
         )
+        return summary
