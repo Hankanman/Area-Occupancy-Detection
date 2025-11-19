@@ -71,6 +71,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
+        self._interval_aggregation_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
 
     async def async_init_database(self) -> None:
@@ -439,6 +440,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
+            self._start_interval_aggregation_timer()
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -467,6 +469,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_save_timer()
                 # Analysis timer is async and runs in background
                 await self._start_analysis_timer()
+                self._start_interval_aggregation_timer()
 
                 self._setup_complete = True
 
@@ -560,6 +563,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._analysis_timer is not None:
             self._analysis_timer()
             self._analysis_timer = None
+
+        if self._interval_aggregation_timer is not None:
+            self._interval_aggregation_timer()
+            self._interval_aggregation_timer = None
 
         # Step 6: Clean up periodic save timer (defensive check)
         if self._save_timer is not None:
@@ -892,3 +899,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
+
+    # --- Interval Aggregation Timer Handling ---
+    def _start_interval_aggregation_timer(self) -> None:
+        """Start nightly interval aggregation timer (02:00 local time)."""
+        if self._interval_aggregation_timer is not None or not self.hass:
+            return
+
+        next_run = self._next_interval_aggregation_run()
+        self._interval_aggregation_timer = async_track_point_in_time(
+            self.hass, self.run_interval_aggregation_job, next_run
+        )
+
+    def _next_interval_aggregation_run(
+        self, reference_local: datetime | None = None
+    ) -> datetime:
+        """Return the next 02:00 local time run expressed in UTC."""
+        if reference_local is None:
+            reference_local = dt_util.now()
+
+        target_time = reference_local.replace(hour=2, minute=0, second=0, microsecond=0)
+        if target_time <= reference_local:
+            target_time += timedelta(days=1)
+
+        return dt_util.as_utc(target_time)
+
+    async def run_interval_aggregation_job(self, _now: datetime) -> None:
+        """Handle nightly interval aggregation timer firing."""
+        self._interval_aggregation_timer = None
+
+        try:
+            results = await self.hass.async_add_executor_job(
+                self.db.run_interval_aggregation
+            )
+            _LOGGER.info(
+                "Interval aggregation completed for areas %s: %s",
+                self._format_area_names_for_logging(),
+                results,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error(
+                "Interval aggregation failed for areas %s: %s",
+                self._format_area_names_for_logging(),
+                err,
+            )
+
+        next_reference_local = dt_util.as_local(_now)
+        next_run = self._next_interval_aggregation_run(next_reference_local)
+        self._interval_aggregation_timer = async_track_point_in_time(
+            self.hass, self.run_interval_aggregation_job, next_run
+        )
