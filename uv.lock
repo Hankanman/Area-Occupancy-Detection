@@ -248,7 +248,7 @@ wheels = [
 
 [[package]]
 name = "area-occupancy-detection"
-version = "2025.11.2"
+version = "2025.11.3rc4"
 source = { editable = "." }
 dependencies = [
     { name = "aiodns" },
