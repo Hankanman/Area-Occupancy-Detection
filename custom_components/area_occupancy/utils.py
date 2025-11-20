@@ -9,9 +9,16 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
+from .const import (
+    ALL_AREAS_IDENTIFIER,
+    DOMAIN,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
+    ROUNDING_PRECISION,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -245,3 +252,66 @@ def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
             "Area Occupancy coordinator not found. Ensure integration is configured."
         )
     return coordinator
+
+
+def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str | None:
+    """Extract device identifier from DeviceInfo identifiers.
+
+    Args:
+        device_info: DeviceInfo object containing identifiers
+
+    Returns:
+        Device identifier string (second element of tuple) or None if not found
+    """
+    identifiers = device_info.get("identifiers")
+    if not identifiers:
+        return None
+    # Identifiers is a set of tuples like {(DOMAIN, device_identifier)}
+    try:
+        identifier_tuple = next(iter(identifiers))
+        if isinstance(identifier_tuple, tuple) and len(identifier_tuple) >= 2:
+            return str(identifier_tuple[1])
+    except (StopIteration, TypeError):
+        pass
+    return None
+
+
+def generate_entity_unique_id(
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str,
+    entity_name: str,
+) -> str:
+    """Generate consistent unique_id for platform entities.
+
+    Args:
+        coordinator: The coordinator instance
+        area_name: Area name or ALL_AREAS_IDENTIFIER
+        entity_name: Entity name constant (will be normalized)
+
+    Returns:
+        Unique ID in format: {entry_id}_{device_id}_{normalized_entity_name}
+    """
+    entry_id = coordinator.entry_id
+
+    # Get DeviceInfo from Area or AllAreas
+    if area_name == ALL_AREAS_IDENTIFIER:
+        device_info = coordinator.get_all_areas().device_info()
+    else:
+        area = coordinator.get_area(area_name)
+        if area is None:
+            # Fallback to entry_id if area not found
+            device_id = coordinator.entry_id
+            # Normalize entity name
+            normalized_name = entity_name.lower().replace(" ", "_")
+            return f"{entry_id}_{device_id}_{normalized_name}"
+        device_info = area.device_info()
+
+    # Extract device_id from DeviceInfo
+    device_id = extract_device_identifier_from_device_info(device_info)
+    if device_id is None:
+        device_id = coordinator.entry_id
+
+    # Normalize entity name
+    normalized_name = entity_name.lower().replace(" ", "_")
+
+    return f"{entry_id}_{device_id}_{normalized_name}"

@@ -32,9 +32,13 @@ class TestThreshold:
     ) -> None:
         """Test Threshold entity initialization."""
         assert threshold_entity.coordinator is not None
-        # unique_id uses area_name directly
+        # unique_id uses entry_id, device_id, and entity_name
         area_name = coordinator_with_areas.get_area_names()[0]
-        assert threshold_entity.unique_id == f"{area_name}_occupancy_threshold"
+        entry_id = coordinator_with_areas.entry_id
+        area = coordinator_with_areas.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_occupancy_threshold"
+        assert threshold_entity.unique_id == expected_unique_id
         assert threshold_entity.name == "Threshold"
 
     def test_entity_properties(self, threshold_entity: Threshold) -> None:
@@ -150,9 +154,10 @@ class TestThreshold:
         coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test device_info property."""
-        # device_info is now a method that takes area_name
+        # device_info is now accessed directly from Area
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        expected_device_info = threshold_entity.coordinator.device_info(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
+        expected_device_info = area.device_info()
         assert threshold_entity.device_info == expected_device_info
 
     @pytest.mark.parametrize(
@@ -285,5 +290,10 @@ class TestAsyncSetupEntry:
         entities = mock_async_add_entities.call_args[0][0]
         threshold_entity = entities[0]
         assert threshold_entity.coordinator == coordinator_with_areas
-        # unique_id format uses area name
-        assert "occupancy_threshold" in threshold_entity.unique_id
+        # unique_id format uses entry_id, device_id, and entity_name
+        entry_id = coordinator_with_areas.entry_id
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_occupancy_threshold"
+        assert threshold_entity.unique_id == expected_unique_id
