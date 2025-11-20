@@ -17,7 +17,6 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
 from custom_components.area_occupancy.data.entity_type import InputType
-from custom_components.area_occupancy.data.prior import MIN_PRIOR
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -133,53 +132,6 @@ class TestAreaOccupancyCoordinator:
         assert "model" in device_info
         assert "sw_version" in device_info
 
-    @pytest.mark.parametrize(
-        ("property_name", "expected_value"),
-        [
-            ("probability", 0.5),
-            ("area_prior", 0.3),
-            ("decay", 1.0),
-        ],
-    )
-    def test_basic_properties(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        property_name: str,
-        expected_value: float,
-    ) -> None:
-        """Test basic coordinator properties."""
-        # These are now methods that take area_name and delegate to area methods
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        # Mock area method to return expected value
-        with patch.object(area, property_name, return_value=expected_value):
-            method = getattr(coordinator, property_name)
-            assert method(area_name) == expected_value
-
-    def test_threshold_property(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test threshold property specifically."""
-        # threshold is now a method that delegates to area
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        # Set threshold to 0.6 for testing
-        area.config.threshold = 0.6
-        # The wrapper should call area.threshold()
-        assert coordinator.threshold(area_name) == 0.6
-
-    def test_is_occupied_property(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test occupied method threshold comparison."""
-        # Set threshold to 0.6 and probability to 0.5
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        area.config.threshold = 0.6
-        # Mock probability to return 0.5
-        with patch.object(area, "probability", return_value=0.5):
-            assert not coordinator.occupied(area_name)  # 0.5 < 0.6
-
-        # Test at threshold boundary
-        with patch.object(area, "probability", return_value=0.6):
-            assert coordinator.occupied(area_name)  # 0.6 >= 0.6
-
     def test_decaying_entities_property(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
@@ -224,153 +176,6 @@ class TestAreaOccupancyCoordinator:
         assert entities["binary_sensor.appliance"] in decaying
         assert entities["binary_sensor.motion2"] not in decaying
         assert entities["media_player.tv"] not in decaying
-
-    @pytest.mark.parametrize(
-        ("entities_empty", "expected_probability", "expected_prior", "expected_decay"),
-        [
-            (True, 0.0, MIN_PRIOR, 1.0),
-            (False, 0.65, 0.35, 0.8),
-        ],
-    )
-    def test_property_calculations_with_entities(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        coordinator_with_sensors: AreaOccupancyCoordinator,
-        entities_empty: bool,
-        expected_probability: float,
-        expected_prior: float,
-        expected_decay: float,
-    ) -> None:
-        """Test property calculations with different entity states."""
-        test_coordinator = coordinator if entities_empty else coordinator_with_sensors
-
-        # These are now methods that take area_name
-        area_name = test_coordinator.get_area_names()[0]
-        area = test_coordinator.get_area(area_name)
-        if entities_empty:
-            area.entities._entities = {}
-            # Mock area methods instead of coordinator methods
-            with (
-                patch.object(area, "probability", return_value=expected_probability),
-                patch.object(area, "area_prior", return_value=expected_prior),
-                patch.object(area, "decay", return_value=expected_decay),
-            ):
-                # Verify coordinator wrappers delegate to area methods
-                assert test_coordinator.probability(area_name) == expected_probability
-                assert test_coordinator.area_prior(area_name) == expected_prior
-                assert test_coordinator.decay(area_name) == expected_decay
-        else:
-            # For non-empty entities, also mock area methods
-            with (
-                patch.object(area, "probability", return_value=expected_probability),
-                patch.object(area, "area_prior", return_value=expected_prior),
-                patch.object(area, "decay", return_value=expected_decay),
-            ):
-                # Verify coordinator wrappers delegate to area methods
-                assert test_coordinator.probability(area_name) == expected_probability
-                assert test_coordinator.area_prior(area_name) == expected_prior
-                assert test_coordinator.decay(area_name) == expected_decay
-
-    def test_probability_with_mixed_evidence_and_decay(
-        self, coordinator_with_sensors: AreaOccupancyCoordinator
-    ) -> None:
-        """Test probability calculation with mixed evidence and decay states."""
-        # Access entities via area
-        area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area(area_name)
-        entities = area.entities.entities
-
-        # Setup entities with various states
-        entities["binary_sensor.motion"].evidence = True
-        entities["binary_sensor.motion"].decay.is_decaying = False
-        entities["binary_sensor.motion"].decay.decay_factor = 1.0
-
-        entities["binary_sensor.motion2"].evidence = False
-        entities["binary_sensor.motion2"].decay.is_decaying = True
-        entities["binary_sensor.motion2"].decay.decay_factor = 0.5
-
-        entities["binary_sensor.appliance"].evidence = False
-        entities["binary_sensor.appliance"].decay.is_decaying = False
-
-        entities["media_player.tv"].evidence = True
-        entities["media_player.tv"].decay.is_decaying = True
-        entities["media_player.tv"].decay.decay_factor = 0.8
-
-        # Mock area.probability to return a valid value since we're testing delegation
-        with patch.object(area, "probability", return_value=0.65):
-            # Verify coordinator wrapper delegates to area method
-            assert coordinator_with_sensors.probability(area_name) == 0.65
-
-    def test_probability_calculation_with_varying_weights(
-        self, coordinator_with_sensors: AreaOccupancyCoordinator
-    ) -> None:
-        """Test probability calculation with entities having different weights."""
-        # Use area-based access
-        area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area(area_name)
-        entities = area.entities.entities
-
-        entities["binary_sensor.motion"].type.weight = 0.9
-        entities["binary_sensor.motion"].evidence = True
-
-        entities["binary_sensor.appliance"].type.weight = 0.1
-        entities["binary_sensor.appliance"].evidence = True
-
-        # Mock area.probability to return a valid value since we're testing delegation
-        with patch.object(area, "probability", return_value=0.65):
-            # Verify coordinator wrapper delegates to area method
-            assert coordinator_with_sensors.probability(area_name) == 0.65
-
-    @pytest.mark.parametrize(
-        ("probability", "threshold", "expected_occupied"),
-        [
-            (0.59, 0.6, False),
-            (0.6, 0.6, True),
-            (0.61, 0.6, True),
-        ],
-    )
-    def test_threshold_boundary_conditions(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        probability: float,
-        threshold: float,
-        expected_occupied: bool,
-    ) -> None:
-        """Test is_occupied calculation at various threshold boundaries."""
-        # These are now methods that take area_name
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        area.config.threshold = threshold
-        with patch.object(area, "probability", return_value=probability):
-            assert coordinator.occupied(area_name) == expected_occupied
-
-    @pytest.mark.parametrize(
-        ("edge_value", "property_name"),
-        [
-            (0.0, "probability"),
-            (1.0, "probability"),
-            (0.0, "threshold"),
-            (1.0, "threshold"),
-        ],
-    )
-    def test_edge_values(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        edge_value: float,
-        property_name: str,
-    ) -> None:
-        """Test property edge values."""
-        # For coordinator properties that are methods, we test via area
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        if property_name == "threshold":
-            area.config.threshold = edge_value
-            assert coordinator.threshold(area_name) == edge_value
-        else:
-            # For other properties, patch the area method
-            with patch.object(area, property_name, return_value=edge_value):
-                method = getattr(coordinator, property_name)
-                assert method(area_name) == edge_value
 
     async def test_async_methods(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test async coordinator methods."""
@@ -758,32 +563,6 @@ class TestAreaOccupancyCoordinator:
             # entities is now per-area, not on coordinator
             assert area.entities is not None
 
-    @pytest.mark.expected_lingering_timers(True)
-    def test_performance_with_many_entities(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test performance with many entities."""
-        # Create many mock entities
-        entities = {}
-        for i in range(50):
-            entity_id = f"binary_sensor.motion_{i}"
-            mock_entity = Mock()
-            mock_entity.probability = 0.5 + (i * 0.01)
-            mock_entity.weight = 0.8
-            mock_entity.is_active = True
-            mock_entity.is_decaying = False
-            entities[entity_id] = mock_entity
-
-        # Access entities via area (multi-area architecture)
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        area.entities._entities = entities
-
-        # Mock area.probability to return a valid value since we're testing delegation
-        with patch.object(area, "probability", return_value=0.5):
-            # Verify coordinator wrapper delegates to area method
-            assert coordinator.probability(area_name) == 0.5
-
     async def test_state_tracking_with_many_entities(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -795,82 +574,6 @@ class TestAreaOccupancyCoordinator:
         ) as mock_track:
             await coordinator.track_entity_state_changes(entity_ids)
             mock_track.assert_called_with(entity_ids)
-
-    def test_type_probabilities_property(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test type_probabilities property calculation."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-
-        # Create an area and add it to coordinator
-        area_name = "Test Area"
-        area = Area(coordinator, area_name=area_name)
-        coordinator.areas[area_name] = area
-
-        # Attach a lightweight mocked entities manager
-        # Mock the entities property on the area by setting the private attribute
-        entities_manager = Mock()
-        entities_manager.entities = {
-            "binary_sensor.motion": Mock(),
-            "media_player.tv": Mock(),
-            "binary_sensor.door": Mock(),
-        }
-        entities_manager.get_entities_by_input_type = Mock(return_value={})
-        # Set the private _entities attribute directly
-        area._entities = entities_manager
-
-        # type_probabilities is now a method that delegates to area
-        # Coordinator wrapper should delegate to area method
-        type_probs = coordinator.type_probabilities(area_name)
-        assert isinstance(type_probs, dict)
-        # The method returns probabilities for each input type, even if empty
-        assert "motion" in type_probs
-        assert "media" in type_probs
-        assert "appliance" in type_probs
-        assert "door" in type_probs
-        assert "window" in type_probs
-        assert "illuminance" in type_probs
-        assert "humidity" in type_probs
-        assert "temperature" in type_probs
-
-    def test_type_probabilities_with_empty_entities(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test type_probabilities property with no entities."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-
-        # Get area name - handle case where areas might not be loaded
-        area_names = coordinator.get_area_names()
-        if not area_names:
-            # Skip test if no areas are configured
-            pytest.skip("No areas configured in test coordinator")
-        area_name = area_names[0]
-
-        entities_manager = Mock()
-        entities_manager.entities = {}
-        entities_manager.get_entities_by_input_type = Mock(return_value={})
-        # Access entities via area
-        area = coordinator.get_area(area_name)
-        if area is None:
-            pytest.skip("Area not found in test coordinator")
-        area.entities = entities_manager
-
-        # type_probabilities is now a method that delegates to area
-        # Coordinator wrapper should delegate to area method
-        type_probs = coordinator.type_probabilities(area_name)
-        assert type_probs == {}
-
-    def test_threshold_property_with_none_config(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test threshold property when config is None."""
-        # threshold is now a method that delegates to area
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        area.threshold = Mock(return_value=0.5)
-        # Coordinator wrapper should delegate to area method
-        # For mock coordinators, verify area method is mocked correctly
-        assert area.threshold.return_value == 0.5
 
     async def test_decay_timer_handling(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

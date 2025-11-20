@@ -23,7 +23,8 @@ class TestThreshold:
     ) -> Threshold:
         """Create a threshold entity for testing."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        return Threshold(coordinator_with_areas, area_name)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        return Threshold(area_handle=handle)
 
     def test_initialization(
         self,

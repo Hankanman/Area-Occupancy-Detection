@@ -1,6 +1,6 @@
 """Tests for AllAreas aggregation class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from custom_components.area_occupancy.area.all_areas import AllAreas
 from custom_components.area_occupancy.const import ALL_AREAS_IDENTIFIER, MIN_PROBABILITY
@@ -22,14 +22,14 @@ class TestAllAreas:
         """Test probability aggregation averages across all areas."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return multiple areas, and probability to return known values
-        with (
-            patch.object(
-                coordinator_with_areas,
-                "get_area_names",
-                return_value=["Area1", "Area2"],
-            ),
-            patch.object(coordinator_with_areas, "probability", side_effect=[0.3, 0.7]),
+        area1 = MagicMock()
+        area1.probability.return_value = 0.3
+        area2 = MagicMock()
+        area2.probability.return_value = 0.7
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
         ):
             prob = all_areas.probability()
             # Average of 0.3 and 0.7 = 0.5
@@ -39,14 +39,14 @@ class TestAllAreas:
         """Test occupied returns True if ANY area is occupied."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return multiple areas, and occupied to return True for at least one
-        with (
-            patch.object(
-                coordinator_with_areas,
-                "get_area_names",
-                return_value=["Area1", "Area2"],
-            ),
-            patch.object(coordinator_with_areas, "occupied", side_effect=[False, True]),
+        area1 = MagicMock()
+        area1.occupied.return_value = False
+        area2 = MagicMock()
+        area2.occupied.return_value = True
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
         ):
             assert all_areas.occupied() is True
 
@@ -54,22 +54,29 @@ class TestAllAreas:
         """Test occupied returns False if no areas are occupied."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock coordinator.occupied to return False for all areas
-        with patch.object(coordinator_with_areas, "occupied", return_value=False):
+        area1 = MagicMock()
+        area1.occupied.return_value = False
+        area2 = MagicMock()
+        area2.occupied.return_value = False
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
+        ):
             assert all_areas.occupied() is False
 
     def test_area_prior_average(self, coordinator_with_areas) -> None:
         """Test area_prior aggregation averages across all areas."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return multiple areas, and area_prior to return known values
-        with (
-            patch.object(
-                coordinator_with_areas,
-                "get_area_names",
-                return_value=["Area1", "Area2"],
-            ),
-            patch.object(coordinator_with_areas, "area_prior", side_effect=[0.2, 0.8]),
+        area1 = MagicMock()
+        area1.area_prior.return_value = 0.2
+        area2 = MagicMock()
+        area2.area_prior.return_value = 0.8
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
         ):
             prior = all_areas.area_prior()
             # Average of 0.2 and 0.8 = 0.5
@@ -79,14 +86,14 @@ class TestAllAreas:
         """Test decay aggregation averages across all areas."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return multiple areas, and decay to return known values
-        with (
-            patch.object(
-                coordinator_with_areas,
-                "get_area_names",
-                return_value=["Area1", "Area2"],
-            ),
-            patch.object(coordinator_with_areas, "decay", side_effect=[0.4, 0.6]),
+        area1 = MagicMock()
+        area1.decay.return_value = 0.4
+        area2 = MagicMock()
+        area2.decay.return_value = 0.6
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
         ):
             decay = all_areas.decay()
             # Average of 0.4 and 0.6 = 0.5
@@ -96,16 +103,14 @@ class TestAllAreas:
         """Test probability clamps to valid bounds."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return multiple areas, and test with values that would average outside bounds
-        with (
-            patch.object(
-                coordinator_with_areas,
-                "get_area_names",
-                return_value=["Area1", "Area2"],
-            ),
-            patch.object(
-                coordinator_with_areas, "probability", side_effect=[-0.5, 1.5]
-            ),
+        area1 = MagicMock()
+        area1.probability.return_value = -0.5
+        area2 = MagicMock()
+        area2.probability.return_value = 1.5
+        with patch.dict(
+            coordinator_with_areas.areas,
+            {"Area1": area1, "Area2": area2},
+            clear=True,
         ):
             prob = all_areas.probability()
             # Should clamp to [MIN_PROBABILITY, 1.0]
@@ -115,12 +120,7 @@ class TestAllAreas:
         """Test probability returns safe default when no areas exist."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return empty list (should never happen due to root cause fix)
-        with patch.object(
-            coordinator_with_areas,
-            "get_area_names",
-            return_value=[],
-        ):
+        with patch.dict(coordinator_with_areas.areas, {}, clear=True):
             prob = all_areas.probability()
             # Should return MIN_PROBABILITY as safe default
             assert prob == MIN_PROBABILITY
@@ -129,12 +129,7 @@ class TestAllAreas:
         """Test area_prior returns safe default when no areas exist."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return empty list (should never happen due to root cause fix)
-        with patch.object(
-            coordinator_with_areas,
-            "get_area_names",
-            return_value=[],
-        ):
+        with patch.dict(coordinator_with_areas.areas, {}, clear=True):
             prior = all_areas.area_prior()
             # Should return MIN_PROBABILITY as safe default
             assert prior == MIN_PROBABILITY
@@ -143,12 +138,7 @@ class TestAllAreas:
         """Test decay returns safe default when no areas exist."""
         all_areas = AllAreas(coordinator_with_areas)
 
-        # Mock get_area_names to return empty list (should never happen due to root cause fix)
-        with patch.object(
-            coordinator_with_areas,
-            "get_area_names",
-            return_value=[],
-        ):
+        with patch.dict(coordinator_with_areas.areas, {}, clear=True):
             decay = all_areas.decay()
             # Should return 1.0 as safe default (no decay = full probability)
             assert decay == 1.0

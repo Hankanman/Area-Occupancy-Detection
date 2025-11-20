@@ -61,15 +61,12 @@ class AllAreas:
         Returns:
             Average probability (0.0-1.0) across all areas.
         """
-        area_names = self.coordinator.get_area_names()
+        areas = list(self.coordinator.areas.values())
         # Safety check: return safe default if no areas exist
-        # (should never happen due to root cause fix, but provides safety net)
-        if not area_names:
+        if not areas:
             return MIN_PROBABILITY
-        probabilities = [
-            self.coordinator.probability(area_name) for area_name in area_names
-        ]
-        avg_prob = sum(probabilities) / len(probabilities)
+        probabilities = [area.probability() for area in areas]
+        avg_prob = sum(probabilities) / len(areas)
         return max(MIN_PROBABILITY, min(1.0, avg_prob))
 
     def occupied(self) -> bool:
@@ -78,8 +75,7 @@ class AllAreas:
         Returns:
             True if any area is occupied, False otherwise
         """
-        area_names = self.coordinator.get_area_names()
-        return any(self.coordinator.occupied(area_name) for area_name in area_names)
+        return any(area.occupied() for area in self.coordinator.areas.values())
 
     def area_prior(self) -> float:
         """Calculate average prior across all areas.
@@ -87,13 +83,11 @@ class AllAreas:
         Returns:
             Average prior (0.0-1.0) across all areas.
         """
-        area_names = self.coordinator.get_area_names()
-        # Safety check: return safe default if no areas exist
-        # (should never happen due to root cause fix, but provides safety net)
-        if not area_names:
+        areas = list(self.coordinator.areas.values())
+        if not areas:
             return MIN_PROBABILITY
-        priors = [self.coordinator.area_prior(area_name) for area_name in area_names]
-        avg_prior = sum(priors) / len(priors)
+        priors = [area.area_prior() for area in areas]
+        avg_prior = sum(priors) / len(areas)
         return max(MIN_PROBABILITY, min(1.0, avg_prior))
 
     def decay(self) -> float:
@@ -102,11 +96,9 @@ class AllAreas:
         Returns:
             Average decay (0.0-1.0) across all areas.
         """
-        area_names = self.coordinator.get_area_names()
-        # Safety check: return safe default if no areas exist
-        # (should never happen due to root cause fix, but provides safety net)
-        if not area_names:
+        areas = list(self.coordinator.areas.values())
+        if not areas:
             return 1.0
-        decays = [self.coordinator.decay(area_name) for area_name in area_names]
-        avg_decay = sum(decays) / len(decays)
+        decays = [area.decay() for area in areas]
+        avg_decay = sum(decays) / len(areas)
         return max(0.0, min(1.0, avg_decay))
