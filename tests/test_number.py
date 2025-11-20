@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.number import Threshold, async_setup_entry
 from homeassistant.components.number import NumberMode
 from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 
@@ -16,14 +18,23 @@ class TestThreshold:
     """Test Threshold number entity."""
 
     @pytest.fixture
-    def threshold_entity(self, mock_coordinator_with_threshold: Mock) -> Threshold:
+    def threshold_entity(
+        self, coordinator_with_areas: AreaOccupancyCoordinator
+    ) -> Threshold:
         """Create a threshold entity for testing."""
-        return Threshold(mock_coordinator_with_threshold, "test_entry")
+        area_name = coordinator_with_areas.get_area_names()[0]
+        return Threshold(coordinator_with_areas, area_name)
 
-    def test_initialization(self, threshold_entity: Threshold) -> None:
+    def test_initialization(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
         """Test Threshold entity initialization."""
         assert threshold_entity.coordinator is not None
-        assert threshold_entity.unique_id == "test_entry_occupancy_threshold"
+        # unique_id uses area_name directly
+        area_name = coordinator_with_areas.get_area_names()[0]
+        assert threshold_entity.unique_id == f"{area_name}_occupancy_threshold"
         assert threshold_entity.name == "Threshold"
 
     def test_entity_properties(self, threshold_entity: Threshold) -> None:
@@ -50,12 +61,15 @@ class TestThreshold:
     def test_native_value_property(
         self,
         threshold_entity: Threshold,
-        mock_coordinator_with_threshold: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         coordinator_threshold: float,
         expected_percentage: float,
     ) -> None:
         """Test native_value property with various threshold values."""
-        mock_coordinator_with_threshold.threshold = coordinator_threshold
+        # Mock area.threshold method
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+        area.threshold = Mock(return_value=coordinator_threshold)
         assert threshold_entity.native_value == expected_percentage
 
     @pytest.mark.parametrize(
@@ -65,14 +79,16 @@ class TestThreshold:
     async def test_async_set_native_value_valid(
         self,
         threshold_entity: Threshold,
-        mock_coordinator_with_threshold: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         percentage_value: float,
     ) -> None:
         """Test setting valid native values."""
-        await threshold_entity.async_set_native_value(percentage_value)
-        mock_coordinator_with_threshold.config.update_config.assert_called_once_with(
-            {"threshold": percentage_value}
-        )
+        # Access config via area
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with patch.object(area.config, "update_config") as mock_update_config:
+            await threshold_entity.async_set_native_value(percentage_value)
+            mock_update_config.assert_called_once_with({"threshold": percentage_value})
 
     @pytest.mark.parametrize(
         ("invalid_value", "expected_error"),
@@ -85,23 +101,32 @@ class TestThreshold:
     async def test_async_set_native_value_invalid(
         self,
         threshold_entity: Threshold,
-        mock_coordinator_with_threshold: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         invalid_value: float,
         expected_error: str,
     ) -> None:
         """Test setting invalid native values."""
-        with pytest.raises(ServiceValidationError, match=expected_error):
-            await threshold_entity.async_set_native_value(invalid_value)
-        mock_coordinator_with_threshold.config.update_config.assert_not_called()
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with patch.object(area.config, "update_config") as mock_update_config:
+            with pytest.raises(ServiceValidationError, match=expected_error):
+                await threshold_entity.async_set_native_value(invalid_value)
+            mock_update_config.assert_not_called()
 
     async def test_async_set_native_value_coordinator_error(
-        self, threshold_entity: Threshold, mock_coordinator_with_threshold: Mock
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test handling coordinator errors."""
-        mock_coordinator_with_threshold.config.update_config.side_effect = Exception(
-            "Update failed"
-        )
-        with pytest.raises(Exception, match="Update failed"):
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with (
+            patch.object(
+                area.config, "update_config", side_effect=Exception("Update failed")
+            ),
+            pytest.raises(Exception, match="Update failed"),
+        ):
             await threshold_entity.async_set_native_value(75.0)
 
     @pytest.mark.parametrize(
@@ -111,19 +136,23 @@ class TestThreshold:
     def test_available_property(
         self,
         threshold_entity: Threshold,
-        mock_coordinator_with_threshold: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         last_update_success: bool,
         expected_available: bool,
     ) -> None:
         """Test available property based on coordinator state."""
-        mock_coordinator_with_threshold.last_update_success = last_update_success
+        threshold_entity.coordinator.last_update_success = last_update_success
         assert threshold_entity.available is expected_available
 
     def test_device_info_property(
-        self, threshold_entity: Threshold, mock_coordinator_with_threshold: Mock
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test device_info property."""
-        expected_device_info = mock_coordinator_with_threshold.device_info
+        # device_info is now a method that takes area_name
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        expected_device_info = threshold_entity.coordinator.device_info(area_name)
         assert threshold_entity.device_info == expected_device_info
 
     @pytest.mark.parametrize(
@@ -133,63 +162,106 @@ class TestThreshold:
     async def test_value_conversion_precision(
         self,
         threshold_entity: Threshold,
-        mock_coordinator_with_threshold: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
         percentage_value: float,
     ) -> None:
         """Test value conversion precision."""
-        await threshold_entity.async_set_native_value(percentage_value)
-        called_value = mock_coordinator_with_threshold.config.update_config.call_args[
-            0
-        ][0]["threshold"]
-        assert called_value == percentage_value
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with patch.object(area.config, "update_config") as mock_update_config:
+            await threshold_entity.async_set_native_value(percentage_value)
+            called_value = mock_update_config.call_args[0][0]["threshold"]
+            assert called_value == percentage_value
 
     async def test_multiple_threshold_updates(
-        self, threshold_entity: Threshold, mock_coordinator_with_threshold: Mock
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test multiple threshold updates in sequence."""
         updates = [25.0, 50.0, 75.0, 90.0]
 
-        for percentage in updates:
-            mock_coordinator_with_threshold.config.update_config.reset_mock()
-            await threshold_entity.async_set_native_value(percentage)
-            mock_coordinator_with_threshold.config.update_config.assert_called_once_with(
-                {"threshold": percentage}
-            )
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with patch.object(area.config, "update_config") as mock_update_config:
+            for percentage in updates:
+                mock_update_config.reset_mock()
+                await threshold_entity.async_set_native_value(percentage)
+                mock_update_config.assert_called_once_with({"threshold": percentage})
 
     async def test_error_recovery(
-        self, threshold_entity: Threshold, mock_coordinator_with_threshold: Mock
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test error recovery scenarios."""
         # Test coordinator error followed by successful update
-        mock_coordinator_with_threshold.config.update_config.side_effect = [
-            Exception("Temporary error"),
-            None,  # Success on second call
-        ]
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+        with patch.object(
+            area.config,
+            "update_config",
+            side_effect=[
+                Exception("Temporary error"),
+                None,  # Success on second call
+            ],
+        ) as mock_update_config:
+            # First call should raise exception
+            with pytest.raises(Exception, match="Temporary error"):
+                await threshold_entity.async_set_native_value(75.0)
 
-        # First call should raise exception
-        with pytest.raises(Exception, match="Temporary error"):
+            # Second call should succeed
+            await threshold_entity.async_set_native_value(75.0)
+            assert mock_update_config.call_count == 2
+            mock_update_config.assert_called_with({"threshold": 75.0})
+
+    async def test_async_set_native_value_missing_area(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when area is missing."""
+
+        # Mock get_area to return None
+        with patch.object(threshold_entity.coordinator, "get_area", return_value=None):
+            # Should handle gracefully and return without error
             await threshold_entity.async_set_native_value(75.0)
 
-        # Second call should succeed
-        await threshold_entity.async_set_native_value(75.0)
-        mock_coordinator_with_threshold.config.update_config.assert_called_with(
-            {"threshold": 75.0}
-        )
+    async def test_async_set_native_value_update_config_error(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when update_config raises error."""
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+
+        # Mock update_config to raise error
+        with (
+            patch.object(
+                area.config, "update_config", side_effect=RuntimeError("Update failed")
+            ),
+            pytest.raises(RuntimeError, match="Update failed"),
+        ):
+            # Should propagate error
+            await threshold_entity.async_set_native_value(75.0)
 
 
 class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
     async def test_async_setup_entry_success(
-        self, mock_hass: Mock, mock_config_entry: Mock
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test successful setup entry."""
         mock_async_add_entities = Mock()
-        mock_coordinator = Mock()
-        mock_coordinator.device_info = {"test": "device_info"}
-        mock_config_entry.runtime_data = mock_coordinator
+        # Use real coordinator
+        mock_config_entry.runtime_data = coordinator_with_areas
 
-        await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
@@ -197,18 +269,21 @@ class TestAsyncSetupEntry:
         assert isinstance(entities[0], Threshold)
 
     async def test_async_setup_entry_with_coordinator_data(
-        self, mock_hass: Mock, mock_config_entry: Mock
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator_with_areas: AreaOccupancyCoordinator,
     ) -> None:
         """Test setup entry with coordinator data."""
-        mock_coordinator = Mock()
-        mock_coordinator.threshold = 0.8
-        mock_coordinator.device_info = {"test": "device_info"}
-        mock_config_entry.runtime_data = mock_coordinator
+        # Use real coordinator
+        mock_config_entry.runtime_data = coordinator_with_areas
+        mock_config_entry.entry_id = "test_entry_id"
         mock_async_add_entities = Mock()
 
-        await async_setup_entry(mock_hass, mock_config_entry, mock_async_add_entities)
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
         entities = mock_async_add_entities.call_args[0][0]
         threshold_entity = entities[0]
-        assert threshold_entity.coordinator == mock_coordinator
-        assert threshold_entity.unique_id == "test_entry_id_occupancy_threshold"
+        assert threshold_entity.coordinator == coordinator_with_areas
+        # unique_id format uses area name
+        assert "occupancy_threshold" in threshold_entity.unique_id
