@@ -33,11 +33,27 @@ class Entity:
     decay: Decay
     hass: HomeAssistant | None = None
     state_provider: Callable[[str], Any] | None = None
-    last_updated: datetime = None
+    last_updated: datetime | None = None
     previous_evidence: bool | None = None
 
     def __post_init__(self) -> None:
-        """Validate that either hass or state_provider is provided."""
+        """Validate that either hass or state_provider is provided.
+
+        Either hass or state_provider must be provided, and they are mutually
+        exclusive. This ensures proper state retrieval behavior:
+
+        - **HA-backed instances**: Provide `hass` to use Home Assistant's state
+          registry for entity state retrieval. This is the standard usage pattern
+          for entities managed within a Home Assistant integration.
+
+        - **State-provider-only instances**: Provide `state_provider` (a callable
+          that takes an entity_id and returns state) for testing or external state
+          management scenarios where Home Assistant is not available.
+
+        Raises:
+            ValueError: If neither hass nor state_provider is provided, or if both
+                are provided simultaneously.
+        """
         if self.hass is None and self.state_provider is None:
             raise ValueError("Either hass or state_provider must be provided")
         if self.hass is not None and self.state_provider is not None:
