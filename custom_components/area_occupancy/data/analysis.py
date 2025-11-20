@@ -696,10 +696,45 @@ class LikelihoodAnalyzer:
 
             for entity in sensors:
                 entity_id = str(entity.entity_id)
-                prob_given_true, prob_given_false = self._analyze_entity_likelihood(
-                    entity, intervals_by_entity, occupied_times, entity_manager
-                )
-                likelihoods[entity_id] = (prob_given_true, prob_given_false)
+
+                # Check if entity has intervals
+                if entity_id not in intervals_by_entity:
+                    _LOGGER.debug(
+                        "Skipping entity %s: no intervals found in database",
+                        entity_id,
+                    )
+                    continue
+
+                # Attempt to fetch entity from entity_manager
+                try:
+                    _ = entity_manager.get_entity(entity_id)
+                except (KeyError, ValueError) as e:
+                    _LOGGER.warning(
+                        "Skipping entity %s: failed to get entity from manager: %s",
+                        entity_id,
+                        e,
+                    )
+                    continue
+
+                # Analyze entity likelihood with error handling
+                try:
+                    prob_given_true, prob_given_false = self._analyze_entity_likelihood(
+                        entity, intervals_by_entity, occupied_times, entity_manager
+                    )
+                    likelihoods[entity_id] = (prob_given_true, prob_given_false)
+                except (
+                    AttributeError,
+                    KeyError,
+                    TypeError,
+                    RuntimeError,
+                    ValueError,
+                ) as e:
+                    _LOGGER.warning(
+                        "Error analyzing likelihood for entity %s: %s. Skipping.",
+                        entity_id,
+                        e,
+                    )
+                    continue
 
             _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
         except (
