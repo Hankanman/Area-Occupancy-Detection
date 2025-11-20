@@ -15,7 +15,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -38,6 +37,7 @@ from .const import (
     NAME_WASP_IN_BOX,
 )
 from .coordinator import AreaOccupancyCoordinator
+from .utils import generate_entity_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,15 +66,18 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
         self._area_name = area_name
         self._attr_has_entity_name = True
 
-        # Unique ID: use area_name directly (may be ALL_AREAS_IDENTIFIER)
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_BINARY_SENSOR
         )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info: DeviceInfo | None = coordinator.device_info(
-            area_name=area_name
-        )
+        # Get device_info directly from Area or AllAreas
+        if area_name == ALL_AREAS_IDENTIFIER:
+            self._attr_device_info = coordinator.get_all_areas().device_info()
+        else:
+            area = coordinator.get_area(area_name)
+            self._attr_device_info = area.device_info() if area is not None else None
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -172,13 +175,14 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
         # Configure entity properties
         self._attr_has_entity_name = True
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_WASP_IN_BOX.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_WASP_IN_BOX
         )
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        area = coordinator.get_area(area_name)
-        self._attr_device_info = area.device_info()
+        # Get device_info directly from Area
+        self._attr_device_info = area.device_info() if area is not None else None
         self._attr_available = True
         self._attr_is_on = False
 

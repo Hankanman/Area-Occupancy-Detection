@@ -14,7 +14,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar, entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -29,10 +28,6 @@ from .const import (
     CONF_AREA_ID,
     CONF_AREAS,
     DEFAULT_NAME,
-    DEVICE_MANUFACTURER,
-    DEVICE_MODEL,
-    DEVICE_SW_VERSION,
-    DOMAIN,
     MIN_PROBABILITY,
     SAVE_INTERVAL,
 )
@@ -252,31 +247,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         method = getattr(area, method_name)
         return method()
-
-    def device_info(self, area_name: str | None = None) -> DeviceInfo:
-        """Return device info for a specific area.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            DeviceInfo for the specified area
-        """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            return self.get_all_areas().device_info()
-
-        area = self.get_area(area_name)
-        if area is None:
-            return DeviceInfo(
-                identifiers={(DOMAIN, self.entry_id)},
-                name=DEFAULT_NAME,
-                manufacturer=DEVICE_MANUFACTURER,
-                model=DEVICE_MODEL,
-                sw_version=DEVICE_SW_VERSION,
-            )
-
-        return area.device_info()
 
     def probability(self, area_name: str | None = None) -> float:
         """Calculate and return the current occupancy probability (0.0-1.0) for an area.

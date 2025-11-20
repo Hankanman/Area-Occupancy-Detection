@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_THRESHOLD
 from .coordinator import AreaOccupancyCoordinator
+from .utils import generate_entity_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,8 +41,9 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         self._area_name = area_name
         self._attr_has_entity_name = True
         self._attr_name = "Threshold"
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_THRESHOLD_NUMBER.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_THRESHOLD_NUMBER
         )
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 99.0
@@ -49,8 +51,9 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_entity_category = EntityCategory.CONFIG
-        # Use coordinator helper so we get proper defaults if the area is missing
-        self._attr_device_info = coordinator.device_info(area_name)
+        # Get device_info directly from Area
+        area = coordinator.get_area(area_name)
+        self._attr_device_info = area.device_info() if area is not None else None
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
     async def async_added_to_hass(self) -> None:

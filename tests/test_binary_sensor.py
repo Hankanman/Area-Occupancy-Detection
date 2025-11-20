@@ -32,8 +32,12 @@ class TestOccupancy:
         entity = Occupancy(coordinator_with_areas, area_name)
 
         assert entity.coordinator == coordinator_with_areas
-        # unique_id uses area_name directly
-        assert entity.unique_id == f"{area_name}_occupancy_status"
+        # unique_id uses entry_id, device_id, and entity_name
+        entry_id = coordinator_with_areas.entry_id
+        area = coordinator_with_areas.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_occupancy_status"
+        assert entity.unique_id == expected_unique_id
         assert entity.name == "Occupancy Status"
 
     async def test_async_added_to_hass(
@@ -167,8 +171,12 @@ class TestWaspInBoxSensor:
 
         assert entity.hass == hass
         assert entity._coordinator == wasp_coordinator
-        # unique_id uses area_name directly
-        assert entity.unique_id == f"{area_name}_wasp_in_box"
+        # unique_id uses entry_id, device_id, and entity_name
+        entry_id = wasp_coordinator.entry_id
+        area = wasp_coordinator.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_wasp_in_box"
+        assert entity.unique_id == expected_unique_id
         assert entity.name == "Wasp in Box"
         assert entity.should_poll is False
 

@@ -101,12 +101,16 @@ class TestPercentageSensors:
         area_name = coordinator_with_areas.get_area_names()[0]
         sensor = sensor_class(coordinator_with_areas, area_name)
 
-        # unique_id uses area_name directly, so it will match the actual area name
-        # Check that it contains the expected suffix
-        assert (
-            expected_unique_id.replace("test_area", area_name) in sensor.unique_id
-            or sensor.unique_id == expected_unique_id
-        )
+        # unique_id uses entry_id, device_id, and entity_name
+        entry_id = coordinator_with_areas.entry_id
+        area = coordinator_with_areas.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        # Build expected unique_id from entity name (expected_unique_id format: "test_area_prior_probability")
+        entity_name = expected_unique_id.split("_", 1)[
+            1
+        ]  # Get "prior_probability" from "test_area_prior_probability"
+        expected_unique_id_new = f"{entry_id}_{device_id}_{entity_name}"
+        assert sensor.unique_id == expected_unique_id_new
         assert sensor.name == expected_name
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1
@@ -158,8 +162,12 @@ class TestEvidenceSensor:
         area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
         sensor = EvidenceSensor(coordinator_with_areas_with_sensors, area_name)
 
-        # unique_id uses area_name directly
-        assert sensor.unique_id == f"{area_name}_evidence"
+        # unique_id uses entry_id, device_id, and entity_name
+        entry_id = coordinator_with_areas_with_sensors.entry_id
+        area = coordinator_with_areas_with_sensors.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_evidence"
+        assert sensor.unique_id == expected_unique_id
         assert sensor.name == "Evidence"
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
@@ -229,8 +237,12 @@ class TestDecaySensor:
         area_name = coordinator_with_areas.get_area_names()[0]
         sensor = DecaySensor(coordinator_with_areas, area_name)
 
-        # unique_id uses area_name directly
-        assert sensor.unique_id == f"{area_name}_decay_status"
+        # unique_id uses entry_id, device_id, and entity_name
+        entry_id = coordinator_with_areas.entry_id
+        area = coordinator_with_areas.get_area(area_name)
+        device_id = next(iter(area.device_info()["identifiers"]))[1]
+        expected_unique_id = f"{entry_id}_{device_id}_decay_status"
+        assert sensor.unique_id == expected_unique_id
         assert sensor.name == "Decay Status"
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1

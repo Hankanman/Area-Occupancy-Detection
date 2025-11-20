@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ALL_AREAS_IDENTIFIER
 from .coordinator import AreaOccupancyCoordinator
-from .utils import format_float, format_percentage
+from .utils import format_float, format_percentage, generate_entity_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +48,12 @@ class AreaOccupancySensorBase(
         self._area_name = area_name
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_device_info = coordinator.device_info(area_name=area_name)
+        # Get device_info directly from Area or AllAreas
+        if area_name == ALL_AREAS_IDENTIFIER:
+            self._attr_device_info = coordinator.get_all_areas().device_info()
+        else:
+            area = coordinator.get_area(area_name)
+            self._attr_device_info = area.device_info() if area is not None else None
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1
 
@@ -87,8 +92,9 @@ class PriorsSensor(AreaOccupancySensorBase):
         """Initialize the priors sensor."""
         super().__init__(coordinator, area_name)
         self._attr_name = NAME_PRIORS_SENSOR
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_PRIORS_SENSOR.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_PRIORS_SENSOR
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -157,8 +163,9 @@ class ProbabilitySensor(AreaOccupancySensorBase):
         """Initialize the probability sensor."""
         super().__init__(coordinator, area_name)
         self._attr_name = NAME_PROBABILITY_SENSOR
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_PROBABILITY_SENSOR.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_PROBABILITY_SENSOR
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -198,8 +205,9 @@ class EvidenceSensor(AreaOccupancySensorBase):
         """Initialize the entities sensor."""
         super().__init__(coordinator, area_name)
         self._attr_name = NAME_EVIDENCE_SENSOR
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_EVIDENCE_SENSOR.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_EVIDENCE_SENSOR
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -265,8 +273,9 @@ class DecaySensor(AreaOccupancySensorBase):
         """Initialize the decay sensor."""
         super().__init__(coordinator, area_name)
         self._attr_name = NAME_DECAY_SENSOR
-        self._attr_unique_id = (
-            f"{area_name}_{NAME_DECAY_SENSOR.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            coordinator, area_name, NAME_DECAY_SENSOR
         )
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE

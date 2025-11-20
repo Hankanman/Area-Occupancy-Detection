@@ -57,9 +57,10 @@ class TestAreaOccupancyCoordinator:
 
     def test_device_info_property(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test device_info property."""
-        # device_info is now a method that takes area_name
+        # device_info is now accessed directly from Area
         area_name = coordinator.get_area_names()[0]
-        device_info = coordinator.device_info(area_name)
+        area = coordinator.get_area(area_name)
+        device_info = area.device_info()
 
         assert "identifiers" in device_info
         assert "name" in device_info
@@ -72,9 +73,10 @@ class TestAreaOccupancyCoordinator:
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test device_info property with actual constant values."""
-        # device_info is now a method that takes area_name
+        # device_info is now accessed directly from Area
         area_name = coordinator_with_areas.get_area_names()[0]
-        device_info = coordinator_with_areas.device_info(area_name)
+        area = coordinator_with_areas.get_area(area_name)
+        device_info = area.device_info()
 
         assert device_info.get("manufacturer") == DEVICE_MANUFACTURER
         assert device_info.get("model") == DEVICE_MODEL
@@ -84,9 +86,7 @@ class TestAreaOccupancyCoordinator:
         assert identifiers is not None
         assert isinstance(identifiers, set)
         # In multi-area architecture, device_info uses area_id as identifier (stable even if area is renamed)
-        # Fallback to area_name for legacy compatibility
-        area = coordinator_with_areas.get_area(area_name)
-        expected_identifier = (DOMAIN, area.config.area_id or area_name)
+        expected_identifier = (DOMAIN, area.config.area_id)
         assert expected_identifier in identifiers, (
             f"Expected {expected_identifier} in {identifiers}"
         )
@@ -95,7 +95,7 @@ class TestAreaOccupancyCoordinator:
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:
         """Test device_info properly handles ALL_AREAS_IDENTIFIER."""
-        device_info = coordinator_with_areas.device_info(ALL_AREAS_IDENTIFIER)
+        device_info = coordinator_with_areas.get_all_areas().device_info()
 
         assert device_info.get("manufacturer") == DEVICE_MANUFACTURER
         assert device_info.get("model") == DEVICE_MODEL
@@ -121,17 +121,12 @@ class TestAreaOccupancyCoordinator:
         area = coordinator.get_area()
         # Handle case where areas might not be loaded in test
         if area is None:
-            # Use fallback device info test
-            device_info = coordinator.device_info(area_name="NonExistentArea")
-            assert "identifiers" in device_info
-            assert "manufacturer" in device_info
-            assert "model" in device_info
-            assert "sw_version" in device_info
-            return
+            # In this case, we can't get device_info since there's no area
+            # This is a test setup issue - coordinator should have areas loaded
+            pytest.skip("No areas loaded in coordinator")
 
-        with patch.object(area, "config") as mock_config:
-            mock_config.name = None
-            device_info = coordinator.device_info(area_name=area.area_name)
+        # device_info is now accessed directly from Area
+        device_info = area.device_info()
 
         assert "identifiers" in device_info
         assert "manufacturer" in device_info
