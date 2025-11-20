@@ -13,7 +13,7 @@ from custom_components.area_occupancy.binary_sensor import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # Add marker for tests that may have lingering timers due to HA internals
@@ -53,7 +53,7 @@ class TestOccupancy:
             mock_parent.assert_called_once()
 
         # Should set occupancy entity ID in area
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         assert area.occupancy_entity_id == entity.entity_id
 
     async def test_async_will_remove_from_hass(
@@ -66,7 +66,7 @@ class TestOccupancy:
         entity.entity_id = (
             f"binary_sensor.{area_name.lower().replace(' ', '_')}_occupancy_status"
         )
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.occupancy_entity_id = entity.entity_id
 
         await entity.async_will_remove_from_hass()
@@ -90,7 +90,7 @@ class TestOccupancy:
     ) -> None:
         """Test icon and is_on properties based on occupancy state."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         entity = Occupancy(coordinator_with_areas, area_name)
         # Mock area.occupied method
         area.occupied = Mock(return_value=occupied)
@@ -107,7 +107,7 @@ def wasp_coordinator(
     """Create a coordinator with wasp-specific configuration."""
     # Customize the coordinator for wasp tests - use area-based access
     area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area_or_default(area_name)
+    area = coordinator_with_areas.get_area(area_name)
     area.config.wasp_in_box = Mock()
     area.config.wasp_in_box.enabled = True
     area.config.wasp_in_box.motion_timeout = 60
@@ -194,7 +194,7 @@ class TestWaspInBoxSensor:
 
         # Should set wasp entity ID in area
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         assert area.wasp_entity_id == entity.entity_id
 
     @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ class TestWaspInBoxSensor:
         listener_mock = Mock()
         entity._remove_state_listener = listener_mock
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         area.wasp_entity_id = entity.entity_id
 
         await entity.async_will_remove_from_hass()
@@ -268,7 +268,7 @@ class TestWaspInBoxSensor:
         if listener_mock:
             listener_mock.assert_called_once()
         area_name = wasp_coordinator.get_area_names()[0]
-        area = wasp_coordinator.get_area_or_default(area_name)
+        area = wasp_coordinator.get_area(area_name)
         assert area.wasp_entity_id is None
 
     def test_extra_state_attributes(
@@ -556,7 +556,7 @@ class TestAsyncSetupEntry:
         mock_config_entry.runtime_data = coordinator_with_areas
         # Configure wasp setting on the area
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.config.wasp_in_box = Mock()
         area.config.wasp_in_box.enabled = True
         return mock_config_entry
@@ -588,7 +588,7 @@ class TestAsyncSetupEntry:
         # Configure wasp setting on the area
         coordinator = setup_config_entry.runtime_data
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.wasp_in_box.enabled = wasp_enabled
 
         mock_async_add_entities = Mock()
@@ -759,7 +759,7 @@ class TestWaspMultiSensorAggregation:
         """Create a coordinator with multiple door and motion sensors."""
         # Use area-based access
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.config.wasp_in_box = Mock()
         area.config.wasp_in_box.enabled = True
         area.config.wasp_in_box.motion_timeout = 60
@@ -981,7 +981,7 @@ class TestWaspMultiSensorAggregation:
         """Test aggregate door state when no door sensors are configured."""
         # Configure no door sensors - use area-based access
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        area = multi_sensor_coordinator.get_area_or_default(area_name)
+        area = multi_sensor_coordinator.get_area(area_name)
         area.config.sensors.door = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
@@ -1000,7 +1000,7 @@ class TestWaspMultiSensorAggregation:
         """Test aggregate motion state when no motion sensors are configured."""
         # Configure no motion sensors
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        area = multi_sensor_coordinator.get_area_or_default(area_name)
+        area = multi_sensor_coordinator.get_area(area_name)
         area.config.sensors.motion = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
@@ -1009,3 +1009,180 @@ class TestWaspMultiSensorAggregation:
 
         result = entity._get_aggregate_motion_state()
         assert result == STATE_OFF  # Should default to off
+
+
+class TestWaspInBoxSensorErrorHandling:
+    """Test WaspInBoxSensor error handling scenarios."""
+
+    def test_setup_entity_tracking_no_entities(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _setup_entity_tracking with no entities configured."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        # Configure no sensors
+        area.config.sensors = Sensors(
+            motion=[], door=[], window=[], media=[], appliance=[]
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+
+        # Should handle gracefully
+        entity._setup_entity_tracking()
+        assert entity._remove_state_listener is None
+
+    def test_setup_entity_tracking_no_valid_entities(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _setup_entity_tracking when no valid entities exist."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        # Configure sensors that don't exist in hass
+        area.config.sensors = Sensors(
+            motion=["binary_sensor.nonexistent"],
+            door=["binary_sensor.nonexistent_door"],
+            window=[],
+            media=[],
+            appliance=[],
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+
+        # Should handle gracefully
+        # Note: async_track_state_change_event may still be called with empty list
+        # When called with empty list, it returns a no-op function instead of None
+        entity._setup_entity_tracking()
+        # Verify listener was set up (even if it's a no-op for empty list)
+        # The important thing is that no actual tracking happens
+        assert entity._remove_state_listener is not None
+
+    def test_handle_state_change_unknown_state(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _handle_state_change with unknown/unavailable state."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        area.config.sensors = Sensors(
+            motion=["binary_sensor.motion1"],
+            door=["binary_sensor.door1"],
+            window=[],
+            media=[],
+            appliance=[],
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+
+        # Mock state change event with unknown state
+        event = Mock(spec=Event)
+        event.data = {
+            "entity_id": "binary_sensor.door1",
+            "old_state": Mock(state="off"),
+            "new_state": Mock(state="unknown"),
+        }
+
+        # Should handle gracefully and return early
+        entity._handle_state_change(event)
+        # State should not change
+
+    def test_handle_state_change_no_new_state(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _handle_state_change with no new_state."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        area.config.sensors = Sensors(
+            motion=["binary_sensor.motion1"],
+            door=["binary_sensor.door1"],
+            window=[],
+            media=[],
+            appliance=[],
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+
+        # Mock state change event with no new_state
+        event = Mock(spec=Event)
+        event.data = {
+            "entity_id": "binary_sensor.door1",
+            "old_state": Mock(state="off"),
+            "new_state": None,
+        }
+
+        # Should handle gracefully and return early
+        entity._handle_state_change(event)
+
+    def test_process_door_state_invalid_state(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _process_door_state with invalid door state."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        area.config.sensors = Sensors(
+            motion=["binary_sensor.motion1"],
+            door=["binary_sensor.door1"],
+            window=[],
+            media=[],
+            appliance=[],
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Set up initial state
+        entity._state = STATE_ON
+        entity._motion_state = STATE_OFF
+
+        # Process invalid door state - should handle gracefully
+        with patch.object(entity, "async_write_ha_state"):
+            entity._process_door_state("binary_sensor.door1", "invalid_state")
+
+    def test_process_motion_state_invalid_state(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test _process_motion_state with invalid motion state."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        area = coordinator_with_areas.get_area(area_name)
+
+        area.config.sensors = Sensors(
+            motion=["binary_sensor.motion1"],
+            door=["binary_sensor.door1"],
+            window=[],
+            media=[],
+            appliance=[],
+        )
+
+        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Process invalid motion state - should handle gracefully
+        with patch.object(entity, "async_write_ha_state"):
+            entity._process_motion_state("binary_sensor.motion1", "invalid_state")

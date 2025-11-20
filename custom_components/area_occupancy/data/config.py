@@ -13,6 +13,7 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    ANALYSIS_INTERVAL,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
@@ -45,6 +46,7 @@ from ..const import (
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
+    DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
@@ -73,6 +75,54 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class IntegrationConfig:
+    """Integration-level configuration for Area Occupancy Detection.
+
+    This class manages global settings that apply to the entire integration,
+    such as coordinator timing intervals, database behavior, and future
+    cross-area coordination features.
+
+    This is separate from AreaConfig, which handles per-area occupancy
+    detection settings like sensors, weights, and thresholds.
+    """
+
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the integration configuration.
+
+        Args:
+            coordinator: The coordinator instance
+            config_entry: The Home Assistant config entry
+        """
+        self.coordinator = coordinator
+        self.config_entry = config_entry
+        self.hass = coordinator.hass
+
+        # Integration identification
+        self.integration_name = config_entry.title
+
+        # Timing and performance settings
+        self.analysis_interval = ANALYSIS_INTERVAL
+        self.decay_interval = DECAY_INTERVAL
+
+        # Database and storage settings
+        # These could be made configurable in the future if needed
+        # self.database_retention_days = RETENTION_DAYS
+        # self.enable_backups = True
+
+        # Future: Cross-area coordination settings
+        # self.person_tracking_enabled = False
+        # self.area_transition_detection = False
+        # self.global_occupancy_threshold = 0.5
+
+    def __repr__(self) -> str:
+        """Return a string representation of the integration config."""
+        return f"IntegrationConfig(name={self.integration_name!r})"
 
 
 @dataclass

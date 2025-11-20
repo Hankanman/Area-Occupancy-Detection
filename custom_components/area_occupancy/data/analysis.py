@@ -8,28 +8,22 @@ from __future__ import annotations
 
 import bisect
 from collections import defaultdict
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy.exc import (
-    DataError,
-    IntegrityError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
 from ..db.aggregation import get_interval_aggregates
-from ..db.priors import (
+from ..db.queries import (
     get_occupied_intervals,
+    get_occupied_intervals_cache,
     get_time_bounds,
     get_total_occupied_seconds,
+    is_occupied_intervals_cache_valid,
 )
 from ..utils import clamp_probability
 
@@ -67,6 +61,70 @@ DAYS_PER_WEEK = 7
 SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
 
 
+def get_occupied_intervals_with_cache(
+    db: Any,
+    entry_id: str,
+    area_name: str,
+    lookback_days: int,
+    motion_timeout_seconds: int,
+    include_media: bool = False,
+    include_appliance: bool = False,
+    media_sensor_ids: list[str] | None = None,
+    appliance_sensor_ids: list[str] | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Fetch occupied intervals with caching and Python fallback.
+
+    This function wraps the query function from queries module with prior-specific caching.
+    Business logic for cache validation and retrieval is handled here.
+
+    Args:
+        db: Database instance
+        entry_id: Entry ID
+        area_name: Area name
+        lookback_days: Number of days to look back
+        motion_timeout_seconds: Motion timeout in seconds
+        include_media: Whether to include media sensors
+        include_appliance: Whether to include appliance sensors
+        media_sensor_ids: List of media sensor IDs
+        appliance_sensor_ids: List of appliance sensor IDs
+
+    Returns:
+        List of occupied intervals
+    """
+    now = dt_util.utcnow()
+    lookback_date = now - timedelta(days=lookback_days)
+
+    # Check cache only for motion-only queries (business logic decision)
+    if not include_media and not include_appliance:
+        if is_occupied_intervals_cache_valid(db, area_name, max_age_hours=24):
+            cached_intervals = get_occupied_intervals_cache(
+                db,
+                area_name,
+                period_start=lookback_date,
+                period_end=now,
+            )
+            if cached_intervals:
+                _LOGGER.debug(
+                    "Using cached occupied intervals for %s: %d intervals",
+                    area_name,
+                    len(cached_intervals),
+                )
+                return cached_intervals
+
+    # Cache miss or media/appliance included - use direct query
+    return get_occupied_intervals(
+        db=db,
+        entry_id=entry_id,
+        area_name=area_name,
+        lookback_days=lookback_days,
+        motion_timeout_seconds=motion_timeout_seconds,
+        include_media=include_media,
+        include_appliance=include_appliance,
+        media_sensor_ids=media_sensor_ids,
+        appliance_sensor_ids=appliance_sensor_ids,
+    )
+
+
 def is_timestamp_occupied(
     timestamp: datetime, occupied_intervals: list[tuple[datetime, datetime]]
 ) -> bool:
@@ -91,15 +149,12 @@ class PriorAnalyzer:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         """Initialize the PriorAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
-            session_provider: Optional callable that returns a context manager for sessions.
-                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -115,7 +170,6 @@ class PriorAnalyzer:
         self.media_sensor_ids = self.config.sensors.media
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
-        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
@@ -137,27 +191,15 @@ class PriorAnalyzer:
             return DEFAULT_PRIOR
 
         # Step 1: Calculate prior from motion sensors only
-        total_occupied_seconds = get_total_occupied_seconds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
+        total_occupied_seconds = self.get_total_occupied_seconds(
             include_media=False,
             include_appliance=False,
-            session_provider=self._session_provider,
         )
 
         lookback_date = dt_util.utcnow() - timedelta(days=DEFAULT_LOOKBACK_DAYS)
 
         # Get total time period from motion sensors
-        first_time, last_time = get_time_bounds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            entity_ids=entity_ids,
-            session_provider=self._session_provider,
-        )
+        first_time, last_time = self.get_time_bounds(entity_ids=entity_ids)
 
         if not first_time or not last_time:
             _LOGGER.debug("No time bounds available, using default prior")
@@ -239,19 +281,10 @@ class PriorAnalyzer:
                 )
             else:
                 # Get total occupied time from all sensor types
-                all_intervals = get_occupied_intervals(
-                    db=self.db,
-                    entry_id=self.entry_id,
-                    area_name=self.area_name,
+                all_intervals = self.get_occupied_intervals(
                     lookback_days=DEFAULT_LOOKBACK_DAYS,
-                    motion_timeout_seconds=self.config.sensors.motion_timeout,
                     include_media=include_media,
                     include_appliance=include_appliance,
-                    media_sensor_ids=self.media_sensor_ids if include_media else None,
-                    appliance_sensor_ids=self.appliance_sensor_ids
-                    if include_appliance
-                    else None,
-                    session_provider=self._session_provider,
                 )
 
                 if not all_intervals:
@@ -311,15 +344,10 @@ class PriorAnalyzer:
             else:
                 # Motion-only, get intervals for cache
                 if all_intervals is None:
-                    all_intervals = get_occupied_intervals(
-                        db=self.db,
-                        entry_id=self.entry_id,
-                        area_name=self.area_name,
+                    all_intervals = self.get_occupied_intervals(
                         lookback_days=DEFAULT_LOOKBACK_DAYS,
-                        motion_timeout_seconds=self.config.sensors.motion_timeout,
                         include_media=False,
                         include_appliance=False,
-                        session_provider=self._session_provider,
                     )
                 interval_count = len(all_intervals) if all_intervals else 0
                 final_occupied_seconds = total_occupied_seconds
@@ -376,25 +404,10 @@ class PriorAnalyzer:
             slot_minutes = DEFAULT_SLOT_MINUTES
 
         # Get aggregated interval data
-        interval_aggregates = get_interval_aggregates(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            slot_minutes=slot_minutes,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
-            media_sensor_ids=self.media_sensor_ids,
-            appliance_sensor_ids=self.appliance_sensor_ids,
-            session_provider=self._session_provider,
-        )
+        interval_aggregates = self.get_interval_aggregates(slot_minutes=slot_minutes)
 
         # Get time bounds
-        first_time, last_time = get_time_bounds(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            session_provider=self._session_provider,
-        )
+        first_time, last_time = self.get_time_bounds()
 
         if not first_time or not last_time:
             _LOGGER.warning("No time bounds available for time prior calculation")
@@ -466,7 +479,7 @@ class PriorAnalyzer:
         db = self.db
 
         try:
-            with self._session_provider() as session:
+            with self.db.get_session() as session:
                 for day in range(DAYS_PER_WEEK):
                     for slot in range(slots_per_day):
                         total_slot_seconds = days * slot_duration_seconds
@@ -522,22 +535,14 @@ class PriorAnalyzer:
                     days,
                     slots_per_day,
                 )
-        except OperationalError as e:
-            _LOGGER.error(
-                "Database connection error during time prior computation: %s", e
-            )
-        except DataError as e:
-            _LOGGER.error("Database data error during time prior computation: %s", e)
-        except IntegrityError as e:
-            _LOGGER.error(
-                "Database integrity error during time prior computation: %s", e
-            )
-        except ProgrammingError as e:
-            _LOGGER.error("Database query error during time prior computation: %s", e)
-        except SQLAlchemyError as e:
-            _LOGGER.error("Database error during time prior computation: %s", e)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error during time prior computation: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error during time prior computation: %s", e)
 
     def get_total_occupied_seconds(
         self, include_media: bool = False, include_appliance: bool = False
@@ -555,7 +560,6 @@ class PriorAnalyzer:
             appliance_sensor_ids=self.appliance_sensor_ids
             if include_appliance
             else None,
-            session_provider=self._session_provider,
         )
 
     def get_occupied_intervals(
@@ -564,8 +568,11 @@ class PriorAnalyzer:
         include_media: bool = False,
         include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
-        """Thin wrapper over database helper for backwards compatibility."""
-        return get_occupied_intervals(
+        """Get occupied intervals with caching logic.
+
+        This method wraps the query function with prior-specific caching logic.
+        """
+        return get_occupied_intervals_with_cache(
             db=self.db,
             entry_id=self.entry_id,
             area_name=self.area_name,
@@ -577,7 +584,6 @@ class PriorAnalyzer:
             appliance_sensor_ids=self.appliance_sensor_ids
             if include_appliance
             else None,
-            session_provider=self._session_provider,
         )
 
     def get_time_bounds(
@@ -589,7 +595,6 @@ class PriorAnalyzer:
             entry_id=self.entry_id,
             area_name=self.area_name,
             entity_ids=entity_ids,
-            session_provider=self._session_provider,
         )
 
     def get_interval_aggregates(
@@ -605,7 +610,6 @@ class PriorAnalyzer:
             motion_timeout_seconds=self.config.sensors.motion_timeout,
             media_sensor_ids=self.media_sensor_ids,
             appliance_sensor_ids=self.appliance_sensor_ids,
-            session_provider=self._session_provider,
         )
 
 
@@ -616,15 +620,12 @@ class LikelihoodAnalyzer:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         """Initialize the LikelihoodAnalyzer.
 
         Args:
             coordinator: The coordinator instance
             area_name: Area name for multi-area support
-            session_provider: Optional callable that returns a context manager for sessions.
-                           If None, uses db.get_session(). Useful for testing.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
@@ -637,7 +638,6 @@ class LikelihoodAnalyzer:
             )
         self.config = coordinator.areas[area_name].config
         self.entry_id = coordinator.entry_id
-        self._session_provider = session_provider or coordinator.db.get_session
 
     def analyze_likelihoods(
         self,
@@ -665,15 +665,18 @@ class LikelihoodAnalyzer:
                 )
 
             # Create new session
-            with self._session_provider() as new_session:
+            with self.db.get_session() as new_session:
                 return self._analyze_likelihoods_from_session(
                     new_session, occupied_times, entity_manager
                 )
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error in analyze_likelihoods: %s", e)
-            return {}
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error in analyze_likelihoods: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error in analyze_likelihoods: %s", e)
             return {}
 
     def _analyze_likelihoods_from_session(
@@ -699,10 +702,14 @@ class LikelihoodAnalyzer:
                 likelihoods[entity_id] = (prob_given_true, prob_given_false)
 
             _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
-        except (OperationalError, SQLAlchemyError, DataError, ProgrammingError) as e:
-            _LOGGER.error("Database error analyzing likelihoods: %s", e)
-        except (ValueError, TypeError, RuntimeError, OSError) as e:
-            _LOGGER.error("Unexpected error analyzing likelihoods: %s", e)
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as e:
+            _LOGGER.error("Error analyzing likelihoods: %s", e)
 
         return likelihoods
 
@@ -913,14 +920,15 @@ async def start_prior_analysis(
 
         _LOGGER.debug("Prior analysis completed successfully for area: %s", area_name)
 
-    except (ValueError, TypeError, ZeroDivisionError):
-        _LOGGER.exception("Prior calculation failed due to data error")
-        raise
-    except SQLAlchemyError:
-        _LOGGER.exception("Prior calculation failed due to database error")
-        raise
-    except Exception:
-        _LOGGER.exception("Prior calculation failed due to unexpected error")
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        ZeroDivisionError,
+        RuntimeError,
+        OSError,
+    ):
+        _LOGGER.exception("Prior calculation failed")
         raise
 
 
@@ -951,7 +959,7 @@ async def start_likelihood_analysis(
     _LOGGER.debug("Starting likelihood analysis for area: %s", area_name)
 
     # Get the area's prior for this EntityManager's area
-    area = coordinator.get_area_or_default(area_name)
+    area = coordinator.get_area(area_name)
     if area is None:
         error_msg = f"Cannot update likelihoods: area '{area_name}' not found"
         _LOGGER.warning(error_msg)
@@ -1005,12 +1013,13 @@ async def start_likelihood_analysis(
             area_name,
         )
 
-    except (ValueError, TypeError, ZeroDivisionError):
-        _LOGGER.exception("Likelihood calculation failed due to data error")
-        raise
-    except SQLAlchemyError:
-        _LOGGER.exception("Likelihood calculation failed due to database error")
-        raise
-    except Exception:
-        _LOGGER.exception("Likelihood calculation failed due to unexpected error")
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        ZeroDivisionError,
+        RuntimeError,
+        OSError,
+    ):
+        _LOGGER.exception("Likelihood calculation failed")
         raise

@@ -68,7 +68,7 @@ class TestThreshold:
         """Test native_value property with various threshold values."""
         # Mock area.threshold method
         area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         area.threshold = Mock(return_value=coordinator_threshold)
         assert threshold_entity.native_value == expected_percentage
 
@@ -85,7 +85,7 @@ class TestThreshold:
         """Test setting valid native values."""
         # Access config via area
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
             await threshold_entity.async_set_native_value(percentage_value)
             mock_update_config.assert_called_once_with({"threshold": percentage_value})
@@ -107,7 +107,7 @@ class TestThreshold:
     ) -> None:
         """Test setting invalid native values."""
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
             with pytest.raises(ServiceValidationError, match=expected_error):
                 await threshold_entity.async_set_native_value(invalid_value)
@@ -120,7 +120,7 @@ class TestThreshold:
     ) -> None:
         """Test handling coordinator errors."""
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with (
             patch.object(
                 area.config, "update_config", side_effect=Exception("Update failed")
@@ -167,7 +167,7 @@ class TestThreshold:
     ) -> None:
         """Test value conversion precision."""
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
             await threshold_entity.async_set_native_value(percentage_value)
             called_value = mock_update_config.call_args[0][0]["threshold"]
@@ -182,7 +182,7 @@ class TestThreshold:
         updates = [25.0, 50.0, 75.0, 90.0]
 
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with patch.object(area.config, "update_config") as mock_update_config:
             for percentage in updates:
                 mock_update_config.reset_mock()
@@ -197,7 +197,7 @@ class TestThreshold:
         """Test error recovery scenarios."""
         # Test coordinator error followed by successful update
         area_name = threshold_entity.coordinator.get_area_names()[0]
-        area = threshold_entity.coordinator.get_area_or_default(area_name)
+        area = threshold_entity.coordinator.get_area(area_name)
         with patch.object(
             area.config,
             "update_config",
@@ -214,6 +214,37 @@ class TestThreshold:
             await threshold_entity.async_set_native_value(75.0)
             assert mock_update_config.call_count == 2
             mock_update_config.assert_called_with({"threshold": 75.0})
+
+    async def test_async_set_native_value_missing_area(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when area is missing."""
+
+        # Mock get_area to return None
+        with patch.object(threshold_entity.coordinator, "get_area", return_value=None):
+            # Should handle gracefully and return without error
+            await threshold_entity.async_set_native_value(75.0)
+
+    async def test_async_set_native_value_update_config_error(
+        self,
+        threshold_entity: Threshold,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test async_set_native_value when update_config raises error."""
+        area_name = threshold_entity.coordinator.get_area_names()[0]
+        area = threshold_entity.coordinator.get_area(area_name)
+
+        # Mock update_config to raise error
+        with (
+            patch.object(
+                area.config, "update_config", side_effect=RuntimeError("Update failed")
+            ),
+            pytest.raises(RuntimeError, match="Update failed"),
+        ):
+            # Should propagate error
+            await threshold_entity.async_set_native_value(75.0)
 
 
 class TestAsyncSetupEntry:

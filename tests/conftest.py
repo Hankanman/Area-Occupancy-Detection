@@ -394,7 +394,7 @@ def coordinator_with_db(test_db: Any) -> AreaOccupancyCoordinator:
         def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
             coordinator = coordinator_with_db
             db = coordinator.db  # Real db attached to real coordinator
-            area = coordinator.get_area_or_default("Test Area")
+            area = coordinator.get_area("Test Area")
             # Use real area.prior.value instead of mocking
     """
     return test_db.coordinator
@@ -405,7 +405,7 @@ def default_area(coordinator_with_areas: AreaOccupancyCoordinator) -> Any:
     """Get the default (first) area from coordinator.
 
     This fixture provides easy access to the first area from coordinator_with_areas,
-    eliminating the need to call coordinator.get_area_or_default() in every test.
+    eliminating the need to call coordinator.get_area() in every test.
 
     Example:
         def test_something(default_area):
@@ -413,7 +413,7 @@ def default_area(coordinator_with_areas: AreaOccupancyCoordinator) -> Any:
             assert default_area.config is not None
     """
 
-    return coordinator_with_areas.get_area_or_default()
+    return coordinator_with_areas.get_area()
 
 
 @pytest.fixture
@@ -867,11 +867,11 @@ def coordinator_with_sensors(
 
     Example:
         def test_sensor_entities(coordinator_with_sensors: AreaOccupancyCoordinator):
-            area = coordinator_with_sensors.get_area_or_default()
+            area = coordinator_with_sensors.get_area()
             assert "binary_sensor.motion" in area.entities.entities
     """
     area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    area = coordinator.get_area(area_name)
 
     # Set up mock entities on the area
     mock_entities = {
@@ -996,7 +996,7 @@ def coordinator_with_areas_with_sensors(
 
     Example:
         def test_sensor_entities(coordinator_with_areas_with_sensors: AreaOccupancyCoordinator):
-            area = coordinator_with_areas_with_sensors.get_area_or_default()
+            area = coordinator_with_areas_with_sensors.get_area()
             assert "binary_sensor.motion" in area.entities.entities
     """
     return coordinator_with_sensors
@@ -1060,19 +1060,19 @@ def create_test_area(
     # Add to coordinator
     coordinator.areas[area_name] = area
 
-    # Update get_area_names and get_area_or_default mocks if they exist
+    # Update get_area_names and get_area mocks if they exist
     if hasattr(coordinator, "get_area_names"):
         area_names = list(coordinator.areas.keys())
         coordinator.get_area_names = Mock(return_value=area_names)
-    if hasattr(coordinator, "get_area_or_default"):
+    if hasattr(coordinator, "get_area"):
 
-        def get_area_or_default(name: str | None = None):
+        def get_area(name: str | None = None):
             if name is None:
                 # When name is None, always return first area (at least one area exists)
                 return next(iter(coordinator.areas.values()))
             return coordinator.areas.get(name)
 
-        coordinator.get_area_or_default = Mock(side_effect=get_area_or_default)
+        coordinator.get_area = Mock(side_effect=get_area)
 
     return area
 
@@ -1261,7 +1261,7 @@ def mock_comprehensive_entity_manager(
     manager = Mock(spec=EntityManager)
     manager.coordinator = coordinator
     area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area_or_default(area_name)
+    area = coordinator.get_area(area_name)
     manager.config = area.config
     manager.hass = coordinator.hass
     manager._entities = {"binary_sensor.test_motion": mock_comprehensive_entity}
@@ -1940,6 +1940,13 @@ def db_engine() -> Generator[Any]:
         # Explicitly close connections when returned to pool
         pool_reset_on_return="commit",
     )
+
+    # Enable foreign key constraints for SQLite
+    @sa.event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
     # Create all tables
     Base.metadata.create_all(engine)

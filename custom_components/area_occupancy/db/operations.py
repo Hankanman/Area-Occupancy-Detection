@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timedelta
+import hashlib
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant import helpers
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_PROBABILITY, MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
-from . import maintenance
+from ..const import (
+    GLOBAL_PRIOR_HISTORY_COUNT,
+    MAX_PROBABILITY,
+    MAX_WEIGHT,
+    MIN_PROBABILITY,
+    MIN_WEIGHT,
+    RETENTION_DAYS,
+)
+from . import maintenance, queries
 from .constants import (
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
@@ -84,32 +95,18 @@ async def load_data(db: AreaOccupancyDB) -> None:
             )
             if entities:
                 # Get the area's entity manager to check if entities exist
-                area_data = db.coordinator.get_area_or_default(area_name)
-                if area_data:
-                    for entity_obj in entities:
-                        # Check if entity exists in current coordinator config
-                        try:
-                            area_data.entities.get_entity(entity_obj.entity_id)
-                        except ValueError:
-                            # Entity not found in coordinator - identify if stale
-                            should_delete = False
-                            if hasattr(area_data.entities, "entity_ids"):
-                                current_entity_ids = set(area_data.entities.entity_ids)
-                                if entity_obj.entity_id not in current_entity_ids:
-                                    should_delete = True
-                            elif hasattr(area_data.entities, "entities"):
-                                # Fallback for mock objects that have entities dict
-                                current_entity_ids = set(
-                                    area_data.entities.entities.keys()
-                                )
-                                if entity_obj.entity_id not in current_entity_ids:
-                                    should_delete = True
-                            else:
-                                # Can't determine current config - assume entity is stale
-                                should_delete = True
-
-                            if should_delete:
-                                stale_entity_ids.append(entity_obj.entity_id)
+                # Area is guaranteed to exist when area_name comes from get_area_names()
+                area_data = db.coordinator.get_area(area_name)
+                for entity_obj in entities:
+                    # Check if entity exists in current coordinator config
+                    try:
+                        area_data.entities.get_entity(entity_obj.entity_id)
+                    except ValueError:
+                        # Entity not found in coordinator - check if it's stale
+                        # EntityManager always has entity_ids property
+                        current_entity_ids = set(area_data.entities.entity_ids)
+                        if entity_obj.entity_id not in current_entity_ids:
+                            stale_entity_ids.append(entity_obj.entity_id)
         return area, entities, stale_entity_ids
 
     def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
@@ -129,7 +126,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
     try:
         # Load data for each configured area
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
 
             # Phase 1: Read without lock (all instances in parallel)
             _area, entities, stale_ids = await db.hass.async_add_executor_job(
@@ -139,17 +136,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
             # Update prior from GlobalPriors table
             global_prior_data = db.get_global_prior(area_name)
             if global_prior_data:
-                _LOGGER.debug(
-                    "Loading global_prior %s from GlobalPriors table for area %s",
-                    global_prior_data["prior_value"],
-                    area_name,
-                )
                 area_data.prior.set_global_prior(global_prior_data["prior_value"])
-            else:
-                _LOGGER.debug(
-                    "No global_prior found for area %s",
-                    area_name,
-                )
 
             # Process entities
             if entities:
@@ -184,11 +171,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                                 pass
                         existing_entity.last_updated = entity_obj.last_updated
                         existing_entity.previous_evidence = entity_obj.evidence
-                        _LOGGER.debug(
-                            "Updated existing entity %s with database values for area %s",
-                            entity_obj.entity_id,
-                            area_name,
-                        )
                     except ValueError:
                         # Entity should exist but doesn't - create it from database
                         # (This handles cases where we can't determine current config, like in tests)
@@ -205,8 +187,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 await db.hass.async_add_executor_job(
                     _delete_stale_operation, area_name, stale_ids
                 )
-
-        _LOGGER.debug("Loaded area occupancy data")
 
     except (
         sa.exc.SQLAlchemyError,
@@ -244,35 +224,20 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
         area_objects = []  # Collect all area objects for batch merge
 
         for area_name_item in areas_to_save:
-            area_data_obj = db.coordinator.get_area_or_default(area_name_item)
-            if area_data_obj is None:
-                error_msg = f"Area '{area_name_item}' not found"
-                _LOGGER.error("%s, cannot insert area", error_msg)
-                failures.append((area_name_item, error_msg))
-                has_failures = True
-                continue
-
+            area_data_obj = db.coordinator.get_area(area_name_item)
+            # Area is guaranteed to exist when area_name comes from get_area_names()
+            # or when area_name is validated before calling this function
             cfg = area_data_obj.config
 
-            # Get area_id from config
-            area_id = cfg.area_id
-            if not area_id:
-                error_msg = "area_id is missing"
-                _LOGGER.warning("Skipping area '%s': %s", area_name_item, error_msg)
-                failures.append((area_name_item, error_msg))
-                has_failures = True
-                continue
-
+            # area_id is validated in config flow before areas are created
             area_data = {
                 "entry_id": db.coordinator.entry_id,
                 "area_name": area_name_item,
-                "area_id": area_id,
+                "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
                 "updated_at": dt_util.utcnow(),
             }
-
-            _LOGGER.debug("Attempting to insert area data: %s", area_data)
 
             # Validate required fields using helper method
             validation_failures = _validate_area_data(db, area_data, area_name_item)
@@ -330,8 +295,13 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                     db.last_area_save_ts = 0.0
                     raise
                 time.sleep(delay)
-        _LOGGER.debug("Saved area data")
-    except Exception as err:
+    except (
+        sa.exc.SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as err:
         _LOGGER.error("Failed to save area data: %s", err)
         raise
 
@@ -345,7 +315,7 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
     def _iter_area_entities() -> Iterable[tuple[str, Any]]:
         """Yield (area_name, entity) tuples for all configured areas."""
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
             entities_container = getattr(area_data.entities, "entities", None)
             if not entities_container:
                 continue
@@ -353,10 +323,6 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             try:
                 entities_iter = entities_container.values()
             except AttributeError:
-                _LOGGER.debug(
-                    "Entities container for area %s does not provide values(), skipping",
-                    area_name,
-                )
                 continue
 
             for entity in entities_iter:
@@ -464,7 +430,6 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
                     db.last_entities_save_ts = 0.0
                     raise
                 time.sleep(delay)
-        _LOGGER.debug("Saved entity data")
 
         # Clean up any orphaned entities after saving current ones
         try:
@@ -478,10 +443,17 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             HomeAssistantError,
             TimeoutError,
             OSError,
+            RuntimeError,
         ) as cleanup_err:
             _LOGGER.error("Failed to cleanup orphaned entities: %s", cleanup_err)
 
-    except Exception as err:
+    except (
+        sa.exc.SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as err:
         _LOGGER.error("Failed to save entity data: %s", err)
         raise
 
@@ -504,24 +476,13 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     total_cleaned = 0
     try:
         for area_name in db.coordinator.get_area_names():
-            area_data = db.coordinator.get_area_or_default(area_name)
+            area_data = db.coordinator.get_area(area_name)
 
             def _cleanup_operation(area_name: str, area_data: Any) -> int:
                 with db.get_session() as session:
                     # Get all entity IDs currently configured for this area
-                    # Handle cases where entities might be a SimpleNamespace or mock object
-                    if hasattr(area_data.entities, "entity_ids"):
-                        current_entity_ids = set(area_data.entities.entity_ids)
-                    elif hasattr(area_data.entities, "entities"):
-                        # Fallback for mock objects that have entities dict
-                        current_entity_ids = set(area_data.entities.entities.keys())
-                    else:
-                        # If we can't determine current entities, skip cleanup
-                        _LOGGER.debug(
-                            "Cannot determine current entity IDs for area %s, skipping cleanup",
-                            area_name,
-                        )
-                        return 0
+                    # EntityManager always has entity_ids property
+                    current_entity_ids = set(area_data.entities.entity_ids)
 
                     # Query all entities for this area_name from database
                     db_entities = (
@@ -536,17 +497,12 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                     ]
 
                     if not orphaned_entities:
-                        _LOGGER.debug(
-                            "No orphaned entities found for area %s",
-                            area_name,
-                        )
                         return 0
 
                     # Collect orphaned entity IDs for bulk operations
                     orphaned_entity_ids = [
                         entity.entity_id for entity in orphaned_entities
                     ]
-                    orphaned_count = len(orphaned_entity_ids)
 
                     # Log orphaned entities being removed
                     for entity_id in orphaned_entity_ids:
@@ -565,14 +521,6 @@ def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
                         .filter(db.Intervals.entity_id.in_(orphaned_entity_ids))
                         .delete(synchronize_session=False)
                     )
-
-                    if intervals_deleted > 0:
-                        _LOGGER.debug(
-                            "Bulk deleted %d intervals for %d orphaned entities in area %s",
-                            intervals_deleted,
-                            orphaned_count,
-                            area_name,
-                        )
 
                     # Bulk delete all orphaned entities in a single query
                     # Filter by both area_name and entity_id to avoid deleting entities
@@ -648,46 +596,21 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 query = query.filter(db.Intervals.entity_id.in_(entity_ids))
             intervals_deleted = query.delete(synchronize_session=False)
 
-            if intervals_deleted > 0:
-                _LOGGER.debug(
-                    "Bulk deleted %d intervals for entities in removed area %s",
-                    intervals_deleted,
-                    area_name,
-                )
-
             # Delete all entities for this area
             entities_deleted = (
                 session.query(db.Entities).filter_by(area_name=area_name).delete()
             )
             deleted_count = entities_deleted
-            if entities_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d entities for removed area %s",
-                    entities_deleted,
-                    area_name,
-                )
 
             # Delete priors for this area
             priors_deleted = (
                 session.query(db.Priors).filter_by(area_name=area_name).delete()
             )
-            if priors_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d priors for removed area %s",
-                    priors_deleted,
-                    area_name,
-                )
 
             # Delete global priors for this area
             global_priors_deleted = (
                 session.query(db.GlobalPriors).filter_by(area_name=area_name).delete()
             )
-            if global_priors_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d global priors for removed area %s",
-                    global_priors_deleted,
-                    area_name,
-                )
 
             # Delete occupied intervals cache for this area
             cache_deleted = (
@@ -695,19 +618,11 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 .filter_by(area_name=area_name)
                 .delete()
             )
-            if cache_deleted > 0:
-                _LOGGER.debug(
-                    "Deleted %d occupied intervals cache entries for removed area %s",
-                    cache_deleted,
-                    area_name,
-                )
 
             # Delete the area record itself
             area_deleted = (
                 session.query(db.Areas).filter_by(area_name=area_name).delete()
             )
-            if area_deleted > 0:
-                _LOGGER.debug("Deleted area record for removed area %s", area_name)
 
             session.commit()
             _LOGGER.info(
@@ -723,3 +638,339 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
     except (SQLAlchemyError, OSError) as err:
         _LOGGER.error("Failed to delete data for removed area %s: %s", area_name, err)
     return deleted_count
+
+
+def _create_data_hash(
+    area_name: str,
+    period_start: datetime,
+    period_end: datetime,
+    total_occupied: float,
+    interval_count: int,
+) -> str:
+    """Create a hash of underlying data for validation.
+
+    Args:
+        area_name: Area name
+        period_start: Period start time
+        period_end: Period end time
+        total_occupied: Total occupied seconds
+        interval_count: Number of intervals
+
+    Returns:
+        Hash string
+    """
+    data = {
+        "area_name": area_name,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "total_occupied": total_occupied,
+        "interval_count": interval_count,
+    }
+    data_str = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(data_str.encode()).hexdigest()
+
+
+def _prune_old_global_priors(
+    db: AreaOccupancyDB,
+    session: Any,
+    area_name: str,
+) -> None:
+    """Prune old global prior calculations, keeping only the most recent N.
+
+    Args:
+        db: Database instance
+        session: Database session
+        area_name: Area name
+    """
+    try:
+        # Get all global priors for this area, ordered by calculation date
+        # Note: GlobalPriors has unique constraint on area_name, so there's only one
+        # But we keep this function for future use if we change to allow history
+        priors = (
+            session.query(db.GlobalPriors)
+            .filter_by(area_name=area_name)
+            .order_by(db.GlobalPriors.calculation_date.desc())
+            .all()
+        )
+
+        # Keep only the most recent N calculations
+        if len(priors) > GLOBAL_PRIOR_HISTORY_COUNT:
+            to_delete = priors[GLOBAL_PRIOR_HISTORY_COUNT:]
+            for prior in to_delete:
+                session.delete(prior)
+            session.commit()
+            _LOGGER.debug(
+                "Pruned %d old global prior calculations for %s",
+                len(to_delete),
+                area_name,
+            )
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError) as e:
+        _LOGGER.warning("Error pruning old global priors: %s", e)
+        # Don't raise - this is cleanup, not critical
+
+
+async def ensure_area_exists(db: AreaOccupancyDB) -> None:
+    """Ensure that the area record exists in the database."""
+    try:
+        # Check if area exists
+        existing_area = queries.get_area_data(db, db.coordinator.entry_id)
+        if existing_area:
+            _LOGGER.debug(
+                "Area already exists for entry_id: %s", db.coordinator.entry_id
+            )
+            return
+
+        # Area doesn't exist, force create it
+        _LOGGER.info(
+            "Area not found, forcing creation for entry_id: %s",
+            db.coordinator.entry_id,
+        )
+        # Call save_area_data directly to avoid circular dependency
+        save_area_data(db)
+
+        # Verify it was created
+        new_area = queries.get_area_data(db, db.coordinator.entry_id)
+        if new_area:
+            _LOGGER.info("Successfully created area: %s", new_area)
+        else:
+            _LOGGER.error(
+                "Failed to create area for entry_id: %s", db.coordinator.entry_id
+            )
+
+    except (
+        SQLAlchemyError,
+        HomeAssistantError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        _LOGGER.error("Error ensuring area exists: %s", e)
+
+
+def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
+    """Delete intervals older than RETENTION_DAYS (coordinated across instances).
+
+    Args:
+        db: Database instance
+        force: If True, skip the recent-prune check
+
+    Returns:
+        Number of intervals deleted
+    """
+    cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+    _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
+
+    try:
+        with db.get_locked_session() as session:
+            # Re-check last_prune inside locked session to prevent concurrent bypass
+            # This ensures the throttle cannot be bypassed by concurrent instances
+            if not force:
+                result = (
+                    session.query(db.Metadata).filter_by(key="last_prune_time").first()
+                )
+                if result:
+                    try:
+                        last_prune = datetime.fromisoformat(result.value)
+                        time_since_prune = (
+                            dt_util.utcnow() - last_prune
+                        ).total_seconds()
+                        if time_since_prune < 3600:  # 1 hour
+                            _LOGGER.debug(
+                                "Skipping prune - last run was %d minutes ago",
+                                int(time_since_prune / 60),
+                            )
+                            return 0
+                    except (ValueError, AttributeError) as e:
+                        _LOGGER.debug(
+                            "Failed to parse last prune time, proceeding: %s", e
+                        )
+
+            # Count intervals to be deleted for logging
+            count_query = session.query(func.count(db.Intervals.id)).filter(
+                db.Intervals.start_time < cutoff_date
+            )
+            intervals_to_delete = count_query.scalar() or 0
+
+            if intervals_to_delete == 0:
+                _LOGGER.debug("No old intervals to prune")
+                # Still record the prune attempt to prevent other instances from trying
+                maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+                return 0
+
+            # Delete old intervals
+            delete_query = session.query(db.Intervals).filter(
+                db.Intervals.start_time < cutoff_date
+            )
+            deleted_count = delete_query.delete(synchronize_session=False)
+
+            session.commit()
+
+            _LOGGER.info(
+                "Pruned %d intervals older than %d days (cutoff: %s)",
+                deleted_count,
+                RETENTION_DAYS,
+                cutoff_date,
+            )
+
+            # Record successful prune
+            maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+
+            return deleted_count
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error during interval pruning: %s", e)
+        return 0
+
+
+def save_global_prior(
+    db: AreaOccupancyDB,
+    area_name: str,
+    prior_value: float,
+    data_period_start: datetime,
+    data_period_end: datetime,
+    total_occupied_seconds: float,
+    total_period_seconds: float,
+    interval_count: int,
+    calculation_method: str = "interval_analysis",
+    confidence: float | None = None,
+) -> bool:
+    """Save global prior calculation to GlobalPriors table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        prior_value: Calculated prior probability
+        data_period_start: Start of data period used
+        data_period_end: End of data period used
+        total_occupied_seconds: Total occupied time in period
+        total_period_seconds: Total period duration
+        interval_count: Number of intervals used
+        calculation_method: Method used for calculation
+        confidence: Confidence in calculation (0.0-1.0)
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving global prior for area: %s, value: %.4f", area_name, prior_value
+    )
+
+    try:
+        with db.get_locked_session() as session:
+            # Create hash of underlying data for validation
+            data_hash = _create_data_hash(
+                area_name,
+                data_period_start,
+                data_period_end,
+                total_occupied_seconds,
+                interval_count,
+            )
+
+            # Check if global prior already exists for this area
+            existing = (
+                session.query(db.GlobalPriors).filter_by(area_name=area_name).first()
+            )
+
+            if existing:
+                # Update existing record
+                existing.prior_value = prior_value
+                existing.calculation_date = dt_util.utcnow()
+                existing.data_period_start = data_period_start
+                existing.data_period_end = data_period_end
+                existing.total_occupied_seconds = total_occupied_seconds
+                existing.total_period_seconds = total_period_seconds
+                existing.interval_count = interval_count
+                existing.confidence = confidence
+                existing.calculation_method = calculation_method
+                existing.underlying_data_hash = data_hash
+                existing.updated_at = dt_util.utcnow()
+            else:
+                # Create new record
+                global_prior = db.GlobalPriors(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    prior_value=prior_value,
+                    calculation_date=dt_util.utcnow(),
+                    data_period_start=data_period_start,
+                    data_period_end=data_period_end,
+                    total_occupied_seconds=total_occupied_seconds,
+                    total_period_seconds=total_period_seconds,
+                    interval_count=interval_count,
+                    confidence=confidence,
+                    calculation_method=calculation_method,
+                    underlying_data_hash=data_hash,
+                )
+                session.add(global_prior)
+
+            session.commit()
+
+            # Prune old global prior history (keep only last N)
+            _prune_old_global_priors(db, session, area_name)
+
+            _LOGGER.debug("Global prior saved successfully")
+            return True
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving global prior: %s", e)
+        session.rollback()
+        return False
+
+
+def save_occupied_intervals_cache(
+    db: AreaOccupancyDB,
+    area_name: str,
+    intervals: list[tuple[datetime, datetime]],
+    data_source: str = "merged",
+) -> bool:
+    """Save occupied intervals to OccupiedIntervalsCache table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        intervals: List of (start_time, end_time) tuples
+        data_source: Source of intervals ('primary_sensor', 'motion_sensors', 'merged')
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving %d occupied intervals to cache for area: %s",
+        len(intervals),
+        area_name,
+    )
+
+    try:
+        with db.get_locked_session() as session:
+            calculation_date = dt_util.utcnow()
+
+            # Delete existing cached intervals for this area
+            session.query(db.OccupiedIntervalsCache).filter_by(
+                area_name=area_name
+            ).delete(synchronize_session=False)
+
+            # Insert new intervals
+            for start_time, end_time in intervals:
+                duration_seconds = (end_time - start_time).total_seconds()
+
+                cached_interval = db.OccupiedIntervalsCache(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_seconds=duration_seconds,
+                    calculation_date=calculation_date,
+                    data_source=data_source,
+                )
+                session.add(cached_interval)
+
+            session.commit()
+            _LOGGER.debug("Occupied intervals cache saved successfully")
+            return True
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error saving occupied intervals cache: %s", e)
+        session.rollback()
+        return False
