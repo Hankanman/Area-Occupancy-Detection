@@ -84,16 +84,6 @@ class TestEntityType:
                 },
                 "Cannot provide both active_states and active_range",
             ),
-            (
-                "neither_active_states_nor_range",
-                {
-                    "input_type": InputType.MOTION,
-                    "weight": 0.8,
-                    "prob_given_true": 0.25,
-                    "prob_given_false": 0.05,
-                },
-                "Either active_states or active_range must be provided",
-            ),
         ],
     )
     def test_initialization_errors(self, test_case, params, expected_error) -> None:
@@ -105,9 +95,9 @@ class TestEntityType:
         ("input_type", "expected_config"),
         [(input_type, config) for input_type, config in DEFAULT_TYPES.items()],
     )
-    def test_create_classmethod_defaults(self, input_type, expected_config) -> None:
-        """Test the create classmethod for different input types with default values."""
-        entity_type = EntityType.create(input_type)
+    def test_initialization_with_defaults(self, input_type, expected_config) -> None:
+        """Test initialization for different input types with default values."""
+        entity_type = EntityType(input_type)
 
         assert entity_type.input_type == input_type
         assert entity_type.weight == expected_config["weight"]
@@ -116,8 +106,8 @@ class TestEntityType:
         assert entity_type.active_states == expected_config["active_states"]
         assert entity_type.active_range == expected_config["active_range"]
 
-    def test_create_classmethod_with_config_override(self) -> None:
-        """Test the create classmethod with configuration overrides."""
+    def test_initialization_with_config_override(self) -> None:
+        """Test initialization with configuration overrides."""
         mock_config = Mock()
         mock_config.weights = Mock()
         mock_config.weights.motion = 0.9
@@ -126,15 +116,27 @@ class TestEntityType:
         # Ensure no unexpected attributes exist
         mock_config.motion_active_range = None
 
-        entity_type = EntityType.create(InputType.MOTION, mock_config)
+        # Extract overrides from config
+        weight = getattr(mock_config.weights, InputType.MOTION.value, None)
+        active_states = getattr(mock_config.sensor_states, InputType.MOTION.value, None)
+        active_range = getattr(
+            mock_config, f"{InputType.MOTION.value}_active_range", None
+        )
+
+        entity_type = EntityType(
+            InputType.MOTION,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
 
         assert entity_type.input_type == InputType.MOTION
         assert entity_type.weight == 0.9  # Overridden
         assert entity_type.active_states == ["on", "detected"]  # Overridden
         assert entity_type.active_range is None
 
-    def test_create_classmethod_with_active_range_override(self) -> None:
-        """Test the create classmethod with active range override."""
+    def test_initialization_with_active_range_override(self) -> None:
+        """Test initialization with active range override."""
         mock_config = Mock()
         mock_config.weights = Mock()
         mock_config.weights.environmental = 0.2  # Override weight
@@ -142,7 +144,19 @@ class TestEntityType:
         mock_config.sensor_states = None
         mock_config.environmental_active_range = (0.1, 0.3)  # Override range
 
-        entity_type = EntityType.create(InputType.ENVIRONMENTAL, mock_config)
+        # Extract overrides from config
+        weight = getattr(mock_config.weights, InputType.ENVIRONMENTAL.value, None)
+        active_states = None  # sensor_states is None
+        active_range = getattr(
+            mock_config, f"{InputType.ENVIRONMENTAL.value}_active_range", None
+        )
+
+        entity_type = EntityType(
+            InputType.ENVIRONMENTAL,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
 
         assert entity_type.input_type == InputType.ENVIRONMENTAL
         assert entity_type.weight == 0.2  # Overridden
@@ -178,10 +192,10 @@ class TestEntityType:
             ),
         ],
     )
-    def test_create_classmethod_config_errors(
+    def test_initialization_config_errors(
         self, test_case, config_setup, expected_error
     ) -> None:
-        """Test the create classmethod with invalid configuration."""
+        """Test initialization with invalid configuration."""
         mock_config = config_setup()
 
         # Use the appropriate input type based on the test case
@@ -190,10 +204,26 @@ class TestEntityType:
         else:
             input_type = InputType.MOTION
 
-        with pytest.raises(ValueError, match=expected_error):
-            EntityType.create(input_type, mock_config)
+        # Extract overrides from config
+        weights = getattr(mock_config, "weights", None)
+        weight = getattr(weights, input_type.value, None) if weights else None
 
-    def test_create_classmethod_with_empty_states_list(self) -> None:
+        sensor_states = getattr(mock_config, "sensor_states", None)
+        active_states = (
+            getattr(sensor_states, input_type.value, None) if sensor_states else None
+        )
+
+        active_range = getattr(mock_config, f"{input_type.value}_active_range", None)
+
+        with pytest.raises(ValueError, match=expected_error):
+            EntityType(
+                input_type,
+                weight=weight,
+                active_states=active_states,
+                active_range=active_range,
+            )
+
+    def test_initialization_with_empty_states_list(self) -> None:
         """Test that empty active_states list uses defaults instead of crashing."""
         mock_config = Mock()
         mock_config.weights = Mock()
@@ -202,7 +232,19 @@ class TestEntityType:
         mock_config.sensor_states.motion = []  # Empty list - should use defaults
         mock_config.motion_active_range = None
 
-        entity_type = EntityType.create(InputType.MOTION, mock_config)
+        # Extract overrides from config
+        weight = getattr(mock_config.weights, InputType.MOTION.value, None)
+        active_states = getattr(mock_config.sensor_states, InputType.MOTION.value, None)
+        active_range = getattr(
+            mock_config, f"{InputType.MOTION.value}_active_range", None
+        )
+
+        entity_type = EntityType(
+            InputType.MOTION,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
 
         # Should use default active_states from DEFAULT_TYPES, not empty list
         assert entity_type.input_type == InputType.MOTION
@@ -213,7 +255,7 @@ class TestEntityType:
         )  # Default states
         assert entity_type.active_range is None
 
-    def test_create_classmethod_with_empty_states_list_for_range_type(self) -> None:
+    def test_initialization_with_empty_states_list_for_range_type(self) -> None:
         """Test that empty active_states list uses defaults for range-based types."""
         mock_config = Mock()
         mock_config.weights = Mock()
@@ -222,7 +264,21 @@ class TestEntityType:
         mock_config.sensor_states.temperature = []  # Empty list - should use defaults
         mock_config.temperature_active_range = None
 
-        entity_type = EntityType.create(InputType.TEMPERATURE, mock_config)
+        # Extract overrides from config
+        weight = getattr(mock_config.weights, InputType.TEMPERATURE.value, None)
+        active_states = getattr(
+            mock_config.sensor_states, InputType.TEMPERATURE.value, None
+        )
+        active_range = getattr(
+            mock_config, f"{InputType.TEMPERATURE.value}_active_range", None
+        )
+
+        entity_type = EntityType(
+            InputType.TEMPERATURE,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
 
         # Should use default active_range from DEFAULT_TYPES, not empty list
         assert entity_type.input_type == InputType.TEMPERATURE

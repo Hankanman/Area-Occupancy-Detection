@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 import math
 from unittest.mock import Mock
 
+from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
+from custom_components.area_occupancy.db.utils import apply_motion_timeout
 from custom_components.area_occupancy.utils import (
-    apply_motion_timeout,
     bayesian_probability,
     clamp_probability,
     combine_priors,
@@ -14,7 +15,6 @@ from custom_components.area_occupancy.utils import (
 )
 
 
-# ruff: noqa: PLC0415
 class TestUtils:
     """Test utility functions."""
 
@@ -58,8 +58,6 @@ class TestUtils:
         assert format_float(0.0001) == 0.0
 
         # Infinity and NaN - these are handled by float() conversion
-        import math
-
         # float('inf') and float('nan') are valid inputs
         assert format_float(float("inf")) == float("inf")
         assert math.isnan(format_float(float("nan")))
@@ -82,11 +80,6 @@ class TestUtils:
 
     def test_clamp_probability(self) -> None:
         """Test clamp_probability function."""
-        from custom_components.area_occupancy.const import (
-            MAX_PROBABILITY,
-            MIN_PROBABILITY,
-        )
-
         # Test values within range
         assert clamp_probability(0.5) == 0.5
         assert clamp_probability(0.0) == MIN_PROBABILITY
@@ -130,11 +123,6 @@ class TestCombinePriors:
 
     def test_combine_priors_edge_cases(self) -> None:
         """Test combine_priors with edge cases."""
-        from custom_components.area_occupancy.const import (
-            MAX_PROBABILITY,
-            MIN_PROBABILITY,
-        )
-
         # Test with zero time_weight
         result = combine_priors(0.3, 0.7, time_weight=0.0)
         assert result == clamp_probability(0.3)
@@ -191,15 +179,16 @@ class TestApplyMotionTimeout:
 
     def test_apply_motion_timeout_empty_list(self) -> None:
         """Test apply_motion_timeout with empty intervals list."""
-        result = apply_motion_timeout([], 60)
+        result = apply_motion_timeout([], [], 60)
         assert result == []
 
     def test_apply_motion_timeout_single_interval(self) -> None:
         """Test apply_motion_timeout with single interval."""
         base_time = datetime(2024, 1, 1, 12, 0, 0)
         intervals = [(base_time, base_time + timedelta(minutes=5))]
+        motion_intervals = [(base_time, base_time + timedelta(minutes=5))]
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -213,8 +202,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # First interval
@@ -231,8 +221,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=3), base_time + timedelta(minutes=8)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -246,8 +237,9 @@ class TestApplyMotionTimeout:
             (base_time, base_time + timedelta(minutes=5)),
             (base_time + timedelta(minutes=5), base_time + timedelta(minutes=10)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 1
         start, end = result[0]
@@ -261,8 +253,9 @@ class TestApplyMotionTimeout:
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
             (base_time, base_time + timedelta(minutes=5)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # Should be sorted by start time
@@ -278,8 +271,9 @@ class TestApplyMotionTimeout:
             (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
             (base_time + timedelta(minutes=14), base_time + timedelta(minutes=20)),
         ]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 60)
+        result = apply_motion_timeout(intervals, motion_intervals, 60)
 
         assert len(result) == 2
         # First merged interval
@@ -293,8 +287,9 @@ class TestApplyMotionTimeout:
         """Test apply_motion_timeout with zero timeout."""
         base_time = datetime(2024, 1, 1, 12, 0, 0)
         intervals = [(base_time, base_time + timedelta(minutes=5))]
+        motion_intervals = intervals.copy()
 
-        result = apply_motion_timeout(intervals, 0)
+        result = apply_motion_timeout(intervals, motion_intervals, 0)
 
         assert len(result) == 1
         start, end = result[0]
@@ -331,7 +326,8 @@ class TestBayesianProbability:
         assert 0.0 <= result <= 1.0
 
         # Test with custom priors
-        result = bayesian_probability(entities, area_prior=0.3, time_prior=0.7)
+        combined_prior = combine_priors(0.3, 0.7)
+        result = bayesian_probability(entities, prior=combined_prior)
         assert 0.0 <= result <= 1.0
 
     def test_bayesian_with_decay(self) -> None:
@@ -367,10 +363,12 @@ class TestBayesianProbability:
         entities = {"entity1": entity}
 
         # Test with extreme priors
-        result = bayesian_probability(entities, area_prior=0.0, time_prior=0.0)
+        combined_prior_0 = combine_priors(0.0, 0.0)
+        result = bayesian_probability(entities, prior=combined_prior_0)
         assert 0.0 <= result <= 1.0
 
-        result = bayesian_probability(entities, area_prior=1.0, time_prior=1.0)
+        combined_prior_1 = combine_priors(1.0, 1.0)
+        result = bayesian_probability(entities, prior=combined_prior_1)
         assert 0.0 <= result <= 1.0
 
     def test_bayesian_numerical_stability(self) -> None:
@@ -543,9 +541,9 @@ class TestBayesianProbability:
         entities = {"entity1": entity1, "entity2": entity2}
 
         # Should return combined prior when all entities are invalid
-        result = bayesian_probability(entities, area_prior=0.3, time_prior=0.7)
-        expected = combine_priors(0.3, 0.7)
-        assert abs(result - expected) < 1e-6
+        combined_prior = combine_priors(0.3, 0.7)
+        result = bayesian_probability(entities, prior=combined_prior)
+        assert abs(result - combined_prior) < 1e-6
 
     def test_bayesian_decay_interpolation(self) -> None:
         """Test Bayesian probability with decay interpolation."""
@@ -580,6 +578,7 @@ class TestBayesianProbability:
 
         entities = {"entity1": entity}
 
-        result = bayesian_probability(entities, area_prior=0.5, time_prior=0.5)
+        combined_prior = combine_priors(0.5, 0.5)
+        result = bayesian_probability(entities, prior=combined_prior)
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))
