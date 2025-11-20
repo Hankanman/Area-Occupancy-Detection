@@ -155,8 +155,11 @@ def test_something(hass: HomeAssistant):
 **`test_db`** - Primary fixture for database testing (recommended):
 
 ```python
-def test_db_operation(test_db: AreaOccupancyDB):
-    """Test with real database instance."""
+async def test_db_operation(test_db: AreaOccupancyDB):
+    """Test with real database instance.
+
+    Note: This example assumes an async test runner (pytest-asyncio or equivalent).
+    """
     db = test_db  # Real AreaOccupancyDB instance
     area_name = db.coordinator.get_area_names()[0]
 
@@ -186,8 +189,11 @@ def test_with_session(test_db: AreaOccupancyDB, db_test_session):
 **`coordinator_with_db`** - Wrapper around `test_db` that returns the coordinator:
 
 ```python
-def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
-    """Test with real coordinator and real database."""
+async def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
+    """Test with real coordinator and real database.
+
+    Note: This example assumes an async test runner (pytest-asyncio or equivalent).
+    """
     coordinator = coordinator_with_db
     db = coordinator.db  # Real AreaOccupancyDB instance
     area_name = coordinator.get_area_names()[0]
