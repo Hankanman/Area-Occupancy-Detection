@@ -26,7 +26,6 @@ from ..const import (
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
     RETENTION_WEEKLY_AGGREGATES_DAYS,
 )
-from .queries import get_occupied_intervals
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -88,48 +87,45 @@ def get_interval_aggregates(
     media_sensor_ids: list[str] | None,
     appliance_sensor_ids: list[str] | None,
 ) -> list[tuple[int, int, float]]:
-    """Fetch interval aggregates via SQL with Python fallback."""
-    try:
-        start_time = dt_util.utcnow()
-        result = db.get_aggregated_intervals_by_slot(
-            entry_id=entry_id,
-            slot_minutes=slot_minutes,
-            area_name=area_name,
-        )
-        query_time = (dt_util.utcnow() - start_time).total_seconds()
-        _LOGGER.debug(
-            "SQL aggregation completed in %.3fs for %s (slots=%d)",
-            query_time,
-            area_name,
-            len(result),
-        )
-    except (
-        SQLAlchemyError,
-        ValueError,
-        TypeError,
-        RuntimeError,
-        OSError,
-    ) as e:
-        _LOGGER.error(
-            "SQL aggregation failed for %s, falling back to Python: %s",
-            area_name,
-            e,
-        )
-    else:
-        return result
+    """Fetch interval aggregates via SQL aggregation.
 
-    intervals = get_occupied_intervals(
-        db=db,
+    Note:
+        motion_timeout_seconds parameter is accepted for API compatibility but
+        cannot be applied in SQL aggregation. This function aggregates raw intervals
+        without applying motion timeout extensions.
+
+    Args:
+        db: Database instance
+        entry_id: Entry ID
+        area_name: Area name
+        slot_minutes: Time slot size in minutes
+        lookback_days: Number of days to look back
+        motion_timeout_seconds: Motion timeout in seconds (not applied in SQL)
+        media_sensor_ids: List of media sensor IDs
+        appliance_sensor_ids: List of appliance sensor IDs
+
+    Returns:
+        List of (day_of_week, time_slot, total_occupied_seconds) tuples
+    """
+    start_time = dt_util.utcnow()
+    result = db.get_aggregated_intervals_by_slot(
         entry_id=entry_id,
+        slot_minutes=slot_minutes,
         area_name=area_name,
         lookback_days=lookback_days,
-        motion_timeout_seconds=motion_timeout_seconds,
         include_media=bool(media_sensor_ids),
         include_appliance=bool(appliance_sensor_ids),
         media_sensor_ids=media_sensor_ids,
         appliance_sensor_ids=appliance_sensor_ids,
     )
-    return aggregate_intervals_by_slot(intervals, slot_minutes)
+    query_time = (dt_util.utcnow() - start_time).total_seconds()
+    _LOGGER.debug(
+        "SQL aggregation completed in %.3fs for %s (slots=%d)",
+        query_time,
+        area_name,
+        len(result),
+    )
+    return result
 
 
 def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) -> int:

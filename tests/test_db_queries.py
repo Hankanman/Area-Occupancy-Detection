@@ -162,7 +162,11 @@ class TestGetAggregatedIntervalsBySlot:
             session.commit()
 
         result = get_aggregated_intervals_by_slot(
-            db, db.coordinator.entry_id, slot_minutes=60, area_name=area_name
+            db,
+            db.coordinator.entry_id,
+            slot_minutes=60,
+            area_name=area_name,
+            lookback_days=90,
         )
         assert isinstance(result, list)
         if result:
@@ -175,7 +179,7 @@ class TestGetAggregatedIntervalsBySlot:
         """Test aggregation with no intervals."""
         db = test_db
         result = get_aggregated_intervals_by_slot(
-            db, "test_entry", slot_minutes=60, area_name=None
+            db, "test_entry", slot_minutes=60, area_name=None, lookback_days=90
         )
         assert result == []
 
@@ -188,7 +192,7 @@ class TestGetAggregatedIntervalsBySlot:
 
         monkeypatch.setattr(db, "get_session", bad_session)
         result = get_aggregated_intervals_by_slot(
-            db, "test_entry", slot_minutes=60, area_name=None
+            db, "test_entry", slot_minutes=60, area_name=None, lookback_days=90
         )
         assert result == []
 
