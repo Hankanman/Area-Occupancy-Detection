@@ -252,22 +252,35 @@ def _update_db_version(session: Any, version: int) -> None:
                 ),
                 {"version": str(version)},
             )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        _LOGGER.exception("Failed to update database version to %d", version)
 
 
-def _drop_all_tables(engine: Any, session: Any) -> None:
+def _drop_all_tables(engine: Any, session: Any) -> bool:
     """Drop all database tables for complete schema reset.
 
     Args:
         engine: SQLAlchemy engine
         session: SQLAlchemy session
+
+    Returns:
+        True if at least one table was dropped, False otherwise
     """
     _LOGGER.info("Dropping all tables for complete database reset")
     _update_db_version(session, DB_VERSION)
     session.commit()
 
+    tables_dropped_count = 0
     with engine.connect() as conn:
+        # Check which tables exist before dropping
+        existing_tables_result = conn.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        )
+        existing_tables = {row[0] for row in existing_tables_result}
+
         # Drop all tables including new ones
         tables_to_drop = [
             "cross_area_stats",
@@ -286,15 +299,23 @@ def _drop_all_tables(engine: Any, session: Any) -> None:
             "metadata",
         ]
         for table_name in tables_to_drop:
-            try:
-                conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
-                _LOGGER.debug("Dropped table: %s", table_name)
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.debug("Error dropping table %s: %s", table_name, e)
+            if table_name in existing_tables:
+                try:
+                    conn.execute(text(f"DROP TABLE {table_name}"))
+                    _LOGGER.debug("Dropped table: %s", table_name)
+                    tables_dropped_count += 1
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.debug("Error dropping table %s: %s", table_name, e)
         conn.commit()
+
+    if tables_dropped_count > 0:
         _LOGGER.info(
             "All tables dropped successfully - database will be recreated with new schema"
         )
+        return True
+
+    _LOGGER.debug("No tables needed dropping - database may already be empty")
+    return False
 
 
 def _drop_tables_locked(
@@ -341,6 +362,7 @@ def _drop_tables_locked(
                 db_version = 0
 
             # If version doesn't match current DB_VERSION, delete and recreate database
+            tables_were_dropped = False
             if db_version != DB_VERSION:
                 _LOGGER.info(
                     "Database version %d doesn't match current version %d. "
@@ -348,12 +370,13 @@ def _drop_tables_locked(
                     db_version,
                     DB_VERSION,
                 )
-                _drop_all_tables(engine, session)
+                tables_were_dropped = _drop_all_tables(engine, session)
 
             session.close()
             engine.dispose()
             _LOGGER.debug("Database engine disposed")
-            _LOGGER.info("Tables dropped successfully")
+            if tables_were_dropped:
+                _LOGGER.info("Tables dropped successfully")
     finally:
         try:
             if lock_path.exists():
@@ -376,7 +399,8 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to the new version."""
-    # No migration needed - all legacy support has been removed
+    # Handle v13 breaking change: reset database if needed for older versions
+    await async_reset_database_if_needed(hass, config_entry.version)
     return True
 
 

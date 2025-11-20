@@ -97,7 +97,8 @@ class Threshold(CoordinatorEntity, NumberEntity):
                 self._area_name,
             )
             return
-        await area.config.update_config({CONF_THRESHOLD: value})
+        # Convert percentage back to 0.0–1.0 for internal storage
+        await area.config.update_config({CONF_THRESHOLD: value / 100.0})
 
     def _get_area(self) -> Area | None:
         """Resolve the current Area instance for this entity."""

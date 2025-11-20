@@ -213,7 +213,6 @@ class TestSafeIsIntervalsEmpty:
 # Note: The following functions are comprehensively tested in test_analysis_helpers.py:
 # - merge_overlapping_intervals
 # - find_overlapping_motion_intervals
-# - calculate_motion_union
 # - segment_interval_with_motion
 # - apply_motion_timeout
 #
