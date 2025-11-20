@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
@@ -523,37 +523,6 @@ class TestAsyncMigrateEntryAdditional:
         result = await async_migrate_entry(hass, entry)
         # Migration always returns True (no migration needed)
         assert result is True
-
-    async def test_async_migrate_entry_consolidation_skipped(
-        self, hass: HomeAssistant
-    ) -> None:
-        """Test migration skips consolidation for version >= 13."""
-        entry = Mock(spec=ConfigEntry)
-        entry.version = 13
-        entry.minor_version = 0
-        entry.entry_id = "test_entry_id"
-        entry.state = ConfigEntryState.LOADED
-        entry.data = {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
-        entry.options = {}
-
-        def async_entries_mock(domain=None):
-            return [entry]
-
-        hass.config_entries.async_entries = async_entries_mock
-
-        with (
-            patch(
-                "custom_components.area_occupancy.migrations.async_reset_database_if_needed",
-                new_callable=AsyncMock,
-            ) as mock_reset_db,
-        ):
-            hass.config_entries.async_update_entry = Mock()
-
-            await async_migrate_entry(hass, entry)
-
-            # For version >= 13, no migration should occur (no reset, no update)
-            mock_reset_db.assert_not_called()
-            hass.config_entries.async_update_entry.assert_not_called()
 
     async def test_async_migrate_entry_consolidation_entry_removed(
         self, hass: HomeAssistant

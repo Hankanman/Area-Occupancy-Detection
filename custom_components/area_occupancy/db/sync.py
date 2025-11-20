@@ -235,6 +235,10 @@ async def sync_states(db: AreaOccupancyDB) -> None:
             all_entity_ids.extend(area_data.entities.entity_ids)
     entity_ids = list(set(all_entity_ids))  # Remove duplicates
 
+    if not entity_ids:
+        _LOGGER.debug("No entity IDs to sync, skipping recorder query")
+        return
+
     try:
         states = await recorder.async_add_executor_job(
             lambda: get_significant_states(

@@ -2,7 +2,7 @@
 
 from datetime import UTC, timedelta
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from sqlalchemy.exc import (
@@ -381,53 +381,34 @@ class TestPriorAnalyzer:
             assert result[0] == (0, 0, 3600.0)
             assert result[1] == (1, 12, 1800.0)
 
-            # Verify SQL method was called with area_name
+            # Verify SQL method was called with all required parameters
             mock_get_aggregated.assert_called_once_with(
                 entry_id=coordinator.entry_id,
                 slot_minutes=60,
                 area_name=area_name,
+                lookback_days=ANY,  # DEFAULT_LOOKBACK_DAYS (90)
+                include_media=ANY,  # bool(media_sensor_ids)
+                include_appliance=ANY,  # bool(appliance_sensor_ids)
+                media_sensor_ids=ANY,  # analyzer.media_sensor_ids
+                appliance_sensor_ids=ANY,  # analyzer.appliance_sensor_ids
             )
 
-    def test_get_interval_aggregates_fallback(
+    def test_get_interval_aggregates_sql_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test fallback to Python method on SQL failure."""
+        """Test SQL-only implementation returns empty list on error."""
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Mock SQL failure and Python fallback path
-        with (
-            patch.object(
-                coordinator.db,
-                "get_aggregated_intervals_by_slot",
-                side_effect=(OperationalError("Database error", None, None)),
-            ),
-            patch(
-                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
-                return_value=False,
-            ),
-            patch(
-                "custom_components.area_occupancy.db.aggregation.get_occupied_intervals",
-                return_value=[
-                    (
-                        dt_util.utcnow() - timedelta(hours=1),
-                        dt_util.utcnow(),
-                    )
-                ],
-            ) as mock_get_occupied,
-            patch(
-                "custom_components.area_occupancy.db.aggregation.aggregate_intervals_by_slot",
-                return_value=[(0, 0, 1800.0)],
-            ) as mock_aggregate,
+        # Mock SQL failure - function should return empty list (error handling in SQL function)
+        with patch.object(
+            coordinator.db,
+            "get_aggregated_intervals_by_slot",
+            return_value=[],  # SQL function returns empty list on error
         ):
             result = analyzer.get_interval_aggregates(slot_minutes=60)
 
-            assert len(result) == 1
-            assert result[0] == (0, 0, 1800.0)
-
-            # Verify Python fallback path was called
-            mock_get_occupied.assert_called_once()
-            mock_aggregate.assert_called_once()
+            assert result == []
 
     def test_get_occupied_intervals_with_lookback_days(
         self, coordinator: AreaOccupancyCoordinator

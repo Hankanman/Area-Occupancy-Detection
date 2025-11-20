@@ -366,7 +366,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not (key in result and isinstance(result[key], dict)):
                     result[key] = value
 
-        result["last_updated"] = dt_util.utcnow()
+        # Only set root-level last_updated if it won't overwrite an area dict
+        if not ("last_updated" in result and isinstance(result["last_updated"], dict)):
+            result["last_updated"] = dt_util.utcnow()
         return result
 
     async def async_shutdown(self) -> None:
