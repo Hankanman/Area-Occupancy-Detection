@@ -231,7 +231,7 @@ Default values vary by entity type:
 - Media players: Medium `P(Active | Occupied)`, very low `P(Active | Not Occupied)`
 - Environmental sensors: Low `P(Active | Occupied)`, low `P(Active | Not Occupied)`
 
-These defaults are replaced by learned values once sufficient historical data is available.
+For non-motion sensors, these defaults are replaced by learned values once sufficient historical data is available.
 
 ## See Also
 
