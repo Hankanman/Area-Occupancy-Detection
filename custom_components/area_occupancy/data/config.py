@@ -27,6 +27,8 @@ from ..const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
+    CONF_MOTION_PROB_GIVEN_FALSE,
+    CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_PRIMARY_OCCUPANCY_SENSOR,
@@ -53,6 +55,8 @@ from ..const import (
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
+    DEFAULT_MOTION_PROB_GIVEN_FALSE,
+    DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -131,6 +135,8 @@ class Sensors:
 
     motion: list[str] = field(default_factory=list)
     motion_timeout: int = DEFAULT_MOTION_TIMEOUT
+    motion_prob_given_true: float = DEFAULT_MOTION_PROB_GIVEN_TRUE
+    motion_prob_given_false: float = DEFAULT_MOTION_PROB_GIVEN_FALSE
     primary_occupancy: str | None = None
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
@@ -314,6 +320,12 @@ class AreaConfig:
         self.sensors = Sensors(
             motion=data.get(CONF_MOTION_SENSORS, []),
             motion_timeout=int(data.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)),
+            motion_prob_given_true=float(
+                data.get(CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE)
+            ),
+            motion_prob_given_false=float(
+                data.get(CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE)
+            ),
             primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),

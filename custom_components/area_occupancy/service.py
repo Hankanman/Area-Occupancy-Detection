@@ -74,6 +74,9 @@ def _build_analysis_data(
 
     return {
         "area_name": area_name,
+        "current_probability": area.probability(),
+        "current_occupied": area.occupied(),
+        "current_threshold": area.threshold(),
         "current_prior": area.area_prior(),
         "global_prior": area.prior.global_prior,
         "time_prior": area.prior.time_prior,

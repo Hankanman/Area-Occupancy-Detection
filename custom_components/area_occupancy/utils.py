@@ -127,9 +127,11 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
                 p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
                 p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
         else:
-            # No evidence present - use neutral probabilities
-            p_t = 0.5
-            p_f = 0.5
+            # No evidence present - use inverse likelihoods
+            # P(Inactive | Occupied) = 1 - P(Active | Occupied)
+            # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
+            p_t = 1.0 - entity.prob_given_true
+            p_f = 1.0 - entity.prob_given_false
 
         # Clamp probabilities to avoid log(0) or log(1)
         p_t = clamp_probability(p_t)

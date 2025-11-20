@@ -26,6 +26,7 @@ from ..db.queries import (
     is_occupied_intervals_cache_valid,
 )
 from ..utils import clamp_probability
+from .entity_type import DEFAULT_TYPES, InputType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -694,8 +695,28 @@ class LikelihoodAnalyzer:
 
             intervals_by_entity = self._get_intervals_by_entity(session, sensors)
 
+            # Track motion sensors for logging
+            motion_sensors_found = []
+
             for entity in sensors:
                 entity_id = str(entity.entity_id)
+                entity_type = (
+                    str(entity.entity_type) if hasattr(entity, "entity_type") else None
+                )
+
+                # Exclude motion sensors from likelihood learning
+                # Motion sensors are used as ground truth to determine occupied intervals,
+                # so they should use default likelihoods, not learned ones.
+                # This breaks the circular dependency where motion sensors determine
+                # occupied intervals and then calculate their own likelihoods from those intervals.
+                if entity_type == InputType.MOTION.value:
+                    motion_sensors_found.append(entity_id)
+                    _LOGGER.debug(
+                        "Excluding motion sensor %s from likelihood learning "
+                        "(motion sensors use default likelihoods as ground truth)",
+                        entity_id,
+                    )
+                    continue
 
                 # Check if entity has intervals
                 if entity_id not in intervals_by_entity:
@@ -735,6 +756,16 @@ class LikelihoodAnalyzer:
                         e,
                     )
                     continue
+
+            # Log summary of motion sensor exclusion
+            if motion_sensors_found:
+                _LOGGER.info(
+                    "Excluded %d motion sensor(s) from likelihood learning: %s. "
+                    "Motion sensors use default likelihoods (prob_given_true=0.95, prob_given_false=0.02) "
+                    "as they are used as ground truth for determining occupied intervals.",
+                    len(motion_sensors_found),
+                    ", ".join(motion_sensors_found),
+                )
 
             _LOGGER.debug("Likelihoods analyzed for %d entities", len(likelihoods))
         except (
@@ -895,6 +926,17 @@ def _update_likelihoods_in_db(
                 .first()
             )
             if entity_db:
+                # Validate: Motion sensors should not have learned likelihoods stored
+                # They use default likelihoods as ground truth
+                if entity_db.entity_type == InputType.MOTION.value:
+                    _LOGGER.warning(
+                        "Attempted to store learned likelihoods for motion sensor '%s'. "
+                        "Motion sensors use default likelihoods (prob_given_true=0.95, prob_given_false=0.02) "
+                        "and should not have learned values. Skipping database update.",
+                        entity_id,
+                    )
+                    continue
+
                 entity_db.prob_given_true = prob_given_true
                 entity_db.prob_given_false = prob_given_false
                 entity_db.last_updated = now
@@ -1042,10 +1084,46 @@ async def start_likelihood_analysis(
                 )
                 continue
 
+        # Reset motion sensor likelihoods to configured values (user-configurable per area)
+        # Get configured values from area config, fall back to defaults if not configured
+        area = coordinator.get_area(area_name)
+        if area and hasattr(area.config, "sensors"):
+            motion_prob_given_true = getattr(
+                area.config.sensors,
+                "motion_prob_given_true",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_true"],
+            )
+            motion_prob_given_false = getattr(
+                area.config.sensors,
+                "motion_prob_given_false",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_false"],
+            )
+        else:
+            # Fallback to defaults if area/config not available
+            default_motion = DEFAULT_TYPES[InputType.MOTION]
+            motion_prob_given_true = float(default_motion["prob_given_true"])
+            motion_prob_given_false = float(default_motion["prob_given_false"])
+
+        motion_prob_given_true = float(motion_prob_given_true)
+        motion_prob_given_false = float(motion_prob_given_false)
+
+        motion_entities = entity_manager.get_entities_by_input_type(InputType.MOTION)
+        for motion_entity in motion_entities.values():
+            motion_entity.update_likelihood(
+                motion_prob_given_true, motion_prob_given_false
+            )
+            _LOGGER.debug(
+                "Reset motion sensor %s to configured likelihoods: prob_given_true=%.2f, prob_given_false=%.2f",
+                motion_entity.entity_id,
+                motion_prob_given_true,
+                motion_prob_given_false,
+            )
+
         _LOGGER.debug(
-            "Likelihoods updated for %d entities in area: %s",
+            "Likelihoods updated for %d entities in area: %s (%d motion sensors reset to defaults)",
             len(updated_entity_ids),
             area_name,
+            len(motion_entities),
         )
 
     except (
