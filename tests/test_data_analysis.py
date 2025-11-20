@@ -1447,14 +1447,14 @@ class TestAnalysisHelperFunctions:
         # Ensure area exists first (foreign key requirement)
         test_db.save_area_data(area_name)
 
-        # Create entity in database
+        # Create entity in database (using MEDIA type since motion sensors are excluded from likelihood updates)
         session = db_test_session
         entity = test_db.Entities(
             entry_id=coordinator.entry_id,
             area_name=area_name,
-            entity_id="binary_sensor.test_motion",
-            entity_type=InputType.MOTION,
-            weight=0.85,
+            entity_id="media_player.test_media",
+            entity_type=InputType.MEDIA,
+            weight=0.7,
             prob_given_true=0.5,
             prob_given_false=0.05,
             last_updated=dt_util.utcnow(),
@@ -1468,20 +1468,20 @@ class TestAnalysisHelperFunctions:
         # Update likelihoods
         now = dt_util.utcnow()
         likelihoods = {
-            "binary_sensor.test_motion": (0.8, 0.1),
+            "media_player.test_media": (0.8, 0.1),
         }
         updated_ids = _update_likelihoods_in_db(
             test_db, coordinator.entry_id, likelihoods, now
         )
 
-        assert "binary_sensor.test_motion" in updated_ids
+        assert "media_player.test_media" in updated_ids
 
         # Verify update - refresh the entity from the database using a new session
         with test_db.get_session() as verify_session:
             updated_entity = (
                 verify_session.query(test_db.Entities)
                 .filter_by(
-                    entry_id=coordinator.entry_id, entity_id="binary_sensor.test_motion"
+                    entry_id=coordinator.entry_id, entity_id="media_player.test_media"
                 )
                 .first()
             )
