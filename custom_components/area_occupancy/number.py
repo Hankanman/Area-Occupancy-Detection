@@ -57,7 +57,7 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
         """Handle entity which will be added."""
         await super().async_added_to_hass()
         # Assign device to Home Assistant area if area_id is configured
-        area = self.coordinator.get_area_or_default(self._area_name)
+        area = self.coordinator.get_area(self._area_name)
         if area and area.config.area_id and self.device_info:
             device_registry = dr.async_get(self.hass)
             identifiers = self.device_info.get("identifiers", set())
@@ -80,7 +80,7 @@ class Threshold(CoordinatorEntity[AreaOccupancyCoordinator], NumberEntity):
                 f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
             )
         # Update the area's config threshold, guarding against a missing area
-        area = self.coordinator.get_area_or_default(self._area_name)
+        area = self.coordinator.get_area(self._area_name)
         if area is None:
             _LOGGER.warning(
                 "Threshold update requested for unknown area '%s'; ignoring",

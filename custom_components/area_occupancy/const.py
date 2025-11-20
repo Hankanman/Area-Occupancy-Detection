@@ -216,11 +216,8 @@ NUMERIC_CORRELATION_HISTORY_COUNT: Final = (
 # Coordinator timer intervals
 DECAY_INTERVAL: Final = 10  # seconds
 ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
+SAVE_INTERVAL: Final = 600  # seconds (10 minutes) - periodic database save interval
 
-# Database save debounce
-SAVE_DEBOUNCE_SECONDS: Final = 5  # Delay before saving after state changes
-
-# Master coordination constants removed - no longer needed with single-instance architecture
 
 ########################################################
 # Virtual sensor constants

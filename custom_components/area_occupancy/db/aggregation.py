@@ -7,18 +7,11 @@ aggregates, and implements retention policies to prevent database bloat.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import (
-    DataError,
-    OperationalError,
-    ProgrammingError,
-    SQLAlchemyError,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.util import dt as dt_util
 
@@ -33,7 +26,7 @@ from ..const import (
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
     RETENTION_WEEKLY_AGGREGATES_DAYS,
 )
-from .priors import get_occupied_intervals
+from .queries import get_occupied_intervals
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -94,10 +87,8 @@ def get_interval_aggregates(
     motion_timeout_seconds: int,
     media_sensor_ids: list[str] | None,
     appliance_sensor_ids: list[str] | None,
-    session_provider: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> list[tuple[int, int, float]]:
     """Fetch interval aggregates via SQL with Python fallback."""
-    session_provider = session_provider or db.get_session
     try:
         start_time = dt_util.utcnow()
         result = db.get_aggregated_intervals_by_slot(
@@ -114,9 +105,6 @@ def get_interval_aggregates(
         )
     except (
         SQLAlchemyError,
-        OperationalError,
-        DataError,
-        ProgrammingError,
         ValueError,
         TypeError,
         RuntimeError,
@@ -140,7 +128,6 @@ def get_interval_aggregates(
         include_appliance=bool(appliance_sensor_ids),
         media_sensor_ids=media_sensor_ids,
         appliance_sensor_ids=appliance_sensor_ids,
-        session_provider=session_provider,
     )
     return aggregate_intervals_by_slot(intervals, slot_minutes)
 
@@ -284,13 +271,14 @@ def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) ->
 
             return created_count
 
-    except SQLAlchemyError as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error aggregating raw to daily: %s", e)
-        if session is not None:
-            session.rollback()
-        raise
-    except Exception as e:
-        _LOGGER.error("Unexpected error during raw to daily aggregation: %s", e)
         if session is not None:
             session.rollback()
         raise
@@ -437,13 +425,14 @@ def aggregate_daily_to_weekly(db: AreaOccupancyDB, area_name: str | None = None)
 
             return created_count
 
-    except SQLAlchemyError as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error aggregating daily to weekly: %s", e)
-        if session is not None:
-            session.rollback()
-        raise
-    except Exception as e:
-        _LOGGER.error("Unexpected error during daily to weekly aggregation: %s", e)
         if session is not None:
             session.rollback()
         raise
@@ -553,6 +542,7 @@ def aggregate_weekly_to_monthly(
 
             # Calculate averages and create aggregate records
             created_count = 0
+            new_aggregates = []
             for agg_data in aggregates.values():
                 # Calculate average duration
                 if agg_data["interval_count"] > 0:
@@ -574,8 +564,13 @@ def aggregate_weekly_to_monthly(
 
                 if not existing:
                     aggregate = db.IntervalAggregates(**agg_data)
-                    session.add(aggregate)
+                    new_aggregates.append(aggregate)
                     created_count += 1
+
+            # Add all new aggregates at once
+            if new_aggregates:
+                session.add_all(new_aggregates)
+                session.flush()  # Flush before deleting to avoid identity map conflicts
 
             # Delete weekly aggregates that were aggregated
             aggregate_ids = [weekly.id for weekly in weekly_aggregates]
@@ -594,13 +589,14 @@ def aggregate_weekly_to_monthly(
 
             return created_count
 
-    except SQLAlchemyError as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error aggregating weekly to monthly: %s", e)
-        if session is not None:
-            session.rollback()
-        raise
-    except Exception as e:
-        _LOGGER.error("Unexpected error during weekly to monthly aggregation: %s", e)
         if session is not None:
             session.rollback()
         raise
@@ -646,7 +642,13 @@ def run_interval_aggregation(
             results["monthly"],
         )
 
-    except Exception as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error during interval aggregation: %s", e)
         raise
 
@@ -725,7 +727,13 @@ def prune_old_aggregates(
                 results["monthly"],
             )
 
-    except SQLAlchemyError as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error pruning old aggregates: %s", e)
         if session is not None:
             session.rollback()
@@ -771,7 +779,13 @@ def prune_old_numeric_samples(db: AreaOccupancyDB, area_name: str | None = None)
 
             return deleted_count
 
-    except SQLAlchemyError as e:
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         _LOGGER.error("Error pruning old numeric samples: %s", e)
         if session is not None:
             session.rollback()

@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import math
 from typing import TYPE_CHECKING
 
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
+from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
 
 
@@ -221,49 +224,24 @@ def combine_priors(
     return clamp_probability(combined_prior)
 
 
-def apply_motion_timeout(
-    intervals: list[tuple[datetime, datetime]], timeout_seconds: int
-) -> list[tuple[datetime, datetime]]:
-    """Apply timeout to motion intervals to extend their duration.
+# ────────────────────────────────────── Coordinator Utilities ───────────────────────────
 
-    This function merges overlapping or adjacent intervals and extends each interval
-    by the specified timeout duration to ensure continuous coverage.
+
+def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
+    """Get global coordinator from hass.data with error handling.
 
     Args:
-        intervals: List of (start_time, end_time) tuples
-        timeout_seconds: Timeout duration in seconds to extend each interval
+        hass: Home Assistant instance
 
     Returns:
-        List of merged and extended intervals
+        AreaOccupancyCoordinator instance
 
+    Raises:
+        HomeAssistantError: If coordinator not found
     """
-    if not intervals:
-        return []
-
-    # Sort intervals by start time
-    sorted_intervals = sorted(intervals, key=lambda x: x[0])
-
-    # Apply timeout to each interval
-    extended_intervals = []
-    for start_time, end_time in sorted_intervals:
-        # Extend the end time by the timeout duration
-        extended_end = end_time + timedelta(seconds=timeout_seconds)
-        extended_intervals.append((start_time, extended_end))
-
-    # Merge overlapping or adjacent intervals
-    merged_intervals = []
-    current_start, current_end = extended_intervals[0]
-
-    for start_time, end_time in extended_intervals[1:]:
-        # If current interval overlaps or is adjacent to next interval, merge them
-        if start_time <= current_end:
-            current_end = max(current_end, end_time)
-        else:
-            # No overlap, add current interval and start new one
-            merged_intervals.append((current_start, current_end))
-            current_start, current_end = start_time, end_time
-
-    # Add the last interval
-    merged_intervals.append((current_start, current_end))
-
-    return merged_intervals
+    coordinator = hass.data.get(DOMAIN)
+    if coordinator is None:
+        raise HomeAssistantError(
+            "Area Occupancy coordinator not found. Ensure integration is configured."
+        )
+    return coordinator

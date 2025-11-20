@@ -9,7 +9,7 @@ from custom_components.area_occupancy.db.aggregation import (
     aggregate_intervals_by_slot,
     calculate_time_slot,
 )
-from custom_components.area_occupancy.db.priors import (
+from custom_components.area_occupancy.db.utils import (
     apply_motion_timeout,
     calculate_motion_union,
     find_overlapping_motion_intervals,

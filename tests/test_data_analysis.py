@@ -143,29 +143,23 @@ class TestPriorAnalyzer:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Mock database session
-        mock_session = Mock()
-        mock_session.query.return_value.filter_by.return_value.first.return_value = None
-        mock_session.add = Mock()
-        mock_session.commit = Mock()
+        # Mock instance methods (now that analyze_time_priors uses wrapper methods)
+        first_time = dt_util.utcnow()
+        last_time = first_time + timedelta(days=1)
 
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_session)
-        mock_context_manager.__exit__ = Mock(return_value=None)
         with (
             patch.object(
-                coordinator.db, "get_session", return_value=mock_context_manager
+                analyzer,
+                "get_interval_aggregates",
+                return_value=[],
             ),
-            patch.object(analyzer, "get_interval_aggregates", return_value=[]),
             patch.object(
                 analyzer,
                 "get_time_bounds",
-                return_value=(
-                    dt_util.utcnow(),
-                    dt_util.utcnow() + timedelta(days=1),
-                ),
+                return_value=(first_time, last_time),
             ),
         ):
+            # Should handle invalid slot_minutes gracefully
             analyzer.analyze_time_priors(slot_minutes=slot_minutes)
             # Should use DEFAULT_SLOT_MINUTES instead
 
@@ -205,23 +199,28 @@ class TestPriorAnalyzer:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Mock database session
-        mock_session = Mock()
-        mock_session.query.return_value.filter_by.return_value.first.return_value = None
-        mock_session.add = Mock()
-        mock_session.commit = Mock()
+        # Mock instance methods (now that analyze_time_priors uses wrapper methods)
+        # Ensure time_bounds are real datetime objects, not Mocks
+        if isinstance(time_bounds[0], Mock) or isinstance(time_bounds[1], Mock):
+            first_time = dt_util.utcnow()
+            last_time = first_time + timedelta(days=1)
+            time_bounds = (first_time, last_time)
 
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_session)
-        mock_context_manager.__exit__ = Mock(return_value=None)
+        # Ensure interval_data is a list, not a Mock
+        if isinstance(interval_data, Mock):
+            interval_data = []
+
         with (
             patch.object(
-                coordinator.db, "get_session", return_value=mock_context_manager
+                analyzer,
+                "get_interval_aggregates",
+                return_value=interval_data if isinstance(interval_data, list) else [],
             ),
             patch.object(
-                analyzer, "get_interval_aggregates", return_value=interval_data
+                analyzer,
+                "get_time_bounds",
+                return_value=time_bounds,
             ),
-            patch.object(analyzer, "get_time_bounds", return_value=time_bounds),
         ):
             analyzer.analyze_time_priors()
             # Should handle all scenarios gracefully
@@ -233,35 +232,20 @@ class TestPriorAnalyzer:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Mock existing prior
-        mock_existing_prior = Mock()
-        mock_existing_prior.prior_value = 0.5
-        mock_existing_prior.data_points = 100
-        mock_existing_prior.last_updated = dt_util.utcnow()
+        # Mock instance methods (now that analyze_time_priors uses wrapper methods)
+        first_time = dt_util.utcnow()
+        last_time = first_time + timedelta(days=1)
 
-        mock_session = Mock()
-        mock_session.query.return_value.filter_by.return_value.first.return_value = (
-            mock_existing_prior
-        )
-        mock_session.commit = Mock()
-
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_session)
-        mock_context_manager.__exit__ = Mock(return_value=None)
         with (
             patch.object(
-                coordinator.db, "get_session", return_value=mock_context_manager
-            ),
-            patch.object(
-                analyzer, "get_interval_aggregates", return_value=[(0, 0, 100.0)]
+                analyzer,
+                "get_interval_aggregates",
+                return_value=[(0, 0, 100.0)],
             ),
             patch.object(
                 analyzer,
                 "get_time_bounds",
-                return_value=(
-                    dt_util.utcnow(),
-                    dt_util.utcnow() + timedelta(days=1),
-                ),
+                return_value=(first_time, last_time),
             ),
         ):
             analyzer.analyze_time_priors()
@@ -325,8 +309,8 @@ class TestPriorAnalyzer:
 
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock()
-            # Patch the analyzer's _session_provider since it's set during __init__
-            with patch.object(analyzer, "_session_provider", return_value=mock_session):
+            # Patch db.get_session to return our mock session
+            with patch.object(analyzer.db, "get_session", return_value=mock_session):
                 result = analyzer.get_time_bounds(entity_ids)
                 assert result == expected_result
 
@@ -419,11 +403,11 @@ class TestPriorAnalyzer:
                 side_effect=(OperationalError("Database error", None, None)),
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals_from_session",
+                "custom_components.area_occupancy.db.aggregation.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -478,7 +462,7 @@ class TestPriorAnalyzer:
                 coordinator.db, "get_session", return_value=mock_context_manager
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -501,11 +485,11 @@ class TestPriorAnalyzer:
         # We'll mock the database to avoid complex SQLAlchemy mocking
         with (
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals_from_session",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[],
             ),
         ):
@@ -533,7 +517,10 @@ class TestPriorAnalyzerWithRealDB:
         assert result == DEFAULT_PRIOR
 
         # Test with no time bounds
-        with patch.object(analyzer, "get_time_bounds", return_value=(None, None)):
+        with (
+            patch.object(analyzer, "get_total_occupied_seconds", return_value=0.0),
+            patch.object(analyzer, "get_time_bounds", return_value=(None, None)),
+        ):
             result = analyzer.analyze_area_prior(["binary_sensor.motion"])
             assert result == DEFAULT_PRIOR
 
@@ -544,6 +531,9 @@ class TestPriorAnalyzerWithRealDB:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entity and interval in database
         session = db_test_session
@@ -582,7 +572,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test analyze_area_prior supplements with media/appliance when motion prior is low."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Set up media and appliance sensors
         area.config.sensors.media = ["media_player.test_tv"]
@@ -655,7 +645,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test analyze_area_prior applies minimum prior override."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.min_prior_override = 0.3
 
         analyzer = PriorAnalyzer(coordinator, area_name)
@@ -687,6 +677,9 @@ class TestPriorAnalyzerWithRealDB:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entity and interval
         session = db_test_session
@@ -761,6 +754,9 @@ class TestPriorAnalyzerWithRealDB:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
+
         # Create test entities and intervals
         session = db_test_session
         now = dt_util.utcnow()
@@ -798,10 +794,13 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_occupied_intervals with media sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals
         session = db_test_session
@@ -860,10 +859,13 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_occupied_intervals with appliance sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.appliance = ["switch.test_appliance"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals
         session = db_test_session
@@ -924,6 +926,9 @@ class TestPriorAnalyzerWithRealDB:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
+
         # Create test entities and overlapping intervals
         session = db_test_session
         now = dt_util.utcnow()
@@ -976,6 +981,9 @@ class TestPriorAnalyzerWithRealDB:
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
+
         # Create test entity and interval
         session = db_test_session
         now = dt_util.utcnow()
@@ -1013,7 +1021,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds uses SQL path."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout to 0 to enable SQL path (guard condition)
@@ -1044,7 +1052,7 @@ class TestPriorAnalyzerWithRealDB:
                 side_effect=SQLAlchemyError("Test error"),
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1053,7 +1061,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -1066,7 +1074,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds skips SQL path when timeout > 0."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout > 0 to disable SQL path (guard condition)
@@ -1080,7 +1088,7 @@ class TestPriorAnalyzerWithRealDB:
                 return_value=3600.0,
             ) as mock_sql,
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1089,7 +1097,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -1104,7 +1112,7 @@ class TestPriorAnalyzerWithRealDB:
         """Test get_total_occupied_seconds skips SQL path when include_media=True."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Set timeout to 0 but include media to disable SQL path (guard condition)
@@ -1118,7 +1126,7 @@ class TestPriorAnalyzerWithRealDB:
                 return_value=3600.0,
             ) as mock_sql,
             patch(
-                "custom_components.area_occupancy.db.priors.get_occupied_intervals",
+                "custom_components.area_occupancy.db.queries.get_occupied_intervals",
                 return_value=[
                     (
                         dt_util.utcnow() - timedelta(hours=1),
@@ -1127,7 +1135,7 @@ class TestPriorAnalyzerWithRealDB:
                 ],
             ),
             patch(
-                "custom_components.area_occupancy.db.priors.is_occupied_intervals_cache_valid",
+                "custom_components.area_occupancy.db.queries.is_occupied_intervals_cache_valid",
                 return_value=False,
             ),
         ):
@@ -1160,8 +1168,11 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods with real database data."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entity and interval
         session = db_test_session
@@ -1201,7 +1212,7 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods with no sensors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock no sensors
@@ -1214,6 +1225,9 @@ class TestLikelihoodAnalyzerExtended:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entity
         session = db_test_session
@@ -1237,6 +1251,9 @@ class TestLikelihoodAnalyzerExtended:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entity and interval
         session = db_test_session
@@ -1423,7 +1440,7 @@ class TestLikelihoodAnalyzerExtended:
         """Test analyze_likelihoods handles database errors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock database error
@@ -1445,6 +1462,9 @@ class TestAnalysisHelperFunctions:
         """Test _update_likelihoods_in_db updates database."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create entity in database
         session = db_test_session
@@ -1513,7 +1533,7 @@ class TestAnalysisHelperFunctions:
         """Test start_prior_analysis orchestrates prior calculation."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer methods
         with (
@@ -1541,7 +1561,7 @@ class TestAnalysisHelperFunctions:
         """Test start_prior_analysis handles errors."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer to raise error
         with (
@@ -1566,7 +1586,7 @@ class TestAnalysisHelperFunctions:
         """Test start_likelihood_analysis orchestrates likelihood calculation."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1616,7 +1636,7 @@ class TestAnalysisHelperFunctions:
         """Test start_likelihood_analysis handles no likelihoods."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(return_value=[])
@@ -1669,7 +1689,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_area_prior when no media/appliance sensors configured."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = []
         area.config.sensors.appliance = []
 
@@ -1774,10 +1794,13 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals with complex interval merging and timeout."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.motion_timeout = 300  # 5 minutes
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals with various overlapping scenarios
         session = db_test_session
@@ -1859,7 +1882,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_likelihoods handles exceptions."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
 
         # Mock database exception
@@ -1878,7 +1901,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles exceptions."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1912,7 +1935,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles entity not found in manager."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -1950,11 +1973,14 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals uses UNION ALL path with multiple sensor types."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals for all sensor types
         session = db_test_session
@@ -2033,11 +2059,14 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals segments intervals for motion timeout correctly."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.motion_timeout = 600  # 10 minutes
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities
         session = db_test_session
@@ -2110,11 +2139,14 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals with mixed sensor types and complex overlaps."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities
         session = db_test_session
@@ -2195,10 +2227,13 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals handles media/appliance intervals with no motion overlap."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities
         session = db_test_session
@@ -2259,11 +2294,14 @@ class TestPriorAnalyzerEdgeCases:
         """Test get_occupied_intervals UNION ALL path returns results with sensor_type."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.sensors.media = ["media_player.test_tv"]
         area.config.sensors.appliance = ["switch.test_appliance"]
 
         analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals within lookback window
         session = db_test_session
@@ -2622,8 +2660,11 @@ class TestPriorAnalyzerEdgeCases:
         """Test analyze_likelihoods completes full path for all branches."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
 
         # Create test entities and intervals with various states
         session = db_test_session
@@ -2705,7 +2746,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_prior_analysis handles SQLAlchemyError."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock analyzer to raise SQLAlchemyError
         with (
@@ -2730,7 +2771,7 @@ class TestPriorAnalyzerEdgeCases:
         """Test start_likelihood_analysis handles ValueError and TypeError."""
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
 
         # Mock prior to return occupied intervals
         area.prior.get_occupied_intervals = Mock(
@@ -2796,7 +2837,22 @@ class TestLikelihoodAnalyzerHelperMethods:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
+
         session = db_test_session
+
+        # Create "Different Area" directly in database for entity3 (not in coordinator)
+        different_area = test_db.Areas(
+            entry_id=coordinator.entry_id,
+            area_name="Different Area",
+            area_id="different_area",
+            purpose="living",
+            threshold=0.5,
+        )
+        session.add(different_area)
+        session.commit()
 
         # Create test entities
         entity1 = test_db.Entities(
@@ -2836,6 +2892,10 @@ class TestLikelihoodAnalyzerHelperMethods:
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         analyzer = LikelihoodAnalyzer(coordinator, area_name)
+
+        # Ensure area exists first (foreign key requirement)
+        test_db.save_area_data(area_name)
+
         session = db_test_session
 
         now = dt_util.utcnow()

@@ -98,13 +98,14 @@ def save_area_relationship(
             _LOGGER.debug("Relationship saved successfully")
             return True
 
-    except (HomeAssistantError, SQLAlchemyError) as e:
-        _LOGGER.error("Database error saving relationship: %s", e)
-        if session is not None:
-            session.rollback()
-        return False
-    except (ValueError, TypeError, RuntimeError) as e:
-        _LOGGER.error("Unexpected error saving relationship: %s", e)
+    except (
+        HomeAssistantError,
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+    ) as e:
+        _LOGGER.error("Error saving relationship: %s", e)
         if session is not None:
             session.rollback()
         return False
@@ -196,7 +197,7 @@ def calculate_adjacent_influence(
         total_weight = 0.0
 
         for adj in adjacent_areas:
-            related_area = db.coordinator.get_area_or_default(adj["related_area_name"])
+            related_area = db.coordinator.get_area(adj["related_area_name"])
             if related_area:
                 # Get current probability of adjacent area
                 adj_prob = related_area.probability()
@@ -243,11 +244,6 @@ def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool
     _LOGGER.debug("Syncing adjacent areas from config for area: %s", area_name)
 
     try:
-        area = db.coordinator.get_area_or_default(area_name)
-        if not area:
-            _LOGGER.warning("Area not found: %s", area_name)
-            return False
-
         # Get adjacent areas from area configuration (stored in Areas table)
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()

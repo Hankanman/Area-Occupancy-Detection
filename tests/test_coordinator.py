@@ -1,5 +1,6 @@
 """Tests for coordinator module."""
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -15,6 +16,7 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.data.prior import MIN_PRIOR
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
@@ -39,15 +41,6 @@ pytestmark = pytest.mark.usefixtures("mock_frame_helper")
 
 class TestAreaOccupancyCoordinator:
     """Test AreaOccupancyCoordinator class."""
-
-    @pytest.fixture(autouse=True)
-    def mock_async_call_later(self):
-        """Mock async_call_later to prevent lingering timers across all tests."""
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_call_later",
-            return_value=Mock(),
-        ):
-            yield
 
     def test_initialization(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
@@ -92,7 +85,7 @@ class TestAreaOccupancyCoordinator:
         assert isinstance(identifiers, set)
         # In multi-area architecture, device_info uses area_id as identifier (stable even if area is renamed)
         # Fallback to area_name for legacy compatibility
-        area = coordinator_with_areas.get_area_or_default(area_name)
+        area = coordinator_with_areas.get_area(area_name)
         expected_identifier = (DOMAIN, area.config.area_id or area_name)
         assert expected_identifier in identifiers, (
             f"Expected {expected_identifier} in {identifiers}"
@@ -125,7 +118,7 @@ class TestAreaOccupancyCoordinator:
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Get first area (always exists - at least one area is guaranteed)
-        area = coordinator.get_area_or_default()
+        area = coordinator.get_area()
         # Handle case where areas might not be loaded in test
         if area is None:
             # Use fallback device info test
@@ -162,7 +155,7 @@ class TestAreaOccupancyCoordinator:
         """Test basic coordinator properties."""
         # These are now methods that take area_name and delegate to area methods
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         # Mock area method to return expected value
         with patch.object(area, property_name, return_value=expected_value):
             method = getattr(coordinator, property_name)
@@ -172,7 +165,7 @@ class TestAreaOccupancyCoordinator:
         """Test threshold property specifically."""
         # threshold is now a method that delegates to area
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         # Set threshold to 0.6 for testing
         area.config.threshold = 0.6
         # The wrapper should call area.threshold()
@@ -182,7 +175,7 @@ class TestAreaOccupancyCoordinator:
         """Test occupied method threshold comparison."""
         # Set threshold to 0.6 and probability to 0.5
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.threshold = 0.6
         # Mock probability to return 0.5
         with patch.object(area, "probability", return_value=0.5):
@@ -198,7 +191,7 @@ class TestAreaOccupancyCoordinator:
         """Test decaying_entities property filtering."""
         # Configure decaying entities - use area-based access
         area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_sensors.get_area(area_name)
         motion2 = area.entities.entities["binary_sensor.motion2"]
         motion2.decay.is_decaying = True
 
@@ -214,7 +207,7 @@ class TestAreaOccupancyCoordinator:
         """Test decaying entities filtering with complex scenarios."""
         # Use area-based access
         area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_sensors.get_area(area_name)
         entities = area.entities.entities
 
         # Set up mixed decay states (using actual entity IDs from coordinator_with_sensors fixture)
@@ -258,7 +251,7 @@ class TestAreaOccupancyCoordinator:
 
         # These are now methods that take area_name
         area_name = test_coordinator.get_area_names()[0]
-        area = test_coordinator.get_area_or_default(area_name)
+        area = test_coordinator.get_area(area_name)
         if entities_empty:
             area.entities._entities = {}
             # Mock area methods instead of coordinator methods
@@ -289,7 +282,7 @@ class TestAreaOccupancyCoordinator:
         """Test probability calculation with mixed evidence and decay states."""
         # Access entities via area
         area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_sensors.get_area(area_name)
         entities = area.entities.entities
 
         # Setup entities with various states
@@ -319,7 +312,7 @@ class TestAreaOccupancyCoordinator:
         """Test probability calculation with entities having different weights."""
         # Use area-based access
         area_name = coordinator_with_sensors.get_area_names()[0]
-        area = coordinator_with_sensors.get_area_or_default(area_name)
+        area = coordinator_with_sensors.get_area(area_name)
         entities = area.entities.entities
 
         entities["binary_sensor.motion"].type.weight = 0.9
@@ -351,7 +344,7 @@ class TestAreaOccupancyCoordinator:
         """Test is_occupied calculation at various threshold boundaries."""
         # These are now methods that take area_name
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.config.threshold = threshold
         with patch.object(area, "probability", return_value=probability):
             assert coordinator.occupied(area_name) == expected_occupied
@@ -374,7 +367,7 @@ class TestAreaOccupancyCoordinator:
         """Test property edge values."""
         # For coordinator properties that are methods, we test via area
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         if property_name == "threshold":
             area.config.threshold = edge_value
             assert coordinator.threshold(area_name) == edge_value
@@ -568,7 +561,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(area.entities, "cleanup", new=AsyncMock()),
@@ -645,7 +638,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         # Prevent scheduling real timers
         with (
@@ -689,7 +682,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         coordinator._global_decay_timer = None
         # _remove_state_listener doesn't exist in new architecture
@@ -728,7 +721,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(area.entities, "get_entity") as mock_get_entity,
@@ -788,7 +781,7 @@ class TestAreaOccupancyCoordinator:
 
         # Access entities via area (multi-area architecture)
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.entities._entities = entities
 
         # Mock area.probability to return a valid value since we're testing delegation
@@ -862,7 +855,7 @@ class TestAreaOccupancyCoordinator:
         entities_manager.entities = {}
         entities_manager.get_entities_by_input_type = Mock(return_value={})
         # Access entities via area
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         if area is None:
             pytest.skip("Area not found in test coordinator")
         area.entities = entities_manager
@@ -878,7 +871,7 @@ class TestAreaOccupancyCoordinator:
         """Test threshold property when config is None."""
         # threshold is now a method that delegates to area
         area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area_or_default(area_name)
+        area = coordinator.get_area(area_name)
         area.threshold = Mock(return_value=0.5)
         # Coordinator wrapper should delegate to area method
         # For mock coordinators, verify area method is mocked correctly
@@ -936,7 +929,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         # Access config via area
         area.config.decay.enabled = True
@@ -962,20 +955,13 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         # Access config via area
         area.config.decay.enabled = False
 
         with (
             patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
-            patch.object(
-                coordinator, "_schedule_save"
-            ),  # Mock _schedule_save to avoid timer
-            patch(
-                "custom_components.area_occupancy.coordinator.async_call_later",
-                return_value=Mock(),  # Return a Mock that can be canceled
-            ),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
@@ -1027,6 +1013,146 @@ class TestAreaOccupancyCoordinator:
             await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_not_called()
 
+    async def test_nightly_timer_start(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test nightly interval aggregation timer start."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+
+        with (
+            patch.object(
+                coordinator,
+                "_next_interval_aggregation_run",
+                return_value=dt_util.utcnow(),
+            ) as mock_next,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=Mock(),
+            ) as mock_track,
+        ):
+            coordinator._start_nightly_timer()
+            mock_next.assert_called_once()
+            mock_track.assert_called_once()
+            assert coordinator._nightly_timer is not None
+
+    async def test_nightly_timer_not_started_when_exists(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test nightly timer is not started when already scheduled."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._nightly_timer = Mock()
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
+        ) as mock_track:
+            coordinator._start_nightly_timer()
+            mock_track.assert_not_called()
+
+    async def test_run_interval_aggregation_job_success(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test successful execution of nightly interval aggregation job."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track:
+            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+            coordinator.db.run_interval_aggregation.assert_called_once()
+            mock_track.assert_called_once()
+            assert coordinator._nightly_timer == mock_track.return_value
+            assert summary["aggregation"] == {"daily": 1}
+            assert summary["errors"] == []
+
+    async def test_run_interval_aggregation_job_triggers_correlation(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Ensure nightly job runs correlation for numeric entities."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        area_name = "Test Area"
+        area = create_test_area(coordinator, area_name=area_name)
+        area.entities._entities = {
+            "sensor.numeric": Mock(type=Mock(input_type=InputType.TEMPERATURE)),
+            "binary_sensor.motion": Mock(type=Mock(input_type=InputType.MOTION)),
+        }
+
+        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
+        coordinator.db.analyze_and_save_correlation = Mock(return_value=True)
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ):
+            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+            coordinator.db.analyze_and_save_correlation.assert_called_once_with(
+                area_name, "sensor.numeric"
+            )
+            assert summary["correlations"]
+            assert summary["correlations"][0]["success"] is True
+
+    async def test_run_interval_aggregation_job_skips_when_no_numeric(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Ensure nightly job skips correlation when no numeric entities."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        area_name = "Test Area"
+        area = create_test_area(coordinator, area_name=area_name)
+        area.entities._entities = {
+            "binary_sensor.motion": Mock(type=Mock(input_type=InputType.MOTION))
+        }
+
+        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
+        coordinator.db.analyze_and_save_correlation = Mock(return_value=True)
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ):
+            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+            coordinator.db.analyze_and_save_correlation.assert_not_called()
+            assert summary["correlations"] == []
+
+    async def test_run_interval_aggregation_job_error(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test error handling for nightly interval aggregation job."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+
+        def _raise_error():
+            raise RuntimeError("Aggregation failed")
+
+        coordinator.db.run_interval_aggregation = Mock(side_effect=_raise_error)
+
+        async def fake_executor_job(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track:
+            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+            mock_track.assert_called_once()
+            assert summary["errors"]
+
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
@@ -1038,7 +1164,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1091,7 +1217,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1159,7 +1285,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         # Mock entity with new evidence
         mock_entity = Mock()
@@ -1204,7 +1330,7 @@ class TestAreaOccupancyCoordinator:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         # Mock entity without new evidence
         mock_entity = Mock()
@@ -1212,13 +1338,6 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(area.entities, "get_entity", return_value=mock_entity),
-            patch.object(
-                coordinator, "_schedule_save"
-            ),  # Mock _schedule_save to avoid timer
-            patch(
-                "custom_components.area_occupancy.coordinator.async_call_later",
-                return_value=Mock(),  # Return a Mock that can be canceled
-            ),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_state_change_event",
                 return_value=Mock(),
@@ -1284,6 +1403,7 @@ class TestAreaOccupancyCoordinator:
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", return_value=None),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
             patch.object(
                 coordinator, "run_analysis", new=AsyncMock()
@@ -1571,7 +1691,7 @@ class TestAreaOccupancyCoordinator:
         coordinator_with_areas._is_master = True  # Enable master-specific cleanup
 
         # Get area from fixture
-        area = coordinator_with_areas.get_area_or_default()
+        area = coordinator_with_areas.get_area()
         assert area is not None
 
         # Set up all timers
@@ -1611,14 +1731,12 @@ class TestAreaOccupancyCoordinator:
         # Should contain at least one area name
         assert all(isinstance(name, str) for name in area_names)
 
-    def test_get_area_or_default(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
-        """Test get_area_or_default method."""
+    def test_get_area(self, coordinator_with_areas: AreaOccupancyCoordinator) -> None:
+        """Test get_area method."""
         # Areas are already loaded by coordinator_with_areas fixture
 
         # Should return first area when None is passed
-        area = coordinator_with_areas.get_area_or_default()
+        area = coordinator_with_areas.get_area()
         assert area is not None
         assert hasattr(area, "area_name")
         assert hasattr(area, "config")
@@ -1629,15 +1747,15 @@ class TestAreaOccupancyCoordinator:
         area_names = coordinator_with_areas.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        specific_area = coordinator_with_areas.get_area_or_default(area_name)
+        specific_area = coordinator_with_areas.get_area(area_name)
         assert specific_area is not None
         assert specific_area.area_name == area_name
 
         # Should return None for non-existent area
-        non_existent = coordinator_with_areas.get_area_or_default("NonExistentArea")
+        non_existent = coordinator_with_areas.get_area("NonExistentArea")
         assert non_existent is None
 
-        first_area = coordinator_with_areas.get_area_or_default()
+        first_area = coordinator_with_areas.get_area()
         assert first_area is not None
         assert first_area.area_name in coordinator_with_areas.get_area_names()
 
@@ -1656,7 +1774,7 @@ class TestRunAnalysisWithPruning:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1689,7 +1807,7 @@ class TestRunAnalysisWithPruning:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1727,7 +1845,7 @@ class TestRunAnalysisWithPruning:
         # Set up an area for the test using helper
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
-        coordinator.get_area_or_default = Mock(return_value=area)
+        coordinator.get_area = Mock(return_value=area)
 
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
@@ -1760,3 +1878,239 @@ class TestRunAnalysisWithPruning:
             coordinator.async_refresh.assert_not_called()
             coordinator.db.save_data.assert_not_called()
             assert coordinator._analysis_timer is None
+
+
+class TestCoordinatorTimerCallbacks:
+    """Test coordinator timer callback error handling."""
+
+    async def test_handle_save_timer_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_save_timer with database error."""
+        with (
+            patch.object(
+                coordinator.db, "save_data", side_effect=RuntimeError("Save failed")
+            ),
+            patch.object(coordinator, "_start_save_timer") as mock_start,
+        ):
+            # Should handle error gracefully and reschedule
+            await coordinator._handle_save_timer(datetime.now())
+            mock_start.assert_called_once()
+
+    async def test_handle_save_timer_success(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_save_timer successful save."""
+        with (
+            patch.object(coordinator.db, "save_data") as mock_save,
+            patch.object(coordinator, "_start_save_timer") as mock_start,
+        ):
+            await coordinator._handle_save_timer(datetime.now())
+            mock_save.assert_called_once()
+            mock_start.assert_called_once()
+
+    async def test_handle_decay_timer_with_decay_enabled(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_decay_timer when decay is enabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.decay.enabled = True
+
+        with (
+            patch.object(coordinator, "async_refresh") as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_start,
+        ):
+            await coordinator._handle_decay_timer(datetime.now())
+            mock_refresh.assert_called_once()
+            mock_start.assert_called_once()
+
+    async def test_handle_decay_timer_with_decay_disabled(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _handle_decay_timer when decay is disabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.decay.enabled = False
+
+        with (
+            patch.object(coordinator, "async_refresh") as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_start,
+        ):
+            await coordinator._handle_decay_timer(datetime.now())
+            # Should not refresh when decay is disabled
+            mock_refresh.assert_not_called()
+            mock_start.assert_called_once()
+
+    async def test_run_analysis_sync_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test run_analysis with sync_states error."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        with (
+            patch.object(
+                coordinator.db, "sync_states", side_effect=RuntimeError("Sync failed")
+            ),
+            patch.object(coordinator.db, "periodic_health_check", return_value=True),
+            patch.object(area, "run_prior_analysis", new=AsyncMock()),
+            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data"),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            # Should handle error gracefully
+            await coordinator.run_analysis(datetime.now())
+
+    async def test_run_analysis_health_check_failure(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test run_analysis with health check failure."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.db, "periodic_health_check", return_value=False),
+            patch.object(area, "run_prior_analysis", new=AsyncMock()),
+            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data"),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            # Should continue despite health check failure
+            await coordinator.run_analysis(datetime.now())
+
+
+class TestCoordinatorAreaRemoval:
+    """Test coordinator area removal scenarios."""
+
+    async def test_async_update_options_remove_area(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test async_update_options when removing an area."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Update config_entry.data to remove the area
+        original_data = coordinator.config_entry.data.copy()
+        coordinator.config_entry.data = {
+            "areas": {
+                "New Area": {
+                    "motion": ["binary_sensor.new_motion"],
+                    "threshold": 50,
+                }
+            }
+        }
+
+        try:
+            with (
+                patch.object(area, "async_cleanup", new=AsyncMock()) as mock_cleanup,
+                patch.object(coordinator.db, "delete_area_data") as mock_delete,
+                patch.object(
+                    coordinator, "track_entity_state_changes", new=AsyncMock()
+                ),
+            ):
+                # Mock entity registry
+                entity_registry = Mock()
+                entity_registry.entities = {}
+                with patch(
+                    "custom_components.area_occupancy.coordinator.er.async_get",
+                    return_value=entity_registry,
+                ):
+                    await coordinator.async_update_options(
+                        coordinator.config_entry.data
+                    )
+
+                # Verify cleanup was called
+                mock_cleanup.assert_called_once()
+                # Verify database deletion was attempted
+                mock_delete.assert_called_once_with(area_name)
+        finally:
+            # Restore original data
+            coordinator.config_entry.data = original_data
+
+    async def test_async_update_options_remove_area_db_error(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test async_update_options when database deletion fails."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Update config_entry.data to remove the area
+        original_data = coordinator.config_entry.data.copy()
+        coordinator.config_entry.data = {
+            "areas": {
+                "New Area": {
+                    "motion": ["binary_sensor.new_motion"],
+                    "threshold": 50,
+                }
+            }
+        }
+
+        try:
+            with (
+                patch.object(area, "async_cleanup", new=AsyncMock()),
+                patch.object(
+                    coordinator.db,
+                    "delete_area_data",
+                    side_effect=OSError("DB deletion failed"),
+                ),
+                patch.object(
+                    coordinator, "track_entity_state_changes", new=AsyncMock()
+                ),
+            ):
+                # Mock entity registry
+                entity_registry = Mock()
+                entity_registry.entities = {}
+                with patch(
+                    "custom_components.area_occupancy.coordinator.er.async_get",
+                    return_value=entity_registry,
+                ):
+                    # Should handle error gracefully
+                    await coordinator.async_update_options(
+                        coordinator.config_entry.data
+                    )
+        finally:
+            # Restore original data
+            coordinator.config_entry.data = original_data
+
+
+class TestCoordinatorFindAreaForEntity:
+    """Test coordinator find_area_for_entity edge cases."""
+
+    def test_find_area_for_entity_not_found(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity when entity is not found."""
+        result = coordinator.find_area_for_entity("binary_sensor.nonexistent")
+        assert result is None
+
+    def test_find_area_for_entity_multiple_areas(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity with multiple areas."""
+        # Create additional area
+        create_test_area(
+            coordinator,
+            area_name="Kitchen",
+            entity_ids=["binary_sensor.kitchen_motion"],
+        )
+
+        # Entity should be found in the correct area
+        result = coordinator.find_area_for_entity("binary_sensor.kitchen_motion")
+        assert result == "Kitchen"
+
+    def test_find_area_for_entity_empty_entity_id(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test find_area_for_entity with empty entity_id."""
+        result = coordinator.find_area_for_entity("")
+        assert result is None
