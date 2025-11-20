@@ -5,20 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import dt as dt_util
 
-from .const import (
-    ALL_AREAS_IDENTIFIER,
-    DOMAIN,
-    MAX_PROBABILITY,
-    MIN_PROBABILITY,
-    ROUNDING_PRECISION,
-)
+from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -277,41 +271,24 @@ def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str |
 
 
 def generate_entity_unique_id(
-    coordinator: AreaOccupancyCoordinator,
-    area_name: str,
+    entry_id: str,
+    device_info: DeviceInfo | dict[str, Any] | None,
     entity_name: str,
 ) -> str:
     """Generate consistent unique_id for platform entities.
 
     Args:
-        coordinator: The coordinator instance
-        area_name: Area name or ALL_AREAS_IDENTIFIER
-        entity_name: Entity name constant (will be normalized)
+        entry_id: Config entry identifier associated with the entity.
+        device_info: DeviceInfo for the parent device (may be None).
+        entity_name: Entity name constant (will be normalized).
 
     Returns:
         Unique ID in format: {entry_id}_{device_id}_{normalized_entity_name}
     """
-    entry_id = coordinator.entry_id
-
-    # Get DeviceInfo from Area or AllAreas
-    if area_name == ALL_AREAS_IDENTIFIER:
-        device_info = coordinator.get_all_areas().device_info()
-    else:
-        area = coordinator.get_area(area_name)
-        if area is None:
-            # Fallback to entry_id if area not found
-            device_id = coordinator.entry_id
-            # Normalize entity name
-            normalized_name = entity_name.lower().replace(" ", "_")
-            return f"{entry_id}_{device_id}_{normalized_name}"
-        device_info = area.device_info()
-
-    # Extract device_id from DeviceInfo
-    device_id = extract_device_identifier_from_device_info(device_info)
+    device_id = extract_device_identifier_from_device_info(device_info or {})
     if device_id is None:
-        device_id = coordinator.entry_id
+        device_id = entry_id
 
-    # Normalize entity name
     normalized_name = entity_name.lower().replace(" ", "_")
 
     return f"{entry_id}_{device_id}_{normalized_name}"

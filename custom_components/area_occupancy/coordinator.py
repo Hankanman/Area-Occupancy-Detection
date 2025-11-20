@@ -22,15 +22,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
-from .area import AllAreas, Area
-from .const import (
-    ALL_AREAS_IDENTIFIER,
-    CONF_AREA_ID,
-    CONF_AREAS,
-    DEFAULT_NAME,
-    MIN_PROBABILITY,
-    SAVE_INTERVAL,
-)
+from .area import AllAreas, Area, AreaDeviceHandle
+from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, SAVE_INTERVAL
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
 
@@ -59,6 +52,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Multi-area architecture: dict[str, Area] keyed by area name
         self.areas: dict[str, Area] = {}
+        self._area_handles: dict[str, AreaDeviceHandle] = {}
 
         # All Areas aggregator (lazy initialization)
         self._all_areas: AllAreas | None = None
@@ -152,6 +146,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name=area_name,
                 area_data=area_data,
             )
+            self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
 
         # Log warnings for deleted/invalid areas
@@ -161,6 +156,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "These areas will be skipped. Please reconfigure via options flow if needed.",
                 len(areas_to_remove),
             )
+
+    def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
+        """Return a stable handle for the requested area."""
+        handle = self._area_handles.get(area_name)
+        if handle is None:
+            handle = AreaDeviceHandle(self, area_name)
+            self._area_handles[area_name] = handle
+        return handle
 
     def get_area(self, area_name: str | None = None) -> Area | None:
         """Get area by name, or return first area if None.
@@ -212,130 +215,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._all_areas = AllAreas(self)
         return self._all_areas
 
-    # --- Area Management ---
-
-    def _with_area[T](
-        self,
-        area_name: str | None,
-        method_name: str,
-        default_value: T,
-        all_areas_method: str | None = None,
-    ) -> T:
-        """Helper method to reduce boilerplate in coordinator methods.
-
-        Handles the common pattern of checking for ALL_AREAS_IDENTIFIER,
-        getting the area, and calling the appropriate method with a default fallback.
-
-        Args:
-            area_name: Area name, None returns first area
-            method_name: Name of the method to call on the area object
-            default_value: Default value to return if area is None
-            all_areas_method: Optional method name to call on AllAreas (defaults to method_name)
-
-        Returns:
-            Result from area method or default_value if area is None
-        """
-        # Handle "All Areas" aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            all_areas = self.get_all_areas()
-            method = getattr(all_areas, all_areas_method or method_name)
-            return method()
-
-        area = self.get_area(area_name)
-        if area is None:
-            return default_value
-
-        method = getattr(area, method_name)
-        return method()
-
-    def probability(self, area_name: str | None = None) -> float:
-        """Calculate and return the current occupancy probability (0.0-1.0) for an area.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            Probability value (0.0-1.0)
-        """
-        return self._with_area(area_name, "probability", MIN_PROBABILITY)
-
-    def type_probabilities(self, area_name: str | None = None) -> dict[str, float]:
-        """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            Dictionary mapping input types to probabilities
-
-        Raises:
-            ValueError: If area_name is ALL_AREAS_IDENTIFIER (not supported for "All Areas")
-        """
-        # "All Areas" does not support type_probabilities aggregation
-        if area_name == ALL_AREAS_IDENTIFIER:
-            raise ValueError(
-                "type_probabilities is not supported for 'All Areas' aggregation"
-            )
-
-        area = self.get_area(area_name)
-        if area is None:
-            return {}
-
-        return area.type_probabilities()
-
-    def area_prior(self, area_name: str | None = None) -> float:
-        """Get the area's baseline occupancy prior from historical data.
-
-        This returns the pure P(area occupied) without any sensor weighting.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            Prior probability (0.0-1.0)
-        """
-        return self._with_area(area_name, "area_prior", MIN_PROBABILITY)
-
-    def decay(self, area_name: str | None = None) -> float:
-        """Calculate the current decay probability (0.0-1.0) for an area.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            Decay probability (0.0-1.0)
-        """
-        return self._with_area(area_name, "decay", 1.0)
-
-    def occupied(self, area_name: str | None = None) -> bool:
-        """Return the current occupancy state (True/False) for an area.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            True if occupied, False otherwise
-        """
-        return self._with_area(area_name, "occupied", False)
-
     @property
     def setup_complete(self) -> bool:
         """Return whether setup is complete."""
         return self._setup_complete
-
-    def threshold(self, area_name: str | None = None) -> float:
-        """Return the current occupancy threshold (0.0-1.0) for an area.
-
-        Args:
-            area_name: Area name, None returns first area (for backward compatibility)
-
-        Returns:
-            Threshold value (0.0-1.0)
-        """
-        area = self.get_area(area_name)
-        if area is None:
-            return 0.5
-        return area.threshold()
 
     def _format_area_names_for_logging(self) -> str:
         """Format area names for logging purposes.
@@ -601,6 +484,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if area:
                     # Clean up removed area
                     await area.async_cleanup()
+                    self.get_area_handle(area_name).attach(None)
 
                     # Remove entities from entity registry
                     entities_removed = 0

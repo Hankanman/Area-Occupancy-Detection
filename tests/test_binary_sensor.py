@@ -29,7 +29,8 @@ class TestOccupancy:
     ) -> None:
         """Test Occupancy entity initialization."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        entity = Occupancy(coordinator_with_areas, area_name)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = Occupancy(area_handle=handle)
 
         assert entity.coordinator == coordinator_with_areas
         # unique_id uses entry_id, device_id, and entity_name
@@ -45,7 +46,8 @@ class TestOccupancy:
     ) -> None:
         """Test entity added to Home Assistant."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        entity = Occupancy(coordinator_with_areas, area_name)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = Occupancy(area_handle=handle)
         # Set hass on entity so device registry can be accessed
         entity.hass = hass
 
@@ -65,7 +67,8 @@ class TestOccupancy:
     ) -> None:
         """Test entity removal from Home Assistant."""
         area_name = coordinator_with_areas.get_area_names()[0]
-        entity = Occupancy(coordinator_with_areas, area_name)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = Occupancy(area_handle=handle)
         # Set entity_id first
         entity.entity_id = (
             f"binary_sensor.{area_name.lower().replace(' ', '_')}_occupancy_status"
@@ -95,7 +98,8 @@ class TestOccupancy:
         """Test icon and is_on properties based on occupancy state."""
         area_name = coordinator_with_areas.get_area_names()[0]
         area = coordinator_with_areas.get_area(area_name)
-        entity = Occupancy(coordinator_with_areas, area_name)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = Occupancy(area_handle=handle)
         # Mock area.occupied method
         area.occupied = Mock(return_value=occupied)
 
@@ -148,7 +152,8 @@ def create_wasp_entity(
     """Create a WaspInBoxSensor with common setup."""
     # WaspInBoxSensor takes (coordinator, area_name, config_entry)
     area_name = wasp_coordinator.get_area_names()[0]
-    entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+    handle = wasp_coordinator.get_area_handle(area_name)
+    entity = WaspInBoxSensor(handle, wasp_config_entry)
     entity.entity_id = "binary_sensor.test_wasp_in_box"
     return entity
 
@@ -164,7 +169,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test WaspInBoxSensor initialization."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Set hass (normally done by HA when entity is added)
         entity.hass = hass
@@ -188,7 +194,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test entity added to Home Assistant."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Mock state restoration and setup methods
         with (
@@ -222,7 +229,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test restoring previous state with and without stored data."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         if has_previous_state:
             # Mock previous state
@@ -260,7 +268,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test entity removal from Home Assistant."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Set up some state to clean up
         entity._remove_timer = Mock()
@@ -287,7 +296,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test extra state attributes."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Set up some state
         entity._last_occupied_time = dt_util.utcnow()
@@ -316,7 +326,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test weight property."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         assert entity.weight == 0.85
 
     async def test_get_valid_entities(
@@ -327,7 +338,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test _get_valid_entities method."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         # Create actual states in hass.states instead of mocking
@@ -387,7 +399,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test handling state changes for different entity types."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Set up initial state - occupied for door test
         if entity_type == "binary_sensor.door1":
@@ -484,7 +497,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test setting state to occupied and unoccupied."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Set up initial state for unoccupied test
         if new_state == STATE_OFF:
@@ -519,7 +533,8 @@ class TestWaspInBoxSensor:
     ) -> None:
         """Test timer start, cancel, and timeout handling."""
         area_name = wasp_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(wasp_coordinator, area_name, wasp_config_entry)
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
 
         # Test starting timer
         entity._max_duration = 3600
@@ -793,7 +808,8 @@ class TestWaspMultiSensorAggregation:
     ) -> WaspInBoxSensor:
         """Create a wasp sensor with multiple door and motion sensors."""
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
         entity.entity_id = "binary_sensor.test_wasp_in_box"
 
@@ -993,7 +1009,8 @@ class TestWaspMultiSensorAggregation:
         area.config.sensors.door = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         result = entity._get_aggregate_door_state()
@@ -1012,7 +1029,8 @@ class TestWaspMultiSensorAggregation:
         area.config.sensors.motion = []
 
         area_name = multi_sensor_coordinator.get_area_names()[0]
-        entity = WaspInBoxSensor(multi_sensor_coordinator, area_name, wasp_config_entry)
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         result = entity._get_aggregate_motion_state()
@@ -1037,7 +1055,8 @@ class TestWaspInBoxSensorErrorHandling:
             motion=[], door=[], window=[], media=[], appliance=[]
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         # Should handle gracefully
@@ -1063,7 +1082,8 @@ class TestWaspInBoxSensorErrorHandling:
             appliance=[],
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         # Should handle gracefully
@@ -1092,7 +1112,8 @@ class TestWaspInBoxSensorErrorHandling:
             appliance=[],
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         # Mock state change event with unknown state
@@ -1125,7 +1146,8 @@ class TestWaspInBoxSensorErrorHandling:
             appliance=[],
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
         # Mock state change event with no new_state
@@ -1157,7 +1179,8 @@ class TestWaspInBoxSensorErrorHandling:
             appliance=[],
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
         entity.entity_id = "binary_sensor.test_wasp_in_box"
 
@@ -1187,7 +1210,8 @@ class TestWaspInBoxSensorErrorHandling:
             appliance=[],
         )
 
-        entity = WaspInBoxSensor(coordinator_with_areas, area_name, wasp_config_entry)
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
         entity.entity_id = "binary_sensor.test_wasp_in_box"
 

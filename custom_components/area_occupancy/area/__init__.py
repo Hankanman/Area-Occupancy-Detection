@@ -6,6 +6,6 @@ for aggregating data across all areas.
 """
 
 from .all_areas import AllAreas
-from .area import Area
+from .area import Area, AreaDeviceHandle
 
-__all__ = ["AllAreas", "Area"]
+__all__ = ["AllAreas", "Area", "AreaDeviceHandle"]

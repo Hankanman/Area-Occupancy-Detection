@@ -38,6 +38,43 @@ else:
 _LOGGER = logging.getLogger(__name__)
 
 
+class AreaDeviceHandle:
+    """Lightweight reference to an Area instance that survives reloads."""
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize a new handle for the given area.
+
+        Args:
+            coordinator: Coordinator that manages the area.
+            area_name: Name of the area represented by this handle.
+        """
+        self.coordinator = coordinator
+        self.area_name = area_name
+        self._area: Area | None = None
+
+    def attach(self, area: Area | None) -> None:
+        """Attach the latest Area implementation."""
+        self._area = area
+
+    @property
+    def area(self) -> Area | None:
+        """Return the currently attached Area."""
+        return self._area
+
+    def resolve(self) -> Area | None:
+        """Return the current Area, refreshing from the coordinator."""
+        area = self.coordinator.get_area(self.area_name)
+        self._area = area
+        return area
+
+    def device_info(self) -> DeviceInfo | None:
+        """Return DeviceInfo for the attached Area, if available."""
+        area = self.resolve()
+        if area is None:
+            return None
+        return area.device_info()
+
+
 class Area:
     """Represents an individual device area in the multi-area architecture.
 
@@ -113,47 +150,12 @@ class Area:
         return self._entities
 
     async def run_prior_analysis(self) -> None:
-        """Run prior analysis for this area.
-
-        This triggers the full prior analysis workflow:
-        - Calculates global prior from sensor data
-        - Writes global prior to database
-        - Updates in-memory state
-        - Calculates time priors and writes to database
-        - Invalidates caches
-
-        Raises:
-            ValueError: If analysis fails due to data error
-            SQLAlchemyError: If database operations fail
-            Exception: For any other unexpected errors
-        """
-        try:
-            await start_prior_analysis(self.coordinator, self.area_name, self.prior)
-        except Exception:
-            _LOGGER.exception("Prior analysis failed for area: %s", self.area_name)
-            raise
+        """Run prior analysis for this area."""
+        await start_prior_analysis(self.coordinator, self.area_name, self.prior)
 
     async def run_likelihood_analysis(self) -> None:
-        """Run likelihood analysis for this area.
-
-        This triggers the full likelihood analysis workflow:
-        - Gets occupied intervals from Prior
-        - Calculates likelihoods for all entities
-        - Writes likelihoods to database
-        - Updates Entity objects in memory
-
-        Raises:
-            ValueError: If analysis fails due to data error
-            SQLAlchemyError: If database operations fail
-            Exception: For any other unexpected errors
-        """
-        try:
-            await start_likelihood_analysis(
-                self.coordinator, self.area_name, self.entities
-            )
-        except Exception:
-            _LOGGER.exception("Likelihood analysis failed for area: %s", self.area_name)
-            raise
+        """Run likelihood analysis for this area."""
+        await start_likelihood_analysis(self.coordinator, self.area_name, self.entities)
 
     async def async_cleanup(self) -> None:
         """Clean up the area's resources.
