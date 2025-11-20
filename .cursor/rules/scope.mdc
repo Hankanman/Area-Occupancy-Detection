@@ -2,36 +2,54 @@
 alwaysApply: true
 ---
 
-There are three main scopes of the codebase:
+There are three main scopes of the codebase within the `custom_components/area_occupancy` directory:
 
 1. Integration level
 
-- **init**.py
+```text
+- db/__init__.py
+- db/aggregation.py
+- db/constants.py
+- db/core.py
+- db/correlation.py
+- db/maintenance.py
+- db/operations.py
+- db/queries.py
+- db/relationships.py
+- db/schema.py
+- db/sync.py
+- db/utils.py
+- __init__.py
 - coordinator.py
 - config_flow.py
 - migrations.py
 - service.py
-- db.py
 - storage.py
 - utils.py
 - const.py
 - manifest.json
+```
 
 2. Area level
 
-- areas/**init**.py
-- areas/area.py
-- areas/all_areas.py
+```text
+- area/__init__.py
+- area/area.py
+- area/all_areas.py
+```
 
 3. Helper Classes
 
-- data/**init**.py
+```text
+- data/__init__.py
+- data/analysis.py
 - data/config.py
-- data/entity.py
-- data/entity_type.py
-- data/prior.py
 - data/decay.py
+- data/entity_type.py
+- data/entity.py
+- data/prior.py
 - data/purpose.py
+```
 
 The integration level is responsible for the overall coordination of the integration. It is responsible for the overall configuration of the integration, the overall data flow and storage in the database.
 
