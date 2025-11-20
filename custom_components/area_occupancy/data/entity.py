@@ -13,7 +13,7 @@ from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..db import AreaOccupancyDB as DB
 from ..utils import clamp_probability, ensure_timezone_aware
 from .decay import Decay
-from .entity_type import EntityType, InputType
+from .entity_type import DEFAULT_TYPES, EntityType, InputType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -330,6 +330,29 @@ class EntityFactory:
             # Weight is invalid, keep the default from EntityType initialization
             pass
 
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Do not use learned likelihoods from database for motion sensors
+        if input_type == InputType.MOTION:
+            # Get configured values from area config, fall back to defaults if not configured
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_true"],
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_false"],
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+            _LOGGER.debug(
+                "Using configured likelihoods for motion sensor %s: prob_given_true=%.2f, prob_given_false=%.2f",
+                entity_id,
+                prob_given_true,
+                prob_given_false,
+            )
+
         # Create decay object
         decay = Decay(
             half_life=self.config.decay.half_life,
@@ -387,11 +410,30 @@ class EntityFactory:
             decay_start=dt_util.utcnow(),
         )
 
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Other sensors use defaults from EntityType
+        if input_type_enum == InputType.MOTION:
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                entity_type.prob_given_true,
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                entity_type.prob_given_false,
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+        else:
+            prob_given_true = entity_type.prob_given_true
+            prob_given_false = entity_type.prob_given_false
+
         return Entity(
             entity_id=entity_id,
             type=entity_type,
-            prob_given_true=entity_type.prob_given_true,
-            prob_given_false=entity_type.prob_given_false,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
             decay=decay,
             hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),

@@ -72,6 +72,18 @@ class TestRunAnalysis:
         )()
         coordinator_with_areas.db.import_stats = {"binary_sensor.motion1": 100}
 
+        # Mock area methods that are called by _build_analysis_data
+        area.probability = Mock(return_value=0.5)
+        area.occupied = Mock(return_value=False)
+        area.threshold = Mock(return_value=0.5)
+        area.area_prior = Mock(return_value=0.3)
+
+        # Mock prior attributes
+        area.prior.global_prior = 0.3
+        # Set cached time_prior values (time_prior is a property with cache)
+        area.prior._cached_time_prior = None
+        area.prior.sensor_ids = ["binary_sensor.motion1"]
+
         # Mock run_analysis method - it always runs for all areas
         coordinator_with_areas.run_analysis = AsyncMock()
 

@@ -46,6 +46,8 @@ CONF_OPTION_PREFIX_AREA: Final = "area_"
 CONF_AREA_ID: Final = "area_id"
 CONF_PURPOSE: Final = "purpose"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
+CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
+CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
 CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
@@ -89,6 +91,8 @@ DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
+DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = 0.02  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 
 # Database recovery defaults

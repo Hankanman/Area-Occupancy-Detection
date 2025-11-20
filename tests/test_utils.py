@@ -582,3 +582,144 @@ class TestBayesianProbability:
         result = bayesian_probability(entities, prior=combined_prior)
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))
+
+    def test_bayesian_inactive_sensor_inverse_likelihoods(self) -> None:
+        """Test that inactive sensors use inverse likelihoods."""
+        # Entity with prob_given_true=0.8, prob_given_false=0.1
+        # When inactive, should use p_t=0.2, p_f=0.9
+        entity = Mock()
+        entity.evidence = False  # Inactive
+        entity.decay.decay_factor = 1.0
+        entity.decay.is_decaying = False
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+        entity.weight = 1.0
+
+        entities = {"entity1": entity}
+
+        # Calculate with prior 0.5
+        result = bayesian_probability(entities, prior=0.5)
+
+        # With inverse likelihoods: p_t=0.2, p_f=0.9
+        # log_true = log(0.5) + log(0.2) = -0.693 - 1.609 = -2.302
+        # log_false = log(0.5) + log(0.9) = -0.693 - 0.105 = -0.798
+        # After normalization, probability should be low (inactive sensor suggests not occupied)
+        assert 0.0 <= result <= 1.0
+        # Inactive sensor with high prob_given_true means it's usually active when occupied
+        # So when inactive, it suggests not occupied -> lower probability
+        assert result < 0.5  # Should be below prior since inactive
+
+    def test_bayesian_motion_sensor_with_inactive_others(self) -> None:
+        """Test motion sensor with multiple inactive sensors to verify probability increases."""
+        # Motion sensor: active, high reliability
+        motion = Mock()
+        motion.evidence = True
+        motion.decay.decay_factor = 1.0
+        motion.decay.is_decaying = False
+        motion.prob_given_true = 0.95
+        motion.prob_given_false = 0.02
+        motion.weight = 1.0
+
+        # Media player: inactive
+        media = Mock()
+        media.evidence = False
+        media.decay.decay_factor = 1.0
+        media.decay.is_decaying = False
+        media.prob_given_true = 0.65
+        media.prob_given_false = 0.02
+        media.weight = 0.85
+
+        # Door: inactive
+        door = Mock()
+        door.evidence = False
+        door.decay.decay_factor = 1.0
+        door.decay.is_decaying = False
+        door.prob_given_true = 0.2
+        door.prob_given_false = 0.02
+        door.weight = 0.3
+
+        # Window: inactive
+        window = Mock()
+        window.evidence = False
+        window.decay.decay_factor = 1.0
+        window.decay.is_decaying = False
+        window.prob_given_true = 0.2
+        window.prob_given_false = 0.02
+        window.weight = 0.2
+
+        entities = {
+            "motion": motion,
+            "media": media,
+            "door": door,
+            "window": window,
+        }
+
+        # Test with prior 0.3
+        result = bayesian_probability(entities, prior=0.3)
+
+        # Motion sensor is active with high prob_given_true (0.95) and low prob_given_false (0.02)
+        # This should significantly increase probability from prior
+        # Inactive sensors use inverse likelihoods, which provide some negative evidence
+        # but the motion sensor's strong positive evidence should dominate
+        assert 0.0 <= result <= 1.0
+        assert result > 0.3  # Should be higher than prior due to active motion sensor
+        assert result > 0.5  # Should be significantly higher
+
+    def test_bayesian_inactive_edge_cases(self) -> None:
+        """Test edge cases for inactive sensors with extreme likelihood values."""
+        # Test with prob_given_true near 0.0
+        entity1 = Mock()
+        entity1.evidence = False
+        entity1.decay.decay_factor = 1.0
+        entity1.decay.is_decaying = False
+        entity1.prob_given_true = 0.01  # Near 0
+        entity1.prob_given_false = 0.01
+        entity1.weight = 1.0
+
+        # Inverse: p_t = 0.99, p_f = 0.99 (should be clamped)
+        entities1 = {"entity1": entity1}
+        result1 = bayesian_probability(entities1, prior=0.5)
+        assert 0.0 <= result1 <= 1.0
+
+        # Test with prob_given_true near 1.0
+        entity2 = Mock()
+        entity2.evidence = False
+        entity2.decay.decay_factor = 1.0
+        entity2.decay.is_decaying = False
+        entity2.prob_given_true = 0.99  # Near 1
+        entity2.prob_given_false = 0.99
+        entity2.weight = 1.0
+
+        # Inverse: p_t = 0.01, p_f = 0.01 (should be clamped)
+        entities2 = {"entity2": entity2}
+        result2 = bayesian_probability(entities2, prior=0.5)
+        assert 0.0 <= result2 <= 1.0
+
+    def test_bayesian_unavailable_sensors_skipped(self) -> None:
+        """Test that unavailable sensors are still skipped (unchanged behavior)."""
+        # Available but inactive sensor
+        inactive = Mock()
+        inactive.evidence = False
+        inactive.decay.decay_factor = 1.0
+        inactive.decay.is_decaying = False
+        inactive.prob_given_true = 0.8
+        inactive.prob_given_false = 0.1
+        inactive.weight = 1.0
+
+        # Unavailable sensor (should be skipped)
+        unavailable = Mock()
+        unavailable.evidence = None  # Unavailable
+        unavailable.decay.decay_factor = 1.0
+        unavailable.decay.is_decaying = False
+        unavailable.prob_given_true = 0.8
+        unavailable.prob_given_false = 0.1
+        unavailable.weight = 1.0
+
+        entities = {"inactive": inactive, "unavailable": unavailable}
+
+        # Should behave the same as if only inactive sensor was present
+        result1 = bayesian_probability(entities, prior=0.5)
+        result2 = bayesian_probability({"inactive": inactive}, prior=0.5)
+
+        # Results should be the same (unavailable sensor is skipped)
+        assert abs(result1 - result2) < 1e-6

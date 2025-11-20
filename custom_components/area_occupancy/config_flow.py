@@ -64,6 +64,8 @@ from .const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
+    CONF_MOTION_PROB_GIVEN_FALSE,
+    CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_OPTION_PREFIX_AREA,
@@ -90,6 +92,8 @@ from .const import (
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
+    DEFAULT_MOTION_PROB_GIVEN_FALSE,
+    DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
     DEFAULT_THRESHOLD,
@@ -105,6 +109,8 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
 )
 from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
 from .state_mapping import get_default_state, get_state_options
@@ -283,6 +289,32 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                     step=5,
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="seconds",
+                )
+            ),
+            vol.Optional(
+                CONF_MOTION_PROB_GIVEN_TRUE,
+                default=defaults.get(
+                    CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_PROBABILITY,
+                    max=MAX_PROBABILITY,
+                    step=0.01,
+                    mode=NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_MOTION_PROB_GIVEN_FALSE,
+                default=defaults.get(
+                    CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_PROBABILITY,
+                    max=MAX_PROBABILITY,
+                    step=0.01,
+                    mode=NumberSelectorMode.BOX,
                 )
             ),
         }
@@ -1246,6 +1278,20 @@ class BaseOccupancyFlow:
         if primary_sensor not in motion_sensors:
             raise vol.Invalid(
                 "Primary occupancy sensor must be one of the selected motion sensors"
+            )
+
+        # Validate motion sensor likelihoods
+        motion_prob_given_true = data.get(
+            CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
+        )
+        motion_prob_given_false = data.get(
+            CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
+        )
+        if motion_prob_given_true <= motion_prob_given_false:
+            raise vol.Invalid(
+                "Motion sensor P(Active | Occupied) must be greater than "
+                "P(Active | Not Occupied). Motion sensors should be more reliable "
+                "when the area is actually occupied."
             )
 
         # Validate threshold

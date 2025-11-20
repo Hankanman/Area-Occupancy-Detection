@@ -598,16 +598,26 @@ class TestEntityPropertiesAndMethods:
             area = coordinator_with_areas.get_area(area_name)
             area.config.decay.half_life = 300.0
 
+            # Set configured motion sensor likelihoods (motion sensors use configured values, not database values)
+            # Default values are 0.95 and 0.02, but we'll set explicit test values
+            area.config.sensors.motion_prob_given_true = 0.95
+            area.config.sensors.motion_prob_given_false = 0.02
+
             # EntityFactory requires area_name
             factory = EntityFactory(coordinator_with_areas, area_name=area_name)
             entity = factory.create_from_db(mock_db_entity)
 
             # Verify entity creation
+            # Motion sensors use configured likelihoods, not database values
             assert entity.entity_id == "binary_sensor.test"
             assert entity.type == mock_entity_type
             assert entity.decay == mock_decay
-            assert entity.prob_given_true == 0.8
-            assert entity.prob_given_false == 0.1
+            assert (
+                entity.prob_given_true == 0.95
+            )  # Uses configured value, not database value (0.8)
+            assert (
+                entity.prob_given_false == 0.02
+            )  # Uses configured value, not database value (0.1)
             assert entity.previous_evidence is True
 
             # Verify factory calls - EntityType is instantiated directly
