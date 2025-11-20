@@ -113,26 +113,6 @@ def find_overlapping_motion_intervals(
     ]
 
 
-def calculate_motion_union(
-    motion_intervals: list[tuple[datetime, datetime]],
-    merged_start: datetime,
-    merged_end: datetime,
-) -> tuple[datetime, datetime]:
-    """Calculate the union of motion coverage within a merged interval."""
-    if not motion_intervals:
-        return (merged_start, merged_end)
-
-    sorted_motion = sorted(motion_intervals, key=lambda x: x[0])
-
-    motion_union_start = min(m_start for m_start, _ in sorted_motion)
-    motion_union_end = max(m_end for _, m_end in sorted_motion)
-
-    motion_union_start = max(motion_union_start, merged_start)
-    motion_union_end = min(motion_union_end, merged_end)
-
-    return (motion_union_start, motion_union_end)
-
-
 def segment_interval_with_motion(
     merged_interval: tuple[datetime, datetime],
     motion_intervals: list[tuple[datetime, datetime]],
@@ -164,7 +144,7 @@ def segment_interval_with_motion(
 
         motion_timeout_end = None
         if clamped_start < clamped_end:
-            motion_timeout_end = clamped_end + timeout_delta
+            motion_timeout_end = min(clamped_end + timeout_delta, merged_end)
             segments.append((clamped_start, motion_timeout_end))
             last_motion_timeout_end = motion_timeout_end
 

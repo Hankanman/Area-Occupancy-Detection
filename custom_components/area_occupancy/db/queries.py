@@ -67,6 +67,11 @@ def get_aggregated_intervals_by_slot(
     entry_id: str,
     slot_minutes: int = 60,
     area_name: str | None = None,
+    lookback_days: int = 90,
+    include_media: bool = False,
+    include_appliance: bool = False,
+    media_sensor_ids: list[str] | None = None,
+    appliance_sensor_ids: list[str] | None = None,
 ) -> list[tuple[int, int, float]]:
     """Get aggregated interval data using SQL GROUP BY for better performance.
 
@@ -75,36 +80,64 @@ def get_aggregated_intervals_by_slot(
         entry_id: The area entry ID to filter by
         slot_minutes: Time slot size in minutes
         area_name: The area name to filter by (required for multi-area support)
+        lookback_days: Number of days to look back for data
+        include_media: Whether to include media player sensors
+        include_appliance: Whether to include appliance sensors
+        media_sensor_ids: List of media sensor entity IDs to include
+        appliance_sensor_ids: List of appliance sensor entity IDs to include
 
     Returns:
         List of (day_of_week, time_slot, total_occupied_seconds) tuples
 
+    Note:
+        motion_timeout_seconds cannot be applied in SQL aggregation as it requires
+        Python interval processing. This function aggregates raw intervals without
+        applying motion timeout extensions.
+
     """
     _LOGGER.debug("Getting aggregated intervals by slot using SQL GROUP BY")
 
+    cutoff_date = dt_util.utcnow() - timedelta(days=lookback_days)
+
     try:
         with db.get_session() as session:
-            # Use SQLite datetime functions to group intervals by day and time slot
-            # This is much more efficient than Python loops
-            query = (
-                session.query(
-                    func.strftime("%w", db.Intervals.start_time).label("day_of_week"),
+            # Base filters for time range and entry_id
+            base_filters = [
+                db.Entities.entry_id == entry_id,
+                db.Intervals.start_time >= cutoff_date,
+            ]
+
+            # Add area_name filter if provided (required for multi-area support)
+            if area_name is not None:
+                base_filters.append(db.Entities.area_name == area_name)
+                base_filters.append(db.Intervals.area_name == area_name)
+
+            # Common expression for day_of_week and time_slot calculation
+            day_of_week_expr = func.strftime("%w", db.Intervals.start_time).label(
+                "day_of_week"
+            )
+            time_slot_expr = func.cast(
+                (
                     func.cast(
-                        (
-                            func.cast(
-                                func.strftime("%H", db.Intervals.start_time),
-                                sa.Integer,
-                            )
-                            * 60
-                            + func.cast(
-                                func.strftime("%M", db.Intervals.start_time),
-                                sa.Integer,
-                            )
-                        )
-                        // slot_minutes,
+                        func.strftime("%H", db.Intervals.start_time),
                         sa.Integer,
-                    ).label("time_slot"),
-                    func.sum(db.Intervals.duration_seconds).label("total_seconds"),
+                    )
+                    * 60
+                    + func.cast(
+                        func.strftime("%M", db.Intervals.start_time),
+                        sa.Integer,
+                    )
+                )
+                // slot_minutes,
+                sa.Integer,
+            ).label("time_slot")
+
+            # Build motion query
+            motion_query = (
+                session.query(
+                    day_of_week_expr,
+                    time_slot_expr,
+                    db.Intervals.duration_seconds.label("duration_seconds"),
                 )
                 .join(
                     db.Entities,
@@ -114,20 +147,79 @@ def get_aggregated_intervals_by_slot(
                     ),
                 )
                 .filter(
-                    db.Entities.entry_id == entry_id,
-                    db.Entities.entity_type
-                    == "motion",  # Use string instead of InputType enum
+                    *base_filters,
+                    db.Entities.entity_type == InputType.MOTION.value,
                     db.Intervals.state == "on",
                 )
             )
-            # Add area_name filter if provided (required for multi-area support)
-            if area_name is not None:
-                query = query.filter(db.Entities.area_name == area_name)
-            query = query.group_by("day_of_week", "time_slot").order_by(
-                "day_of_week", "time_slot"
+
+            # Start with motion query
+            queries = [motion_query]
+
+            # Add media player query if requested
+            if include_media and media_sensor_ids:
+                media_query = (
+                    session.query(
+                        day_of_week_expr,
+                        time_slot_expr,
+                        db.Intervals.duration_seconds.label("duration_seconds"),
+                    )
+                    .join(
+                        db.Entities,
+                        sa.and_(
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                            db.Intervals.area_name == db.Entities.area_name,
+                        ),
+                    )
+                    .filter(
+                        *base_filters,
+                        db.Entities.entity_type == InputType.MEDIA.value,
+                        db.Intervals.entity_id.in_(media_sensor_ids),
+                        db.Intervals.state == STATE_PLAYING,
+                    )
+                )
+                queries.append(media_query)
+
+            # Add appliance query if requested
+            if include_appliance and appliance_sensor_ids:
+                appliance_query = (
+                    session.query(
+                        day_of_week_expr,
+                        time_slot_expr,
+                        db.Intervals.duration_seconds.label("duration_seconds"),
+                    )
+                    .join(
+                        db.Entities,
+                        sa.and_(
+                            db.Intervals.entity_id == db.Entities.entity_id,
+                            db.Intervals.area_name == db.Entities.area_name,
+                        ),
+                    )
+                    .filter(
+                        *base_filters,
+                        db.Entities.entity_type == InputType.APPLIANCE.value,
+                        db.Intervals.entity_id.in_(appliance_sensor_ids),
+                        db.Intervals.state == STATE_ON,
+                    )
+                )
+                queries.append(appliance_query)
+
+            # Union all queries and aggregate by day_of_week and time_slot
+            select_statements = [query.statement for query in queries]
+            union_subquery = union_all(*select_statements).subquery()
+
+            # Aggregate the unioned results by day_of_week and time_slot
+            aggregated_query = (
+                session.query(
+                    union_subquery.c.day_of_week,
+                    union_subquery.c.time_slot,
+                    func.sum(union_subquery.c.duration_seconds).label("total_seconds"),
+                )
+                .group_by(union_subquery.c.day_of_week, union_subquery.c.time_slot)
+                .order_by(union_subquery.c.day_of_week, union_subquery.c.time_slot)
             )
 
-            results = query.all()
+            results = aggregated_query.all()
 
             # Convert SQLite day_of_week (0=Sunday) to Python weekday (0=Monday)
             converted_results = []

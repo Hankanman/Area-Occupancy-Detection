@@ -713,8 +713,10 @@ def _prune_old_global_priors(
 async def ensure_area_exists(db: AreaOccupancyDB) -> None:
     """Ensure that the area record exists in the database."""
     try:
-        # Check if area exists
-        existing_area = queries.get_area_data(db, db.coordinator.entry_id)
+        # Check if area exists (offload blocking DB call to executor)
+        existing_area = await db.hass.async_add_executor_job(
+            queries.get_area_data, db, db.coordinator.entry_id
+        )
         if existing_area:
             _LOGGER.debug(
                 "Area already exists for entry_id: %s", db.coordinator.entry_id
@@ -726,11 +728,13 @@ async def ensure_area_exists(db: AreaOccupancyDB) -> None:
             "Area not found, forcing creation for entry_id: %s",
             db.coordinator.entry_id,
         )
-        # Call save_area_data directly to avoid circular dependency
-        save_area_data(db)
+        # Call save_area_data via executor to avoid blocking the event loop
+        await db.hass.async_add_executor_job(save_area_data, db)
 
-        # Verify it was created
-        new_area = queries.get_area_data(db, db.coordinator.entry_id)
+        # Verify it was created (offload blocking DB call to executor)
+        new_area = await db.hass.async_add_executor_job(
+            queries.get_area_data, db, db.coordinator.entry_id
+        )
         if new_area:
             _LOGGER.info("Successfully created area: %s", new_area)
         else:
@@ -858,6 +862,7 @@ def save_global_prior(
         "Saving global prior for area: %s, value: %.4f", area_name, prior_value
     )
 
+    session = None
     try:
         with db.get_locked_session() as session:
             # Create hash of underlying data for validation
@@ -915,7 +920,8 @@ def save_global_prior(
 
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error saving global prior: %s", e)
-        session.rollback()
+        if session is not None and session.is_active:
+            session.rollback()
         return False
 
 
@@ -942,6 +948,7 @@ def save_occupied_intervals_cache(
         area_name,
     )
 
+    session = None
     try:
         with db.get_locked_session() as session:
             calculation_date = dt_util.utcnow()
@@ -972,5 +979,6 @@ def save_occupied_intervals_cache(
 
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error saving occupied intervals cache: %s", e)
-        session.rollback()
+        if session is not None and session.is_active:
+            session.rollback()
         return False
