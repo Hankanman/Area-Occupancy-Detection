@@ -1,15 +1,15 @@
 """Entity model."""
 
-import bisect
-from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
+from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..db import AreaOccupancyDB as DB
 from ..utils import clamp_probability, ensure_timezone_aware
 from .decay import Decay
@@ -31,14 +31,29 @@ class Entity:
     prob_given_true: float
     prob_given_false: float
     decay: Decay
-    coordinator: "AreaOccupancyCoordinator"
-    last_updated: datetime
-    previous_evidence: bool | None
+    hass: HomeAssistant | None = None
+    state_provider: Callable[[str], Any] | None = None
+    last_updated: datetime = None
+    previous_evidence: bool | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that either hass or state_provider is provided."""
+        if self.hass is None and self.state_provider is None:
+            raise ValueError("Either hass or state_provider must be provided")
+        if self.hass is not None and self.state_provider is not None:
+            raise ValueError("Cannot provide both hass and state_provider")
+        if self.last_updated is None:
+            self.last_updated = dt_util.utcnow()
 
     @property
     def name(self) -> str | None:
-        """Get the entity name from Home Assistant state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity name from Home Assistant state or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "name"):
+                return state_obj.name
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
     @property
@@ -48,19 +63,32 @@ class Entity:
 
     @property
     def state(self) -> str | float | bool | None:
-        """Get the entity state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity state from Home Assistant or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj is None:
+                return None
+            # Handle both object with .state attribute and direct value
+            if hasattr(state_obj, "state"):
+                state_value = state_obj.state
+            else:
+                state_value = state_obj
+        else:
+            ha_state = self.hass.states.get(self.entity_id)
+            if ha_state is None:
+                return None
+            state_value = ha_state.state
 
-        # Check if HA state is valid
-        if ha_state and ha_state.state not in [
+        # Check if state is valid
+        if state_value in [
             "unknown",
             "unavailable",
             None,
             "",
             "NaN",
         ]:
-            return ha_state.state
-        return None
+            return None
+        return state_value
 
     @property
     def weight(self) -> float:
@@ -171,10 +199,27 @@ class Entity:
 class EntityFactory:
     """Factory for creating entities from various sources."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the factory."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str,
+    ) -> None:
+        """Initialize the factory.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Area name for multi-area support
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Validate area_name exists and retrieve config from coordinator.areas
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data.
@@ -204,7 +249,7 @@ class EntityFactory:
 
         # Convert numeric fields with validation
         try:
-            weight = float(entity_data["weight"])
+            db_weight = float(entity_data["weight"])
             prob_given_true = float(entity_data["prob_given_true"])
             prob_given_false = float(entity_data["prob_given_false"])
         except (TypeError, ValueError) as e:
@@ -230,24 +275,50 @@ class EntityFactory:
             previous_evidence = bool(previous_evidence)
 
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(entity_type_str),
-            self.config,
+        input_type = InputType(entity_type_str)
+
+        # Extract overrides from config
+        config_weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type.value, None)
+            if weight_attr is not None:
+                config_weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type,
+            weight=config_weight,
+            active_states=active_states,
+            active_range=active_range,
         )
 
         # DB weight should take priority over configured default
         try:
-            if MIN_WEIGHT <= weight <= MAX_WEIGHT:
-                entity_type.weight = weight
+            if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
+                entity_type.weight = db_weight
         except (TypeError, ValueError):
-            # Weight is invalid, keep the default from EntityType.create
+            # Weight is invalid, keep the default from EntityType initialization
             pass
 
         # Create decay object
-        decay = Decay.create(
-            decay_start=decay_start,
+        decay = Decay(
             half_life=self.config.decay.half_life,
             is_decaying=is_decaying,
+            decay_start=decay_start,
         )
 
         return Entity(
@@ -256,7 +327,7 @@ class EntityFactory:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=last_updated,
             previous_evidence=previous_evidence,
         )
@@ -264,14 +335,40 @@ class EntityFactory:
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
         """Create entity from configuration specification."""
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(input_type),
-            self.config,
+        input_type_enum = InputType(input_type)
+
+        # Extract overrides from config
+        weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type_enum.value, None)
+            if weight_attr is not None:
+                weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type_enum.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type_enum.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type_enum,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
         )
-        decay = Decay.create(
-            decay_start=dt_util.utcnow(),
+        decay = Decay(
             half_life=self.config.decay.half_life,
             is_decaying=False,
+            decay_start=dt_util.utcnow(),
         )
 
         return Entity(
@@ -280,7 +377,7 @@ class EntityFactory:
             prob_given_true=entity_type.prob_given_true,
             prob_given_false=entity_type.prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
         )
@@ -333,12 +430,32 @@ class EntityFactory:
 class EntityManager:
     """Manages entities with simplified creation and storage logic."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the entity manager."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the entity manager.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Required area name for multi-area support. Used to look up
+                the area configuration from coordinator.areas.
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Validate area_name and retrieve config from coordinator.areas
+        if not area_name:
+            raise ValueError("Area name is required in multi-area architecture")
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
         self.hass = coordinator.hass
-        self._factory = EntityFactory(coordinator)
+        self._factory = EntityFactory(coordinator, area_name=area_name)
         self._entities: dict[str, Entity] = self._factory.create_all_from_config()
 
     @property
@@ -397,194 +514,15 @@ class EntityManager:
         self._entities[entity.entity_id] = entity
 
     async def cleanup(self) -> None:
-        """Clean up resources and recreate from config."""
-        self._entities.clear()
-        self._entities = self._factory.create_all_from_config()
+        """Clean up resources and recreate from config.
 
-    async def update_likelihoods(self) -> None:
-        """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
-
-        Use motion-based labels for 'occupied'.
+        This method clears all entity references to release memory
+        and prevent leaks when areas are removed or reconfigured.
         """
-        _LOGGER.debug("Updating likelihoods")
-        db = self.coordinator.db
-        entry_id = self.coordinator.entry_id
-
-        with db.get_session() as session:
-            sensors = self._get_sensors(session, entry_id)
-            if not sensors:
-                return
-
-            occupied_times = self.coordinator.prior.get_occupied_intervals()
-            intervals_by_entity = self._get_intervals_by_entity(session, sensors)
-
-            for entity in sensors:
-                self._update_entity_likelihoods(
-                    entity, intervals_by_entity, occupied_times, dt_util.utcnow()
-                )
-
-            session.commit()
-            _LOGGER.debug("Likelihoods updated")
-
-    def _get_sensors(self, session: Any, entry_id: str) -> list["DB.Entities"]:
-        """Get all sensor configs for this area."""
-        return list(
-            session.query(self.coordinator.db.Entities)
-            .filter_by(entry_id=entry_id)
-            .all()
-        )
-
-    def _get_intervals_by_entity(
-        self,
-        session: Any,
-        sensors: list["DB.Entities"],
-    ) -> dict[str, list["DB.Intervals"]]:
-        """Get all intervals grouped by entity_id."""
-        sensor_entity_ids = [entity.entity_id for entity in sensors]
-
-        all_intervals = (
-            session.query(self.coordinator.db.Intervals)
-            .filter(self.coordinator.db.Intervals.entity_id.in_(sensor_entity_ids))
-            .all()
-        )
-
-        intervals_by_entity = defaultdict(list)
-        for interval in all_intervals:
-            intervals_by_entity[interval.entity_id].append(interval)
-
-        return intervals_by_entity
-
-    def _update_entity_likelihoods(
-        self,
-        entity: "DB.Entities",
-        intervals_by_entity: dict[str, list["DB.Intervals"]],
-        occupied_times: list[tuple[datetime, datetime]],
-        now: datetime,
-    ) -> None:
-        """Update likelihoods for a single entity."""
-        # Convert SQLAlchemy entity to Python types
-        entity_id = str(entity.entity_id)
-        intervals = intervals_by_entity[entity_id]
-        entity_obj = self.get_entity(entity_id)
-
-        # Count interval states
-        true_occ: float = 0.0
-        false_occ: float = 0.0
-        true_empty: float = 0.0
-        false_empty: float = 0.0
-
-        for interval in intervals:
-            # Convert SQLAlchemy interval to Python types
-            interval_data = interval.to_dict()
-            start_time = interval_data["start_time"]
-            duration_seconds = float(interval_data["duration_seconds"])
-
-            occ = self._is_occupied(start_time, occupied_times)
-            is_active = self._is_interval_active(interval, entity_obj)
-
-            if is_active:
-                if occ:
-                    true_occ += duration_seconds
-                else:
-                    true_empty += duration_seconds
-            elif occ:
-                false_occ += duration_seconds
-            else:
-                false_empty += duration_seconds
-
-        # Calculate probabilities
-        prob_given_true = (
-            true_occ / (true_occ + false_occ) if (true_occ + false_occ) > 0 else 0.5
-        )
-        prob_given_false = (
-            true_empty / (true_empty + false_empty)
-            if (true_empty + false_empty) > 0
-            else 0.5
-        )
-
-        # Special handling for motion sensors (ground truth)
-        if entity_obj.type.input_type == InputType.MOTION:
-            # Check data quality for motion sensors
-            total_occupied_time = true_occ + false_occ
-            total_unoccupied_time = true_empty + false_empty
-
-            if total_occupied_time < 3600:  # Less than 1 hour of occupied time
-                _LOGGER.warning(
-                    "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
-                    entity_id,
-                    total_occupied_time,
-                )
-                prob_given_true = entity_obj.type.prob_given_true
-                prob_given_false = entity_obj.type.prob_given_false
-            else:
-                # Trust calculated values when sufficient data exists
-                # Log info if values are outside typical ranges (for debugging)
-                if prob_given_true < 0.8:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_true (%.3f) below typical range (0.8), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_true,
-                        total_occupied_time,
-                    )
-
-                # Check if we have sufficient unoccupied data for prob_given_false
-                # If not, the calculated value is just a fallback (0.5), not real data
-                if total_unoccupied_time < 3600:  # Less than 1 hour of unoccupied time
-                    _LOGGER.info(
-                        "Motion sensor %s has insufficient unoccupied time data (%.1fs), "
-                        "using default for prob_given_false (%.3f)",
-                        entity_id,
-                        total_unoccupied_time,
-                        entity_obj.type.prob_given_false,
-                    )
-                    prob_given_false = entity_obj.type.prob_given_false
-                elif prob_given_false > 0.1:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_false (%.3f) above typical range (0.1), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_false,
-                        total_unoccupied_time,
-                    )
-        else:
-            # Fallback to defaults if too low for other sensors
-            if prob_given_true < MIN_PROBABILITY:
-                prob_given_true = entity_obj.type.prob_given_true
-            if prob_given_false < MIN_PROBABILITY:
-                prob_given_false = entity_obj.type.prob_given_false
-
-        # Update entity
-        entity_obj.update_likelihood(prob_given_true, prob_given_false)
-
-    def _is_occupied(
-        self, ts: datetime, occupied_times: list[tuple[datetime, datetime]]
-    ) -> bool:
-        """Check if timestamp falls within any occupied interval."""
-        if not occupied_times:
-            return False
-
-        # Binary search to find the rightmost interval that starts <= ts
-        idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
-
-        # Check if ts falls within the interval found
-        if idx > 0:
-            start, end = occupied_times[idx - 1]
-            if start <= ts < end:
-                return True
-
-        return False
-
-    def _is_interval_active(self, interval: "DB.Intervals", entity_obj: Entity) -> bool:
-        """Determine if interval state is active based on entity type."""
-        if entity_obj.active_states:
-            return interval.state in entity_obj.active_states
-        if entity_obj.active_range:
-            min_val, max_val = entity_obj.active_range
-            try:
-                state_val = float(interval.state)
-            except (ValueError, TypeError):
-                return False
-            else:
-                return min_val <= state_val <= max_val
-        return False
+        _LOGGER.debug("Cleaning up EntityManager for area: %s", self.area_name)
+        # Clear all entity references to release memory
+        # This ensures entities and their internal state (decay, etc.) are released
+        self._entities.clear()
+        # Recreate entities from config (needed for reconfiguration scenarios)
+        self._entities = self._factory.create_all_from_config()
+        _LOGGER.debug("EntityManager cleanup completed for area: %s", self.area_name)

@@ -1,0 +1,50 @@
+#!/bin/sh
+
+# script/bootstrap: Install/update all dependencies required to run the project
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Checking for uv..."
+if ! command -v uv >/dev/null 2>&1; then
+  echo "UV not found, installing..."
+  if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+    echo "ERROR: uv installer failed" >&2
+    exit 1
+  fi
+
+  # Verify uv is now available on PATH
+  if ! command -v uv >/dev/null 2>&1; then
+    # Try adding common install locations to PATH
+    export PATH="$HOME/.local/bin:$PATH"
+    export PATH="/usr/local/bin:$PATH"
+
+    # Re-check after adding common paths
+    if ! command -v uv >/dev/null 2>&1; then
+      echo "ERROR: uv installer completed but uv is not found on PATH" >&2
+      echo "Please run: source ~/.bashrc  (or ~/.zshrc, ~/.profile, etc.)" >&2
+      echo "Or manually add uv to your PATH and re-run this script" >&2
+      exit 1
+    fi
+  fi
+fi
+
+echo "==> Creating virtual environment if needed..."
+if [ ! -d ".venv" ]; then
+    uv venv
+fi
+
+echo "==> Installing dependencies..."
+uv pip install --python .venv/bin/python --requirement requirements.txt
+
+echo "==> Installing test dependencies..."
+uv pip install --python .venv/bin/python --requirement requirements_test.txt
+
+echo "==> Installing dev dependencies..."
+uv pip install --python .venv/bin/python ".[dev]"
+
+echo "==> Installing pre-commit hooks..."
+uv run pre-commit install
+
+echo "==> Bootstrap completed!"

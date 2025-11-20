@@ -15,7 +15,7 @@ class TestDecay:
     @pytest.mark.parametrize(
         ("kwargs", "expected_is_decaying", "expected_half_life"),
         [
-            ({}, False, 30.0),
+            ({"half_life": 30.0}, False, 30.0),
             ({"is_decaying": True, "half_life": 60.0}, True, 60.0),
         ],
     )
@@ -83,7 +83,7 @@ class TestDecay:
         self, initial_state: bool, method: str, expected_is_decaying: bool
     ) -> None:
         """Test decay control methods."""
-        decay = Decay(is_decaying=initial_state)
+        decay = Decay(half_life=60.0, is_decaying=initial_state)
         original_start = decay.decay_start
 
         # Call the method
@@ -101,7 +101,7 @@ class TestDecay:
         ("kwargs", "expected_values"),
         [
             (
-                {},
+                {"half_life": 30.0},
                 {"is_decaying": False, "half_life": 30.0},
             ),
             (
@@ -118,9 +118,11 @@ class TestDecay:
             ),
         ],
     )
-    def test_create_classmethod(self, kwargs: dict, expected_values: dict) -> None:
-        """Test the create classmethod."""
-        decay = Decay.create(**kwargs)
+    def test_initialization_with_kwargs(
+        self, kwargs: dict, expected_values: dict
+    ) -> None:
+        """Test initialization with various keyword arguments."""
+        decay = Decay(**kwargs)
         for key, expected_value in expected_values.items():
             assert getattr(decay, key) == expected_value
 
@@ -130,7 +132,7 @@ class TestDecay:
         naive_datetime = datetime(2023, 1, 1, 12, 0, 0)  # No timezone info
 
         # Create decay with naive datetime
-        decay = Decay.create(decay_start=naive_datetime, is_decaying=True)
+        decay = Decay(half_life=60.0, decay_start=naive_datetime, is_decaying=True)
 
         # Verify the datetime is now timezone-aware
         assert decay.decay_start.tzinfo is not None

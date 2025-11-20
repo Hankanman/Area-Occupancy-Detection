@@ -2,50 +2,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from pathlib import Path
 from typing import Any
 
 from filelock import FileLock
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from .binary_sensor import NAME_BINARY_SENSOR
-from .const import (
-    CONF_APPLIANCE_ACTIVE_STATES,
-    CONF_AREA_ID,
-    CONF_DECAY_HALF_LIFE,
-    CONF_DOOR_ACTIVE_STATE,
-    CONF_MEDIA_ACTIVE_STATES,
-    CONF_MOTION_SENSORS,
-    CONF_MOTION_TIMEOUT,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
-    CONF_PURPOSE,
-    CONF_THRESHOLD,
-    CONF_VERSION,
-    CONF_VERSION_MINOR,
-    CONF_WINDOW_ACTIVE_STATE,
-    DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_DECAY_HALF_LIFE,
-    DEFAULT_DOOR_ACTIVE_STATE,
-    DEFAULT_MEDIA_ACTIVE_STATES,
-    DEFAULT_MOTION_TIMEOUT,
-    DEFAULT_PURPOSE,
-    DEFAULT_THRESHOLD,
-    DEFAULT_WINDOW_ACTIVE_STATE,
-    DOMAIN,
-    PLATFORMS,
-)
+from .const import DEFAULT_THRESHOLD, DOMAIN
 from .db import DB_NAME, DB_VERSION
 from .number import NAME_THRESHOLD_NUMBER
 from .sensor import NAME_DECAY_SENSOR, NAME_PRIORS_SENSOR, NAME_PROBABILITY_SENSOR
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Entity Registry Migrations
+# ============================================================================
 
 
 async def async_migrate_unique_ids(
@@ -54,7 +36,6 @@ async def async_migrate_unique_ids(
     """Migrate unique IDs of entities in the entity registry."""
     _LOGGER.debug("Starting unique ID migration for platform %s", platform)
     entity_registry = er.async_get(hass)
-    updated_entries = 0
     entry_id = config_entry.entry_id
 
     # Define which entity types to look for based on platform
@@ -72,22 +53,32 @@ async def async_migrate_unique_ids(
     old_prefix = f"{DOMAIN}_{entry_id}_"
     _LOGGER.debug("Looking for entities with old prefix: %s", old_prefix)
 
-    for entity_id, entity_entry in entity_registry.entities.items():
-        old_unique_id = entity_entry.unique_id
-        # Convert to string to avoid AttributeError
-        if old_unique_id is not None and str(old_unique_id).startswith(old_prefix):
-            # Simply remove the domain prefix to get the new ID
-            new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_")
+    # Find entities matching the old prefix
+    matching_entities = _find_entities_by_prefix(
+        entity_registry, old_prefix, config_entry.entry_id
+    )
+    updated_entries = 0
 
-            # Update the unique ID in the registry
-            _LOGGER.info(
-                "Migrating unique ID for %s: %s -> %s",
-                entity_id,
-                old_unique_id,
-                new_unique_id,
-            )
-            entity_registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
-            updated_entries += 1
+    for entity_id, entity_entry in matching_entities:
+        old_unique_id = entity_entry.unique_id
+        # Simply remove the domain prefix to get the new ID
+        new_unique_id = str(old_unique_id).replace(old_prefix, f"{entry_id}_").lower()
+
+        # Update the unique ID in the registry (no conflict checking needed here)
+        _LOGGER.info(
+            "Migrating unique ID for %s: %s -> %s",
+            entity_id,
+            old_unique_id,
+            new_unique_id,
+        )
+        _update_entity_unique_id(
+            entity_registry,
+            entity_id,
+            str(old_unique_id),
+            new_unique_id,
+            check_conflicts=False,
+        )
+        updated_entries += 1
 
     if updated_entries > 0:
         _LOGGER.info(
@@ -99,198 +90,244 @@ async def async_migrate_unique_ids(
         _LOGGER.debug("No unique IDs to migrate for platform %s", platform)
 
 
-DECAY_MIN_DELAY_KEY = "decay_min_delay"
+# Entity Registry Helper Functions
+# ==========================================
 
 
-def remove_decay_min_delay(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay delay option from config."""
-    if DECAY_MIN_DELAY_KEY in config:
-        config.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from config")
-    return config
-
-
-CONF_LIGHTS_KEY = "lights"
-
-
-def remove_lights_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated lights key from config."""
-    if CONF_LIGHTS_KEY in config:
-        config.pop(CONF_LIGHTS_KEY)
-        _LOGGER.debug("Removed deprecated lights key from config")
-    return config
-
-
-CONF_DECAY_WINDOW_KEY = "decay_window"
-
-
-def remove_decay_window_key(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated decay window key from config."""
-    if CONF_DECAY_WINDOW_KEY in config:
-        config.pop(CONF_DECAY_WINDOW_KEY)
-        _LOGGER.debug("Removed deprecated decay window key from config")
-    return config
-
-
-CONF_HISTORICAL_ANALYSIS_ENABLED = "historical_analysis_enabled"
-CONF_HISTORY_PERIOD = "history_period"
-
-
-def remove_history_keys(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated history period key from config."""
-    if CONF_HISTORY_PERIOD in config:
-        config.pop(CONF_HISTORY_PERIOD)
-        _LOGGER.debug("Removed deprecated history period key from config")
-    if CONF_HISTORICAL_ANALYSIS_ENABLED in config:
-        config.pop(CONF_HISTORICAL_ANALYSIS_ENABLED)
-        _LOGGER.debug("Removed deprecated historical analysis enabled key from config")
-    return config
-
-
-def migrate_decay_half_life(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add decay half life."""
-    if CONF_DECAY_HALF_LIFE not in config:
-        config[CONF_DECAY_HALF_LIFE] = DEFAULT_DECAY_HALF_LIFE
-        _LOGGER.debug("Added decay half life to config")
-
-    return config
-
-
-def migrate_primary_occupancy_sensor(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add primary occupancy sensor.
-
-    This migration:
-    1. Takes the first motion sensor as the primary occupancy sensor if none is set
-    2. Preserves any existing primary occupancy sensor setting
-    3. Logs the migration for debugging
+def _find_entities_by_prefix(
+    entity_registry: er.EntityRegistry,
+    prefix: str,
+    config_entry_id: str | None = None,
+) -> list[tuple[str, er.RegistryEntry]]:
+    """Find entities matching a prefix pattern.
 
     Args:
-        config: The configuration to migrate
+        entity_registry: The entity registry to search
+        prefix: The prefix to match against unique IDs
+        config_entry_id: Optional config entry ID to filter by
 
     Returns:
-        The migrated configuration
-
+        List of (entity_id, entity_entry) tuples matching the prefix
     """
-    if CONF_PRIMARY_OCCUPANCY_SENSOR not in config:
-        motion_sensors = config.get(CONF_MOTION_SENSORS, [])
-        if motion_sensors:
-            config[CONF_PRIMARY_OCCUPANCY_SENSOR] = motion_sensors[0]
-            _LOGGER.debug(
-                "Migrated primary occupancy sensor to first motion sensor: %s",
-                motion_sensors[0],
-            )
-        else:
-            _LOGGER.debug(
-                "No motion sensors found for primary occupancy sensor migration"
-            )
+    matches = []
+    for entity_id, entity_entry in entity_registry.entities.items():
+        # Filter by config_entry_id if provided
+        if config_entry_id and entity_entry.config_entry_id != config_entry_id:
+            continue
 
-    return config
+        old_unique_id = entity_entry.unique_id
+        if old_unique_id is not None and str(old_unique_id).startswith(prefix):
+            matches.append((entity_id, entity_entry))
+    return matches
 
 
-def migrate_purpose_field(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add purpose field with default value.
-
-    This migration:
-    1. Adds the purpose field with default value if it doesn't exist
-    2. Preserves any existing purpose setting
-    3. Logs the migration for debugging
+def _check_unique_id_conflict(
+    entity_registry: er.EntityRegistry,
+    new_unique_id: str,
+    exclude_entity_id: str,
+) -> tuple[bool, str | None]:
+    """Check if a unique ID already exists in the registry.
 
     Args:
-        config: The configuration to migrate
+        entity_registry: The entity registry to check
+        new_unique_id: The unique ID to check for conflicts
+        exclude_entity_id: Entity ID to exclude from conflict check (the entity being migrated)
 
     Returns:
-        The migrated configuration
-
+        Tuple of (has_conflict: bool, conflicting_entity_id: str | None)
     """
-
-    if CONF_PURPOSE not in config:
-        config[CONF_PURPOSE] = DEFAULT_PURPOSE
-        _LOGGER.debug("Migrated purpose field to default value: %s", DEFAULT_PURPOSE)
-
-    return config
-
-
-def migrate_motion_timeout(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to add motion timeout."""
-    if CONF_MOTION_TIMEOUT not in config:
-        config[CONF_MOTION_TIMEOUT] = DEFAULT_MOTION_TIMEOUT
-        _LOGGER.debug("Added motion timeout to config: %s", DEFAULT_MOTION_TIMEOUT)
-
-    return config
+    new_unique_id_lower = str(new_unique_id).lower()
+    for other_entity_id, other_entity_entry in entity_registry.entities.items():
+        if (
+            other_entity_id != exclude_entity_id
+            and str(other_entity_entry.unique_id).lower() == new_unique_id_lower
+        ):
+            return True, other_entity_id
+    return False, None
 
 
-def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Migrate configuration to latest version.
+def _update_entity_unique_id(
+    entity_registry: er.EntityRegistry,
+    entity_id: str,
+    old_unique_id: str,
+    new_unique_id: str,
+    check_conflicts: bool = True,
+) -> tuple[bool, str | None]:
+    """Update entity unique ID with optional conflict checking.
 
     Args:
-        config: The configuration to migrate
+        entity_registry: The entity registry to update
+        entity_id: The entity ID to update
+        old_unique_id: The current unique ID (for logging)
+        new_unique_id: The new unique ID to set
+        check_conflicts: Whether to check for conflicts before updating
 
     Returns:
-        The migrated configuration
-
+        Tuple of (success: bool, conflict_entity_id: str | None)
+        If check_conflicts is True and a conflict exists, returns (False, conflict_entity_id)
+        Otherwise returns (True, None)
     """
-    # Apply migrations in order
-    config = remove_decay_min_delay(config)
-    config = migrate_primary_occupancy_sensor(config)
-    config = migrate_decay_half_life(config)
-    config = remove_decay_window_key(config)
-    config = remove_lights_key(config)
-    config = remove_history_keys(config)
-    config = migrate_purpose_field(config)
-    return migrate_motion_timeout(config)
+    # Ensure unique_id is lowercase
+    new_unique_id = str(new_unique_id).lower()
+
+    if check_conflicts:
+        has_conflict, conflict_entity_id = _check_unique_id_conflict(
+            entity_registry, new_unique_id, entity_id
+        )
+        if has_conflict:
+            return False, conflict_entity_id
+
+    entity_registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+    return True, None
 
 
-LEGACY_STORAGE_KEY = "area_occupancy.storage"
+# ============================================================================
+# Configuration Migration Constants and Helpers
+# ============================================================================
 
 
-async def async_migrate_storage(
-    hass: HomeAssistant, entry_id: str, entry_major: int
-) -> None:
-    """Migrate legacy multi-instance storage to per-entry storage format."""
+# Configuration Migration Helper Functions
+# ==========================================
+
+
+def _safe_file_operation(operation: Callable[[], Any], error_message: str) -> bool:
+    """Safely execute a file operation with error handling.
+
+    Args:
+        operation: Callable that performs the file operation
+        error_message: Error message to log if operation fails
+
+    Returns:
+        True if operation succeeded, False otherwise
+    """
     try:
-        _LOGGER.debug("Starting storage migration for entry %s", entry_id)
+        operation()
+    except OSError as err:
+        _LOGGER.warning("%s: %s", error_message, err)
+        return False
+    else:
+        return True
 
-        # Check for and clean up legacy multi-instance storage using direct file operations
-        storage_dir = Path(hass.config.config_dir) / ".storage"
-        legacy_file = storage_dir / LEGACY_STORAGE_KEY
 
-        if legacy_file.exists():
-            _LOGGER.info(
-                "Found legacy storage file %s, removing it for fresh start",
-                legacy_file.name,
+def _safe_database_operation(operation: Callable[[], Any], error_message: str) -> bool:
+    """Safely execute a database operation with error handling.
+
+    Args:
+        operation: Callable that performs the database operation
+        error_message: Error message to log if operation fails
+
+    Returns:
+        True if operation succeeded, False otherwise
+    """
+    try:
+        operation()
+    except (SQLAlchemyError, OSError) as err:
+        _LOGGER.warning("%s: %s", error_message, err)
+        return False
+    else:
+        return True
+
+
+# ============================================================================
+# Database Migrations
+# ============================================================================
+
+
+def _update_db_version(session: Any, version: int) -> None:
+    """Update database version in metadata table.
+
+    Args:
+        session: SQLAlchemy session
+        version: Version number to set
+    """
+    try:
+        session.execute(
+            text("UPDATE metadata SET value = :version WHERE key = 'db_version'"),
+            {"version": str(version)},
+        )
+        if session.execute(text("SELECT changes()")).scalar() == 0:
+            session.execute(
+                text(
+                    "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
+                ),
+                {"version": str(version)},
             )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _drop_all_tables(engine: Any, session: Any) -> None:
+    """Drop all database tables for complete schema reset.
+
+    Args:
+        engine: SQLAlchemy engine
+        session: SQLAlchemy session
+    """
+    _LOGGER.info("Dropping all tables for complete database reset")
+    _update_db_version(session, DB_VERSION)
+    session.commit()
+
+    with engine.connect() as conn:
+        # Drop all tables including new ones
+        tables_to_drop = [
+            "cross_area_stats",
+            "area_relationships",
+            "entity_statistics",
+            "numeric_correlations",
+            "numeric_aggregates",
+            "numeric_samples",
+            "global_priors",
+            "occupied_intervals_cache",
+            "interval_aggregates",
+            "intervals",
+            "priors",
+            "entities",
+            "areas",
+            "metadata",
+        ]
+        for table_name in tables_to_drop:
             try:
-                legacy_file.unlink()
-                _LOGGER.info("Successfully removed legacy storage file")
-            except OSError as err:
-                _LOGGER.warning(
-                    "Error removing legacy storage file %s: %s", legacy_file, err
-                )
-
-        # Reset database for version < 11
-        await async_reset_database_if_needed(hass, entry_major)
-
-        _LOGGER.debug("Storage migration completed for entry %s", entry_id)
-    except (HomeAssistantError, OSError, ValueError) as err:
-        _LOGGER.error("Error during storage migration for entry %s: %s", entry_id, err)
+                conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                _LOGGER.debug("Dropped table: %s", table_name)
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.debug("Error dropping table %s: %s", table_name, e)
+        conn.commit()
+        _LOGGER.info(
+            "All tables dropped successfully - database will be recreated with new schema"
+        )
 
 
-def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
-    """Blocking helper: perform locked drop of legacy tables if needed."""
-    if entry_major >= 11:
-        _LOGGER.debug("Skipping table dropping for version %s", entry_major)
-        return
+def _drop_tables_locked(
+    storage_dir: Path,
+    entry_major: int,
+    engine_factory: Any | None = None,
+    session_factory: Any | None = None,
+) -> None:
+    """Blocking helper: perform locked drop of tables if DB version doesn't match.
 
-    _LOGGER.info("Dropping tables for schema migration")
+    Args:
+        storage_dir: Directory containing the database file
+        entry_major: Major version number of the entry (for compatibility, not used for DB version check)
+        engine_factory: Optional factory function to create engine (for testing)
+        session_factory: Optional factory function to create session (for testing)
+    """
     db_path = storage_dir / DB_NAME
     if not db_path.exists():
+        _LOGGER.debug("Database file does not exist, no migration needed")
         return
 
     lock_path = storage_dir / (DB_NAME + ".lock")
     try:
         with FileLock(lock_path):
-            engine = create_engine(f"sqlite:///{db_path}")
-            session = sessionmaker(bind=engine)()
+            if engine_factory is not None:
+                engine = engine_factory()
+            else:
+                engine = create_engine(f"sqlite:///{db_path}")
+
+            if session_factory is not None:
+                session = session_factory()
+            else:
+                session = sessionmaker(bind=engine)()
 
             db_version = 0
             try:
@@ -303,42 +340,15 @@ def _drop_tables_locked(storage_dir: Path, entry_major: int) -> None:
             except Exception:  # noqa: BLE001
                 db_version = 0
 
-            if db_version < 3:
-                _LOGGER.info("Dropping tables for schema migration")
-                try:
-                    session.execute(
-                        text(
-                            "UPDATE metadata SET value = :version WHERE key = 'db_version'"
-                        ),
-                        {"version": str(DB_VERSION)},
-                    )
-                    if session.execute(text("SELECT changes()")).scalar() == 0:
-                        session.execute(
-                            text(
-                                "INSERT INTO metadata (key, value) VALUES ('db_version', :version)"
-                            ),
-                            {"version": str(DB_VERSION)},
-                        )
-                except Exception:  # noqa: BLE001
-                    pass
-                session.commit()
-
-                with engine.connect() as conn:
-                    tables_to_drop = [
-                        "intervals",
-                        "priors",
-                        "entities",
-                        "areas",
-                        "metadata",
-                    ]
-                    for table_name in tables_to_drop:
-                        try:
-                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
-                            _LOGGER.debug("Dropped table: %s", table_name)
-                        except Exception as e:  # noqa: BLE001
-                            _LOGGER.debug("Error dropping table %s: %s", table_name, e)
-                    conn.commit()
-                    _LOGGER.info("All tables dropped successfully")
+            # If version doesn't match current DB_VERSION, delete and recreate database
+            if db_version != DB_VERSION:
+                _LOGGER.info(
+                    "Database version %d doesn't match current version %d. "
+                    "Deleting and recreating database with new schema.",
+                    db_version,
+                    DB_VERSION,
+                )
+                _drop_all_tables(engine, session)
 
             session.close()
             engine.dispose()
@@ -359,117 +369,20 @@ async def async_reset_database_if_needed(hass: HomeAssistant, entry_major: int) 
     await hass.async_add_executor_job(_drop_tables_locked, storage_dir, entry_major)
 
 
+# ============================================================================
+# Entry Migration (Main Entry Point)
+# ============================================================================
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to the new version."""
-    current_major = CONF_VERSION
-    current_minor = CONF_VERSION_MINOR
-    entry_major = config_entry.version
-    entry_minor = getattr(
-        config_entry, "minor_version", 0
-    )  # Use 0 if minor_version doesn't exist
+    # No migration needed - all legacy support has been removed
+    return True
 
-    if entry_major > current_major or (
-        entry_major == current_major and entry_minor >= current_minor
-    ):
-        # Stored version is same or newer, no migration needed
-        _LOGGER.debug(
-            "Skipping migration for %s: Stored version (%s.%s) >= Current version (%s.%s)",
-            config_entry.entry_id,
-            entry_major,
-            entry_minor,
-            current_major,
-            current_minor,
-        )
-        return True  # Indicate successful (skipped) migration
 
-    _LOGGER.info(
-        "Migrating Area Occupancy entry %s from version %s.%s to %s.%s",
-        config_entry.entry_id,
-        entry_major,
-        entry_minor,
-        current_major,
-        current_minor,
-    )
-
-    # --- Run Storage File Migration First ---
-    _LOGGER.debug("Starting storage migration for %s", config_entry.entry_id)
-    await async_migrate_storage(hass, config_entry.entry_id, entry_major)
-    _LOGGER.debug("Storage migration completed for %s", config_entry.entry_id)
-    # --------------------------------------
-
-    # Get existing data
-    _LOGGER.debug("Getting existing config data for %s", config_entry.entry_id)
-    data = {**config_entry.data}
-    options = {**config_entry.options}
-
-    try:
-        # Run the unique ID migrations
-        _LOGGER.debug("Starting unique ID migrations for %s", config_entry.entry_id)
-        for platform in PLATFORMS:
-            _LOGGER.debug("Migrating unique IDs for platform %s", platform)
-            await async_migrate_unique_ids(hass, config_entry, platform)
-        _LOGGER.debug("Unique ID migrations completed for %s", config_entry.entry_id)
-    except HomeAssistantError as err:
-        _LOGGER.error("Error during unique ID migration: %s", err)
-
-    # Remove deprecated fields
-    _LOGGER.debug("Removing deprecated fields for %s", config_entry.entry_id)
-    if CONF_AREA_ID in data:
-        data.pop(CONF_AREA_ID)
-        _LOGGER.debug("Removed deprecated CONF_AREA_ID")
-
-    if DECAY_MIN_DELAY_KEY in data:
-        data.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from data")
-    if DECAY_MIN_DELAY_KEY in options:
-        options.pop(DECAY_MIN_DELAY_KEY)
-        _LOGGER.debug("Removed deprecated decay_min_delay from options")
-
-    # Ensure new state configuration values are present with defaults
-    _LOGGER.debug("Adding new state configurations for %s", config_entry.entry_id)
-    new_configs = {
-        CONF_DOOR_ACTIVE_STATE: DEFAULT_DOOR_ACTIVE_STATE,
-        CONF_WINDOW_ACTIVE_STATE: DEFAULT_WINDOW_ACTIVE_STATE,
-        CONF_MEDIA_ACTIVE_STATES: DEFAULT_MEDIA_ACTIVE_STATES,
-        CONF_APPLIANCE_ACTIVE_STATES: DEFAULT_APPLIANCE_ACTIVE_STATES,
-    }
-
-    # Update data with new state configurations if not present
-    for key, default_value in new_configs.items():
-        if key not in data and key not in options:
-            _LOGGER.info("Adding new configuration %s with default value", key)
-            # For multi-select states, add to data
-            if isinstance(default_value, list):
-                data[key] = default_value
-            # For single-select states, add to options
-            else:
-                options[key] = default_value
-
-    try:
-        # Apply configuration migrations
-        _LOGGER.debug("Applying configuration migrations for %s", config_entry.entry_id)
-        data = migrate_config(data)
-        options = migrate_config(options)
-
-        # Handle threshold value with default if not present
-        threshold = options.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-        options[CONF_THRESHOLD] = validate_threshold(threshold)
-
-        # Update the config entry with new data and options
-        _LOGGER.debug("Updating config entry for %s", config_entry.entry_id)
-        hass.config_entries.async_update_entry(
-            config_entry,
-            data=data,
-            options=options,
-            version=CONF_VERSION,
-            minor_version=CONF_VERSION_MINOR,
-        )
-        _LOGGER.info("Successfully migrated config entry %s", config_entry.entry_id)
-    except (ValueError, KeyError, HomeAssistantError) as err:
-        _LOGGER.error("Error during config migration: %s", err)
-        return False
-    else:
-        return True
+# ============================================================================
+# Validation Functions
+# ============================================================================
 
 
 def validate_threshold(threshold: float) -> float:
