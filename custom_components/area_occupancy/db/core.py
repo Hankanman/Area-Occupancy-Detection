@@ -276,10 +276,23 @@ class AreaOccupancyDB:
         entry_id: str,
         slot_minutes: int = 60,
         area_name: str | None = None,
+        lookback_days: int = 90,
+        include_media: bool = False,
+        include_appliance: bool = False,
+        media_sensor_ids: list[str] | None = None,
+        appliance_sensor_ids: list[str] | None = None,
     ) -> list[tuple[int, int, float]]:
         """Get aggregated interval data using SQL GROUP BY for better performance."""
         return queries.get_aggregated_intervals_by_slot(
-            self, entry_id, slot_minutes, area_name
+            self,
+            entry_id,
+            slot_minutes,
+            area_name,
+            lookback_days,
+            include_media,
+            include_appliance,
+            media_sensor_ids,
+            appliance_sensor_ids,
         )
 
     def get_total_occupied_seconds_sql(
