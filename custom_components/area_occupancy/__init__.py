@@ -60,7 +60,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         try:
             migration_result = await async_migrate_entry(hass, entry)
-            _validate_migration_result(migration_result, entry.entry_id)
+
+            # If migration returned False, check if it's because the entry was deleted
+            # (consolidated into another entry). In that case, we stop setup cleanly.
+            if not migration_result:
+                if entry.data.get("deleted"):
+                    _LOGGER.info(
+                        "Entry %s was consolidated during migration, stopping setup",
+                        entry.entry_id,
+                    )
+                    return False
+
+                # Real failure
+                _validate_migration_result(migration_result, entry.entry_id)
+
             # Update entry version after successful migration
             hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
             _LOGGER.info(

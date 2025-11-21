@@ -419,7 +419,7 @@ def _combine_config_entries(
     return area_configs
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:  # noqa: C901
     """Migrate old entry to the new version.
 
     This migration combines multiple old config entries (each representing one area)
@@ -442,6 +442,14 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         # If entry is already at version 13 or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
+            # Check if we were deleted while waiting for lock
+            if config_entry.data.get("deleted"):
+                _LOGGER.info(
+                    "Entry %s was marked deleted while waiting for lock, stopping setup",
+                    config_entry.entry_id,
+                )
+                return False
+
             _LOGGER.debug(
                 "Entry %s already at version %d, no migration needed",
                 config_entry.entry_id,
@@ -629,21 +637,28 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     entities_removed,
                 )
 
-        # Remove old entries
-        # Ensure we remove the current entry LAST, as it might cancel this task
-        entries_to_remove.sort(key=lambda eid: eid == config_entry.entry_id)
+    # REMOVAL MUST BE OUTSIDE LOCK TO PREVENT DEADLOCK
+    # We run removals as background tasks to avoid blocking the surviving entry's setup
+    # if the old entries are currently busy/locked.
 
-        for entry_id in entries_to_remove:
-            _LOGGER.info("Removing old config entry %s", entry_id)
-            try:
-                await hass.config_entries.async_remove(entry_id)
-            except (OSError, KeyError, ValueError) as err:
-                _LOGGER.error("Failed to remove old entry %s: %s", entry_id, err)
+    async def _remove_entry_safe(entry_id: str) -> None:
+        """Remove entry safely in background."""
+        _LOGGER.info("Removing old config entry %s (background task)", entry_id)
+        try:
+            await hass.config_entries.async_remove(entry_id)
+        except (OSError, KeyError, ValueError) as err:
+            _LOGGER.error("Failed to remove old entry %s: %s", entry_id, err)
 
-        if entries_to_remove:
-            _LOGGER.info(
-                "Migration completed: %d entry(ies) combined into single entry",
-                len(cleanup_entry_ids),
-            )
+    # Ensure we remove the current entry LAST
+    entries_to_remove.sort(key=lambda eid: eid == config_entry.entry_id)
 
-        return migration_result
+    for entry_id in entries_to_remove:
+        hass.async_create_task(_remove_entry_safe(entry_id))
+
+    if entries_to_remove:
+        _LOGGER.info(
+            "Migration completed: %d entry(ies) scheduled for removal",
+            len(entries_to_remove),
+        )
+
+    return migration_result
