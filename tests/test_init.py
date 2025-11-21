@@ -142,6 +142,52 @@ class TestAsyncSetupEntry:
         # Coordinator is now stored in hass.data[DOMAIN] instead of runtime_data
         assert hass.data[DOMAIN_CONST] == coordinator
 
+    async def test_async_setup_entry_migration_updates_version(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Test that entry version is updated after successful migration."""
+        # Ensure hass.data[DOMAIN] doesn't exist initially
+        if DOMAIN_CONST in hass.data:
+            del hass.data[DOMAIN_CONST]
+
+        # Set entry to an old version to trigger migration
+        old_version = CONF_VERSION - 1
+        mock_config_entry.version = old_version
+
+        # Use real coordinator to test actual database initialization
+        coordinator = AreaOccupancyCoordinator(hass, mock_config_entry)
+        # Mock get_area_names to return a list
+        coordinator.get_area_names = Mock(return_value=["Test Area"])
+
+        # Mock async_update_entry to verify it's called
+        mock_update_entry = Mock()
+
+        with (
+            patch.object(
+                coordinator, "async_config_entry_first_refresh", new=AsyncMock()
+            ),
+            patch(
+                "custom_components.area_occupancy.AreaOccupancyCoordinator",
+                return_value=coordinator,
+            ),
+            patch("custom_components.area_occupancy.async_setup_services", AsyncMock()),
+            patch.object(
+                hass.config_entries, "async_forward_entry_setups", new=AsyncMock()
+            ),
+            patch.object(
+                hass.config_entries,
+                "async_update_entry",
+                new=mock_update_entry,
+            ),
+        ):
+            result = await async_setup_entry(hass, mock_config_entry)
+
+        assert result is True
+        # Verify async_update_entry was called with the correct version
+        mock_update_entry.assert_called_once_with(
+            mock_config_entry, version=CONF_VERSION
+        )
+
 
 class TestAsyncSetup:
     """Test async_setup function."""

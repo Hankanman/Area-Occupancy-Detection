@@ -15,7 +15,6 @@ from custom_components.area_occupancy.config_flow import (
     _build_area_description_placeholders,
     _create_action_selection_schema,
     _create_area_selection_schema,
-    _ensure_primary_in_motion_sensors,
     _find_area_by_id,
     _find_area_by_sanitized_id,
     _flatten_sectioned_input,
@@ -26,7 +25,6 @@ from custom_components.area_occupancy.config_flow import (
     _get_state_select_options,
     _handle_step_error,
     _remove_area_from_list,
-    _sanitize_area_name_for_option,
     _update_area_in_list,
     create_schema,
 )
@@ -47,12 +45,12 @@ from custom_components.area_occupancy.const import (
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_OPTION_PREFIX_AREA,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
+    DEFAULT_PURPOSE,
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -95,10 +93,6 @@ class TestBaseOccupancyFlow:
                 "weight_motion must be between 0 and 1",
             ),
             (
-                {"primary_occupancy_sensor": "binary_sensor.motion2"},
-                "Primary occupancy sensor must be one of the selected motion sensors",
-            ),
-            (
                 {"threshold": 150},
                 "threshold",
             ),
@@ -121,10 +115,6 @@ class TestBaseOccupancyFlow:
             (
                 {CONF_PURPOSE: ""},
                 "Purpose is required",
-            ),
-            (
-                {CONF_PRIMARY_OCCUPANCY_SENSOR: None},
-                "primary occupancy sensor must be selected",
             ),
             (
                 {CONF_MEDIA_DEVICES: ["media_player.tv"], CONF_MEDIA_ACTIVE_STATES: []},
@@ -176,23 +166,6 @@ class TestHelperFunctions:
         assert isinstance(options, list)
         assert len(options) > 0
         assert all("value" in option and "label" in option for option in options)
-
-    @pytest.mark.parametrize(
-        ("input_name", "expected"),
-        [
-            ("Living Room", "Living_Room"),
-            ("Living Room/Kitchen", "Living_Room_Kitchen"),
-            ("Living_Room", "Living_Room"),
-            # Legacy invalid names that should fall back gracefully
-            ("all_areas", "all_areas"),  # Conflicts with ALL_AREAS_IDENTIFIER
-            ("   ", ""),  # Empty after strip
-            ("!!!@@@###", "!!!@@@###"),  # Only invalid characters (triggers ValueError)
-        ],
-    )
-    def test_sanitize_area_name_for_option(self, input_name, expected):
-        """Test _sanitize_area_name_for_option function."""
-        result = _sanitize_area_name_for_option(input_name)
-        assert result == expected
 
     @pytest.mark.parametrize(
         ("purpose", "expected"),
@@ -403,7 +376,6 @@ class TestHelperFunctions:
                 {
                     CONF_AREA_ID: "test_area",
                     CONF_MOTION_SENSORS: ["binary_sensor.motion_1"],
-                    CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion_1",
                 },
                 False,
                 True,  # CONF_AREA_ID is always present in schema now
@@ -436,8 +408,7 @@ class TestHelperFunctions:
 
         expected_sections = [
             "motion",
-            "doors",
-            "windows",
+            "windows_and_doors",
             "media",
             "appliances",
             "environmental",
@@ -455,13 +426,13 @@ class TestHelperFunctions:
 
         if test_schema_validation:
             # Test schema instantiation
+            # Note: purpose is a string, not a dict section
             data = schema(
                 {
                     CONF_AREA_ID: "test_area",
-                    "purpose": {},
+                    "purpose": DEFAULT_PURPOSE,  # purpose is a string value, not a section
                     "motion": {},
-                    "doors": {},
-                    "windows": {},
+                    "windows_and_doors": {},
                     "media": {},
                     "appliances": {},
                     "environmental": {},
@@ -510,7 +481,6 @@ class TestAreaOccupancyConfigFlow:
                     {
                         CONF_AREA_ID: "living_room",
                         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                         CONF_PURPOSE: "social",
                     }
                 ],
@@ -649,7 +619,6 @@ class TestAreaOccupancyConfigFlow:
             create_area_config(
                 name="Living Room",
                 motion_sensors=["binary_sensor.motion1"],
-                primary_occupancy_sensor="binary_sensor.motion1",
             )
         ]
         # _area_being_edited now stores area ID, not name
@@ -780,9 +749,6 @@ class TestConfigFlowIntegration:
             area_data = areas[0]
             assert area_data.get(CONF_AREA_ID) == "living_room"  # Area ID
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
-            assert (
-                area_data.get(CONF_PRIMARY_OCCUPANCY_SENSOR) == "binary_sensor.motion1"
-            )
             assert area_data.get(CONF_THRESHOLD) == 60
 
     async def test_config_flow_with_existing_entry(
@@ -798,7 +764,6 @@ class TestConfigFlowIntegration:
         area_config = create_area_config(
             name="Living Room",
             motion_sensors=["binary_sensor.motion1"],
-            primary_occupancy_sensor="binary_sensor.motion1",
         )
         # Update to use actual area ID from registry
         area_config[CONF_AREA_ID] = living_room_area_id
@@ -987,7 +952,7 @@ class TestConfigFlowIntegration:
         # First attempt with invalid data in area_config
         invalid_input = create_user_input(
             name="Living Room",
-            motion={CONF_MOTION_SENSORS: [], CONF_PRIMARY_OCCUPANCY_SENSOR: ""},
+            motion={CONF_MOTION_SENSORS: []},
         )
         # Update to use actual area ID from registry
         invalid_input[CONF_AREA_ID] = living_room_area_id
@@ -1566,56 +1531,6 @@ class TestNewHelperFunctions:
     """Test newly extracted helper functions."""
 
     @pytest.mark.parametrize(
-        (
-            "primary_sensor",
-            "motion_sensors",
-            "expected_contains_primary",
-            "expected_unchanged",
-        ),
-        [
-            (
-                "binary_sensor.primary",
-                ["binary_sensor.motion1"],
-                True,
-                False,
-            ),  # adds_primary
-            (
-                "binary_sensor.primary",
-                ["binary_sensor.primary", "binary_sensor.motion1"],
-                True,
-                True,
-            ),  # already_present
-            (
-                None,
-                ["binary_sensor.motion1"],
-                False,
-                True,
-            ),  # no_primary
-        ],
-    )
-    def test_ensure_primary_in_motion_sensors(
-        self,
-        primary_sensor,
-        motion_sensors,
-        expected_contains_primary,
-        expected_unchanged,
-    ):
-        """Test that primary sensor handling works correctly."""
-        user_input = {"motion": {CONF_MOTION_SENSORS: motion_sensors.copy()}}
-        if primary_sensor:
-            user_input["motion"][CONF_PRIMARY_OCCUPANCY_SENSOR] = primary_sensor
-
-        original_list = user_input["motion"][CONF_MOTION_SENSORS].copy()
-        _ensure_primary_in_motion_sensors(user_input)
-
-        if expected_contains_primary:
-            assert primary_sensor in user_input["motion"][CONF_MOTION_SENSORS]
-        if expected_unchanged:
-            assert user_input["motion"][CONF_MOTION_SENSORS] == original_list
-        else:
-            assert user_input["motion"][CONF_MOTION_SENSORS] != original_list
-
-    @pytest.mark.parametrize(
         ("purpose", "expected_has_decay_half_life"),
         [
             ("social", True),  # with_purpose
@@ -1639,9 +1554,8 @@ class TestNewHelperFunctions:
             CONF_AREA_ID: "test_area",
             "motion": {
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
             },
-            "purpose": {CONF_PURPOSE: "social"},
+            CONF_PURPOSE: "social",  # Purpose is now at root level
             "wasp_in_box": {CONF_WASP_ENABLED: True},
         }
         result = _flatten_sectioned_input(user_input)

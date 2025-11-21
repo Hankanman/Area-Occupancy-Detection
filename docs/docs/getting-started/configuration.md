@@ -37,7 +37,6 @@ You will be prompted to select entities for various categories. You only need to
 
 | Sensor Type                         | Entity Type                         | Description                                                                                                                       | Default States/Range |
 | ----------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| Primary Occupancy Sensor (Required) | `binary_sensor`                     | One reliable motion or occupancy sensor. Crucial as ground truth for [Prior Probability Learning](../features/prior-learning.md). | `on`                 |
 | Motion Sensors                      | `binary_sensor`                     | Additional motion sensors in the area such as PIR or mmWave sensors.                                                              | `on`                 |
 | Door Sensors                        | `binary_sensor`                     | Relevant door sensors.                                                                                                            | `Closed`             |
 | Window Sensors                      | `binary_sensor`                     | Relevant window sensors.                                                                                                          | `Open`               |

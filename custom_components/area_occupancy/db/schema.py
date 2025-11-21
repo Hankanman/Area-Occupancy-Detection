@@ -397,9 +397,7 @@ class OccupiedIntervalsCache(Base):
     end_time = Column(DateTime(timezone=True), nullable=False, index=True)
     duration_seconds = Column(Float, nullable=False)
     calculation_date = Column(DateTime(timezone=True), nullable=False)
-    data_source = Column(
-        String, nullable=True
-    )  # 'primary_sensor', 'motion_sensors', 'merged'
+    data_source = Column(String, nullable=True)  # 'motion_sensors', 'merged'
     created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
 
     __table_args__ = (
