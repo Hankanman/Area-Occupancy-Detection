@@ -531,6 +531,73 @@ class TestMultipleEntriesMigration:
         # Should not update entry
         assert len(update_calls) == 0
 
+    async def test_migrate_multiple_entries_with_unconvertible_entry(
+        self, hass: HomeAssistant, mock_entry_1: Mock
+    ) -> None:
+        """Test that an unconvertible entry prevents migration and leaves entries intact."""
+        # Create an unconvertible entry (missing CONF_AREA_ID and no fallback)
+        unconvertible_entry = Mock(spec=ConfigEntry)
+        unconvertible_entry.version = 12
+        unconvertible_entry.minor_version = 0
+        unconvertible_entry.entry_id = "entry_unconvertible"
+        unconvertible_entry.state = ConfigEntryState.LOADED
+        unconvertible_entry.data = {
+            CONF_MOTION_SENSORS: ["binary_sensor.motion2"],
+        }
+        unconvertible_entry.options = {}
+        unconvertible_entry.title = None
+        unconvertible_entry.unique_id = None
+
+        # Mock hass.config_entries.async_entries to return both entries
+        hass.config_entries.async_entries = Mock(
+            return_value=[mock_entry_1, unconvertible_entry]
+        )
+
+        # Track update calls
+        update_calls = []
+        original_data_1 = mock_entry_1.data.copy()
+        original_data_unconvertible = unconvertible_entry.data.copy()
+
+        def mock_update(entry, **kwargs):
+            update_calls.append((entry, kwargs))
+            if "data" in kwargs:
+                entry.data = kwargs["data"]
+            if "version" in kwargs:
+                entry.version = kwargs["version"]
+
+        hass.config_entries.async_update_entry = Mock(side_effect=mock_update)
+
+        # Track remove calls
+        remove_calls = []
+        hass.config_entries.async_remove = Mock(
+            side_effect=lambda entry_id: remove_calls.append(entry_id)
+        )
+
+        # Mock registry cleanup
+        with patch(
+            "custom_components.area_occupancy.migrations._cleanup_registry_devices_and_entities",
+            return_value=(2, 3),  # 2 devices, 3 entities removed
+        ):
+            # Attempt migration - should fail
+            result = await async_migrate_entry(hass, mock_entry_1)
+
+            # Migration should fail
+            assert result is False
+
+        # Verify no entries were updated
+        assert len(update_calls) == 0
+
+        # Verify no entries were removed
+        assert len(remove_calls) == 0
+
+        # Verify original entry data is still intact
+        assert mock_entry_1.data == original_data_1
+        assert unconvertible_entry.data == original_data_unconvertible
+
+        # Verify entry versions are still unchanged
+        assert mock_entry_1.version == 12
+        assert unconvertible_entry.version == 12
+
 
 class TestRegistryCleanup:
     """Test registry cleanup during migration."""

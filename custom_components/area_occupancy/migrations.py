@@ -224,20 +224,15 @@ def _combine_config_entries(entries: list[ConfigEntry]) -> list[dict[str, Any]]:
         List of area config dictionaries in new format
 
     Raises:
-        ValueError: If any entry is missing required CONF_AREA_ID
+        ValueError: If any entry fails to convert (e.g., missing required CONF_AREA_ID)
+        AttributeError: If entry is missing required attributes
+        KeyError: If entry data is invalid
     """
     area_configs: list[dict[str, Any]] = []
 
     for entry in entries:
-        try:
-            area_config = _convert_entry_to_area_config(entry)
-            area_configs.append(area_config)
-        except ValueError as err:
-            _LOGGER.error(
-                "Failed to convert entry %s to area config: %s", entry.entry_id, err
-            )
-            # Continue with other entries instead of failing completely
-            continue
+        area_config = _convert_entry_to_area_config(entry)
+        area_configs.append(area_config)
 
     return area_configs
 
