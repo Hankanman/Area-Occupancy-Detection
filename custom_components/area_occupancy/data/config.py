@@ -24,6 +24,7 @@ from ..const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_ENERGY_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -72,6 +73,7 @@ from ..const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_ENERGY,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
@@ -155,6 +157,7 @@ class Sensors:
     voc: list[str] = field(default_factory=list)
     pm25: list[str] = field(default_factory=list)
     pm10: list[str] = field(default_factory=list)
+    energy: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
     _parent_config: "AreaConfig | None" = field(default=None, repr=False, compare=False)
@@ -226,6 +229,7 @@ class Weights:
     door: float = DEFAULT_WEIGHT_DOOR
     window: float = DEFAULT_WEIGHT_WINDOW
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
+    energy: float = DEFAULT_WEIGHT_ENERGY
     wasp: float = DEFAULT_WASP_WEIGHT
 
 
@@ -350,6 +354,7 @@ class AreaConfig:
             voc=data.get(CONF_VOC_SENSORS, []),
             pm25=data.get(CONF_PM25_SENSORS, []),
             pm10=data.get(CONF_PM10_SENSORS, []),
+            energy=data.get(CONF_ENERGY_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
             _parent_config=self,
@@ -429,6 +434,7 @@ class AreaConfig:
             *self.sensors.voc,
             *self.sensors.pm25,
             *self.sensors.pm10,
+            *self.sensors.energy,
         ]
 
     def validate_entity_configuration(self) -> list[str]:
