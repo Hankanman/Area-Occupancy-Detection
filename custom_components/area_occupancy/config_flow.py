@@ -69,7 +69,6 @@ from .const import (
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_OPTION_PREFIX_AREA,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -241,20 +240,6 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the motion section."""
     return vol.Schema(
         {
-            vol.Required(
-                CONF_PRIMARY_OCCUPANCY_SENSOR,
-                default=defaults.get(CONF_PRIMARY_OCCUPANCY_SENSOR, ""),
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=Platform.BINARY_SENSOR,
-                    device_class=[
-                        BinarySensorDeviceClass.MOTION,
-                        BinarySensorDeviceClass.OCCUPANCY,
-                        BinarySensorDeviceClass.PRESENCE,
-                    ],
-                    multiple=False,
-                )
-            ),
             vol.Required(
                 CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
             ): EntitySelector(
@@ -909,28 +894,6 @@ def _get_area_summary_info(area: dict[str, Any]) -> str:
     )
 
 
-def _ensure_primary_in_motion_sensors(user_input: dict[str, Any]) -> None:
-    """Ensure primary occupancy sensor is in motion sensors list.
-
-    Auto-adds primary sensor to motion sensors if it's not already present.
-    Modifies user_input in place.
-
-    Args:
-        user_input: User input dictionary with motion section
-    """
-    motion_section = user_input.get("motion", {})
-    primary_sensor = motion_section.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
-    motion_sensors = motion_section.get(CONF_MOTION_SENSORS, [])
-
-    if primary_sensor and primary_sensor not in motion_sensors:
-        _LOGGER.debug(
-            "Auto-adding primary sensor %s to motion sensors list",
-            primary_sensor,
-        )
-        motion_sensors.append(primary_sensor)
-        user_input["motion"][CONF_MOTION_SENSORS] = motion_sensors
-
-
 def _apply_purpose_based_decay_default(
     flattened_input: dict[str, Any], purpose: str | None
 ) -> None:
@@ -1272,14 +1235,6 @@ class BaseOccupancyFlow:
         if not motion_sensors:
             raise vol.Invalid("At least one motion sensor is required")
 
-        primary_sensor = data.get(CONF_PRIMARY_OCCUPANCY_SENSOR)
-        if not primary_sensor:
-            raise vol.Invalid("A primary occupancy sensor must be selected")
-        if primary_sensor not in motion_sensors:
-            raise vol.Invalid(
-                "Primary occupancy sensor must be one of the selected motion sensors"
-            )
-
         # Validate motion sensor likelihoods
         motion_prob_given_true = data.get(
             CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
@@ -1508,9 +1463,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                # Auto-add primary sensor to motion sensors if needed
-                _ensure_primary_in_motion_sensors(user_input)
-
                 # Flatten sectioned data
                 flattened_input = _flatten_sectioned_input(user_input)
 
@@ -1793,9 +1745,6 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
 
         if user_input is not None:
             try:
-                # Auto-add primary sensor to motion sensors if needed
-                _ensure_primary_in_motion_sensors(user_input)
-
                 # Flatten sectioned data
                 flattened_input = _flatten_sectioned_input(user_input)
 

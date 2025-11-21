@@ -171,7 +171,7 @@ Stores precomputed occupied intervals for fast prior calculations.
 | `end_time` | DateTime | Interval end time |
 | `duration_seconds` | Float | Interval duration |
 | `calculation_date` | DateTime | When interval was calculated |
-| `data_source` | String | Source: "primary_sensor", "motion_sensors", "merged" |
+| `data_source` | String | Source: "motion_sensors", "merged" |
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**

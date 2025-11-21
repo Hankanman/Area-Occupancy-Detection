@@ -79,13 +79,11 @@ class TestSensors:
             sensors.window,
         ]
         assert all(not sensor_list for sensor_list in expected_empty_lists)
-        assert sensors.primary_occupancy is None
 
     def test_initialization_with_values(self) -> None:
         """Test Sensors initialization with specific values."""
         test_data = {
             "motion": ["binary_sensor.motion1"],
-            "primary_occupancy": "binary_sensor.motion1",
             "media": ["media_player.tv"],
             "appliance": ["switch.computer"],
             "illuminance": ["sensor.illuminance"],

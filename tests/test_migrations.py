@@ -9,7 +9,6 @@ import pytest
 
 from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_VERSION,
     CONF_VERSION_MINOR,
 )
@@ -46,7 +45,6 @@ class TestAsyncMigrateEntry:
         entry.state = ConfigEntryState.LOADED
         entry.data = {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         }
         entry.options = {}
         return entry

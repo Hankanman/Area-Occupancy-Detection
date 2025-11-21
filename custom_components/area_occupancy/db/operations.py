@@ -937,7 +937,7 @@ def save_occupied_intervals_cache(
         db: Database instance
         area_name: Area name
         intervals: List of (start_time, end_time) tuples
-        data_source: Source of intervals ('primary_sensor', 'motion_sensors', 'merged')
+        data_source: Source of intervals ('motion_sensors', 'merged')
 
     Returns:
         True if saved successfully, False otherwise
