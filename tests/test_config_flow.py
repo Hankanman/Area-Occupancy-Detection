@@ -25,7 +25,6 @@ from custom_components.area_occupancy.config_flow import (
     _get_state_select_options,
     _handle_step_error,
     _remove_area_from_list,
-    _sanitize_area_name_for_option,
     _update_area_in_list,
     create_schema,
 )
@@ -166,23 +165,6 @@ class TestHelperFunctions:
         assert isinstance(options, list)
         assert len(options) > 0
         assert all("value" in option and "label" in option for option in options)
-
-    @pytest.mark.parametrize(
-        ("input_name", "expected"),
-        [
-            ("Living Room", "Living_Room"),
-            ("Living Room/Kitchen", "Living_Room_Kitchen"),
-            ("Living_Room", "Living_Room"),
-            # Legacy invalid names that should fall back gracefully
-            ("all_areas", "all_areas"),  # Conflicts with ALL_AREAS_IDENTIFIER
-            ("   ", ""),  # Empty after strip
-            ("!!!@@@###", "!!!@@@###"),  # Only invalid characters (triggers ValueError)
-        ],
-    )
-    def test_sanitize_area_name_for_option(self, input_name, expected):
-        """Test _sanitize_area_name_for_option function."""
-        result = _sanitize_area_name_for_option(input_name)
-        assert result == expected
 
     @pytest.mark.parametrize(
         ("purpose", "expected"),
@@ -425,8 +407,7 @@ class TestHelperFunctions:
 
         expected_sections = [
             "motion",
-            "doors",
-            "windows",
+            "windows_and_doors",
             "media",
             "appliances",
             "environmental",
@@ -449,8 +430,7 @@ class TestHelperFunctions:
                     CONF_AREA_ID: "test_area",
                     "purpose": {},
                     "motion": {},
-                    "doors": {},
-                    "windows": {},
+                    "windows_and_doors": {},
                     "media": {},
                     "appliances": {},
                     "environmental": {},
@@ -1573,7 +1553,7 @@ class TestNewHelperFunctions:
             "motion": {
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             },
-            "purpose": {CONF_PURPOSE: "social"},
+            CONF_PURPOSE: "social",  # Purpose is now at root level
             "wasp_in_box": {CONF_WASP_ENABLED: True},
         }
         result = _flatten_sectioned_input(user_input)

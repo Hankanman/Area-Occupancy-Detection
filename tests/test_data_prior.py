@@ -80,6 +80,95 @@ def test_value_property_clamping(
         assert prior.value == expected_value, f"Failed for {description}"
 
 
+def test_min_prior_override_with_global_prior_below_threshold(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
+    """Test min_prior_override is applied when global_prior is below threshold."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area(area_name)
+    prior = Prior(coordinator_with_areas, area_name=area_name)
+
+    # Set min_prior_override to 0.3
+    area.config.min_prior_override = 0.3
+
+    # Set global_prior to 0.2 (below min_prior_override)
+    prior.global_prior = 0.2
+
+    # Mock get_time_prior to return None to avoid database calls
+    with patch.object(prior, "get_time_prior", return_value=None):
+        # After applying PRIOR_FACTOR: 0.2 * 1.05 = 0.21
+        # But min_prior_override (0.3) should take precedence
+        result = prior.value
+        assert result == 0.3, f"Expected 0.3 but got {result}"
+
+
+def test_min_prior_override_with_combined_prior_below_threshold(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
+    """Test min_prior_override is applied when combined prior is below threshold."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area(area_name)
+    prior = Prior(coordinator_with_areas, area_name=area_name)
+
+    # Set min_prior_override to 0.3
+    area.config.min_prior_override = 0.3
+
+    # Set global_prior to 0.25
+    prior.global_prior = 0.25
+
+    # Mock time_prior to return a low value that would lower the combined prior
+    # Combined prior will be less than 0.3, so min_prior_override should apply
+    with patch.object(prior, "get_time_prior", return_value=0.1):
+        # Combined prior will be less than min_prior_override
+        # After PRIOR_FACTOR it could still be below, so min_prior_override should apply
+        result = prior.value
+        assert result >= 0.3, f"Expected at least 0.3 but got {result}"
+
+
+def test_min_prior_override_disabled_when_zero(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
+    """Test min_prior_override has no effect when set to 0.0 (disabled)."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area(area_name)
+    prior = Prior(coordinator_with_areas, area_name=area_name)
+
+    # Set min_prior_override to 0.0 (disabled)
+    area.config.min_prior_override = 0.0
+
+    # Set global_prior to a low value
+    prior.global_prior = 0.05
+
+    # Mock get_time_prior to return None to avoid database calls
+    with patch.object(prior, "get_time_prior", return_value=None):
+        # Should use normal calculation without override
+        result = prior.value
+        # After PRIOR_FACTOR: 0.05 * 1.05 = 0.0525, clamped to MIN_PRIOR
+        assert result == MIN_PRIOR, f"Expected MIN_PRIOR ({MIN_PRIOR}) but got {result}"
+
+
+def test_min_prior_override_above_normal_calculation(
+    coordinator_with_areas: AreaOccupancyCoordinator,
+):
+    """Test min_prior_override when final prior after PRIOR_FACTOR is below threshold."""
+    area_name = coordinator_with_areas.get_area_names()[0]
+    area = coordinator_with_areas.get_area(area_name)
+    prior = Prior(coordinator_with_areas, area_name=area_name)
+
+    # Set min_prior_override to 0.3
+    area.config.min_prior_override = 0.3
+
+    # Set global_prior to 0.25
+    # After PRIOR_FACTOR: 0.25 * 1.05 = 0.2625 (below min_prior_override)
+    prior.global_prior = 0.25
+
+    # Mock get_time_prior to return None to avoid database calls
+    with patch.object(prior, "get_time_prior", return_value=None):
+        result = prior.value
+        # Should be raised to min_prior_override (0.3) even though calculation gives 0.2625
+        assert result == 0.3, f"Expected 0.3 but got {result}"
+
+
 def test_constants_are_properly_defined():
     """Test that all constants are properly defined."""
     assert PRIOR_FACTOR == 1.05

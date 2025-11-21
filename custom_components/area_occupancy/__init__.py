@@ -44,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     With single-instance architecture, there should only be one config entry.
     A single global coordinator manages all areas.
     """
+    _LOGGER.debug("Starting async_setup_entry for entry %s", entry.entry_id)
 
     # Migration check
     if entry.version != CONF_VERSION or not entry.version:
