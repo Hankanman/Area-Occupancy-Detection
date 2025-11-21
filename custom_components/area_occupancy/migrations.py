@@ -658,7 +658,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if entries_to_remove:
         _LOGGER.info(
             "Migration completed: %d entry(ies) scheduled for removal",
-            len(cleanup_entry_ids),
+            len(entries_to_remove),
         )
 
     return migration_result
