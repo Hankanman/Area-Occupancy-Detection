@@ -46,6 +46,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     _LOGGER.debug("Starting async_setup_entry for entry %s", entry.entry_id)
 
+    # Check if entry is marked for deletion (handled by concurrent migration)
+    if entry.data.get("deleted"):
+        _LOGGER.info("Entry %s is marked for deletion, skipping setup", entry.entry_id)
+        return False
+
     # Migration check
     if entry.version != CONF_VERSION or not entry.version:
         _LOGGER.info(
