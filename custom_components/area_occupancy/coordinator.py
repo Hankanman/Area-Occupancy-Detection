@@ -553,17 +553,30 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # This ensures self.areas is never empty when platform entities can access it
         self.areas = new_areas
 
+        # Update area handles to point to new Area objects
+        # This ensures platform entities can access the updated areas
+        for area_name, area in self.areas.items():
+            self.get_area_handle(area_name).attach(area)
+
         # Update each area's configuration
+        # Clean up and recreate entities from new config first
         for area_name, area in self.areas.items():
             _LOGGER.info(
                 "Configuration updated, re-initializing entities for area: %s",
                 area_name,
             )
 
-            # Clean up existing entity tracking
+            # Clean up existing entity tracking and recreate from new config
+            # This ensures entities match the updated configuration
             await area.entities.cleanup()
 
             # Area components are now initialized synchronously in __init__
+
+        # Reload database data for new areas (restores priors, entity states)
+        # This must happen AFTER entities are recreated from config so database
+        # state can be applied to the correctly configured entities
+        # This is critical to restore state after config changes without requiring a full reload
+        await self.db.load_data()
 
         # Re-establish entity state tracking with new entity lists
         all_entity_ids = []

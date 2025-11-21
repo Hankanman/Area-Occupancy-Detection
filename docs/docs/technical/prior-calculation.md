@@ -60,26 +60,19 @@ This supplementation helps in areas with low motion activity but high media/appl
 
 If configured, a minimum prior override is applied to ensure the prior never drops below a configured minimum, useful for areas that should always have some baseline occupancy probability.
 
-The override is applied in two phases:
+**Important:** The override is **only** applied at runtime, **not** during the learning phase. This ensures that the database stores the actual calculated prior from historical data, allowing for accurate analysis and potential future adjustments to the override value.
 
-1. **Learning Phase** (when calculating global_prior from history):
+The override is applied at runtime:
 
-   **Code Reference:** `319:328:custom_components/area_occupancy/data/analysis.py`
-
-   ```
-   if prior < min_prior_override:
-       prior = min_prior_override
-   ```
-
-   Applied after calculating the prior from historical sensor data, before storing in the database.
-
-2. **Runtime Phase** (when calculating Prior.value property):
+**Runtime Phase** (when calculating Prior.value property):
 
    **Code Reference:** `116:127:custom_components/area_occupancy/data/prior.py`
 
    Applied after combining global_prior with time_prior and applying PRIOR_FACTOR, ensuring the final runtime prior never drops below the configured minimum regardless of time-based adjustments or scaling factors.
 
    This ensures that even if the combined prior (global_prior + time_prior) or the final prior (after PRIOR_FACTOR) would be below the minimum, the override takes effect at runtime.
+
+   The actual calculated prior (without override) is stored in the database during the learning phase, allowing the override to be adjusted without needing to recalculate historical priors.
 
 ### Step 4: Database Storage
 

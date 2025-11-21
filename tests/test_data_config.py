@@ -696,7 +696,7 @@ class TestConfig:
         """Test update_config method."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
-        options = {CONF_AREA_ID: "updated_area", CONF_THRESHOLD: 70}
+        options = {CONF_THRESHOLD: 70}
 
         # Mock all the required methods
         with (
@@ -713,6 +713,23 @@ class TestConfig:
 
             # Verify all expected calls were made
             mock_update_entry.assert_called_once()
+            # Verify that update_entry was called with properly structured options
+            call_args = mock_update_entry.call_args
+            assert call_args is not None
+            updated_options = call_args[1]["options"]  # Get options from kwargs
+            # For multi-area format, verify CONF_AREAS list is present and updated
+            if CONF_AREAS in updated_options:
+                areas_list = updated_options[CONF_AREAS]
+                assert isinstance(areas_list, list)
+                # Find the updated area
+                area_found = False
+                for area_data in areas_list:
+                    if area_data.get(CONF_AREA_ID) == config.area_id:
+                        # Verify threshold was updated in the area config
+                        assert area_data.get(CONF_THRESHOLD) == 70
+                        area_found = True
+                        break
+                assert area_found, "Area should be found in CONF_AREAS list"
             mock_load_config.assert_called_once()
             mock_refresh.assert_called_once()
 

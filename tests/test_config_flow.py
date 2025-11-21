@@ -50,6 +50,7 @@ from custom_components.area_occupancy.const import (
     CONF_WASP_ENABLED,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
+    DEFAULT_PURPOSE,
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -425,10 +426,11 @@ class TestHelperFunctions:
 
         if test_schema_validation:
             # Test schema instantiation
+            # Note: purpose is a string, not a dict section
             data = schema(
                 {
                     CONF_AREA_ID: "test_area",
-                    "purpose": {},
+                    "purpose": DEFAULT_PURPOSE,  # purpose is a string value, not a section
                     "motion": {},
                     "windows_and_doors": {},
                     "media": {},
