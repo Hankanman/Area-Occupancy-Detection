@@ -30,6 +30,13 @@ _NUMERIC_INPUT_TYPES = {
     InputType.TEMPERATURE,
     InputType.HUMIDITY,
     InputType.ILLUMINANCE,
+    InputType.CO2,
+    InputType.SOUND_PRESSURE,
+    InputType.PRESSURE,
+    InputType.AIR_QUALITY,
+    InputType.VOC,
+    InputType.PM25,
+    InputType.PM10,
     InputType.ENVIRONMENTAL,
 }
 

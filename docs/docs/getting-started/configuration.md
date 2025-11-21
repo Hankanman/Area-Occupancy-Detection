@@ -45,6 +45,13 @@ You will be prompted to select entities for various categories. You only need to
 | Illuminance Sensors                 | `sensor`                            | Illuminance sensors measuring light levels (lux)                                                                                  | `30.0 - 100000.0`    |
 | Temperature Sensors                 | `sensor`                            | Temperature sensors measuring temperature                                                                                         | `18.0 - 24.0`        |
 | Humidity Sensors                    | `sensor`                            | Humidity sensors measuring humidity                                                                                               | `70.0 - 100.0`       |
+| CO2 Sensors                         | `sensor`                            | Carbon dioxide sensors measuring CO2 levels (ppm)                                                                                 | `400.0 - 1200.0`     |
+| Sound Pressure Sensors              | `sensor`                            | Sound pressure sensors measuring noise levels in decibels (dB)                                                                     | `40.0 - 80.0`        |
+| Atmospheric Pressure Sensors        | `sensor`                            | Atmospheric pressure sensors measuring air pressure (hPa)                                                                         | `980.0 - 1050.0`     |
+| Air Quality Index Sensors           | `sensor`                            | Air quality index sensors measuring overall air quality                                                                            | `50.0 - 150.0`       |
+| VOC Sensors                         | `sensor`                            | Volatile organic compound sensors measuring VOC levels (ppb)                                                                      | `200.0 - 1000.0`     |
+| PM2.5 Sensors                       | `sensor`                            | Particulate matter sensors measuring PM2.5 levels (µg/m³)                                                                          | `12.0 - 55.0`        |
+| PM10 Sensors                        | `sensor`                            | Particulate matter sensors measuring PM10 levels (µg/m³)                                                                         | `55.0 - 155.0`       |
 
 ### Available States
 

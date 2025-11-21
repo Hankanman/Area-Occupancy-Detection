@@ -51,10 +51,12 @@ from .const import (
     CONF_ACTION_EDIT,
     CONF_ACTION_FINISH_SETUP,
     CONF_ACTION_REMOVE,
+    CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CO2_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -69,9 +71,14 @@ from .const import (
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
     CONF_OPTION_PREFIX_AREA,
+    CONF_PM10_SENSORS,
+    CONF_PM25_SENSORS,
+    CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_VOC_SENSORS,
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
@@ -478,6 +485,76 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
                     device_class=SensorDeviceClass.TEMPERATURE,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CO2_SENSORS,
+                default=defaults.get(CONF_CO2_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.CO2,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_SOUND_PRESSURE_SENSORS,
+                default=defaults.get(CONF_SOUND_PRESSURE_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.SOUND_PRESSURE,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_PRESSURE_SENSORS,
+                default=defaults.get(CONF_PRESSURE_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.PRESSURE,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_AIR_QUALITY_SENSORS,
+                default=defaults.get(CONF_AIR_QUALITY_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.AQI,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_VOC_SENSORS,
+                default=defaults.get(CONF_VOC_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_PM25_SENSORS,
+                default=defaults.get(CONF_PM25_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.PM25,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_PM10_SENSORS,
+                default=defaults.get(CONF_PM10_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.PM10,
                     multiple=True,
                 )
             ),

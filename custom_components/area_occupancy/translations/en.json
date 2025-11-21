@@ -125,9 +125,23 @@
                             "illuminance_sensors": "Illuminance Sensors",
                             "humidity_sensors": "Humidity Sensors",
                             "temperature_sensors": "Temperature Sensors",
+                            "co2_sensors": "CO2 Sensors",
+                            "sound_pressure_sensors": "Sound Pressure Sensors (Decibels)",
+                            "pressure_sensors": "Atmospheric Pressure Sensors",
+                            "air_quality_sensors": "Air Quality Index Sensors",
+                            "voc_sensors": "VOC Sensors (Volatile Organic Compounds)",
+                            "pm25_sensors": "PM2.5 Sensors (Particulate Matter)",
+                            "pm10_sensors": "PM10 Sensors (Particulate Matter)",
                             "weight_environmental": "Environmental Weight"
                         },
                         "data_description": {
+                            "co2_sensors": "Carbon dioxide sensors that detect increased CO2 levels from human respiration, indicating occupancy.",
+                            "sound_pressure_sensors": "Sound pressure sensors (decibels) that detect noise from human activity, indicating occupancy.",
+                            "pressure_sensors": "Atmospheric pressure sensors that detect subtle changes from HVAC and human presence, indicating occupancy.",
+                            "air_quality_sensors": "Air quality index sensors that detect general air quality changes, indicating occupancy.",
+                            "voc_sensors": "Volatile organic compound sensors that detect chemical signatures of human presence, indicating occupancy.",
+                            "pm25_sensors": "PM2.5 particulate matter sensors that detect fine particles from human activity, indicating occupancy.",
+                            "pm10_sensors": "PM10 particulate matter sensors that detect coarse particles from human activity, indicating occupancy.",
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
                     },
@@ -283,9 +297,23 @@
                             "illuminance_sensors": "Illuminance Sensors",
                             "humidity_sensors": "Humidity Sensors",
                             "temperature_sensors": "Temperature Sensors",
+                            "co2_sensors": "CO2 Sensors",
+                            "sound_pressure_sensors": "Sound Pressure Sensors (Decibels)",
+                            "pressure_sensors": "Atmospheric Pressure Sensors",
+                            "air_quality_sensors": "Air Quality Index Sensors",
+                            "voc_sensors": "VOC Sensors (Volatile Organic Compounds)",
+                            "pm25_sensors": "PM2.5 Sensors (Particulate Matter)",
+                            "pm10_sensors": "PM10 Sensors (Particulate Matter)",
                             "weight_environmental": "Environmental Weight"
                         },
                         "data_description": {
+                            "co2_sensors": "Carbon dioxide sensors that detect increased CO2 levels from human respiration, indicating occupancy.",
+                            "sound_pressure_sensors": "Sound pressure sensors (decibels) that detect noise from human activity, indicating occupancy.",
+                            "pressure_sensors": "Atmospheric pressure sensors that detect subtle changes from HVAC and human presence, indicating occupancy.",
+                            "air_quality_sensors": "Air quality index sensors that detect general air quality changes, indicating occupancy.",
+                            "voc_sensors": "Volatile organic compound sensors that detect chemical signatures of human presence, indicating occupancy.",
+                            "pm25_sensors": "PM2.5 particulate matter sensors that detect fine particles from human activity, indicating occupancy.",
+                            "pm10_sensors": "PM10 particulate matter sensors that detect coarse particles from human activity, indicating occupancy.",
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
                     },
