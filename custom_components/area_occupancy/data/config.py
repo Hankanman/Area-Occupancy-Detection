@@ -14,10 +14,12 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     ANALYSIS_INTERVAL,
+    CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CO2_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -31,9 +33,14 @@ from ..const import (
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
+    CONF_PM10_SENSORS,
+    CONF_PM25_SENSORS,
+    CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_VOC_SENSORS,
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
@@ -141,6 +148,13 @@ class Sensors:
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
+    co2: list[str] = field(default_factory=list)
+    sound_pressure: list[str] = field(default_factory=list)
+    pressure: list[str] = field(default_factory=list)
+    air_quality: list[str] = field(default_factory=list)
+    voc: list[str] = field(default_factory=list)
+    pm25: list[str] = field(default_factory=list)
+    pm10: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
     _parent_config: "AreaConfig | None" = field(default=None, repr=False, compare=False)
@@ -329,6 +343,13 @@ class AreaConfig:
             illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
             humidity=data.get(CONF_HUMIDITY_SENSORS, []),
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
+            co2=data.get(CONF_CO2_SENSORS, []),
+            sound_pressure=data.get(CONF_SOUND_PRESSURE_SENSORS, []),
+            pressure=data.get(CONF_PRESSURE_SENSORS, []),
+            air_quality=data.get(CONF_AIR_QUALITY_SENSORS, []),
+            voc=data.get(CONF_VOC_SENSORS, []),
+            pm25=data.get(CONF_PM25_SENSORS, []),
+            pm10=data.get(CONF_PM10_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
             _parent_config=self,
@@ -401,6 +422,13 @@ class AreaConfig:
             *self.sensors.illuminance,
             *self.sensors.humidity,
             *self.sensors.temperature,
+            *self.sensors.co2,
+            *self.sensors.sound_pressure,
+            *self.sensors.pressure,
+            *self.sensors.air_quality,
+            *self.sensors.voc,
+            *self.sensors.pm25,
+            *self.sensors.pm10,
         ]
 
     def validate_entity_configuration(self) -> list[str]:
@@ -436,6 +464,13 @@ class AreaConfig:
             ("illuminance", self.sensors.illuminance),
             ("humidity", self.sensors.humidity),
             ("temperature", self.sensors.temperature),
+            ("co2", self.sensors.co2),
+            ("sound_pressure", self.sensors.sound_pressure),
+            ("pressure", self.sensors.pressure),
+            ("air_quality", self.sensors.air_quality),
+            ("voc", self.sensors.voc),
+            ("pm25", self.sensors.pm25),
+            ("pm10", self.sensors.pm10),
         ]:
             if entity_list and not all(
                 isinstance(eid, str) and eid.strip() for eid in entity_list

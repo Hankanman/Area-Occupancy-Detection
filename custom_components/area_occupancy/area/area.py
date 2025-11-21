@@ -20,7 +20,6 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..data.analysis import start_likelihood_analysis, start_prior_analysis
-from ..data.entity_type import InputType
 from ..utils import bayesian_probability
 
 if TYPE_CHECKING:
@@ -199,55 +198,6 @@ class Area:
             entities=entities,
             prior=self.prior.value,
         )
-
-    def type_probabilities(self) -> dict[str, float]:
-        """Calculate and return the current occupancy probabilities for each entity type (0.0-1.0).
-
-        Returns:
-            Dictionary mapping input types to probabilities
-        """
-        entities = self.entities.entities
-        if not entities:
-            return {}
-
-        return {
-            InputType.MOTION: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.MOTION),
-                prior=self.prior.value,
-            ),
-            InputType.MEDIA: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.MEDIA),
-                prior=self.prior.value,
-            ),
-            InputType.APPLIANCE: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.APPLIANCE),
-                prior=self.prior.value,
-            ),
-            InputType.DOOR: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.DOOR),
-                prior=self.prior.value,
-            ),
-            InputType.WINDOW: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.WINDOW),
-                prior=self.prior.value,
-            ),
-            InputType.ILLUMINANCE: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(
-                    InputType.ILLUMINANCE
-                ),
-                prior=self.prior.value,
-            ),
-            InputType.HUMIDITY: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(InputType.HUMIDITY),
-                prior=self.prior.value,
-            ),
-            InputType.TEMPERATURE: bayesian_probability(
-                entities=self.entities.get_entities_by_input_type(
-                    InputType.TEMPERATURE
-                ),
-                prior=self.prior.value,
-            ),
-        }
 
     def area_prior(self) -> float:
         """Get the area's baseline occupancy prior from historical data.

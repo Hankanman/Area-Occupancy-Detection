@@ -11,7 +11,6 @@ from custom_components.area_occupancy.const import (
     MIN_PROBABILITY,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.entity_type import InputType
 
 
 # ruff: noqa: SLF001
@@ -72,46 +71,6 @@ class TestAreaMethods:
         default_area.entities._entities = {}
         prob = default_area.probability()
         assert prob == MIN_PROBABILITY
-
-    def test_type_probabilities(self, default_area: Area) -> None:
-        """Test type_probabilities method."""
-        # Set up mock entities by type with PropertyMock for weight property
-        mock_motion = Mock()
-        mock_motion.evidence = True
-        mock_motion.prob_given_true = 0.8
-        mock_motion.prob_given_false = 0.2
-        mock_motion.type = Mock(input_type=InputType.MOTION, weight=0.85)
-        mock_motion.decay = Mock(decay_factor=1.0)
-        type(mock_motion).weight = PropertyMock(return_value=0.85)
-
-        mock_media = Mock()
-        mock_media.evidence = False
-        mock_media.prob_given_true = 0.7
-        mock_media.prob_given_false = 0.3
-        mock_media.type = Mock(input_type=InputType.MEDIA, weight=0.7)
-        mock_media.decay = Mock(decay_factor=1.0)
-        type(mock_media).weight = PropertyMock(return_value=0.7)
-
-        default_area.entities._entities = {
-            "binary_sensor.motion": mock_motion,
-            "media_player.tv": mock_media,
-        }
-        default_area.prior.global_prior = 0.3
-        default_area.prior._cached_time_prior = None
-
-        type_probs = default_area.type_probabilities()
-
-        assert isinstance(type_probs, dict)
-        assert InputType.MOTION in type_probs
-        assert InputType.MEDIA in type_probs
-        assert 0.0 <= type_probs[InputType.MOTION] <= 1.0
-        assert 0.0 <= type_probs[InputType.MEDIA] <= 1.0
-
-    def test_type_probabilities_no_entities(self, default_area: Area) -> None:
-        """Test type_probabilities method with no entities."""
-        default_area.entities._entities = {}
-        type_probs = default_area.type_probabilities()
-        assert type_probs == {}
 
     def test_area_prior(self, default_area: Area) -> None:
         """Test area_prior method."""

@@ -469,6 +469,13 @@ class EntityFactory:
             "illuminance": InputType.ILLUMINANCE,
             "humidity": InputType.HUMIDITY,
             "temperature": InputType.TEMPERATURE,
+            "co2": InputType.CO2,
+            "sound_pressure": InputType.SOUND_PRESSURE,
+            "pressure": InputType.PRESSURE,
+            "air_quality": InputType.AIR_QUALITY,
+            "voc": InputType.VOC,
+            "pm25": InputType.PM25,
+            "pm10": InputType.PM10,
         }
 
         # Process each sensor type using the mapping
