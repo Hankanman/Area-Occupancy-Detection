@@ -281,25 +281,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         CONF_VERSION,
     )
 
-    # Clean up all devices and entities for all domain entries before migration
-    # This removes orphaned devices/entities with old unique IDs
-    # Setup will recreate them with new unique IDs after migration
-    _LOGGER.info(
-        "Cleaning up devices and entities from registries for %d config entry(ies)",
-        len(all_entries),
-    )
-    all_entry_ids = [entry.entry_id for entry in all_entries]
-    devices_removed, entities_removed = await _cleanup_registry_devices_and_entities(
-        hass, all_entry_ids
-    )
-    if devices_removed > 0 or entities_removed > 0:
-        _LOGGER.info(
-            "Registry cleanup: removed %d device(s) and %d entity(ies). "
-            "They will be recreated with new unique IDs during setup.",
-            devices_removed,
-            entities_removed,
-        )
-
     # If there's only one old entry, convert it to new format
     if len(old_entries) == 1:
         _LOGGER.info(
@@ -320,6 +301,27 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 "Successfully migrated single entry %s to multi-area format",
                 config_entry.entry_id,
             )
+
+            # Clean up devices and entities after successful conversion
+            # This removes orphaned devices/entities with old unique IDs
+            # Setup will recreate them with new unique IDs after migration
+            _LOGGER.info(
+                "Cleaning up devices and entities from registries for entry %s",
+                config_entry.entry_id,
+            )
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(
+                hass, [config_entry.entry_id]
+            )
+            if devices_removed > 0 or entities_removed > 0:
+                _LOGGER.info(
+                    "Registry cleanup: removed %d device(s) and %d entity(ies). "
+                    "They will be recreated with new unique IDs during setup.",
+                    devices_removed,
+                    entities_removed,
+                )
         except (ValueError, AttributeError, KeyError, OSError) as err:
             _LOGGER.error(
                 "Failed to migrate single entry %s: %s", config_entry.entry_id, err
@@ -353,8 +355,20 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 area_ids,
             )
 
-        # Use the first entry as the target for the combined configuration
-        target_entry = old_entries[0]
+        # Prefer config_entry as target if it's in old_entries, otherwise use first entry
+        # This makes the migration more predictable for callers
+        if config_entry in old_entries:
+            target_entry = config_entry
+            _LOGGER.debug(
+                "Using config_entry %s as target for consolidation",
+                config_entry.entry_id,
+            )
+        else:
+            target_entry = old_entries[0]
+            _LOGGER.debug(
+                "config_entry not in old_entries, using first entry %s as target",
+                target_entry.entry_id,
+            )
 
         # Create new data structure with CONF_AREAS list
         new_data = {CONF_AREAS: area_configs}
@@ -371,6 +385,26 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             target_entry.entry_id,
             len(area_configs),
         )
+
+        # Clean up devices and entities after successful conversion
+        # This removes orphaned devices/entities with old unique IDs
+        # Setup will recreate them with new unique IDs after migration
+        all_entry_ids = [entry.entry_id for entry in old_entries]
+        _LOGGER.info(
+            "Cleaning up devices and entities from registries for %d config entry(ies)",
+            len(all_entry_ids),
+        )
+        (
+            devices_removed,
+            entities_removed,
+        ) = await _cleanup_registry_devices_and_entities(hass, all_entry_ids)
+        if devices_removed > 0 or entities_removed > 0:
+            _LOGGER.info(
+                "Registry cleanup: removed %d device(s) and %d entity(ies). "
+                "They will be recreated with new unique IDs during setup.",
+                devices_removed,
+                entities_removed,
+            )
 
         # Delete other old entries
         entries_to_remove = [entry for entry in old_entries if entry != target_entry]
