@@ -55,6 +55,7 @@ The integration supports multiple sensor types with different default weights:
 - **Media Devices** (0.70): Good indicator of active use
 - **Appliances** (0.40): Moderate reliability
 - **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
+- **Energy Sensors** (0.30): Power consumption indicating active device usage
 - **Window Sensors** (0.20): Minimal influence
 - **Environmental Sensors** (0.10): Very low influence (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 
@@ -95,7 +96,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 ## Key Features
 
-- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
+- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances, energy sensors, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
 - **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
 - **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.
