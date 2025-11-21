@@ -629,20 +629,6 @@ class TestSensorErrorHandling:
             # Should handle gracefully
             await sensor.async_added_to_hass()
 
-    def test_extra_state_attributes_no_coordinator_data(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
-        """Test extra_state_attributes when coordinator has no data."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
-        sensor = ProbabilitySensor(area_handle=handle)
-
-        # Mock coordinator.data to be None
-        coordinator_with_areas.data = None
-
-        attrs = sensor.extra_state_attributes
-        assert attrs == {}
-
     def test_extra_state_attributes_error(
         self, coordinator_with_areas: AreaOccupancyCoordinator
     ) -> None:

@@ -195,11 +195,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             return None
         return format_float(area.probability() * 100)
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return entity specific state attributes."""
-        return {}
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
