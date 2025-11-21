@@ -61,6 +61,7 @@ from .const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_ENERGY_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -86,6 +87,7 @@ from .const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
+    CONF_WEIGHT_ENERGY,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
@@ -109,6 +111,7 @@ from .const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_ENERGY,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
@@ -575,6 +578,35 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
     )
 
 
+def _create_energy_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the energy section."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_ENERGY_SENSORS,
+                default=defaults.get(CONF_ENERGY_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.ENERGY,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_ENERGY,
+                default=defaults.get(CONF_WEIGHT_ENERGY, DEFAULT_WEIGHT_ENERGY),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+        }
+    )
+
+
 def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the parameters section."""
     # Get the purpose-based default for decay half-life
@@ -767,6 +799,9 @@ def create_schema(
     )
     schema_dict[vol.Required("environmental")] = section(
         _create_environmental_section_schema(defaults), {"collapsed": True}
+    )
+    schema_dict[vol.Required("energy")] = section(
+        _create_energy_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("wasp_in_box")] = section(
         _create_wasp_in_box_section_schema(defaults), {"collapsed": True}

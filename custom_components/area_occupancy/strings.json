@@ -145,6 +145,18 @@
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
                     },
+                    "energy": {
+                        "name": "Energy Sensors",
+                        "description": "Configure energy consumption sensors",
+                        "data": {
+                            "energy_sensors": "Energy Sensors",
+                            "weight_energy": "Energy Weight"
+                        },
+                        "data_description": {
+                            "energy_sensors": "Energy sensors that measure power consumption (kWh). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
+                            "weight_energy": "The weight given to energy sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -315,6 +327,18 @@
                             "pm25_sensors": "PM2.5 particulate matter sensors that detect fine particles from human activity, indicating occupancy.",
                             "pm10_sensors": "PM10 particulate matter sensors that detect coarse particles from human activity, indicating occupancy.",
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "energy": {
+                        "name": "Energy Sensors",
+                        "description": "Configure energy consumption sensors",
+                        "data": {
+                            "energy_sensors": "Energy Sensors",
+                            "weight_energy": "Energy Weight"
+                        },
+                        "data_description": {
+                            "energy_sensors": "Energy sensors that measure power consumption (kWh). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
+                            "weight_energy": "The weight given to energy sensor inputs in the occupancy calculation."
                         }
                     },
                     "parameters": {
