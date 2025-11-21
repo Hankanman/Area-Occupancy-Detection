@@ -306,25 +306,27 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_doors_section_schema(
+def _create_windows_and_doors_section_schema(
     defaults: dict[str, Any],
-    include_entities: list[str],
-    state_options: list[SelectOptionDict],
+    door_entities: list[str],
+    window_entities: list[str],
+    door_state_options: list[SelectOptionDict],
+    window_state_options: list[SelectOptionDict],
 ) -> vol.Schema:
-    """Create schema for the doors section."""
+    """Create schema for the combined windows and doors section."""
     return vol.Schema(
         {
             vol.Optional(
                 CONF_DOOR_SENSORS, default=defaults.get(CONF_DOOR_SENSORS, [])
             ): EntitySelector(
-                EntitySelectorConfig(include_entities=include_entities, multiple=True)
+                EntitySelectorConfig(include_entities=door_entities, multiple=True)
             ),
             vol.Optional(
                 CONF_DOOR_ACTIVE_STATE,
                 default=defaults.get(CONF_DOOR_ACTIVE_STATE, get_default_state("door")),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=state_options, mode=SelectSelectorMode.DROPDOWN
+                    options=door_state_options, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
             vol.Optional(
@@ -338,22 +340,10 @@ def _create_doors_section_schema(
                     mode=NumberSelectorMode.SLIDER,
                 )
             ),
-        }
-    )
-
-
-def _create_windows_section_schema(
-    defaults: dict[str, Any],
-    include_entities: list[str],
-    state_options: list[SelectOptionDict],
-) -> vol.Schema:
-    """Create schema for the windows section."""
-    return vol.Schema(
-        {
             vol.Optional(
                 CONF_WINDOW_SENSORS, default=defaults.get(CONF_WINDOW_SENSORS, [])
             ): EntitySelector(
-                EntitySelectorConfig(include_entities=include_entities, multiple=True)
+                EntitySelectorConfig(include_entities=window_entities, multiple=True)
             ),
             vol.Optional(
                 CONF_WINDOW_ACTIVE_STATE,
@@ -362,7 +352,7 @@ def _create_windows_section_schema(
                 ),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=state_options, mode=SelectSelectorMode.DROPDOWN
+                    options=window_state_options, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
             vol.Optional(
@@ -504,22 +494,6 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     mode=NumberSelectorMode.SLIDER,
                 )
             ),
-        }
-    )
-
-
-def _create_purpose_section_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Create schema for the purpose section."""
-    return vol.Schema(
-        {
-            vol.Optional(
-                CONF_PURPOSE, default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE)
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=cast("list[SelectOptionDict]", get_purpose_options()),
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
         }
     )
 
@@ -672,41 +646,30 @@ def create_schema(
     # Get default area ID from defaults (for editing existing areas)
     default_area_id = defaults.get(CONF_AREA_ID, "")
 
-    if not is_options:
-        # Add the area selector for initial config flow
-        schema_dict[vol.Required(CONF_AREA_ID, default=default_area_id)] = AreaSelector(
-            AreaSelectorConfig()
+    # Add area selector (same for both initial and options flow)
+    schema_dict[vol.Required(CONF_AREA_ID, default=default_area_id)] = AreaSelector(
+        AreaSelectorConfig()
+    )
+    # Add purpose field at root level (not in a section)
+    schema_dict[
+        vol.Optional(CONF_PURPOSE, default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE))
+    ] = SelectSelector(
+        SelectSelectorConfig(
+            options=cast("list[SelectOptionDict]", get_purpose_options()),
+            mode=SelectSelectorMode.DROPDOWN,
         )
-        # Add purpose section right after area selection in initial config flow
-        schema_dict[vol.Required("purpose")] = section(
-            _create_purpose_section_schema(defaults), {"collapsed": False}
-        )
-    else:
-        # Add area selector for options flow (for editing/renaming areas)
-        schema_dict[vol.Required(CONF_AREA_ID, default=default_area_id)] = AreaSelector(
-            AreaSelectorConfig()
-        )
-        # Add purpose section at the top for options flow
-        schema_dict[vol.Required("purpose")] = section(
-            _create_purpose_section_schema(defaults), {"collapsed": False}
-        )
+    )
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
         _create_motion_section_schema(defaults), {"collapsed": True}
     )
-    schema_dict[vol.Required("doors")] = section(
-        _create_doors_section_schema(
+    schema_dict[vol.Required("windows_and_doors")] = section(
+        _create_windows_and_doors_section_schema(
             defaults,
             include_entities["door"],
-            cast("list[SelectOptionDict]", door_state_options),
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("windows")] = section(
-        _create_windows_section_schema(
-            defaults,
             include_entities["window"],
+            cast("list[SelectOptionDict]", door_state_options),
             cast("list[SelectOptionDict]", window_state_options),
         ),
         {"collapsed": True},
@@ -739,23 +702,6 @@ def create_schema(
     return schema_dict
 
 
-def _get_configured_area_ids(areas: list[dict[str, Any]]) -> set[str]:
-    """Get set of already-configured area IDs.
-
-    Args:
-        areas: List of area configuration dictionaries
-
-    Returns:
-        Set of area IDs that are already configured
-    """
-    configured_ids: set[str] = set()
-    for area in areas:
-        area_id = area.get(CONF_AREA_ID)
-        if area_id:
-            configured_ids.add(area_id)
-    return configured_ids
-
-
 def _resolve_area_id_to_name(hass: HomeAssistant, area_id: str) -> str:
     """Resolve area ID to area name for display.
 
@@ -776,19 +722,6 @@ def _resolve_area_id_to_name(hass: HomeAssistant, area_id: str) -> str:
             f"Area ID '{area_id}' not found in Home Assistant area registry"
         )
     return area_entry.name
-
-
-def _sanitize_area_name_for_option(area_name: str) -> str:
-    """Sanitize area name for use in SelectOption value.
-
-    Args:
-        area_name: Original area name
-
-    Returns:
-        Sanitized name safe for use in option values
-    """
-    # Simple sanitization for display purposes
-    return area_name.strip().replace(" ", "_").replace("/", "_")
 
 
 def _get_purpose_display_name(purpose: str) -> str:
@@ -938,24 +871,8 @@ def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
     flattened_input = {}
     for key, value in user_input.items():
         if isinstance(value, dict):
-            if key == "wasp_in_box":
-                flattened_input[CONF_WASP_ENABLED] = value.get(CONF_WASP_ENABLED, False)
-                flattened_input[CONF_WASP_MOTION_TIMEOUT] = value.get(
-                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
-                )
-                flattened_input[CONF_WASP_WEIGHT] = value.get(
-                    CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT
-                )
-                flattened_input[CONF_WASP_MAX_DURATION] = value.get(
-                    CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION
-                )
-                flattened_input[CONF_WASP_VERIFICATION_DELAY] = value.get(
-                    CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY
-                )
-            elif key == "purpose":
-                flattened_input[CONF_PURPOSE] = value.get(CONF_PURPOSE, DEFAULT_PURPOSE)
-            else:
-                flattened_input.update(value)
+            # All sections (motion, doors, windows, wasp_in_box, etc.) are flattened the same way
+            flattened_input.update(value)
         else:
             flattened_input[key] = value
     return flattened_input

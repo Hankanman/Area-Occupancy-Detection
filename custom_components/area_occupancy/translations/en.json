@@ -29,23 +29,15 @@
                 "description": "Configure sensors and parameters for this area",
                 "data": {
                     "area_id": "Home Assistant Area",
+                    "purpose": "Area Purpose",
                     "name": "Name of Detection Area"
                 },
                 "data_description": {
                     "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
+                    "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time.",
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
-                    "purpose": {
-                        "name": "Area Purpose",
-                        "description": "Configure the primary purpose of this area",
-                        "data": {
-                            "purpose": "Area Purpose"
-                        },
-                        "data_description": {
-                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
-                        }
-                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
@@ -64,17 +56,22 @@
                             "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.02 (2%)."
                         }
                     },
-                    "doors": {
-                        "name": "Door Sensors",
-                        "description": "Configure door sensors and their states",
+                    "windows_and_doors": {
+                        "name": "Windows & Doors",
+                        "description": "Configure door and window sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
-                            "weight_door": "Door Weight"
+                            "weight_door": "Door Weight",
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State",
+                            "weight_window": "Window Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
-                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
+                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
@@ -93,19 +90,6 @@
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation",
                             "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
                             "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
-                        }
-                    },
-                    "windows": {
-                        "name": "Window Sensors",
-                        "description": "Configure window sensors and their states",
-                        "data": {
-                            "window_sensors": "Window Sensors",
-                            "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
-                        },
-                        "data_description": {
-                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
                     "media": {
@@ -153,12 +137,14 @@
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life (seconds)"
+                            "decay_half_life": "Decay Half Life (seconds)",
+                            "min_prior_override": "Minimum Prior Override"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
+                            "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
                 }
@@ -201,23 +187,15 @@
                 "description": "Configure sensors and parameters for this area",
                 "data": {
                     "area_id": "Home Assistant Area",
+                    "purpose": "Area Purpose",
                     "name": "Name of Detection Area"
                 },
                 "data_description": {
                     "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
+                    "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time.",
                     "name": "This is the name of the area or detection area. It will be used to name the sensors and the area occupancy entity."
                 },
                 "sections": {
-                    "purpose": {
-                        "name": "Area Purpose",
-                        "description": "Configure the primary purpose of this area",
-                        "data": {
-                            "purpose": "Area Purpose"
-                        },
-                        "data_description": {
-                            "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time."
-                        }
-                    },
                     "motion": {
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
@@ -236,17 +214,22 @@
                             "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.02 (2%)."
                         }
                     },
-                    "doors": {
-                        "name": "Door Sensors",
-                        "description": "Configure door sensors and their states",
+                    "windows_and_doors": {
+                        "name": "Windows & Doors",
+                        "description": "Configure door and window sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
-                            "weight_door": "Door Weight"
+                            "weight_door": "Door Weight",
+                            "window_sensors": "Window Sensors",
+                            "window_active_state": "Window Active State",
+                            "weight_window": "Window Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
-                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation."
+                            "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
@@ -265,19 +248,6 @@
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation",
                             "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
                             "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
-                        }
-                    },
-                    "windows": {
-                        "name": "Window Sensors",
-                        "description": "Configure window sensors and their states",
-                        "data": {
-                            "window_sensors": "Window Sensors",
-                            "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
-                        },
-                        "data_description": {
-                            "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
                         }
                     },
                     "media": {
@@ -325,12 +295,14 @@
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life (seconds)"
+                            "decay_half_life": "Decay Half Life (seconds)",
+                            "min_prior_override": "Minimum Prior Override"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose."
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
+                            "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
                 }
