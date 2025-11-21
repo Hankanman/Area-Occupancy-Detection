@@ -299,7 +299,7 @@ Stores calculated correlations between numeric sensor values and occupancy.
 
 **Retention:** Last 10 correlation analyses per sensor are retained.
 
-**Purpose:** Identifies which numeric sensors (temperature, CO2, humidity, etc.) correlate with occupancy, enabling them to be used as occupancy indicators.
+**Purpose:** Identifies which numeric sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10, etc.) correlate with occupancy, enabling them to be used as occupancy indicators.
 
 ### `entity_statistics`
 
