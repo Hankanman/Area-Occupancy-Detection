@@ -48,7 +48,6 @@ from custom_components.area_occupancy.const import (
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -174,7 +173,6 @@ def mock_config_entry() -> Mock:
     # Comprehensive configuration data
     entry.data = {
         CONF_AREA_ID: "test_area",
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.test_motion",
         CONF_MOTION_SENSORS: ["binary_sensor.test_motion"],
         CONF_PURPOSE: DEFAULT_PURPOSE,
         CONF_THRESHOLD: DEFAULT_THRESHOLD,
@@ -1041,7 +1039,6 @@ def create_test_area(
             motion=entity_ids
             if "motion" not in config_overrides
             else config_overrides.get("motion", []),
-            primary_occupancy=None,
             media=[],
             appliance=[],
             illuminance=[],
@@ -1661,7 +1658,6 @@ def mock_config() -> Mock:
     # Create sensor configurations
     config.sensors = Sensors(
         motion=["binary_sensor.motion1"],
-        primary_occupancy="binary_sensor.motion1",
         media=["media_player.tv"],
         appliance=["switch.computer"],
         illuminance=["sensor.illuminance_sensor_1"],
@@ -1775,7 +1771,6 @@ def mock_realistic_config_entry(
                     "binary_sensor.motion_sensor_2",
                     "binary_sensor.motion_sensor_3",
                 ],
-                "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
                 "purpose": "social",
                 "temperature_sensors": [
                     "sensor.temperature_sensor_1",
@@ -1816,7 +1811,6 @@ def mock_realistic_config_entry(
             "binary_sensor.motion_sensor_2",
             "binary_sensor.motion_sensor_3",
         ],
-        "primary_occupancy_sensor": "binary_sensor.motion_sensor_1",
         "purpose": "social",
         "temperature_sensors": [
             "sensor.temperature_sensor_1",
@@ -2246,7 +2240,6 @@ def config_flow_base_config(
     return {
         CONF_AREA_ID: testing_area_id,
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         CONF_WEIGHT_MOTION: DEFAULT_WEIGHT_MOTION,
         CONF_WEIGHT_MEDIA: DEFAULT_WEIGHT_MEDIA,
         CONF_WEIGHT_APPLIANCE: DEFAULT_WEIGHT_APPLIANCE,
@@ -2281,7 +2274,6 @@ def config_flow_sample_area_full(
         CONF_AREA_ID: living_room_area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         CONF_MEDIA_DEVICES: ["media_player.tv"],
         CONF_DOOR_SENSORS: ["binary_sensor.door1"],
         CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
@@ -2301,7 +2293,6 @@ def config_flow_valid_user_input(
         CONF_AREA_ID: living_room_area_id,
         "motion": {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         },
         "purpose": {},
         "doors": {},
@@ -2334,7 +2325,6 @@ def config_flow_mock_config_entry_with_areas(
                 CONF_AREA_ID: living_room_area_id,
                 CONF_PURPOSE: "social",
                 CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
                 CONF_THRESHOLD: 60.0,
             }
         ]
@@ -2352,7 +2342,6 @@ def config_flow_mock_config_entry_legacy() -> Mock:
     entry.data = {
         CONF_AREA_ID: "legacy_area",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
     }
     entry.options = {}
     return entry
@@ -2366,7 +2355,6 @@ def config_flow_mock_config_entry_legacy_no_name() -> Mock:
     entry.state = ConfigEntryState.LOADED
     entry.data = {
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
     }
     entry.options = {}
     return entry
@@ -2464,7 +2452,6 @@ def create_area_config(name: str = "Test Area", **overrides: Any) -> dict[str, A
         CONF_AREA_ID: area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-        CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
     }
     config.update(overrides)
     return config
@@ -2486,7 +2473,6 @@ def create_user_input(name: str = "Test Area", **overrides: Any) -> dict[str, An
         CONF_AREA_ID: area_id,
         "motion": {
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-            CONF_PRIMARY_OCCUPANCY_SENSOR: "binary_sensor.motion1",
         },
         "purpose": {},
         "doors": {},

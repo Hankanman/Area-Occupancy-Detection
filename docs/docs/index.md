@@ -97,7 +97,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 - **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances and environmental sensors (temperature, humidity, illuminance).
 - **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
-- **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using a primary sensor as ground truth) over a configurable history period.
+- **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.
 - **Probability Decay:** Gradually decreases the occupancy probability when sensors indicate inactivity, providing a natural transition to "unoccupied".
 - **Purpose-Based Decay:** Choosing a room purpose automatically sets a decay half life suited to the space.
@@ -116,10 +116,10 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 ## How It Works
 
 1.  **Configuration:** You select various sensors associated with an area (motion, doors, media players, etc.) and configure parameters like weights and the history period for learning.
-2.  **Prior Learning:** The integration analyses the history of your selected sensors against a designated primary motion/occupancy sensor. It calculates:
+2.  **Prior Learning:** The integration analyses the history of your selected sensors against all configured motion sensors. It calculates:
     - **P(Sensor Active | Area Occupied):** How likely is a sensor to be active when the area is truly occupied?
     - **P(Sensor Active | Area Not Occupied):** How likely is a sensor to be active when the area is _not_ occupied?
-    - **P(Area Occupied):** The baseline (prior) probability of the area being occupied, derived from the primary sensor's history.
+    - **P(Area Occupied):** The baseline (prior) probability of the area being occupied, derived from motion sensor history.
       These learned probabilities (or defaults if history is insufficient) are stored and used in calculations.
 3.  **Real-time Calculation:** As your sensor states change, the integration uses Bayes' theorem. For each _active_ sensor, it updates the probability of occupancy based on its learned likelihoods and the overall prior probability.
 4.  **Weighted Combination:** The contributions from individual active sensors are combined in log space and weighted by sensor type.

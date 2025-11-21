@@ -50,15 +50,13 @@
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
                         "data": {
-                            "primary_occupancy_sensor": "Primary Occupancy Sensor",
-                            "motion_sensors": "Additional Motion/Presence Sensors",
+                            "motion_sensors": "Motion/Presence Sensors",
                             "weight_motion": "Motion Weight",
                             "motion_timeout": "Motion Timeout (seconds)",
                             "motion_prob_given_true": "P(Active | Occupied)",
                             "motion_prob_given_false": "P(Active | Not Occupied)"
                         },
                         "data_description": {
-                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability. This should be your most reliable indicator of occupancy as it will be used as the baseline probability.",
                             "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation.",
                             "motion_timeout": "This adds an additional timeout to historical motion sensor data. You can use this to effectively adjust the prior probability for the area and the likelihood of occupancy for any given sensor.",
@@ -224,15 +222,13 @@
                         "name": "Motion & Presence Sensors",
                         "description": "Configure motion and presence sensors",
                         "data": {
-                            "primary_occupancy_sensor": "Primary Occupancy Sensor",
-                            "motion_sensors": "Additional Motion/Presence Sensors",
+                            "motion_sensors": "Motion/Presence Sensors",
                             "weight_motion": "Motion Weight",
                             "motion_timeout": "Motion Timeout (seconds)",
                             "motion_prob_given_true": "P(Active | Occupied)",
                             "motion_prob_given_false": "P(Active | Not Occupied)"
                         },
                         "data_description": {
-                            "primary_occupancy_sensor": "This is the primary occupancy sensor that will be used to detect occupancy. It will be used to calculate the prior probability. This should be your most reliable indicator of occupancy as it will be used as the baseline probability.",
                             "motion_sensors": "These will be used to detect occupancy and presence. They can be motion sensors, occupancy sensors, or presence sensors.",
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation.",
                             "motion_timeout": "This adds an additional timeout to historical motion sensor data. You can use this to effectively adjust the prior probability for the area and the likelihood of occupancy for any given sensor.",

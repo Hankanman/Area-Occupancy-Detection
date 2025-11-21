@@ -1144,7 +1144,6 @@ class TestAreaOccupancyCoordinator:
         # Make entity_ids empty by clearing sensors
         area.config.sensors = Sensors(
             motion=[],
-            primary_occupancy=None,
             media=[],
             appliance=[],
             illuminance=[],

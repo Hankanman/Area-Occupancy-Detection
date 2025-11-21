@@ -31,7 +31,6 @@ from ..const import (
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
     CONF_PURPOSE,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -137,7 +136,6 @@ class Sensors:
     motion_timeout: int = DEFAULT_MOTION_TIMEOUT
     motion_prob_given_true: float = DEFAULT_MOTION_PROB_GIVEN_TRUE
     motion_prob_given_false: float = DEFAULT_MOTION_PROB_GIVEN_FALSE
-    primary_occupancy: str | None = None
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
     illuminance: list[str] = field(default_factory=list)
@@ -326,7 +324,6 @@ class AreaConfig:
             motion_prob_given_false=float(
                 data.get(CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE)
             ),
-            primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),
             illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
