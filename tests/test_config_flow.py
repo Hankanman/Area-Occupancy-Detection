@@ -412,6 +412,7 @@ class TestHelperFunctions:
             "media",
             "appliances",
             "environmental",
+            "energy",
             "wasp_in_box",
             "parameters",
         ]
@@ -419,10 +420,19 @@ class TestHelperFunctions:
         for section in expected_sections:
             assert section in schema_dict
 
+        # Check if CONF_AREA_ID is present in schema_dict
+        # Schema dict uses vol.Required/vol.Optional markers as keys, so we need to check the .schema attribute
+        area_id_present = any(
+            hasattr(key, "schema") and key.schema == CONF_AREA_ID for key in schema_dict
+        )
         if expected_name_present:
-            assert CONF_AREA_ID in schema_dict
+            assert area_id_present, (
+                "CONF_AREA_ID should be present in schema but was not found"
+            )
         else:
-            assert CONF_AREA_ID not in schema_dict
+            assert not area_id_present, (
+                "CONF_AREA_ID should not be present in schema but was found"
+            )
 
         if test_schema_validation:
             # Test schema instantiation
@@ -436,6 +446,7 @@ class TestHelperFunctions:
                     "media": {},
                     "appliances": {},
                     "environmental": {},
+                    "energy": {},
                     "wasp_in_box": {},
                     "parameters": {},
                 }
