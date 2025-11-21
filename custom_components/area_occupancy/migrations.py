@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from difflib import SequenceMatcher
 import logging
 from pathlib import Path
 from typing import Any
@@ -10,12 +12,19 @@ from filelock import FileLock
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN
 from .db import DB_NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+# Module-level lock to prevent concurrent migrations
+_migration_lock = asyncio.Lock()
 
 
 # ============================================================================
@@ -174,26 +183,171 @@ async def _cleanup_registry_devices_and_entities(
 
 
 # ============================================================================
+# Area Matching Helpers
+# ============================================================================
+
+
+def _normalize_area_name(name: str) -> str:
+    """Normalize area name for comparison.
+
+    Converts to lowercase and removes spaces, underscores, hyphens.
+
+    Args:
+        name: Area name to normalize
+
+    Returns:
+        Normalized area name
+    """
+    if not name:
+        return ""
+    return name.lower().replace(" ", "").replace("_", "").replace("-", "")
+
+
+def _find_area_by_normalized_name(
+    area_reg: ar.AreaRegistry, target_name: str
+) -> str | None:
+    """Find area ID by normalized name matching.
+
+    Args:
+        area_reg: Home Assistant area registry
+        target_name: Area name to find
+
+    Returns:
+        Area ID if found, None otherwise
+    """
+    normalized_target = _normalize_area_name(target_name)
+    for area_id, area in area_reg.areas.items():
+        if _normalize_area_name(area.name) == normalized_target:
+            return area_id
+    return None
+
+
+def _fuzzy_match_area(
+    area_reg: ar.AreaRegistry, target_name: str, threshold: float = 0.8
+) -> str | None:
+    """Find area using fuzzy string matching.
+
+    Uses simple ratio-based matching with difflib.SequenceMatcher.
+    Returns area ID if similarity >= threshold, None otherwise.
+
+    Args:
+        area_reg: Home Assistant area registry
+        target_name: Area name to find
+        threshold: Minimum similarity ratio (0.0-1.0) to consider a match
+
+    Returns:
+        Area ID if match found above threshold, None otherwise
+    """
+    normalized_target = _normalize_area_name(target_name)
+    best_match = None
+    best_ratio = 0.0
+
+    for area_id, area in area_reg.areas.items():
+        normalized_area = _normalize_area_name(area.name)
+        ratio = SequenceMatcher(None, normalized_target, normalized_area).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = area_id
+
+    if best_ratio >= threshold:
+        return best_match
+    return None
+
+
+def _find_or_create_area(area_reg: ar.AreaRegistry, area_name: str) -> str:
+    """Find existing area or create new one.
+
+    Tries matching methods in order:
+    1. Exact match by ID
+    2. Exact match by name
+    3. Normalized name matching
+    4. Fuzzy matching
+    5. Create new area
+
+    Args:
+        area_reg: Home Assistant area registry
+        area_name: Area name to find or create
+
+    Returns:
+        Area ID (existing or newly created)
+    """
+    # Try exact ID match first
+    area_entry = area_reg.async_get_area(area_name)
+    if area_entry:
+        _LOGGER.debug(
+            "Found area '%s' using exact ID match for '%s'",
+            area_entry.name,
+            area_name,
+        )
+        return area_entry.id
+
+    # Try exact name match
+    area_entry = area_reg.async_get_area_by_name(area_name)
+    if area_entry:
+        _LOGGER.info(
+            "Found area '%s' using exact name match for '%s'",
+            area_entry.name,
+            area_name,
+        )
+        return area_entry.id
+
+    # Try normalized matching
+    area_id = _find_area_by_normalized_name(area_reg, area_name)
+    if area_id:
+        matched_area = area_reg.async_get_area(area_id)
+        _LOGGER.info(
+            "Found area '%s' using normalized matching for '%s'",
+            matched_area.name if matched_area else area_id,
+            area_name,
+        )
+        return area_id
+
+    # Try fuzzy matching
+    area_id = _fuzzy_match_area(area_reg, area_name)
+    if area_id:
+        matched_area = area_reg.async_get_area(area_id)
+        matched_name = matched_area.name if matched_area else area_id
+        _LOGGER.info(
+            "Found area '%s' using fuzzy matching for '%s'",
+            matched_name,
+            area_name,
+        )
+        return area_id
+
+    # Create new area
+    _LOGGER.info(
+        "No matching area found for '%s', creating new area in Home Assistant",
+        area_name,
+    )
+    created_area = area_reg.async_create(area_name)
+    return created_area.id
+
+
+# ============================================================================
 # Entry Migration (Main Entry Point)
 # ============================================================================
 
 
-def _convert_entry_to_area_config(entry: ConfigEntry) -> dict[str, Any]:
+def _convert_entry_to_area_config(
+    entry: ConfigEntry, hass: HomeAssistant
+) -> dict[str, Any] | None:
     """Convert old single-area config entry to new area config dict format.
 
     Args:
         entry: Config entry with old format (single area config in data)
+        hass: Home Assistant instance for area registry validation
 
     Returns:
-        Dictionary representing an area config in the new format
+        Dictionary representing an area config in the new format, or None if area ID is invalid
     """
     # Merge data and options (Home Assistant pattern)
     merged = dict(entry.data)
     if entry.options:
         merged.update(entry.options)
 
-    # Ensure CONF_AREA_ID exists (required field)
-    if CONF_AREA_ID not in merged:
+    # Get area ID (with fallback to title/unique_id)
+    area_id = merged.get(CONF_AREA_ID)
+    if not area_id:
         # Try to use entry title or unique_id as fallback
         area_id = getattr(entry, "title", None) or getattr(entry, "unique_id", None)
         if area_id:
@@ -203,36 +357,61 @@ def _convert_entry_to_area_config(entry: ConfigEntry) -> dict[str, Any]:
                 area_id,
             )
             merged[CONF_AREA_ID] = area_id
-        else:
-            _LOGGER.error(
-                "Entry %s missing CONF_AREA_ID and no fallback available",
-                entry.entry_id,
-            )
-            raise ValueError(f"Entry {entry.entry_id} missing required CONF_AREA_ID")
+
+    if not area_id:
+        _LOGGER.error(
+            "Entry %s missing CONF_AREA_ID and no fallback available",
+            entry.entry_id,
+        )
+        return None
+
+    # LOG: Starting area processing
+    _LOGGER.info(
+        "Processing area '%s' from entry %s",
+        area_id,
+        entry.entry_id,
+    )
+
+    # Find or create area in Home Assistant
+    area_reg = ar.async_get(hass)
+    matched_area_id = _find_or_create_area(area_reg, area_id)
+
+    # LOG: Result
+    matched_area = area_reg.async_get_area(matched_area_id)
+    if matched_area:
+        _LOGGER.info(
+            "Area '%s' from entry %s -> matched/created area '%s' (ID: %s)",
+            area_id,
+            entry.entry_id,
+            matched_area.name,
+            matched_area_id,
+        )
+
+    # Update merged config with matched/created area ID
+    merged[CONF_AREA_ID] = matched_area_id
 
     # Return merged dict as area config (preserve all keys)
     return merged
 
 
-def _combine_config_entries(entries: list[ConfigEntry]) -> list[dict[str, Any]]:
+def _combine_config_entries(
+    entries: list[ConfigEntry], hass: HomeAssistant
+) -> list[dict[str, Any]]:
     """Combine multiple old config entries into list of area config dicts.
 
     Args:
         entries: List of config entries with old format (version < 13)
+        hass: Home Assistant instance for area registry validation
 
     Returns:
-        List of area config dictionaries in new format
-
-    Raises:
-        ValueError: If any entry fails to convert (e.g., missing required CONF_AREA_ID)
-        AttributeError: If entry is missing required attributes
-        KeyError: If entry data is invalid
+        List of area config dictionaries in new format (invalid areas are filtered out)
     """
     area_configs: list[dict[str, Any]] = []
 
     for entry in entries:
-        area_config = _convert_entry_to_area_config(entry)
-        area_configs.append(area_config)
+        area_config = _convert_entry_to_area_config(entry, hass)
+        if area_config is not None:
+            area_configs.append(area_config)
 
     return area_configs
 
@@ -242,6 +421,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     This migration combines multiple old config entries (each representing one area)
     into a single config entry with CONF_AREAS list format.
+
+    Uses file locking to prevent concurrent migrations from creating multiple instances.
 
     Args:
         hass: Home Assistant instance
@@ -262,59 +443,181 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
         return True
 
-    # Get all config entries for this domain
-    all_entries = hass.config_entries.async_entries(DOMAIN)
+    # Acquire async lock to prevent concurrent migration attempts
+    async with _migration_lock:
+        # EARLY CHECK: Before even starting executor, check if migration is done
+        # This prevents multiple executors from starting concurrently
+        all_entries = hass.config_entries.async_entries(DOMAIN)
+        old_entries = [entry for entry in all_entries if entry.version < CONF_VERSION]
 
-    # Filter entries that need migration (version < 13)
-    old_entries = [entry for entry in all_entries if entry.version < CONF_VERSION]
-
-    if not old_entries:
-        _LOGGER.debug(
-            "No entries with version < %d found, migration not needed",
-            CONF_VERSION,
-        )
-        return True
-
-    _LOGGER.info(
-        "Found %d config entry(ies) to migrate from version < %d",
-        len(old_entries),
-        CONF_VERSION,
-    )
-
-    # If there's only one old entry, convert it to new format
-    if len(old_entries) == 1:
-        _LOGGER.info(
-            "Migrating single config entry %s to multi-area format",
-            config_entry.entry_id,
-        )
-        try:
-            area_config = _convert_entry_to_area_config(config_entry)
-            new_data = {CONF_AREAS: [area_config]}
-
-            # Update entry with new format
-            hass.config_entries.async_update_entry(
-                config_entry,
-                data=new_data,
-                version=CONF_VERSION,
-            )
-            _LOGGER.info(
-                "Successfully migrated single entry %s to multi-area format",
+        if not old_entries:
+            _LOGGER.debug(
+                "Migration already completed by another entry, skipping entry %s",
                 config_entry.entry_id,
             )
+            return True
 
-            # Clean up devices and entities after successful conversion
-            # This removes orphaned devices/entities with old unique IDs
-            # Setup will recreate them with new unique IDs after migration
+        # Check if this specific entry was already migrated
+        current_entry = next(
+            (e for e in all_entries if e.entry_id == config_entry.entry_id), None
+        )
+        if current_entry and current_entry.version >= CONF_VERSION:
+            _LOGGER.debug("Entry %s already migrated, skipping", config_entry.entry_id)
+            return True
+
+        # Use file lock to prevent concurrent migrations - DEPRECATED for config entry updates
+        # We now rely on asyncio.Lock within the single process to serialize access to async APIs.
+        # Calling async APIs from a thread (via FileLock executor) is unsafe and causes deadlocks.
+
+        # Track entry IDs that need cleanup (set by migration function)
+        cleanup_entry_ids: list[str] = []
+        entries_to_remove: list[str] = []
+
+        async def _migrate() -> bool:
+            """Perform migration logic (async)."""
+            try:
+                # Refresh registry entries
+                all_entries = hass.config_entries.async_entries(DOMAIN)
+
+                # Check status of CURRENT entry
+                current_entry = next(
+                    (e for e in all_entries if e.entry_id == config_entry.entry_id),
+                    None,
+                )
+
+                # If entry is gone or marked deleted, stop immediately
+                if not current_entry:
+                    _LOGGER.info(
+                        "Entry %s not found in registry, stopping setup",
+                        config_entry.entry_id,
+                    )
+                    return False
+
+                if current_entry.data.get("deleted"):
+                    _LOGGER.info(
+                        "Entry %s is marked deleted, stopping setup",
+                        config_entry.entry_id,
+                    )
+                    return False
+
+                # Identify all entries needing migration
+                old_entries = [
+                    entry for entry in all_entries if entry.version < CONF_VERSION
+                ]
+
+                if not old_entries:
+                    # Check for any "deleted" entries that need removal
+                    # (This happens if another process did the migration but couldn't remove them)
+                    for entry in all_entries:
+                        if entry.data.get("deleted"):
+                            _LOGGER.debug(
+                                "Found pending deleted entry %s, adding to cleanup",
+                                entry.entry_id,
+                            )
+                            entries_to_remove.append(entry.entry_id)
+                            cleanup_entry_ids.append(entry.entry_id)
+
+                    # No migration needed. Since we passed the "deleted" check above,
+                    # we are a valid, surviving entry (or already migrated).
+                    _LOGGER.debug("No entries requiring migration found")
+                    return True
+
+                # Deterministic target selection: Sort by entry_id and pick first
+                old_entries.sort(key=lambda e: e.entry_id)
+                target_entry = old_entries[0]
+
+                _LOGGER.info(
+                    "Migrating %d entries. Target entry: %s",
+                    len(old_entries),
+                    target_entry.entry_id,
+                )
+
+                # Consolidate all areas into one list
+                area_configs = _combine_config_entries(old_entries, hass)
+
+                if not area_configs:
+                    _LOGGER.error(
+                        "Failed to convert any entries to area configs. Migration aborted."
+                    )
+                    return False
+
+                # Filter invalid areas
+                area_reg = ar.async_get(hass)
+                valid_areas = []
+                for area_config in area_configs:
+                    area_id = area_config.get(CONF_AREA_ID)
+                    if area_id and area_reg.async_get_area(area_id):
+                        valid_areas.append(area_config)
+                    else:
+                        _LOGGER.warning("Removing invalid area ID '%s'", area_id)
+
+                if not valid_areas:
+                    _LOGGER.error("No valid areas found after migration. Aborting.")
+                    return False
+
+                # Update TARGET entry with consolidated areas
+                new_data = {CONF_AREAS: valid_areas}
+                hass.config_entries.async_update_entry(
+                    target_entry,
+                    data=new_data,
+                    version=CONF_VERSION,
+                )
+
+                _LOGGER.info(
+                    "Successfully updated target entry %s with %d areas",
+                    target_entry.entry_id,
+                    len(valid_areas),
+                )
+
+                # Handle entries to remove (everyone except target)
+                for entry in old_entries:
+                    if entry.entry_id != target_entry.entry_id:
+                        # Update to v13 + deleted to prevent them from running migration again
+                        hass.config_entries.async_update_entry(
+                            entry,
+                            data={"deleted": True},
+                            version=CONF_VERSION,
+                        )
+                        entries_to_remove.append(entry.entry_id)
+                        cleanup_entry_ids.append(entry.entry_id)
+
+                    # Also add to cleanup to ensure device registry is cleaned for all old entries
+                    # (Target entry also needs its old device cleaned up/replaced)
+                    if entry.entry_id == target_entry.entry_id:
+                        cleanup_entry_ids.append(entry.entry_id)
+
+                # If WE are the target, return True (continue setup).
+                # If we are one of the removed ones, return False (stop setup).
+                if config_entry.entry_id == target_entry.entry_id:
+                    return True
+
+                _LOGGER.info(
+                    "Current entry %s was consolidated into %s. Stopping setup.",
+                    config_entry.entry_id,
+                    target_entry.entry_id,
+                )
+
+            except Exception:
+                _LOGGER.exception("Unexpected error during migration")
+                return False
+            else:
+                return False
+
+        # Perform migration (in async loop, protected by lock)
+        migration_result = await _migrate()
+
+        # After successful migration, perform cleanup (safe in async loop)
+        if cleanup_entry_ids:
+            # Use set to remove duplicates if any
+            unique_cleanup_ids = list(set(cleanup_entry_ids))
             _LOGGER.info(
-                "Cleaning up devices and entities from registries for entry %s",
-                config_entry.entry_id,
+                "Cleaning up devices and entities from registries for %d config entry(ies)",
+                len(unique_cleanup_ids),
             )
             (
                 devices_removed,
                 entities_removed,
-            ) = await _cleanup_registry_devices_and_entities(
-                hass, [config_entry.entry_id]
-            )
+            ) = await _cleanup_registry_devices_and_entities(hass, unique_cleanup_ids)
             if devices_removed > 0 or entities_removed > 0:
                 _LOGGER.info(
                     "Registry cleanup: removed %d device(s) and %d entity(ies). "
@@ -322,107 +625,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     devices_removed,
                     entities_removed,
                 )
-        except (ValueError, AttributeError, KeyError, OSError) as err:
-            _LOGGER.error(
-                "Failed to migrate single entry %s: %s", config_entry.entry_id, err
-            )
-            return False
-        else:
-            return True
 
-    # Multiple entries need to be combined
-    _LOGGER.info(
-        "Combining %d config entries into single multi-area entry",
-        len(old_entries),
-    )
+        # Remove old entries
+        # Ensure we remove the current entry LAST, as it might cancel this task
+        entries_to_remove.sort(key=lambda eid: eid == config_entry.entry_id)
 
-    try:
-        # Convert all old entries to area config dicts
-        area_configs = _combine_config_entries(old_entries)
-
-        if not area_configs:
-            _LOGGER.error(
-                "Failed to convert any entries to area configs. Migration aborted."
-            )
-            return False
-
-        # Check for duplicate area IDs
-        area_ids = [config.get(CONF_AREA_ID) for config in area_configs]
-        if len(area_ids) != len(set(area_ids)):
-            _LOGGER.warning(
-                "Duplicate area IDs found in entries to migrate. "
-                "This may cause issues. Area IDs: %s",
-                area_ids,
-            )
-
-        # Prefer config_entry as target if it's in old_entries, otherwise use first entry
-        # This makes the migration more predictable for callers
-        if config_entry in old_entries:
-            target_entry = config_entry
-            _LOGGER.debug(
-                "Using config_entry %s as target for consolidation",
-                config_entry.entry_id,
-            )
-        else:
-            target_entry = old_entries[0]
-            _LOGGER.debug(
-                "config_entry not in old_entries, using first entry %s as target",
-                target_entry.entry_id,
-            )
-
-        # Create new data structure with CONF_AREAS list
-        new_data = {CONF_AREAS: area_configs}
-
-        # Update the target entry with combined data
-        hass.config_entries.async_update_entry(
-            target_entry,
-            data=new_data,
-            version=CONF_VERSION,
-        )
-
-        _LOGGER.info(
-            "Successfully updated entry %s with %d area(s)",
-            target_entry.entry_id,
-            len(area_configs),
-        )
-
-        # Clean up devices and entities after successful conversion
-        # This removes orphaned devices/entities with old unique IDs
-        # Setup will recreate them with new unique IDs after migration
-        all_entry_ids = [entry.entry_id for entry in old_entries]
-        _LOGGER.info(
-            "Cleaning up devices and entities from registries for %d config entry(ies)",
-            len(all_entry_ids),
-        )
-        (
-            devices_removed,
-            entities_removed,
-        ) = await _cleanup_registry_devices_and_entities(hass, all_entry_ids)
-        if devices_removed > 0 or entities_removed > 0:
-            _LOGGER.info(
-                "Registry cleanup: removed %d device(s) and %d entity(ies). "
-                "They will be recreated with new unique IDs during setup.",
-                devices_removed,
-                entities_removed,
-            )
-
-        # Delete other old entries
-        entries_to_remove = [entry for entry in old_entries if entry != target_entry]
-        for entry in entries_to_remove:
-            _LOGGER.info("Removing old config entry %s", entry.entry_id)
+        for entry_id in entries_to_remove:
+            _LOGGER.info("Removing old config entry %s", entry_id)
             try:
-                hass.config_entries.async_remove(entry.entry_id)
+                await hass.config_entries.async_remove(entry_id)
             except (OSError, KeyError, ValueError) as err:
-                _LOGGER.error("Failed to remove old entry %s: %s", entry.entry_id, err)
-                # Continue removing other entries even if one fails
+                _LOGGER.error("Failed to remove old entry %s: %s", entry_id, err)
 
-        _LOGGER.info(
-            "Migration completed: %d entry(ies) combined into entry %s",
-            len(old_entries),
-            target_entry.entry_id,
-        )
-    except (ValueError, AttributeError, KeyError, OSError):
-        _LOGGER.exception("Failed to combine config entries during migration")
-        return False
-    else:
-        return True
+        if entries_to_remove:
+            _LOGGER.info(
+                "Migration completed: %d entry(ies) combined into single entry",
+                len(cleanup_entry_ids),
+            )
+
+        return migration_result

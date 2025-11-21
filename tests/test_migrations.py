@@ -275,13 +275,13 @@ class TestMultipleEntriesMigration:
         entry.entry_id = "entry_1"
         entry.state = ConfigEntryState.LOADED
         entry.data = {
-            CONF_AREA_ID: "area_1",
+            CONF_AREA_ID: "living_room",
             CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
             CONF_THRESHOLD: 50.0,
         }
         entry.options = {}
-        entry.title = "Area 1"
-        entry.unique_id = "area_1"
+        entry.title = "Living Room"
+        entry.unique_id = "living_room"
         return entry
 
     @pytest.fixture
@@ -293,13 +293,13 @@ class TestMultipleEntriesMigration:
         entry.entry_id = "entry_2"
         entry.state = ConfigEntryState.LOADED
         entry.data = {
-            CONF_AREA_ID: "area_2",
+            CONF_AREA_ID: "kitchen",
             CONF_MOTION_SENSORS: ["binary_sensor.motion2"],
             CONF_THRESHOLD: 60.0,
         }
         entry.options = {}
-        entry.title = "Area 2"
-        entry.unique_id = "area_2"
+        entry.title = "Kitchen"
+        entry.unique_id = "kitchen"
         return entry
 
     async def test_migrate_multiple_entries(
@@ -326,9 +326,12 @@ class TestMultipleEntriesMigration:
 
         # Mock async_remove to track removals
         remove_calls = []
-        hass.config_entries.async_remove = Mock(
-            side_effect=lambda entry_id: remove_calls.append(entry_id)
-        )
+
+        async def mock_remove(entry_id):
+            remove_calls.append(entry_id)
+            return True
+
+        hass.config_entries.async_remove = Mock(side_effect=mock_remove)
 
         # Mock registry cleanup
         with patch(
@@ -341,19 +344,29 @@ class TestMultipleEntriesMigration:
             # Migration should succeed
             assert result is True
 
-        # Should update the first entry with combined data
-        assert len(update_calls) == 1
-        updated_entry, update_kwargs = update_calls[0]
-        assert updated_entry == mock_entry_1
-        assert update_kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in update_kwargs["data"]
-        assert len(update_kwargs["data"][CONF_AREAS]) == 2
+        # Should update both entries:
+        # 1. Target entry with new areas
+        # 2. Old entry marked as deleted
+        assert len(update_calls) == 2
+
+        # Check target entry update
+        target_update = next(call for call in update_calls if call[0] == mock_entry_1)
+        _, target_kwargs = target_update
+        assert target_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS in target_kwargs["data"]
+        assert len(target_kwargs["data"][CONF_AREAS]) == 2
+
+        # Check loser entry update
+        loser_update = next(call for call in update_calls if call[0] == mock_entry_2)
+        _, loser_kwargs = loser_update
+        assert loser_kwargs["version"] == CONF_VERSION
+        assert loser_kwargs["data"].get("deleted") is True
 
         # Verify area configs were preserved
-        areas = update_kwargs["data"][CONF_AREAS]
+        areas = target_kwargs["data"][CONF_AREAS]
         area_ids = [area[CONF_AREA_ID] for area in areas]
-        assert "area_1" in area_ids
-        assert "area_2" in area_ids
+        assert "living_room" in area_ids
+        assert "kitchen" in area_ids
 
         # Should remove the second entry
         assert len(remove_calls) == 1
@@ -399,7 +412,7 @@ class TestMultipleEntriesMigration:
 
         # Verify area config was preserved
         area = update_kwargs["data"][CONF_AREAS][0]
-        assert area[CONF_AREA_ID] == "area_1"
+        assert area[CONF_AREA_ID] == "living_room"
         assert area[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
 
     async def test_migrate_entry_with_options(self, hass: HomeAssistant) -> None:
@@ -485,7 +498,7 @@ class TestMultipleEntriesMigration:
 
         # Should use title as fallback
         area = update_calls[0][1]["data"][CONF_AREAS][0]
-        assert area[CONF_AREA_ID] == "My Area"
+        assert area[CONF_AREA_ID] == "my_area"
 
     async def test_migrate_entry_missing_area_id_no_fallback(
         self, hass: HomeAssistant
@@ -555,8 +568,6 @@ class TestMultipleEntriesMigration:
 
         # Track update calls
         update_calls = []
-        original_data_1 = mock_entry_1.data.copy()
-        original_data_unconvertible = unconvertible_entry.data.copy()
 
         def mock_update(entry, **kwargs):
             update_calls.append((entry, kwargs))
@@ -569,34 +580,50 @@ class TestMultipleEntriesMigration:
 
         # Track remove calls
         remove_calls = []
-        hass.config_entries.async_remove = Mock(
-            side_effect=lambda entry_id: remove_calls.append(entry_id)
-        )
+
+        async def mock_remove(entry_id):
+            remove_calls.append(entry_id)
+            return True
+
+        hass.config_entries.async_remove = Mock(side_effect=mock_remove)
 
         # Mock registry cleanup
         with patch(
             "custom_components.area_occupancy.migrations._cleanup_registry_devices_and_entities",
             return_value=(2, 3),  # 2 devices, 3 entities removed
         ):
-            # Attempt migration - should fail
+            # Attempt migration - should succeed now as it handles partial failures
             result = await async_migrate_entry(hass, mock_entry_1)
 
-            # Migration should fail
-            assert result is False
+            # Migration should succeed (valid entry migrated, invalid removed)
+            assert result is True
 
-        # Verify no entries were updated
-        assert len(update_calls) == 0
+        # Verify updates:
+        # 1. Valid entry updated with areas
+        # 2. Invalid entry marked as deleted
+        assert len(update_calls) == 2
 
-        # Verify no entries were removed
-        assert len(remove_calls) == 0
+        # Check valid entry update
+        valid_update = next(call for call in update_calls if call[0] == mock_entry_1)
+        entry, kwargs = valid_update
+        assert entry == mock_entry_1
+        assert kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS in kwargs["data"]
+        assert len(kwargs["data"][CONF_AREAS]) == 1
+        assert kwargs["data"][CONF_AREAS][0][CONF_AREA_ID] == "living_room"
 
-        # Verify original entry data is still intact
-        assert mock_entry_1.data == original_data_1
-        assert unconvertible_entry.data == original_data_unconvertible
+        # Check invalid entry update (marked as deleted)
+        invalid_update = next(
+            call for call in update_calls if call[0] == unconvertible_entry
+        )
+        entry, kwargs = invalid_update
+        assert entry == unconvertible_entry
+        assert kwargs["version"] == CONF_VERSION
+        assert kwargs["data"].get("deleted") is True
 
-        # Verify entry versions are still unchanged
-        assert mock_entry_1.version == 12
-        assert unconvertible_entry.version == 12
+        # Verify invalid entry was removed
+        assert len(remove_calls) == 1
+        assert remove_calls[0] == "entry_unconvertible"
 
 
 class TestRegistryCleanup:
