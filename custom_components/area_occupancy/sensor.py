@@ -198,15 +198,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
-        if not self.coordinator.data:
-            return {}
-        # "All Areas" does not support type_probabilities aggregation
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            return {}
-        area = self._get_area()
-        if area is None:
-            return {}
-        return area.type_probabilities()
+        return {}
 
     @callback
     def _handle_coordinator_update(self) -> None:

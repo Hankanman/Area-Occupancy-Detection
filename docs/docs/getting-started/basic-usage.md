@@ -19,24 +19,18 @@ This entity shows the overall occupancy status, you can use it in automations su
 
 This entity shows the calculated probability of occupancy based on the sensors and their weights that are currently active based on your configuration.
 
-**Attributes:**
-
-| Attribute | Description |
-|-----------|-------------|
-| `type_probabilities` | Mapping of each sensor type to its individual occupancy probability contribution |
-
 ### Prior Probability
 
 The prior probability is the probability of occupancy before any sensors are active. It is used to provide a baseline probability of occupancy.
 
 **Attributes:**
 
-| Attribute | Description |
-|-----------|-------------|
+| Attribute      | Description                                     |
+| -------------- | ----------------------------------------------- |
 | `global_prior` | Baseline prior derived from historical analysis |
-| `time_prior` | Time-based modifier applied to the prior |
-| `day_of_week` | Day-of-week index used for time prior |
-| `time_slot` | Time slot index used for time prior |
+| `time_prior`   | Time-based modifier applied to the prior        |
+| `day_of_week`  | Day-of-week index used for time prior           |
+| `time_slot`    | Time slot index used for time prior             |
 
 ### Evidence
 
@@ -44,12 +38,12 @@ Lists active and inactive entities and provides detailed information about each 
 
 **Attributes:**
 
-| Attribute | Description |
-|-----------|-------------|
-| `evidence` | Comma-separated list of active entity names |
-| `no_evidence` | Comma-separated list of inactive entity names |
-| `total` | Total number of entities |
-| `details` | Detailed information for each entity including probabilities and decay status |
+| Attribute     | Description                                                                   |
+| ------------- | ----------------------------------------------------------------------------- |
+| `evidence`    | Comma-separated list of active entity names                                   |
+| `no_evidence` | Comma-separated list of inactive entity names                                 |
+| `total`       | Total number of entities                                                      |
+| `details`     | Detailed information for each entity including probabilities and decay status |
 
 ### Decay Status
 
@@ -112,24 +106,24 @@ automation:
 
 1. **Optimal Threshold**:
 
-      - Start at 50%
-      - Increase for fewer false positives
-      - Decrease for higher sensitivity
+   - Start at 50%
+   - Increase for fewer false positives
+   - Decrease for higher sensitivity
 
 2. **Sensor Weights**:
 
-      - Adjust based on reliability
-      - Higher weights = stronger influence
-      - Balance multiple sensors
+   - Adjust based on reliability
+   - Higher weights = stronger influence
+   - Balance multiple sensors
 
 3. **Decay Settings**:
 
-      - Match room usage patterns
-      - Longer windows for less traffic
-      - Shorter windows for high traffic
+   - Match room usage patterns
+   - Longer windows for less traffic
+   - Shorter windows for high traffic
 
 4. **Historical Learning**:
 
-      - Enable for better accuracy
-      - Use longer periods when stable
-      - Update regularly
+   - Enable for better accuracy
+   - Use longer periods when stable
+   - Update regularly

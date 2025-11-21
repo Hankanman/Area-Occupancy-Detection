@@ -110,7 +110,6 @@ The integration creates several entities, all prefixed with your configured area
 
     - `active_triggers`: List of sensors currently indicating activity.
     - `sensor_probabilities`: Individual probability details for each sensor.
-    - `type_probabilities`: Per-input-type occupancy probabilities.
     - `time_prior`: Prior probability for the current day/time slot.
     - `threshold`: Current threshold setting.
     - `decay_active`: Whether decay is currently active.

@@ -16,8 +16,6 @@ This integration creates several entities in Home Assistant to expose the calcul
     *   **Description:** Shows the current calculated Bayesian probability that the area is occupied. This value incorporates sensor inputs, learned priors, weights, and decay (if active).
     *   **Device Class:** `power_factor` (used for % display)
     *   **State Class:** `measurement`
-    *   **Attributes:**
-        *   `type_probabilities`: Mapping of each sensor type to its individual occupancy probability contribution.
 
 *   **`number.area_occupancy_threshold_<area_name>` (Occupancy Threshold)**
     *   **State:** Numeric value (configurable range, typically 1-99)

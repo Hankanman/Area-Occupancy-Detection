@@ -969,7 +969,6 @@ def coordinator_with_sensors(
     area.decay = Mock(return_value=0.8)
     area.occupied = Mock(return_value=True)
     area.threshold = Mock(return_value=0.5)
-    area.type_probabilities = Mock(return_value={})
     area.device_info = Mock(
         return_value={
             "identifiers": {(DOMAIN, area.area_name)},
