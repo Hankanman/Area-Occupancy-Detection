@@ -549,7 +549,44 @@ class AreaConfig:
             _validate_config_entry()
             # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
-            new_options.update(options)
+
+            # Check if we're in multi-area format and need to update area within CONF_AREAS list
+            if CONF_AREAS in new_options and isinstance(new_options[CONF_AREAS], list):
+                # Multi-area format: update the specific area within CONF_AREAS list
+                areas_list = new_options[CONF_AREAS].copy()
+                area_updated = False
+
+                # Find the area to update by matching area_id
+                area_id = self.area_id
+                if area_id:
+                    for i, area_data in enumerate(areas_list):
+                        if area_data.get(CONF_AREA_ID) == area_id:
+                            # Merge new options into existing area config
+                            updated_area = dict(area_data)
+                            updated_area.update(options)
+                            areas_list[i] = updated_area
+                            area_updated = True
+                            break
+
+                    if not area_updated:
+                        _LOGGER.warning(
+                            "Area with ID '%s' not found in CONF_AREAS list when updating config",
+                            area_id,
+                        )
+                        # Fallback: add options at top level (legacy behavior)
+                        new_options.update(options)
+                    else:
+                        # Update CONF_AREAS list with modified area
+                        new_options[CONF_AREAS] = areas_list
+                else:
+                    _LOGGER.warning(
+                        "Area ID not available, cannot update area in CONF_AREAS list"
+                    )
+                    # Fallback: add options at top level
+                    new_options.update(options)
+            else:
+                # Legacy single-area format: update options at top level
+                new_options.update(options)
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
@@ -559,7 +596,10 @@ class AreaConfig:
 
             # Merge existing config entry with new options for internal state
             data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
-            data.update(options)
+            # For multi-area format, data already has updated area from new_options
+            # For legacy format, update at top level
+            if CONF_AREAS not in data or not isinstance(data.get(CONF_AREAS), list):
+                data.update(options)
 
             # Validate area_name for multi-area config before processing
             _validate_area_name_for_multi_area(data)

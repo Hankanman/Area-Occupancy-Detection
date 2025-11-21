@@ -623,7 +623,12 @@ class TestPriorAnalyzerWithRealDB:
     def test_analyze_area_prior_with_min_prior_override(
         self, test_db: AreaOccupancyDB
     ) -> None:
-        """Test analyze_area_prior applies minimum prior override."""
+        """Test that min_prior_override is applied in Prior.value, not in analyze_area_prior.
+
+        Note: min_prior_override is applied at runtime in Prior.value, not during analysis.
+        The analyzer returns the raw calculated prior, which is then capped by min_prior_override
+        when Prior.value is accessed.
+        """
         coordinator = test_db.coordinator
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
@@ -647,9 +652,30 @@ class TestPriorAnalyzerWithRealDB:
                 ),
             ),
         ):
-            result = analyzer.analyze_area_prior(analyzer.sensor_ids)
-            # Should be at least min_prior_override
-            assert result >= 0.3
+            # analyze_area_prior returns raw calculated prior (without override)
+            raw_result = analyzer.analyze_area_prior(analyzer.sensor_ids)
+            # The override is NOT applied here - it's applied in Prior.value
+            # So we just verify the method returns a valid prior value
+            assert 0.0 <= raw_result <= 1.0
+
+            # Set the global_prior so that Prior.value can use it
+            # (normally this is done by start_prior_analysis, but for testing we set it directly)
+            area.prior.set_global_prior(raw_result)
+
+            # Verify that Prior.value applies the override
+            prior_value = area.prior.value
+            # Should be at least min_prior_override if raw result was lower
+            if raw_result < 0.3:
+                assert prior_value >= 0.3, (
+                    f"Prior value {prior_value} should be >= 0.3 (min_prior_override) "
+                    f"when raw result {raw_result} < 0.3"
+                )
+            else:
+                # If raw result was already >= 0.3, prior_value should match (after adjustments)
+                # Note: Prior.value applies PRIOR_FACTOR and clamping, so it might not exactly match
+                assert prior_value >= 0.3, (
+                    f"Prior value {prior_value} should be >= 0.3 when raw result {raw_result} >= 0.3"
+                )
 
     def test_analyze_time_priors_with_real_data(
         self, test_db: AreaOccupancyDB, db_test_session

@@ -317,16 +317,8 @@ class PriorAnalyzer:
                         motion_prior,
                     )
 
-        # Step 3: Apply minimum prior override if configured
-        if self.config.min_prior_override > 0.0:
-            original_prior = prior
-            if prior < self.config.min_prior_override:
-                prior = self.config.min_prior_override
-                _LOGGER.debug(
-                    "Applied minimum prior override: %.4f -> %.4f",
-                    original_prior,
-                    prior,
-                )
+        # Note: min_prior_override is NOT applied here - it's applied at runtime
+        # in Prior.value. We save the actual calculated prior to the database.
 
         _LOGGER.debug("Final calculated prior: %.4f", prior)
 
