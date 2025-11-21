@@ -171,7 +171,7 @@ Default weights by entity type:
 - Media players: 0.70 (medium-high reliability)
 - Appliances: 0.40 (medium reliability)
 - Doors/Windows: 0.20-0.30 (low reliability)
-- Environmental sensors: 0.10 (very low reliability)
+- Environmental sensors: 0.10 (very low reliability) - includes temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors
 
 ## Decay Interpolation Formula
 

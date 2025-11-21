@@ -11,7 +11,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 - **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
 - **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
-- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, appliance, and environmental sensors
+- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 - **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
 - **[All Areas Aggregation](features/entities.md#all-areas-aggregation-device)**: Automatically aggregates occupancy data across all configured areas for whole-home detection
 
@@ -56,7 +56,7 @@ The integration supports multiple sensor types with different default weights:
 - **Appliances** (0.40): Moderate reliability
 - **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
 - **Window Sensors** (0.20): Minimal influence
-- **Environmental** (0.10): Very low influence
+- **Environmental Sensors** (0.10): Very low influence (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 
 ## Example Use Cases
 
@@ -95,7 +95,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 ## Key Features
 
-- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances and environmental sensors (temperature, humidity, illuminance).
+- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
 - **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
 - **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.

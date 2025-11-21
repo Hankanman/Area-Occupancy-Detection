@@ -23,6 +23,13 @@ class InputType(StrEnum):
     TEMPERATURE = "temperature"
     HUMIDITY = "humidity"
     ILLUMINANCE = "illuminance"
+    CO2 = "co2"
+    SOUND_PRESSURE = "sound_pressure"
+    PRESSURE = "pressure"
+    AIR_QUALITY = "air_quality"
+    VOC = "voc"
+    PM25 = "pm25"
+    PM10 = "pm10"
     ENVIRONMENTAL = "environmental"
     UNKNOWN = "unknown"
 
@@ -180,6 +187,55 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_false": 0.01,
         "active_states": None,
         "active_range": (30.00, 100000.0),
+    },
+    InputType.CO2: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (400.0, 1200.0),
+    },
+    InputType.SOUND_PRESSURE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (40.0, 80.0),
+    },
+    InputType.PRESSURE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (980.0, 1050.0),
+    },
+    InputType.AIR_QUALITY: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (50.0, 150.0),
+    },
+    InputType.VOC: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (200.0, 1000.0),
+    },
+    InputType.PM25: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (12.0, 55.0),
+    },
+    InputType.PM10: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (55.0, 155.0),
     },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,
