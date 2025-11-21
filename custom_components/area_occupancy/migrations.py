@@ -63,39 +63,42 @@ async def async_reset_database_if_needed(hass: HomeAssistant, version: int) -> N
             return
 
         lock_path = storage_dir / (DB_NAME + ".lock")
-        try:
-            with FileLock(lock_path):
-                _LOGGER.info(
-                    "Config entry version %d is older than current version %d. "
-                    "Deleting database file to allow recreation with new schema.",
-                    version,
-                    CONF_VERSION,
+        # Use FileLock to prevent concurrent deletion by other processes/threads
+        with FileLock(lock_path):
+            # Re-check existence inside lock to handle race conditions
+            if not db_path.exists():
+                _LOGGER.debug(
+                    "Database file already deleted by another process, skipping deletion"
                 )
+                return
 
-                # Delete database file and associated WAL files
-                try:
-                    db_path.unlink()
-                    _LOGGER.debug("Deleted database file: %s", db_path)
-                except Exception as e:  # noqa: BLE001
-                    _LOGGER.warning("Failed to delete database file %s: %s", db_path, e)
+            _LOGGER.info(
+                "Config entry version %d is older than current version %d. "
+                "Deleting database file to allow recreation with new schema.",
+                version,
+                CONF_VERSION,
+            )
 
-                # Delete WAL and shared memory files if they exist
-                wal_path = storage_dir / (DB_NAME + "-wal")
-                shm_path = storage_dir / (DB_NAME + "-shm")
-                for path in [wal_path, shm_path]:
-                    if path.exists():
-                        try:
-                            path.unlink()
-                            _LOGGER.debug("Deleted database file: %s", path)
-                        except Exception as e:  # noqa: BLE001
-                            _LOGGER.debug("Failed to delete %s: %s", path, e)
-        finally:
+            # Delete database file and associated WAL files
             try:
-                if lock_path.exists():
-                    lock_path.unlink()
-                    _LOGGER.debug("Removed leftover lock file: %s", lock_path)
-            except Exception as cleanup_err:  # noqa: BLE001
-                _LOGGER.debug("Error during lock cleanup: %s", cleanup_err)
+                db_path.unlink()
+                _LOGGER.debug("Deleted database file: %s", db_path)
+            except FileNotFoundError:
+                # Handled by exists check, but safe to catch just in case
+                pass
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.warning("Failed to delete database file %s: %s", db_path, e)
+
+            # Delete WAL and shared memory files if they exist
+            wal_path = storage_dir / (DB_NAME + "-wal")
+            shm_path = storage_dir / (DB_NAME + "-shm")
+            for path in [wal_path, shm_path]:
+                if path.exists():
+                    try:
+                        path.unlink()
+                        _LOGGER.debug("Deleted database file: %s", path)
+                    except Exception as e:  # noqa: BLE001
+                        _LOGGER.debug("Failed to delete %s: %s", path, e)
 
     await hass.async_add_executor_job(_delete_database_file)
 
@@ -431,20 +434,20 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     Returns:
         True if migration succeeded, False otherwise
     """
-    # Handle v13 breaking change: reset database if needed for older versions
-    await async_reset_database_if_needed(hass, config_entry.version)
-
-    # If entry is already at version 13 or higher, no migration needed
-    if config_entry.version >= CONF_VERSION:
-        _LOGGER.debug(
-            "Entry %s already at version %d, no migration needed",
-            config_entry.entry_id,
-            config_entry.version,
-        )
-        return True
-
     # Acquire async lock to prevent concurrent migration attempts
     async with _migration_lock:
+        # Handle v13 breaking change: reset database if needed for older versions
+        # Moved inside lock to serialize DB deletion across concurrent setup attempts
+        await async_reset_database_if_needed(hass, config_entry.version)
+
+        # If entry is already at version 13 or higher, no migration needed
+        if config_entry.version >= CONF_VERSION:
+            _LOGGER.debug(
+                "Entry %s already at version %d, no migration needed",
+                config_entry.entry_id,
+                config_entry.version,
+            )
+            return True
         # EARLY CHECK: Before even starting executor, check if migration is done
         # This prevents multiple executors from starting concurrently
         all_entries = hass.config_entries.async_entries(DOMAIN)
