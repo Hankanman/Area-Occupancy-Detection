@@ -113,6 +113,17 @@ class Prior:
         else:
             result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
+        # Apply minimum prior override if configured
+        if self.config.min_prior_override > 0.0:
+            original_result = result
+            if result < self.config.min_prior_override:
+                result = self.config.min_prior_override
+                _LOGGER.debug(
+                    "Applied minimum prior override in runtime: %.4f -> %.4f",
+                    original_result,
+                    result,
+                )
+
         return result
 
     @property

@@ -48,7 +48,6 @@ CONF_PURPOSE: Final = "purpose"
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
 CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
-CONF_PRIMARY_OCCUPANCY_SENSOR: Final = "primary_occupancy_sensor"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
@@ -120,12 +119,6 @@ MAX_WEIGHT: Final[float] = 0.99
 # Default prior probabilities
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
-
-# Primary occupancy sensor defaults (optimized for ground truth reliability)
-PRIMARY_PROB_GIVEN_TRUE: Final[float] = (
-    0.95  # Very high confidence when area is occupied
-)
-PRIMARY_PROB_GIVEN_FALSE: Final[float] = 0.02  # Very low false positive rate
 
 # Door sensor defaults
 DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2

@@ -20,6 +20,21 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
+def _validate_migration_result(migration_result: bool, entry_id: str) -> None:
+    """Validate migration result and raise if migration failed.
+
+    Args:
+        migration_result: Result of the migration operation
+        entry_id: Config entry ID for error logging
+
+    Raises:
+        ConfigEntryNotReady: If migration failed
+    """
+    if not migration_result:
+        _LOGGER.error("Migration failed for entry %s", entry_id)
+        raise ConfigEntryNotReady("Migration failed")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Area Occupancy Detection from a config entry (fast startup mode).
 
@@ -29,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     With single-instance architecture, there should only be one config entry.
     A single global coordinator manages all areas.
     """
+    _LOGGER.debug("Starting async_setup_entry for entry %s", entry.entry_id)
 
     # Migration check
     if entry.version != CONF_VERSION or not entry.version:
@@ -39,11 +55,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         try:
             migration_result = await async_migrate_entry(hass, entry)
-            if not migration_result:
-                _LOGGER.error("Migration failed for entry %s", entry.entry_id)
+            _validate_migration_result(migration_result, entry.entry_id)
+            # Update entry version after successful migration
+            hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
             _LOGGER.info(
                 "Migration completed successfully for entry %s", entry.entry_id
             )
+        except ConfigEntryNotReady:
+            raise
         except Exception as err:
             _LOGGER.error(
                 "Migration threw exception for entry %s: %s", entry.entry_id, err

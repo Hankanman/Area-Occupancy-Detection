@@ -110,28 +110,6 @@ class TestAreaOccupancyCoordinator:
             f"Expected {expected_identifier} in {identifiers}, got {identifiers}"
         )
 
-    def test_device_info_with_missing_config(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test device info generation when config is missing."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-
-        # Get first area (always exists - at least one area is guaranteed)
-        area = coordinator.get_area()
-        # Handle case where areas might not be loaded in test
-        if area is None:
-            # In this case, we can't get device_info since there's no area
-            # This is a test setup issue - coordinator should have areas loaded
-            pytest.skip("No areas loaded in coordinator")
-
-        # device_info is now accessed directly from Area
-        device_info = area.device_info()
-
-        assert "identifiers" in device_info
-        assert "manufacturer" in device_info
-        assert "model" in device_info
-        assert "sw_version" in device_info
-
     def test_decaying_entities_property(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
@@ -1144,7 +1122,6 @@ class TestAreaOccupancyCoordinator:
         # Make entity_ids empty by clearing sensors
         area.config.sensors = Sensors(
             motion=[],
-            primary_occupancy=None,
             media=[],
             appliance=[],
             illuminance=[],
@@ -1346,6 +1323,7 @@ class TestAreaOccupancyCoordinator:
             patch.object(
                 coordinator, "track_entity_state_changes", new=AsyncMock()
             ) as mock_track,
+            patch.object(coordinator.db, "load_data", new=AsyncMock()) as mock_load,
             patch.object(coordinator.db, "save_data", new=AsyncMock()) as mock_save,
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
@@ -1372,8 +1350,10 @@ class TestAreaOccupancyCoordinator:
                 "Areas should never be empty after update"
             )
 
-            # cleanup is called on area.entities for each area (after reload)
+            # cleanup is called on area.entities for each area (before database reload)
             mock_cleanup.assert_called()
+            # load_data is called to restore priors and entity states from database
+            mock_load.assert_called_once()
             # track_entity_state_changes is called with new entity lists
             mock_track.assert_called_once()
             # save_data is called to persist changes

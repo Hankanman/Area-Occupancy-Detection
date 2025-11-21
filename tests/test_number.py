@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import CONF_THRESHOLD
+from custom_components.area_occupancy.const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_THRESHOLD,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.number import Threshold, async_setup_entry
 from homeassistant.core import HomeAssistant
@@ -202,3 +206,44 @@ class TestThreshold:
             # Should not raise an error, just log warning and return
             await threshold_entity.async_set_native_value(50.0)
             # No exception should be raised
+
+    async def test_async_set_native_value_triggers_hot_reload(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_areas: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test that threshold update triggers coordinator hot reload via config entry update."""
+        area_name = coordinator_with_areas.get_area_names()[0]
+        handle = coordinator_with_areas.get_area_handle(area_name)
+        threshold_entity = Threshold(area_handle=handle)
+
+        # Mock config entry update to verify it's called with properly structured options
+        with patch.object(
+            hass.config_entries, "async_update_entry"
+        ) as mock_update_entry:
+            # Set threshold value
+            await threshold_entity.async_set_native_value(75.0)
+
+            # Verify config entry was updated
+            mock_update_entry.assert_called_once()
+            call_args = mock_update_entry.call_args
+            assert call_args is not None
+            updated_options = call_args[1]["options"]
+
+            # Verify options structure for multi-area format
+            if CONF_AREAS in updated_options:
+                areas_list = updated_options[CONF_AREAS]
+                assert isinstance(areas_list, list)
+                # Verify threshold was updated in the correct area
+                area = coordinator_with_areas.get_area(area_name)
+                area_id = area.config.area_id if area else None
+                if area_id:
+                    area_found = False
+                    for area_data in areas_list:
+                        if area_data.get(CONF_AREA_ID) == area_id:
+                            assert area_data.get(CONF_THRESHOLD) == 75.0
+                            area_found = True
+                            break
+                    assert area_found, (
+                        "Area should be found and updated in CONF_AREAS list"
+                    )
