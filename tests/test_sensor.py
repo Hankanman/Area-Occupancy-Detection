@@ -25,21 +25,17 @@ from homeassistant.core import HomeAssistant
 class TestAreaOccupancySensorBase:
     """Test AreaOccupancySensorBase class."""
 
-    def test_initialization(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_initialization(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test base sensor initialization."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = AreaOccupancySensorBase(area_handle=handle)
-        assert sensor.coordinator == coordinator_with_areas
+        assert sensor.coordinator == coordinator
 
-    def test_set_enabled_default(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_set_enabled_default(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test setting enabled default."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = AreaOccupancySensorBase(area_handle=handle)
 
         sensor.set_enabled_default(False)
@@ -48,29 +44,25 @@ class TestAreaOccupancySensorBase:
         sensor.set_enabled_default(True)
         assert sensor._attr_entity_registry_enabled_default is True
 
-    def test_available_property(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_available_property(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test available property."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = AreaOccupancySensorBase(area_handle=handle)
 
-        coordinator_with_areas.last_update_success = True
+        coordinator.last_update_success = True
         assert sensor.available is True
 
-        coordinator_with_areas.last_update_success = False
+        coordinator.last_update_success = False
         assert sensor.available is False
 
-    def test_device_info_property(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_device_info_property(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test device_info property."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = AreaOccupancySensorBase(area_handle=handle)
         # Device info should match the parent area's device info
-        area = coordinator_with_areas.get_area(area_name)
+        area = coordinator.get_area(area_name)
         assert sensor.device_info == area.device_info()
 
 
@@ -92,17 +84,17 @@ class TestPercentageSensors:
     )
     def test_initialization(
         self,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         sensor_class,
         expected_name,
     ) -> None:
         """Test percentage sensor initialization."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = sensor_class(area_handle=handle)
 
         expected_unique_id_new = generate_entity_unique_id(
-            coordinator_with_areas.entry_id,
+            coordinator.entry_id,
             sensor.device_info,
             expected_name,
         )
@@ -130,16 +122,16 @@ class TestPercentageSensors:
     )
     def test_native_value_conversion(
         self,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         sensor_class,
         coordinator_attr,
         input_value,
         expected_percentage,
     ) -> None:
         """Test percentage conversion for different input values."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        handle = coordinator.get_area_handle(area_name)
         sensor = sensor_class(area_handle=handle)
         # Mock area methods
         if coordinator_attr == "area_prior":
@@ -153,16 +145,16 @@ class TestEvidenceSensor:
     """Test EvidenceSensor class."""
 
     def test_initialization(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test EvidenceSensor initialization."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensor = EvidenceSensor(area_handle=handle)
 
         # unique_id uses entry_id, device_id, and entity_name
-        entry_id = coordinator_with_areas_with_sensors.entry_id
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
+        entry_id = coordinator_with_sensors.entry_id
+        area = coordinator_with_sensors.get_area(area_name)
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_evidence"
         assert sensor.unique_id == expected_unique_id
@@ -170,38 +162,59 @@ class TestEvidenceSensor:
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
     def test_native_value_property(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test native_value property."""
         # Entities are already set up by the fixture
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        # Note: coordinator_with_sensors uses mock_realistic_config_entry which has 15 entities
+        # plus the 4 added by the fixture, totaling 19.
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensor = EvidenceSensor(area_handle=handle)
-        assert sensor.native_value == 4
+        assert sensor.native_value == 19
 
     def test_native_value_no_entities(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test native_value when no entities."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
         area._entities = type("obj", (object,), {"entities": {}})()
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        handle = coordinator.get_area_handle(area_name)
         sensor = EvidenceSensor(area_handle=handle)
         assert sensor.native_value == 0
 
     def test_extra_state_attributes(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes property."""
-        coordinator_with_areas_with_sensors.data = {"test": "data"}
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
-        area.entities.active_entities = []
-        area.entities.inactive_entities = []
+        coordinator_with_sensors.data = {"test": "data"}
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
 
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        # Use real EntityManager but mock the entities inside
+        # Clear existing entities
+        area.entities._entities.clear()
+
+        # Create a mock entity that behaves correctly
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.test"
+        mock_entity.name = "Test Entity"
+        mock_entity.evidence = True
+        mock_entity.prob_given_true = 0.9
+        mock_entity.prob_given_false = 0.1
+        mock_entity.weight = 0.5
+        mock_entity.state = "on"
+        mock_entity.decay.is_decaying = False
+        mock_entity.decay.decay_factor = 1.0
+        mock_entity.type.weight = 0.5
+
+        # 'active' is used by EntityManager to filter active_entities
+        mock_entity.active = True
+
+        area.entities._entities["binary_sensor.test"] = mock_entity
+
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensor = EvidenceSensor(area_handle=handle)
         attributes = sensor.extra_state_attributes
 
@@ -209,22 +222,22 @@ class TestEvidenceSensor:
         assert "no_evidence" in attributes
 
     def test_extra_state_attributes_no_data(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes when no coordinator data."""
-        coordinator_with_areas.data = None
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        coordinator.data = None
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = EvidenceSensor(area_handle=handle)
         assert sensor.extra_state_attributes == {}
 
     def test_native_value_nonexistent_area(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test native_value when area doesn't exist (e.g., removed during runtime)."""
         # Create sensor for a non-existent area
         # This simulates the case where an area is removed but sensor entity hasn't been cleaned up
-        handle = coordinator_with_areas.get_area_handle("nonexistent_area")
+        handle = coordinator.get_area_handle("nonexistent_area")
         sensor = EvidenceSensor(area_handle=handle)
         # Should return None instead of raising AttributeError
         assert sensor.native_value is None
@@ -233,17 +246,15 @@ class TestEvidenceSensor:
 class TestDecaySensor:
     """Test DecaySensor class."""
 
-    def test_initialization(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_initialization(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test DecaySensor initialization."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = DecaySensor(area_handle=handle)
 
         # unique_id uses entry_id, device_id, and entity_name
-        entry_id = coordinator_with_areas.entry_id
-        area = coordinator_with_areas.get_area(area_name)
+        entry_id = coordinator.entry_id
+        area = coordinator.get_area(area_name)
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_decay_status"
         assert sensor.unique_id == expected_unique_id
@@ -264,27 +275,35 @@ class TestDecaySensor:
     )
     def test_native_value_property(
         self,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
         decay_value: float,
         expected_percentage: float,
     ) -> None:
         """Test native_value property with different decay values."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        handle = coordinator.get_area_handle(area_name)
         sensor = DecaySensor(area_handle=handle)
         # Mock area.decay method
         area.decay = Mock(return_value=decay_value)
         assert sensor.native_value == expected_percentage
 
     def test_extra_state_attributes_with_decaying_entities(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes with decaying entities."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        # Use the appliance entity which is already decaying in the fixture
-        # The fixture already sets up decaying_entities, so we can use them directly
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
+
+        # Mock EntityManager to control decaying_entities
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.appliance"
+        mock_entity.decay.decay_factor = 0.5
+
+        area._entities = Mock()
+        area._entities.decaying_entities = [mock_entity]
+
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensor = DecaySensor(area_handle=handle)
         attributes = sensor.extra_state_attributes
 
@@ -292,29 +311,29 @@ class TestDecaySensor:
         assert len(attributes["decaying"]) == 1
 
     def test_extra_state_attributes_error_handling(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes error handling."""
 
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = DecaySensor(area_handle=handle)
         attrs = sensor.extra_state_attributes
         assert isinstance(attrs, dict)
 
     def test_extra_state_attributes_empty_entities(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes with empty entities."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
         # Patch decaying_entities property to return empty list
         with patch.object(
             type(area.entities),
             "decaying_entities",
             new_callable=PropertyMock(return_value=[]),
         ):
-            handle = coordinator_with_areas.get_area_handle(area_name)
+            handle = coordinator.get_area_handle(area_name)
             sensor = DecaySensor(area_handle=handle)
             assert sensor.extra_state_attributes == {"decaying": []}
 
@@ -326,7 +345,7 @@ class TestAsyncSetupEntry:
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test successful setup entry.
 
@@ -335,7 +354,7 @@ class TestAsyncSetupEntry:
         """
         mock_async_add_entities = Mock()
         # Use real coordinator
-        mock_config_entry.runtime_data = coordinator_with_areas
+        mock_config_entry.runtime_data = coordinator
 
         await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
@@ -388,35 +407,35 @@ class TestAsyncSetupEntry:
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test setup entry with coordinator data."""
         # Use real coordinator
-        mock_config_entry.runtime_data = coordinator_with_areas
+        mock_config_entry.runtime_data = coordinator
 
         mock_async_add_entities = Mock()
         await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
         entities = mock_async_add_entities.call_args[0][0]
         for entity in entities:
-            assert entity.coordinator == coordinator_with_areas
+            assert entity.coordinator == coordinator
 
 
 class TestSensorIntegration:
     """Test sensor integration scenarios."""
 
     def test_all_sensors_with_comprehensive_data(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test all sensors with comprehensive coordinator data."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
         # Mock area methods
         area.area_prior = Mock(return_value=0.35)
         area.probability = Mock(return_value=0.65)
         area.decay = Mock(return_value=0.15)
 
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensors = [
             PriorsSensor(area_handle=handle),
             ProbabilitySensor(area_handle=handle),
@@ -424,16 +443,16 @@ class TestSensorIntegration:
             DecaySensor(area_handle=handle),
         ]
 
-        expected_values = [35.0, 65.0, 4, 85.0]  # 85.0 = (1 - 0.15) * 100
+        expected_values = [35.0, 65.0, 19, 85.0]  # 85.0 = (1 - 0.15) * 100
         for sensor, expected_value in zip(sensors, expected_values, strict=False):
             assert sensor.native_value == expected_value
 
     def test_sensor_availability_changes(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test sensor behavior when coordinator availability changes."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensors = [
             PriorsSensor(area_handle=handle),
             ProbabilitySensor(area_handle=handle),
@@ -441,21 +460,21 @@ class TestSensorIntegration:
             DecaySensor(area_handle=handle),
         ]
 
-        coordinator_with_areas_with_sensors.last_update_success = True
+        coordinator_with_sensors.last_update_success = True
         for sensor in sensors:
             assert sensor.available is True
 
-        coordinator_with_areas_with_sensors.last_update_success = False
+        coordinator_with_sensors.last_update_success = False
         for sensor in sensors:
             assert sensor.available is False
 
     def test_sensor_value_updates(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test sensor value updates when coordinator data changes."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         probability_sensor = ProbabilitySensor(area_handle=handle)
         priors_sensor = PriorsSensor(area_handle=handle)
         decay_sensor = DecaySensor(area_handle=handle)
@@ -479,13 +498,13 @@ class TestSensorIntegration:
         assert decay_sensor.native_value == 70.0
 
     def test_priors_sensor_extra_attributes_include_combined_prior(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Ensure priors sensor reports raw and combined priors separately."""
 
-        coordinator_with_areas_with_sensors.data = {"ready": True}
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
+        coordinator_with_sensors.data = {"ready": True}
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
 
         combined_value = 0.47
         area.area_prior = Mock(return_value=combined_value)
@@ -499,7 +518,7 @@ class TestSensorIntegration:
         )
         area._prior = mock_prior
 
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         sensor = PriorsSensor(area_handle=handle)
         try:
             attrs = sensor.extra_state_attributes
@@ -513,37 +532,39 @@ class TestSensorIntegration:
         assert attrs["time_slot"] == 5
 
     def test_evidence_sensor_dynamic_updates(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test evidence sensor with dynamic entity updates."""
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
         # Entities are already set up by the fixture
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         evidence_sensor = EvidenceSensor(area_handle=handle)
-        assert evidence_sensor.native_value == 4
+        assert evidence_sensor.native_value == 19
 
         # Add entity
         area.entities.entities["new_sensor"] = Mock()
-        assert evidence_sensor.native_value == 5
+        assert evidence_sensor.native_value == 20
 
         # Remove entity (remove one of the existing entities)
         del area.entities.entities["binary_sensor.motion"]
-        assert evidence_sensor.native_value == 4
+        assert evidence_sensor.native_value == 19
 
     def test_decay_sensor_dynamic_updates(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test decay sensor with dynamic decay state updates."""
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
         mock_entity1.decay.decay_factor = 0.8
 
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
-        area.entities.decaying_entities = [mock_entity1]
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
+        # Mock EntityManager to control decaying_entities
+        area._entities = Mock()
+        area._entities.decaying_entities = [mock_entity1]
 
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         decay_sensor = DecaySensor(area_handle=handle)
         attrs = decay_sensor.extra_state_attributes
         assert len(attrs["decaying"]) == 1
@@ -553,7 +574,7 @@ class TestSensorIntegration:
         mock_entity2.entity_id = "binary_sensor.motion2"
         mock_entity2.decay.decay_factor = 0.6
 
-        area.entities.decaying_entities = [
+        area._entities.decaying_entities = [
             mock_entity1,
             mock_entity2,
         ]
@@ -561,25 +582,29 @@ class TestSensorIntegration:
         assert len(attrs["decaying"]) == 2
 
     def test_sensor_error_handling(
-        self, coordinator_with_areas_with_sensors: AreaOccupancyCoordinator
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test sensor error handling scenarios."""
         # Test evidence sensor error handling
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
-        area.entities.entities = Mock()
-        area.entities.entities.__len__ = Mock(side_effect=TypeError("Test error"))
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
+        # Mock EntityManager to simulate error
+        area._entities = Mock()
+        area._entities.entities = Mock()
+        area._entities.entities.__len__ = Mock(side_effect=TypeError("Test error"))
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         evidence_sensor = EvidenceSensor(area_handle=handle)
 
         with pytest.raises(TypeError):
             _ = evidence_sensor.native_value
 
         # Test decay sensor error handling
-        area_name = coordinator_with_areas_with_sensors.get_area_names()[0]
-        area = coordinator_with_areas_with_sensors.get_area(area_name)
-        area.entities.decaying_entities = Mock(side_effect=Exception("Test error"))
-        handle = coordinator_with_areas_with_sensors.get_area_handle(area_name)
+        area_name = coordinator_with_sensors.get_area_names()[0]
+        area = coordinator_with_sensors.get_area(area_name)
+        # Mock EntityManager to simulate error
+        area._entities = Mock()
+        area._entities.decaying_entities = Mock(side_effect=Exception("Test error"))
+        handle = coordinator_with_sensors.get_area_handle(area_name)
         decay_sensor = DecaySensor(area_handle=handle)
         assert decay_sensor.extra_state_attributes == {}
 
@@ -588,11 +613,11 @@ class TestSensorErrorHandling:
     """Test sensor error handling scenarios."""
 
     async def test_async_added_to_hass_device_registry_error(
-        self, hass: HomeAssistant, coordinator_with_areas: AreaOccupancyCoordinator
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test async_added_to_hass with device registry error."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = ProbabilitySensor(area_handle=handle)
         sensor.hass = hass
 
@@ -611,11 +636,11 @@ class TestSensorErrorHandling:
             await sensor.async_added_to_hass()
 
     async def test_async_added_to_hass_no_device(
-        self, hass: HomeAssistant, coordinator_with_areas: AreaOccupancyCoordinator
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test async_added_to_hass when device doesn't exist."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = ProbabilitySensor(area_handle=handle)
         sensor.hass = hass
 
@@ -630,26 +655,26 @@ class TestSensorErrorHandling:
             await sensor.async_added_to_hass()
 
     def test_extra_state_attributes_error(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test extra_state_attributes with error."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = PriorsSensor(area_handle=handle)
 
         # Mock area access to raise error
         with patch.object(
-            coordinator_with_areas, "get_area", side_effect=KeyError("Area not found")
+            coordinator, "get_area", side_effect=KeyError("Area not found")
         ):
             attrs = sensor.extra_state_attributes
             assert attrs == {}
 
     def test_native_value_none_coordinator(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test native_value when coordinator returns None."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = ProbabilitySensor(area_handle=handle)
 
         fake_area = Mock()
@@ -664,11 +689,11 @@ class TestSensorErrorHandling:
             _ = sensor.native_value
 
     def test_native_value_format_error(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test native_value with format_float error."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = ProbabilitySensor(area_handle=handle)
 
         # Mock format_float to raise error
@@ -683,11 +708,11 @@ class TestSensorErrorHandling:
             _ = sensor.native_value
 
     def test_handle_coordinator_update_error(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test _handle_coordinator_update with error."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        handle = coordinator_with_areas.get_area_handle(area_name)
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
         sensor = ProbabilitySensor(area_handle=handle)
 
         # Mock parent method to raise error
