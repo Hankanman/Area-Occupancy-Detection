@@ -70,7 +70,7 @@ class TestAsyncSetupEntry:
                     await async_setup_entry(hass, mock_config_entry)
 
         elif failure_type == "migration":
-            mock_config_entry.version = CONF_VERSION - 1
+            object.__setattr__(mock_config_entry, "version", CONF_VERSION - 1)
             with (
                 patch(
                     "custom_components.area_occupancy.__init__.async_migrate_entry",
@@ -152,7 +152,7 @@ class TestAsyncSetupEntry:
 
         # Set entry to an old version to trigger migration
         old_version = CONF_VERSION - 1
-        mock_config_entry.version = old_version
+        object.__setattr__(mock_config_entry, "version", old_version)
 
         # Use real coordinator to test actual database initialization
         coordinator = AreaOccupancyCoordinator(hass, mock_config_entry)
@@ -288,7 +288,7 @@ class TestEntryUpdated:
         mock_coordinator.async_update_options = AsyncMock()
         mock_coordinator.async_refresh = AsyncMock()
         mock_config_entry.runtime_data = mock_coordinator
-        mock_config_entry.options = {}
+        object.__setattr__(mock_config_entry, "options", {})
         return mock_coordinator
 
     async def test_async_entry_updated_success(

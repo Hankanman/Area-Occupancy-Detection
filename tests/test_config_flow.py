@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import voluptuous as vol
@@ -301,72 +301,34 @@ class TestHelperFunctions:
         schema_dict = schema.schema
         assert "action" in schema_dict
 
-    def test_get_include_entities(self, hass, mock_entity_registry):
+    def test_get_include_entities(self, hass, entity_registry):
         """Test getting include entities."""
-        # Setup test entities
-        entity_list = [
-            Mock(
-                entity_id="binary_sensor.door_1",
-                domain="binary_sensor",
-                device_class="door",
-                original_device_class="door",
-            ),
-            Mock(
-                entity_id="binary_sensor.window_1",
-                domain="binary_sensor",
-                device_class="window",
-                original_device_class="window",
-            ),
-            Mock(
-                entity_id="switch.appliance_1",
-                domain="switch",
-                device_class=None,
-                original_device_class=None,
-            ),
-        ]
+        # Register entities
+        entity_registry.async_get_or_create(
+            "binary_sensor", "test", "door_1", original_device_class="door"
+        )
+        entity_registry.async_get_or_create(
+            "binary_sensor", "test", "window_1", original_device_class="window"
+        )
+        entity_registry.async_get_or_create("switch", "test", "appliance_1")
 
-        # Setup mocks
-        mock_entity_registry.entities = Mock()
-        mock_entity_registry.entities.values = Mock(return_value=entity_list)
+        # Create states
+        hass.states.async_set(
+            "binary_sensor.test_door_1", "off", {"device_class": "door"}
+        )
+        hass.states.async_set(
+            "binary_sensor.test_window_1", "off", {"device_class": "window"}
+        )
+        hass.states.async_set("switch.test_appliance_1", "off")
 
-        with patch(
-            "homeassistant.helpers.entity_registry.async_get",
-            return_value=mock_entity_registry,
-        ):
-            # Since StateMachine attributes are read-only, we need to use monkeypatch
-            # or create states directly in hass. Let's use monkeypatch approach.
-            def mock_async_entity_ids(domain):
-                """Mock async_entity_ids to return test entities."""
-                domain_map = {
-                    "binary_sensor": ["binary_sensor.door_1", "binary_sensor.window_1"],
-                    "switch": ["switch.appliance_1"],
-                    "fan": [],
-                    "light": [],
-                }
-                return domain_map.get(domain, [])
-
-            # Since StateMachine attributes are read-only, use object.__setattr__ to bypass
-            # Create a mock states object
-            mock_states = MagicMock()
-            mock_states.async_entity_ids = MagicMock(side_effect=mock_async_entity_ids)
-            mock_states.get = MagicMock(
-                return_value=Mock(attributes={"device_class": None})
-            )
-
-            # Store original and replace using object.__setattr__ to bypass read-only protection
-            original_states = hass.states
-            object.__setattr__(hass, "states", mock_states)
-            try:
-                result = _get_include_entities(hass)
-            finally:
-                object.__setattr__(hass, "states", original_states)
+        result = _get_include_entities(hass)
 
         assert "door" in result
         assert "window" in result
         assert "appliance" in result
-        assert "binary_sensor.door_1" in result["door"]
-        assert "binary_sensor.window_1" in result["window"]
-        assert "switch.appliance_1" in result["appliance"]
+        assert "binary_sensor.test_door_1" in result["door"]
+        assert "binary_sensor.test_window_1" in result["window"]
+        assert "switch.test_appliance_1" in result["appliance"]
 
     @pytest.mark.parametrize(
         ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
@@ -392,19 +354,16 @@ class TestHelperFunctions:
     def test_create_schema(
         self,
         hass,
-        config_flow_mock_entity_registry_for_schema,
+        entity_registry,
         defaults,
         is_options,
         expected_name_present,
         test_schema_validation,
     ):
         """Test creating schema with different configurations."""
-        with patch(
-            "homeassistant.helpers.entity_registry.async_get",
-            return_value=config_flow_mock_entity_registry_for_schema,
-        ):
-            schema_dict = create_schema(hass, defaults, is_options)
-            schema = vol.Schema(schema_dict)
+        # Use real entity registry via fixture
+        schema_dict = create_schema(hass, defaults, is_options)
+        schema = vol.Schema(schema_dict)
 
         expected_sections = [
             "motion",
@@ -653,22 +612,21 @@ class TestAreaOccupancyConfigFlow:
 
     @pytest.mark.parametrize(
         (
-            "scenario",
             "area_being_edited",
             "area_to_remove",
             "step_method",
             "expected_step_id",
         ),
         [
-            ("no_area", None, None, "async_step_area_action", "user"),
-            ("area_not_found", "NonExistent", None, "async_step_area_action", "user"),
-            ("remove_no_area", None, None, "async_step_remove_area", "user"),
+            (None, None, "async_step_area_action", "user"),
+            ("NonExistent", None, "async_step_area_action", "user"),
+            (None, None, "async_step_remove_area", "user"),
         ],
+        ids=["no_area", "area_not_found", "remove_no_area"],
     )
     async def test_config_flow_edge_cases(
         self,
         config_flow_flow,
-        scenario,
         area_being_edited,
         area_to_remove,
         step_method,
