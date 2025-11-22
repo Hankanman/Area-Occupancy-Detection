@@ -73,4 +73,3 @@ When data is missing or insufficient, the system uses these defaults:
 
 - **Neutral (0.5)**: Used when historical data is completely missing or invalid (e.g., during initial setup).
 - **Time Slot Default (0.5)**: Used for specific time slots that have no recorded history.
-- **Empty Bias (0.1)**: Before the very first analysis runs (typically 5 minutes after startup), the system assumes a low probability to avoid false triggers.
