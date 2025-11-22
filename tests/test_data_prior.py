@@ -33,14 +33,14 @@ from homeassistant.util import dt as dt_util
 
 
 # ruff: noqa: SLF001
-def test_initialization(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_initialization(coordinator: AreaOccupancyCoordinator):
     """Test Prior initialization with real coordinator."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area(area_name)
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
     # Check that sensor_ids matches the area config
     assert prior.sensor_ids == area.config.sensors.motion
-    assert prior.hass == coordinator_with_areas.hass
+    assert prior.hass == coordinator.hass
     assert prior.global_prior is None
     assert prior._last_updated is None
 
@@ -66,14 +66,14 @@ def test_initialization(coordinator_with_areas: AreaOccupancyCoordinator):
     ],
 )
 def test_value_property_clamping(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
     global_prior,
     expected_value,
     description,
 ):
     """Test value property handles various global_prior values correctly."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
     prior.global_prior = global_prior
     # Mock get_time_prior to return None to avoid database calls
     with patch.object(prior, "get_time_prior", return_value=None):
@@ -81,12 +81,12 @@ def test_value_property_clamping(
 
 
 def test_min_prior_override_with_global_prior_below_threshold(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test min_prior_override is applied when global_prior is below threshold."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area(area_name)
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
 
     # Set min_prior_override to 0.3
     area.config.min_prior_override = 0.3
@@ -103,12 +103,12 @@ def test_min_prior_override_with_global_prior_below_threshold(
 
 
 def test_min_prior_override_with_combined_prior_below_threshold(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test min_prior_override is applied when combined prior is below threshold."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area(area_name)
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
 
     # Set min_prior_override to 0.3
     area.config.min_prior_override = 0.3
@@ -126,12 +126,12 @@ def test_min_prior_override_with_combined_prior_below_threshold(
 
 
 def test_min_prior_override_disabled_when_zero(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test min_prior_override has no effect when set to 0.0 (disabled)."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area(area_name)
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
 
     # Set min_prior_override to 0.0 (disabled)
     area.config.min_prior_override = 0.0
@@ -148,12 +148,12 @@ def test_min_prior_override_disabled_when_zero(
 
 
 def test_min_prior_override_above_normal_calculation(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test min_prior_override when final prior after PRIOR_FACTOR is below threshold."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    area = coordinator_with_areas.get_area(area_name)
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
 
     # Set min_prior_override to 0.3
     area.config.min_prior_override = 0.3
@@ -203,25 +203,25 @@ def test_weekday_conversion(sqlite_weekday, expected_python_weekday):
     assert result == expected_python_weekday
 
 
-def test_to_dict_and_from_dict(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_to_dict_and_from_dict(coordinator: AreaOccupancyCoordinator):
     """Test Prior serialization and deserialization."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
     now = dt_util.utcnow()
     prior.global_prior = 0.42
     prior._last_updated = now
     d = prior.to_dict()
     assert d["value"] == 0.42
     assert d["last_updated"] == now.isoformat()
-    restored = Prior.from_dict(d, coordinator_with_areas, area_name=area_name)
+    restored = Prior.from_dict(d, coordinator, area_name=area_name)
     assert restored.global_prior == 0.42
     assert restored._last_updated == now
 
 
-def test_set_global_prior(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
     """Test set_global_prior method."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
     now = dt_util.utcnow()
 
     with patch(
@@ -232,10 +232,10 @@ def test_set_global_prior(coordinator_with_areas: AreaOccupancyCoordinator):
         assert prior._last_updated == now
 
 
-def test_last_updated_property(coordinator_with_areas: AreaOccupancyCoordinator):
+def test_last_updated_property(coordinator: AreaOccupancyCoordinator):
     """Test last_updated property."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
     assert prior.last_updated is None
 
     now = dt_util.utcnow()
@@ -247,11 +247,11 @@ def test_last_updated_property(coordinator_with_areas: AreaOccupancyCoordinator)
 
 
 def test_get_occupied_intervals_caching(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test caching behavior of get_occupied_intervals."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
 
     # Test cache invalidation method directly
     # Set up cache
@@ -272,11 +272,11 @@ def test_get_occupied_intervals_caching(
 
 
 def test_get_occupied_intervals_cache_expiry(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test cache expiry after DEFAULT_CACHE_TTL_SECONDS."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
 
     # Test cache expiry logic directly
     test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
@@ -294,11 +294,11 @@ def test_get_occupied_intervals_cache_expiry(
 
 
 def test_invalidate_occupied_intervals_cache(
-    coordinator_with_areas: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator,
 ):
     """Test cache invalidation method."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
 
     # Set up cache
     prior._cached_occupied_intervals = [(dt_util.utcnow(), dt_util.utcnow())]
@@ -317,11 +317,11 @@ def test_invalidate_occupied_intervals_cache(
 
 
 def test_get_occupied_intervals_cache_hit_logging(
-    coordinator_with_areas: AreaOccupancyCoordinator, caplog
+    coordinator: AreaOccupancyCoordinator, caplog
 ):
     """Test cache hit logging."""
-    area_name = coordinator_with_areas.get_area_names()[0]
-    prior = Prior(coordinator_with_areas, area_name=area_name)
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
 
     # Test cache hit logging by setting up cache and calling the actual method
     test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
