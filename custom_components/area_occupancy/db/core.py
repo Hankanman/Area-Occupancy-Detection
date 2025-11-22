@@ -271,30 +271,6 @@ class AreaOccupancyDB:
         """Delete intervals older than RETENTION_DAYS."""
         return operations.prune_old_intervals(self, force)
 
-    def get_total_occupied_seconds_sql(
-        self,
-        entry_id: str,
-        area_name: str | None = None,
-        lookback_days: int = 90,
-        motion_timeout_seconds: int = 0,
-        include_media: bool = False,
-        include_appliance: bool = False,
-        media_sensor_ids: list[str] | None = None,
-        appliance_sensor_ids: list[str] | None = None,
-    ) -> float | None:
-        """Get total occupied seconds using SQL aggregation for better performance."""
-        return queries.get_total_occupied_seconds_sql(
-            self,
-            entry_id,
-            area_name,
-            lookback_days,
-            motion_timeout_seconds,
-            include_media,
-            include_appliance,
-            media_sensor_ids,
-            appliance_sensor_ids,
-        )
-
     def get_time_prior(
         self,
         area_name: str,

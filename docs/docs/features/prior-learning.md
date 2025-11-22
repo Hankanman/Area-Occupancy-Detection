@@ -33,6 +33,8 @@ The Time-Based Prior provides granularity by breaking the week into 1-hour slots
 
 - **Grid**: It creates a schedule of 168 slots (24 hours $\times$ 7 days).
 - **History Analysis**: For each slot, it looks at historical data to see how often the room was occupied during that specific hour on that day of the week.
+- **Smart Fallback**: Just like the Global Prior, if motion data is scarce, it will automatically consider **Media Players** and **Appliances** as indicators of occupancy. This ensures that "quiet" activities like watching TV are correctly learned as occupied times.
+- **Safety Bounds**: The system bounds these time-specific probabilities between 10% and 90%. This prevents extreme values (like 1% or 99%) from dominating the calculation, ensuring that the system remains responsive to new sensor evidence even if the schedule suggests the room "should" be empty.
 - **Result**: This produces a unique probability for every hour of the week, allowing the system to "expect" occupancy at usual times (like evening TV time) and "expect" vacancy at others (like work hours).
 
 ## Ground Truth: Defining "Occupancy"
