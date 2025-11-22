@@ -2,7 +2,7 @@
 
 from datetime import UTC, timedelta
 import logging
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.exc import (
@@ -150,7 +150,7 @@ class TestPriorAnalyzer:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
+                "get_occupied_intervals",
                 return_value=[],
             ),
             patch.object(
@@ -167,22 +167,12 @@ class TestPriorAnalyzer:
         ("interval_data", "time_bounds", "description"),
         [
             (
-                [(0, 0, 100.0)],
+                [(dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))],
                 (dt_util.utcnow(), dt_util.utcnow()),
-                "invalid days calculation",
+                "short time bounds",
             ),
             (
-                [("invalid", "data", None)],
-                (dt_util.utcnow(), dt_util.utcnow() + timedelta(days=1)),
-                "invalid interval data",
-            ),
-            (
-                [(0, 999, 100.0)],
-                (dt_util.utcnow(), dt_util.utcnow() + timedelta(days=1)),
-                "invalid slot number",
-            ),
-            (
-                [(0, 0, 100.0)],
+                [(dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))],
                 (dt_util.utcnow(), dt_util.utcnow() + timedelta(days=1)),
                 "valid data",
             ),
@@ -213,7 +203,7 @@ class TestPriorAnalyzer:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
+                "get_occupied_intervals",
                 return_value=interval_data if isinstance(interval_data, list) else [],
             ),
             patch.object(
@@ -239,8 +229,8 @@ class TestPriorAnalyzer:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(first_time, first_time + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -254,7 +244,6 @@ class TestPriorAnalyzer:
     @pytest.mark.parametrize(
         ("method_name", "error_class", "expected_result"),
         [
-            ("get_interval_aggregates", OperationalError, []),
             ("get_time_bounds", DataError, (None, None)),
             ("get_total_occupied_seconds", ProgrammingError, DEFAULT_OCCUPIED_SECONDS),
         ],
@@ -328,87 +317,6 @@ class TestPriorAnalyzer:
         with patch.object(coordinator.db, "get_session", return_value=mock_session):
             result = analyzer.get_total_occupied_seconds()
             assert result == DEFAULT_OCCUPIED_SECONDS
-
-    @pytest.mark.parametrize(
-        ("mock_result", "expected_result"),
-        [
-            ([], []),  # No intervals
-            (
-                [(dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))],
-                [(0, 0, 3600.0)],
-            ),  # One hour interval
-        ],
-    )
-    def test_get_interval_aggregates_various_scenarios(
-        self, coordinator: AreaOccupancyCoordinator, mock_result, expected_result
-    ) -> None:
-        """Test get_interval_aggregates handles various scenarios."""
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        with patch.object(analyzer, "get_occupied_intervals", return_value=mock_result):
-            result = analyzer.get_interval_aggregates()
-            # The new implementation aggregates intervals differently, so we just check it returns a list
-            assert isinstance(result, list)
-            # For the empty case, we expect an empty list
-            if not mock_result:
-                assert result == []
-            else:
-                # For non-empty cases, the result depends on the actual aggregation logic
-                # Since we're mocking get_occupied_intervals, the SQL path might return empty
-                # So we just verify it's a list (the actual aggregation is tested elsewhere)
-                assert isinstance(result, list)
-
-    def test_get_interval_aggregates_sql_path(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test successful SQL aggregation path."""
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        # Mock successful SQL aggregation
-        with patch.object(
-            coordinator.db,
-            "get_aggregated_intervals_by_slot",
-            return_value=[
-                (0, 0, 3600.0),  # Monday, slot 0, 1 hour
-                (1, 12, 1800.0),  # Tuesday, slot 12, 30 minutes
-            ],
-        ) as mock_get_aggregated:
-            result = analyzer.get_interval_aggregates(slot_minutes=60)
-
-            assert len(result) == 2
-            assert result[0] == (0, 0, 3600.0)
-            assert result[1] == (1, 12, 1800.0)
-
-            # Verify SQL method was called with all required parameters
-            mock_get_aggregated.assert_called_once_with(
-                entry_id=coordinator.entry_id,
-                slot_minutes=60,
-                area_name=area_name,
-                lookback_days=ANY,  # DEFAULT_LOOKBACK_DAYS (90)
-                include_media=ANY,  # bool(media_sensor_ids)
-                include_appliance=ANY,  # bool(appliance_sensor_ids)
-                media_sensor_ids=ANY,  # analyzer.media_sensor_ids
-                appliance_sensor_ids=ANY,  # analyzer.appliance_sensor_ids
-            )
-
-    def test_get_interval_aggregates_sql_error(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test SQL-only implementation returns empty list on error."""
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        # Mock SQL failure - function should return empty list (error handling in SQL function)
-        with patch.object(
-            coordinator.db,
-            "get_aggregated_intervals_by_slot",
-            return_value=[],  # SQL function returns empty list on error
-        ):
-            result = analyzer.get_interval_aggregates(slot_minutes=60)
-
-            assert result == []
 
     def test_get_occupied_intervals_with_lookback_days(
         self, coordinator: AreaOccupancyCoordinator
@@ -715,12 +623,12 @@ class TestPriorAnalyzerWithRealDB:
         session.add(interval)
         session.commit()
 
-        # Mock interval aggregates and time bounds
+        # Mock occupied intervals and time bounds
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(start_time.weekday(), 0, 3600.0)],
+                "get_occupied_intervals",
+                return_value=[(start_time, end_time)],
             ),
             patch.object(
                 analyzer,
@@ -742,8 +650,10 @@ class TestPriorAnalyzerWithRealDB:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[
+                    (dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))
+                ],
             ),
             patch.object(
                 analyzer,
@@ -1733,8 +1643,10 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[
+                    (dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))
+                ],
             ),
             patch.object(
                 analyzer,
@@ -2393,8 +2305,10 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[
+                    (dt_util.utcnow(), dt_util.utcnow() + timedelta(hours=1))
+                ],
             ),
             patch.object(
                 analyzer,
@@ -2419,8 +2333,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2443,8 +2357,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2477,8 +2391,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2487,35 +2401,6 @@ class TestPriorAnalyzerEdgeCases:
             ),
         ):
             # Test with valid configuration
-            analyzer.analyze_time_priors(slot_minutes=60)
-
-    def test_analyze_time_priors_invalid_weekday(
-        self, test_db: AreaOccupancyDB
-    ) -> None:
-        """Test analyze_time_priors handles invalid weekday in interval aggregates."""
-        coordinator = test_db.coordinator
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        now = dt_util.utcnow()
-
-        # Mock invalid weekday (outside 0-6 range)
-        with (
-            patch.object(
-                analyzer,
-                "get_interval_aggregates",
-                return_value=[
-                    (7, 0, 100.0),  # Invalid weekday (7 > 6)
-                    (0, 0, 100.0),  # Valid weekday
-                ],
-            ),
-            patch.object(
-                analyzer,
-                "get_time_bounds",
-                return_value=(now - timedelta(days=1), now),
-            ),
-        ):
-            # Should skip invalid weekday but process valid one
             analyzer.analyze_time_priors(slot_minutes=60)
 
     def test_analyze_time_priors_zero_total_slot_seconds(
@@ -2538,8 +2423,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2564,8 +2449,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2585,8 +2470,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2605,8 +2490,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2625,8 +2510,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
@@ -2645,8 +2530,8 @@ class TestPriorAnalyzerEdgeCases:
         with (
             patch.object(
                 analyzer,
-                "get_interval_aggregates",
-                return_value=[(0, 0, 100.0)],
+                "get_occupied_intervals",
+                return_value=[(now, now + timedelta(hours=1))],
             ),
             patch.object(
                 analyzer,
