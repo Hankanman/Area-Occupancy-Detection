@@ -16,9 +16,9 @@ from homeassistant.exceptions import HomeAssistantError
 class TestAreaOccupancyDBInitialization:
     """Test AreaOccupancyDB initialization."""
 
-    def test_initialization_with_valid_coordinator(self, coordinator_with_areas):
+    def test_initialization_with_valid_coordinator(self, coordinator):
         """Test initialization with valid coordinator."""
-        coordinator = coordinator_with_areas
+
         db = AreaOccupancyDB(coordinator=coordinator)
 
         assert db.coordinator is coordinator
@@ -29,57 +29,53 @@ class TestAreaOccupancyDBInitialization:
         assert db.db_path is not None
         assert db._lock_path is not None
 
-    def test_initialization_with_none_config_entry(self, coordinator_with_areas):
+    def test_initialization_with_none_config_entry(self, coordinator):
         """Test initialization fails when config_entry is None."""
-        coordinator = coordinator_with_areas
+
         coordinator.config_entry = None
 
         with pytest.raises(ValueError, match="Coordinator config_entry cannot be None"):
             AreaOccupancyDB(coordinator=coordinator)
 
-    def test_initialization_creates_storage_directory(
-        self, coordinator_with_areas, tmp_path
-    ):
+    def test_initialization_creates_storage_directory(self, coordinator, tmp_path):
         """Test that initialization creates storage directory."""
-        coordinator = coordinator_with_areas
+
         with patch.object(coordinator.hass.config, "config_dir", str(tmp_path)):
             db = AreaOccupancyDB(coordinator=coordinator)
             assert db.storage_path.exists()
             assert db.storage_path.is_dir()
 
-    def test_initialization_sets_recovery_config(self, coordinator_with_areas):
+    def test_initialization_sets_recovery_config(self, coordinator):
         """Test that initialization sets recovery configuration."""
-        db = AreaOccupancyDB(coordinator=coordinator_with_areas)
+        db = AreaOccupancyDB(coordinator=coordinator)
 
         assert hasattr(db, "enable_auto_recovery")
         assert hasattr(db, "max_recovery_attempts")
         assert hasattr(db, "enable_periodic_backups")
         assert hasattr(db, "backup_interval_hours")
 
-    def test_initialization_creates_model_classes_dict(self, coordinator_with_areas):
+    def test_initialization_creates_model_classes_dict(self, coordinator):
         """Test that initialization creates model_classes dictionary."""
-        db = AreaOccupancyDB(coordinator=coordinator_with_areas)
+        db = AreaOccupancyDB(coordinator=coordinator)
 
         assert "Areas" in db.model_classes
         assert "Entities" in db.model_classes
         assert "Intervals" in db.model_classes
         assert db.model_classes["Areas"] == db.Areas
 
-    def test_initialization_auto_init_db_env_var(
-        self, coordinator_with_areas, monkeypatch
-    ):
+    def test_initialization_auto_init_db_env_var(self, coordinator, monkeypatch):
         """Test that AREA_OCCUPANCY_AUTO_INIT_DB env var triggers initialization."""
         monkeypatch.setenv("AREA_OCCUPANCY_AUTO_INIT_DB", "1")
 
         with patch(
             "custom_components.area_occupancy.db.core.maintenance.ensure_db_exists"
         ) as mock_ensure:
-            db = AreaOccupancyDB(coordinator=coordinator_with_areas)
+            db = AreaOccupancyDB(coordinator=coordinator)
             mock_ensure.assert_called_once_with(db)
 
-    def test_initialize_database(self, coordinator_with_areas):
+    def test_initialize_database(self, coordinator):
         """Test initialize_database method."""
-        db = AreaOccupancyDB(coordinator=coordinator_with_areas)
+        db = AreaOccupancyDB(coordinator=coordinator)
 
         with patch(
             "custom_components.area_occupancy.db.core.maintenance.ensure_db_exists"
@@ -134,11 +130,9 @@ class TestSessionManagement:
             result = session.execute(text("SELECT 1"))
             assert result.scalar() == 1
 
-    def test_get_locked_session_without_lock_path(
-        self, coordinator_with_areas, tmp_path
-    ):
+    def test_get_locked_session_without_lock_path(self, coordinator, tmp_path):
         """Test get_locked_session falls back to regular session when no lock path."""
-        coordinator = coordinator_with_areas
+
         db = AreaOccupancyDB(coordinator=coordinator)
         db._lock_path = None
 

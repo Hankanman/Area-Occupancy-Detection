@@ -153,31 +153,29 @@ class TestAreaMethodsIntegration:
     """Integration tests for Area methods with real coordinator."""
 
     def test_probability_integration(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test probability method with real coordinator."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
 
         prob = area.probability()
         assert 0.0 <= prob <= 1.0
 
-    def test_occupied_integration(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_occupied_integration(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test occupied method with real coordinator."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
 
         occupied = area.occupied()
         assert isinstance(occupied, bool)
 
     def test_device_info_integration(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test device_info method with real coordinator."""
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
 
         device_info = area.device_info()
         assert device_info is not None

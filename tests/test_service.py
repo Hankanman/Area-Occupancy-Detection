@@ -54,12 +54,12 @@ class TestRunAnalysis:
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test successful analysis run."""
         # Set up coordinator with test data - use area-based access
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
 
         # Create test entity
         mock_entity = Mock()
@@ -70,7 +70,7 @@ class TestRunAnalysis:
         area._entities = type(
             "obj", (object,), {"entities": {"binary_sensor.motion1": mock_entity}}
         )()
-        coordinator_with_areas.db.import_stats = {"binary_sensor.motion1": 100}
+        coordinator.db.import_stats = {"binary_sensor.motion1": 100}
 
         # Mock area methods that are called by _build_analysis_data
         area.probability = Mock(return_value=0.5)
@@ -85,9 +85,9 @@ class TestRunAnalysis:
         area.prior.sensor_ids = ["binary_sensor.motion1"]
 
         # Mock run_analysis method - it always runs for all areas
-        coordinator_with_areas.run_analysis = AsyncMock()
+        coordinator.run_analysis = AsyncMock()
 
-        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
         mock_service_call = _create_service_call()
 
         result = await _run_analysis(hass, mock_service_call)
@@ -112,14 +112,14 @@ class TestRunAnalysis:
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test analysis run with coordinator error."""
-        coordinator_with_areas.run_analysis = AsyncMock(
+        coordinator.run_analysis = AsyncMock(
             side_effect=RuntimeError("Analysis failed")
         )
 
-        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
         mock_service_call = _create_service_call()
 
         with pytest.raises(
@@ -136,7 +136,7 @@ class TestRunNightlyTasks:
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test successful nightly tasks run."""
         summary = {
@@ -147,31 +147,29 @@ class TestRunNightlyTasks:
             "errors": [],
         }
 
-        coordinator_with_areas.run_interval_aggregation_job = AsyncMock(
-            return_value=summary
-        )
+        coordinator.run_interval_aggregation_job = AsyncMock(return_value=summary)
 
-        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
         mock_service_call = _create_service_call()
 
         result = await _run_nightly_tasks(hass, mock_service_call)
 
         assert result["results"] == summary
-        coordinator_with_areas.run_interval_aggregation_job.assert_called_once()
+        coordinator.run_interval_aggregation_job.assert_called_once()
 
     async def test_run_nightly_tasks_error(
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
-        coordinator_with_areas: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test nightly tasks error handling."""
 
-        coordinator_with_areas.run_interval_aggregation_job = AsyncMock(
+        coordinator.run_interval_aggregation_job = AsyncMock(
             side_effect=RuntimeError("Nightly failed")
         )
 
-        _setup_coordinator_test(hass, mock_config_entry, coordinator_with_areas)
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
         mock_service_call = _create_service_call()
 
         with pytest.raises(

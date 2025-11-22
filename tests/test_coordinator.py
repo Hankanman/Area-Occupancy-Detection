@@ -69,12 +69,12 @@ class TestAreaOccupancyCoordinator:
         assert isinstance(device_info["name"], str)
 
     def test_device_info_with_real_constants(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test device_info property with actual constant values."""
         # device_info is now accessed directly from Area
-        area_name = coordinator_with_areas.get_area_names()[0]
-        area = coordinator_with_areas.get_area(area_name)
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
         device_info = area.device_info()
 
         assert device_info.get("manufacturer") == DEVICE_MANUFACTURER
@@ -91,10 +91,10 @@ class TestAreaOccupancyCoordinator:
         )
 
     def test_device_info_with_all_areas_identifier(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test device_info properly handles ALL_AREAS_IDENTIFIER."""
-        device_info = coordinator_with_areas.get_all_areas().device_info()
+        device_info = coordinator.get_all_areas().device_info()
 
         assert device_info.get("manufacturer") == DEVICE_MANUFACTURER
         assert device_info.get("model") == DEVICE_MODEL
@@ -120,8 +120,6 @@ class TestAreaOccupancyCoordinator:
         motion2 = area.entities.entities["binary_sensor.motion2"]
         motion2.decay.is_decaying = True
 
-        area.entities.decaying_entities = [motion2]
-
         decaying = area.entities.decaying_entities
         assert len(decaying) == 1
         assert decaying[0].entity_id == "binary_sensor.motion2"
@@ -140,12 +138,6 @@ class TestAreaOccupancyCoordinator:
         entities["binary_sensor.motion2"].decay.is_decaying = False
         entities["binary_sensor.appliance"].decay.is_decaying = True
         entities["media_player.tv"].decay.is_decaying = False
-
-        expected_decaying = [
-            entities["binary_sensor.motion"],
-            entities["binary_sensor.appliance"],
-        ]
-        area.entities.decaying_entities = expected_decaying
 
         decaying = area.entities.decaying_entities
 
@@ -1363,58 +1355,54 @@ class TestAreaOccupancyCoordinator:
             await coordinator.async_shutdown()
 
     async def test_shutdown_with_all_timers(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test shutdown with all timers present."""
-        coordinator_with_areas._is_master = True  # Enable master-specific cleanup
+        coordinator._is_master = True  # Enable master-specific cleanup
 
         # Get area from fixture
-        area = coordinator_with_areas.get_area()
+        area = coordinator.get_area()
         assert area is not None
 
         # Set up all timers
-        coordinator_with_areas._global_decay_timer = Mock()
-        coordinator_with_areas._analysis_timer = Mock()
-        coordinator_with_areas._save_timer = (
-            Mock()
-        )  # Set save timer to trigger final save
+        coordinator._global_decay_timer = Mock()
+        coordinator._analysis_timer = Mock()
+        coordinator._save_timer = Mock()  # Set save timer to trigger final save
 
         with (
-            patch.object(coordinator_with_areas.db, "save_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(area, "async_cleanup", new=AsyncMock()) as mock_cleanup,
             patch(
                 "homeassistant.helpers.update_coordinator.DataUpdateCoordinator.async_shutdown",
                 new=AsyncMock(),
             ),
         ):
-            await coordinator_with_areas.async_shutdown()
+            await coordinator.async_shutdown()
 
-            assert coordinator_with_areas._global_decay_timer is None
-            assert coordinator_with_areas._analysis_timer is None
-            coordinator_with_areas.db.save_data.assert_called_once()
+            assert coordinator._global_decay_timer is None
+            assert coordinator._analysis_timer is None
+            coordinator.db.save_data.assert_called_once()
             # async_cleanup is called for each area, which calls entities.cleanup() and purpose.cleanup()
             mock_cleanup.assert_called_once()
 
     # New tests for performance optimization features
 
-    def test_get_area_names(
-        self, coordinator_with_areas: AreaOccupancyCoordinator
-    ) -> None:
+    def test_get_area_names(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test get_area_names method."""
-        # Areas are already loaded by coordinator_with_areas fixture
-        area_names = coordinator_with_areas.get_area_names()
+        # Areas are already loaded by coordinator fixture
+        area_names = coordinator.get_area_names()
         assert isinstance(area_names, list)
         assert len(area_names) > 0
 
         # Should contain at least one area name
         assert all(isinstance(name, str) for name in area_names)
 
-    def test_get_area(self, coordinator_with_areas: AreaOccupancyCoordinator) -> None:
+    def test_get_area(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test get_area method."""
-        # Areas are already loaded by coordinator_with_areas fixture
+        # Areas are already loaded by coordinator fixture
 
         # Should return first area when None is passed
-        area = coordinator_with_areas.get_area()
+        area = coordinator.get_area()
         assert area is not None
         assert hasattr(area, "area_name")
         assert hasattr(area, "config")
@@ -1422,20 +1410,20 @@ class TestAreaOccupancyCoordinator:
         assert hasattr(area, "prior")
 
         # Should return specific area when name is provided
-        area_names = coordinator_with_areas.get_area_names()
+        area_names = coordinator.get_area_names()
         assert len(area_names) > 0
         area_name = area_names[0]
-        specific_area = coordinator_with_areas.get_area(area_name)
+        specific_area = coordinator.get_area(area_name)
         assert specific_area is not None
         assert specific_area.area_name == area_name
 
         # Should return None for non-existent area
-        non_existent = coordinator_with_areas.get_area("NonExistentArea")
+        non_existent = coordinator.get_area("NonExistentArea")
         assert non_existent is None
 
-        first_area = coordinator_with_areas.get_area()
+        first_area = coordinator.get_area()
         assert first_area is not None
-        assert first_area.area_name in coordinator_with_areas.get_area_names()
+        assert first_area.area_name in coordinator.get_area_names()
 
 
 class TestRunAnalysisWithPruning:
