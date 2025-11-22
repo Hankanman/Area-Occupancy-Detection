@@ -129,6 +129,7 @@ MAX_WEIGHT: Final[float] = 0.99
 # Default prior probabilities
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
 DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
+DEFAULT_TIME_PRIOR: Final[float] = 0.5
 
 # Door sensor defaults
 DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2

@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 from ..const import (
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_LOOKBACK_DAYS,
+    DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MAX_PROBABILITY,
     MIN_PRIOR,
@@ -206,7 +207,7 @@ class Prior:
             area_name=self.area_name,
             day_of_week=self.day_of_week,
             time_slot=self.time_slot,
-            default_prior=DEFAULT_PRIOR,
+            default_prior=DEFAULT_TIME_PRIOR,
         )
 
     def get_occupied_intervals(

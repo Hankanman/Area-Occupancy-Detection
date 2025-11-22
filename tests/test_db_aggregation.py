@@ -8,26 +8,11 @@ from custom_components.area_occupancy.db.aggregation import (
     aggregate_daily_to_weekly,
     aggregate_raw_to_daily,
     aggregate_weekly_to_monthly,
-    calculate_time_slot,
-    get_interval_aggregates,
     prune_old_aggregates,
     prune_old_numeric_samples,
     run_interval_aggregation,
 )
 from homeassistant.util import dt as dt_util
-
-
-class TestCalculateTimeSlot:
-    """Test calculate_time_slot function."""
-
-    def test_calculate_time_slot(self):
-        """Test time slot calculation."""
-        timestamp = dt_util.utcnow().replace(hour=10, minute=30)
-        slot = calculate_time_slot(timestamp, slot_minutes=60)
-        assert slot == 10
-
-        slot = calculate_time_slot(timestamp, slot_minutes=30)
-        assert slot == 21  # (10 * 60 + 30) // 30 = 21
 
 
 class TestAggregateRawToDaily:
@@ -335,50 +320,3 @@ class TestPruneOldNumericSamples:
                 sample.timestamp > dt_util.utcnow() - timedelta(days=30)
                 for sample in samples
             )
-
-
-class TestGetIntervalAggregates:
-    """Test get_interval_aggregates function."""
-
-    def test_get_interval_aggregates_success(self, test_db):
-        """Test getting interval aggregates successfully."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        end = dt_util.utcnow()
-        start = end - timedelta(hours=1)
-
-        # Ensure area exists first (foreign key requirement)
-        db.save_area_data(area_name)
-
-        with db.get_locked_session() as session:
-            entity = db.Entities(
-                entity_id="binary_sensor.motion1",
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_type="motion",
-            )
-            session.add(entity)
-
-            interval = db.Intervals(
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_id="binary_sensor.motion1",
-                start_time=start,
-                end_time=end,
-                state="on",
-                duration_seconds=3600,
-            )
-            session.add(interval)
-            session.commit()
-
-        result = get_interval_aggregates(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            slot_minutes=60,
-            lookback_days=90,
-            motion_timeout_seconds=0,
-            media_sensor_ids=None,
-            appliance_sensor_ids=None,
-        )
-        assert isinstance(result, list)
