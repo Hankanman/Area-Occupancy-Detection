@@ -17,7 +17,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, MIN_PROBABILITY
-from ..db.aggregation import get_interval_aggregates
 from ..db.queries import (
     get_occupied_intervals,
     get_occupied_intervals_cache,
@@ -172,6 +171,11 @@ class PriorAnalyzer:
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
 
+        # Track which supplemental sensors were used in global prior calculation
+        # This ensures time prior calculation uses consistent logic
+        self._used_media = False
+        self._used_appliance = False
+
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
 
@@ -185,6 +189,10 @@ class PriorAnalyzer:
             float: Prior probability of occupancy (0.0 to 1.0)
         """
         _LOGGER.debug("Calculating area prior")
+
+        # Reset sensor usage flags
+        self._used_media = False
+        self._used_appliance = False
 
         # Validate input
         if not entity_ids:
@@ -294,6 +302,10 @@ class PriorAnalyzer:
                         "No intervals found when including media/appliances, using motion prior"
                     )
                 else:
+                    # Update flags to indicate we used supplemental sensors
+                    self._used_media = include_media
+                    self._used_appliance = include_appliance
+
                     # Calculate total occupied seconds from all intervals
                     total_all_occupied = sum(
                         (end - start).total_seconds() for start, end in all_intervals
@@ -325,8 +337,9 @@ class PriorAnalyzer:
         # Save to GlobalPriors table with metadata
         try:
             # Determine which intervals were used
-            used_media = motion_prior < 0.10 and bool(self.media_sensor_ids)
-            used_appliance = motion_prior < 0.10 and bool(self.appliance_sensor_ids)
+            # Use instance flags instead of recalculating conditions
+            used_media = self._used_media
+            used_appliance = self._used_appliance
 
             # Get all intervals used for calculation (if we haven't already)
             if used_media or used_appliance:
@@ -396,10 +409,7 @@ class PriorAnalyzer:
             )
             slot_minutes = DEFAULT_SLOT_MINUTES
 
-        # Get aggregated interval data
-        interval_aggregates = self.get_interval_aggregates(slot_minutes=slot_minutes)
-
-        # Get time bounds
+        # Step 1: Get time bounds to calculate total denominator
         first_time, last_time = self.get_time_bounds()
 
         if not first_time or not last_time:
@@ -417,55 +427,67 @@ class PriorAnalyzer:
         slots_per_day = MINUTES_PER_DAY // slot_minutes
         slot_duration_seconds = slot_minutes * MINUTES_PER_HOUR
 
-        # Validate calculated values
-        if days <= 0:
+        if days <= 0 or slots_per_day <= 0:
             _LOGGER.warning(
-                "Invalid day calculation: first_time=%s, last_time=%s, days=%d",
-                first_time,
-                last_time,
-                days,
+                "Invalid calculation parameters: days=%d, slots=%d", days, slots_per_day
             )
             return
 
-        if slots_per_day <= 0:
-            _LOGGER.warning(
-                "Invalid slots_per_day calculation: slot_minutes=%d, slots_per_day=%d",
-                slot_minutes,
-                slots_per_day,
+        # Step 2: Get aggregated interval data using cached intervals
+        # We use get_occupied_intervals_with_cache to ensure we use the EXACT SAME logic
+        # as global prior (including motion timeout, merged intervals and fallback logic).
+        # This ensures time priors are calculated from the same "ground truth" as global prior.
+        intervals = self.get_occupied_intervals(
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            include_media=self._used_media,
+            include_appliance=self._used_appliance,
+        )
+
+        if self._used_media or self._used_appliance:
+            _LOGGER.debug(
+                "Using supplemental sensors for time priors: media=%s, appliance=%s",
+                self._used_media,
+                self._used_appliance,
             )
-            return
 
-        # Create lookup dictionary from aggregated results with safer conversion
-        occupied_seconds = {}
-        for day, slot, total_seconds in interval_aggregates:
-            try:
-                # Day is already in Python weekday format (0=Monday, 6=Sunday)
-                # from both SQL and Python aggregation paths
-                python_weekday = int(day)
+        # Step 3: Aggregate occupied seconds per slot (Python side)
+        # Initialize buckets for (day_of_week, slot_idx) -> total_seconds
+        occupied_seconds: dict[tuple[int, int], float] = defaultdict(float)
 
-                # Validate weekday is within valid range
-                if not (0 <= python_weekday < DAYS_PER_WEEK):
-                    _LOGGER.warning(
-                        "Invalid weekday: %d (must be 0-6), skipping", python_weekday
-                    )
-                    continue
+        for start, end in intervals:
+            # Ensure timezone awareness
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=UTC)
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=UTC)
 
-                # Validate slot number
-                if 0 <= int(slot) < slots_per_day:
-                    occupied_seconds[(python_weekday, int(slot))] = float(
-                        total_seconds or DEFAULT_OCCUPIED_SECONDS
+            current = start
+            while current < end:
+                # Determine current slot
+                day_of_week = current.weekday()  # 0=Monday, 6=Sunday
+                minutes_from_midnight = current.hour * 60 + current.minute
+                slot_idx = minutes_from_midnight // slot_minutes
+
+                # Determine end of current slot
+                next_slot_minutes = (slot_idx + 1) * slot_minutes
+                # Handle day rollover
+                if next_slot_minutes >= MINUTES_PER_DAY:
+                    next_slot_start = (current + timedelta(days=1)).replace(
+                        hour=0, minute=0, second=0, microsecond=0
                     )
                 else:
-                    _LOGGER.warning(
-                        "Invalid slot number: %d (max: %d), skipping",
-                        int(slot),
-                        slots_per_day - 1,
-                    )
-            except (ValueError, TypeError) as e:
-                _LOGGER.warning(
-                    "Invalid interval data: day=%s, slot=%s, error=%s", day, slot, e
-                )
-                continue
+                    next_slot_start = current.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    ) + timedelta(minutes=next_slot_minutes)
+
+                # Determine segment end (min of interval end or slot end)
+                segment_end = min(end, next_slot_start)
+                duration = (segment_end - current).total_seconds()
+
+                if duration > 0:
+                    occupied_seconds[(day_of_week, slot_idx)] += duration
+
+                current = segment_end
 
         # Generate priors for all time slots
         now = dt_util.utcnow()
@@ -588,21 +610,6 @@ class PriorAnalyzer:
             entry_id=self.entry_id,
             area_name=self.area_name,
             entity_ids=entity_ids,
-        )
-
-    def get_interval_aggregates(
-        self, slot_minutes: int = DEFAULT_SLOT_MINUTES
-    ) -> list[tuple[int, int, float]]:
-        """Thin wrapper over database helper for backwards compatibility."""
-        return get_interval_aggregates(
-            db=self.db,
-            entry_id=self.entry_id,
-            area_name=self.area_name,
-            slot_minutes=slot_minutes,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            motion_timeout_seconds=self.config.sensors.motion_timeout,
-            media_sensor_ids=self.media_sensor_ids,
-            appliance_sensor_ids=self.appliance_sensor_ids,
         )
 
 

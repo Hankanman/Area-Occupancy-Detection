@@ -10,13 +10,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_WEIGHT
-from ..db import AreaOccupancyDB as DB
 from ..utils import clamp_probability, ensure_timezone_aware
 from .decay import Decay
 from .entity_type import DEFAULT_TYPES, EntityType, InputType
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
 

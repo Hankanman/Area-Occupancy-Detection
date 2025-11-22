@@ -15,10 +15,13 @@ from homeassistant.util import dt as dt_util
 from ..const import (
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_LOOKBACK_DAYS,
+    DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MAX_PROBABILITY,
     MIN_PRIOR,
     MIN_PROBABILITY,
+    TIME_PRIOR_MAX_BOUND,
+    TIME_PRIOR_MIN_BOUND,
 )
 from ..data.analysis import PriorAnalyzer
 from ..utils import clamp_probability, combine_priors
@@ -202,12 +205,18 @@ class Prior:
 
         """
         _LOGGER.debug("Getting time prior")
-        return self.db.get_time_prior(
+        time_prior = self.db.get_time_prior(
             area_name=self.area_name,
             day_of_week=self.day_of_week,
             time_slot=self.time_slot,
-            default_prior=DEFAULT_PRIOR,
+            default_prior=DEFAULT_TIME_PRIOR,
         )
+
+        # Clamp the retrieved time prior between safety bounds
+        # This prevents extreme values (like 0.01 or 0.99) from disproportionately
+        # affecting the global prior, while still allowing meaningful influence.
+        # We bound it to [0.1, 0.9] to avoid "black hole" probabilities.
+        return max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, time_prior))
 
     def get_occupied_intervals(
         self,
