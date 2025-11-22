@@ -13,7 +13,6 @@ from custom_components.area_occupancy.db.queries import (
     build_base_filters,
     build_media_query,
     build_motion_query,
-    get_aggregated_intervals_by_slot,
     get_area_data,
     get_global_prior,
     get_latest_interval,
@@ -21,7 +20,6 @@ from custom_components.area_occupancy.db.queries import (
     get_occupied_intervals_cache,
     get_time_bounds,
     get_time_prior,
-    get_total_occupied_seconds_sql,
     is_occupied_intervals_cache_valid,
 )
 from homeassistant.util import dt as dt_util
@@ -127,127 +125,6 @@ class TestGetLatestInterval:
         assert isinstance(result, datetime)
 
 
-class TestGetAggregatedIntervalsBySlot:
-    """Test get_aggregated_intervals_by_slot function."""
-
-    def test_get_aggregated_intervals_by_slot_success(self, test_db):
-        """Test successful aggregation."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        base_time = dt_util.utcnow().replace(hour=10, minute=0, second=0, microsecond=0)
-        monday = base_time - timedelta(days=base_time.weekday())
-
-        # Ensure area exists first (foreign key requirement)
-        db.save_area_data(area_name)
-
-        with db.get_locked_session() as session:
-            entity = db.Entities(
-                entity_id="binary_sensor.motion1",
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_type="motion",
-            )
-            session.add(entity)
-
-            interval = db.Intervals(
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_id="binary_sensor.motion1",
-                start_time=monday,
-                end_time=monday + timedelta(hours=1),
-                state="on",
-                duration_seconds=3600,
-            )
-            session.add(interval)
-            session.commit()
-
-        result = get_aggregated_intervals_by_slot(
-            db,
-            db.coordinator.entry_id,
-            slot_minutes=60,
-            area_name=area_name,
-            lookback_days=90,
-        )
-        assert isinstance(result, list)
-        if result:
-            day_of_week, time_slot, total_seconds = result[0]
-            assert isinstance(day_of_week, int)
-            assert isinstance(time_slot, int)
-            assert isinstance(total_seconds, float)
-
-    def test_get_aggregated_intervals_by_slot_empty(self, test_db):
-        """Test aggregation with no intervals."""
-        db = test_db
-        result = get_aggregated_intervals_by_slot(
-            db, "test_entry", slot_minutes=60, area_name=None, lookback_days=90
-        )
-        assert result == []
-
-    def test_get_aggregated_intervals_by_slot_error(self, test_db, monkeypatch):
-        """Test aggregation with database error."""
-        db = test_db
-
-        def bad_session():
-            raise SQLAlchemyError("Error")
-
-        monkeypatch.setattr(db, "get_session", bad_session)
-        result = get_aggregated_intervals_by_slot(
-            db, "test_entry", slot_minutes=60, area_name=None, lookback_days=90
-        )
-        assert result == []
-
-
-class TestGetTotalOccupiedSecondsSql:
-    """Test get_total_occupied_seconds_sql function."""
-
-    def test_get_total_occupied_seconds_sql_success(self, test_db):
-        """Test successful calculation."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        end = dt_util.utcnow()
-        start = end - timedelta(hours=1)
-
-        # Ensure area exists first (foreign key requirement)
-        db.save_area_data(area_name)
-
-        with db.get_locked_session() as session:
-            entity = db.Entities(
-                entity_id="binary_sensor.motion1",
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_type="motion",
-            )
-            session.add(entity)
-            session.commit()
-
-        with db.get_locked_session() as session:
-            interval = db.Intervals(
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_id="binary_sensor.motion1",
-                start_time=start,
-                end_time=end,
-                state="on",
-                duration_seconds=3600,
-            )
-            session.add(interval)
-            session.commit()
-
-        result = get_total_occupied_seconds_sql(
-            db, db.coordinator.entry_id, area_name=area_name, lookback_days=90
-        )
-        assert result is not None
-        assert result >= 3600
-
-    def test_get_total_occupied_seconds_sql_empty(self, test_db):
-        """Test calculation with no intervals."""
-        db = test_db
-        result = get_total_occupied_seconds_sql(
-            db, "test_entry", area_name=None, lookback_days=90
-        )
-        assert result == 0.0 or result is None
-
-
 class TestGetTimePrior:
     """Test get_time_prior function."""
 
@@ -319,6 +196,7 @@ class TestGetOccupiedIntervals:
                 end_time=end,
                 state="on",
                 duration_seconds=3600,
+                aggregation_level="raw",
             )
             session.add(interval)
             session.commit()
@@ -461,6 +339,7 @@ class TestGetTimeBounds:
                 end_time=end,
                 state="on",
                 duration_seconds=3600,
+                aggregation_level="raw",
             )
             session.add(interval)
             session.commit()

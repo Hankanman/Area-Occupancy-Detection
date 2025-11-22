@@ -6,7 +6,6 @@ aggregates, and implements retention policies to prevent database bloat.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -35,97 +34,6 @@ _LOGGER = logging.getLogger(__name__)
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR
-
-
-def calculate_time_slot(timestamp: datetime, slot_minutes: int) -> int:
-    """Calculate the time slot number for a given timestamp."""
-    hour = timestamp.hour
-    minute = timestamp.minute
-    return (hour * MINUTES_PER_HOUR + minute) // slot_minutes
-
-
-def aggregate_intervals_by_slot(
-    intervals: list[tuple[datetime, datetime]],
-    slot_minutes: int,
-) -> list[tuple[int, int, float]]:
-    """Aggregate time intervals by day of week and time slot."""
-    slot_seconds: defaultdict[tuple[int, int], float] = defaultdict(float)
-
-    for start_time, end_time in intervals:
-        current_time = start_time
-        while current_time < end_time:
-            day_of_week = current_time.weekday()
-            slot = calculate_time_slot(current_time, slot_minutes)
-
-            day_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-            slot_start = day_start + timedelta(minutes=slot * slot_minutes)
-            slot_end = slot_start + timedelta(minutes=slot_minutes)
-
-            overlap_start = max(current_time, slot_start)
-            overlap_end = min(end_time, slot_end)
-            overlap_duration = (overlap_end - overlap_start).total_seconds()
-
-            if overlap_duration > 0:
-                slot_seconds[(day_of_week, slot)] += overlap_duration
-
-            current_time = slot_end
-
-    result = []
-    for (day, slot), seconds in slot_seconds.items():
-        result.append((day, slot, seconds))
-
-    return result
-
-
-def get_interval_aggregates(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    area_name: str,
-    slot_minutes: int,
-    lookback_days: int,
-    motion_timeout_seconds: int,
-    media_sensor_ids: list[str] | None,
-    appliance_sensor_ids: list[str] | None,
-) -> list[tuple[int, int, float]]:
-    """Fetch interval aggregates via SQL aggregation.
-
-    Note:
-        motion_timeout_seconds parameter is accepted for API compatibility but
-        cannot be applied in SQL aggregation. This function aggregates raw intervals
-        without applying motion timeout extensions.
-
-    Args:
-        db: Database instance
-        entry_id: Entry ID
-        area_name: Area name
-        slot_minutes: Time slot size in minutes
-        lookback_days: Number of days to look back
-        motion_timeout_seconds: Motion timeout in seconds (not applied in SQL)
-        media_sensor_ids: List of media sensor IDs
-        appliance_sensor_ids: List of appliance sensor IDs
-
-    Returns:
-        List of (day_of_week, time_slot, total_occupied_seconds) tuples
-    """
-    start_time = dt_util.utcnow()
-    result = db.get_aggregated_intervals_by_slot(
-        entry_id=entry_id,
-        slot_minutes=slot_minutes,
-        area_name=area_name,
-        lookback_days=lookback_days,
-        include_media=bool(media_sensor_ids),
-        include_appliance=bool(appliance_sensor_ids),
-        media_sensor_ids=media_sensor_ids,
-        appliance_sensor_ids=appliance_sensor_ids,
-    )
-    query_time = (dt_util.utcnow() - start_time).total_seconds()
-    _LOGGER.debug(
-        "SQL aggregation completed in %.3fs for %s (slots=%d)",
-        query_time,
-        area_name,
-        len(result),
-    )
-    return result
 
 
 def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) -> int:
