@@ -63,144 +63,6 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
         return dt_util.now() - timedelta(days=10)
 
 
-def get_total_occupied_seconds_sql(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    area_name: str | None = None,
-    lookback_days: int = 90,
-    motion_timeout_seconds: int = 0,
-    include_media: bool = False,
-    include_appliance: bool = False,
-    media_sensor_ids: list[str] | None = None,
-    appliance_sensor_ids: list[str] | None = None,
-) -> float | None:
-    """Get total occupied seconds using SQL aggregation for better performance.
-
-    This is a simplified SQL version that calculates the sum directly in the database.
-    For complex timeout logic, the Python version should be used.
-
-    Args:
-        db: Database instance
-        entry_id: The area entry ID to filter by
-        area_name: The area name to filter by (required for multi-area support)
-        lookback_days: Number of days to look back for data
-        motion_timeout_seconds: Motion timeout in seconds (not used in SQL version)
-        include_media: Whether to include media player sensors
-        include_appliance: Whether to include appliance sensors
-        media_sensor_ids: List of media sensor entity IDs to include
-        appliance_sensor_ids: List of appliance sensor entity IDs to include
-
-    Returns:
-        Total occupied seconds as float, or None if an error occurred
-
-    """
-    cutoff_date = dt_util.utcnow() - timedelta(days=lookback_days)
-
-    try:
-        with db.get_session() as session:
-            # Base filters for time range and entry_id
-            base_filters = [
-                db.Entities.entry_id == entry_id,
-                db.Intervals.start_time >= cutoff_date,
-            ]
-
-            # Add area_name filter if provided (required for multi-area support)
-            if area_name is not None:
-                base_filters.append(db.Entities.area_name == area_name)
-
-            # Build motion query with sum expression for motion sensors
-            motion_sum_expr = func.sum(db.Intervals.duration_seconds).label(
-                "total_seconds"
-            )
-
-            motion_query = (
-                session.query(motion_sum_expr.label("total_seconds"))
-                .join(
-                    db.Entities,
-                    sa.and_(
-                        db.Intervals.entity_id == db.Entities.entity_id,
-                        db.Intervals.area_name == db.Entities.area_name,
-                    ),
-                )
-                .filter(
-                    *base_filters,
-                    db.Entities.entity_type == InputType.MOTION.value,
-                    db.Intervals.state == "on",
-                )
-            )
-
-            # Start with motion query
-            queries = [motion_query]
-
-            # Add media player query if requested
-            if include_media and media_sensor_ids:
-                media_query = (
-                    session.query(
-                        func.sum(db.Intervals.duration_seconds).label("total_seconds")
-                    )
-                    .join(
-                        db.Entities,
-                        sa.and_(
-                            db.Intervals.entity_id == db.Entities.entity_id,
-                            db.Intervals.area_name == db.Entities.area_name,
-                        ),
-                    )
-                    .filter(
-                        *base_filters,
-                        db.Entities.entity_type == InputType.MEDIA.value,
-                        db.Intervals.entity_id.in_(media_sensor_ids),
-                        db.Intervals.state == STATE_PLAYING,
-                    )
-                )
-                queries.append(media_query)
-
-            # Add appliance query if requested
-            if include_appliance and appliance_sensor_ids:
-                appliance_query = (
-                    session.query(
-                        func.sum(db.Intervals.duration_seconds).label("total_seconds")
-                    )
-                    .join(
-                        db.Entities,
-                        sa.and_(
-                            db.Intervals.entity_id == db.Entities.entity_id,
-                            db.Intervals.area_name == db.Entities.area_name,
-                        ),
-                    )
-                    .filter(
-                        *base_filters,
-                        db.Entities.entity_type == InputType.APPLIANCE.value,
-                        db.Intervals.entity_id.in_(appliance_sensor_ids),
-                        db.Intervals.state == STATE_ON,
-                    )
-                )
-                queries.append(appliance_query)
-
-            # Sum all query results
-            total_seconds = 0.0
-            for query in queries:
-                result = query.scalar()
-                if result is not None:
-                    total_seconds += float(result)
-
-            _LOGGER.debug(
-                "SQL aggregation returned %.2f total occupied seconds",
-                total_seconds,
-            )
-            return total_seconds
-
-    except (
-        SQLAlchemyError,
-        ValueError,
-        TypeError,
-        RuntimeError,
-        OSError,
-        ImportError,
-    ) as e:
-        _LOGGER.error("Error during total seconds calculation: %s", e)
-        return None
-
-
 def get_time_prior(
     db: AreaOccupancyDB,
     entry_id: str,
@@ -644,38 +506,11 @@ def get_total_occupied_seconds(
     media_sensor_ids: list[str] | None = None,
     appliance_sensor_ids: list[str] | None = None,
 ) -> float:
-    """Calculate total occupied seconds with SQL fast-path and Python fallback."""
-    try:
-        if motion_timeout_seconds == 0 and not include_media and not include_appliance:
-            total_seconds = db.get_total_occupied_seconds_sql(
-                entry_id=entry_id,
-                area_name=area_name,
-                lookback_days=lookback_days,
-                motion_timeout_seconds=0,
-                include_media=False,
-                include_appliance=False,
-                media_sensor_ids=None,
-                appliance_sensor_ids=None,
-            )
-            if total_seconds is None:
-                _LOGGER.debug(
-                    "SQL method returned None (error occurred) for total occupied seconds, falling back to Python interval logic for %s",
-                    area_name,
-                )
-            elif total_seconds >= 0:
-                _LOGGER.debug(
-                    "Total occupied seconds (SQL) for %s: %.1f",
-                    area_name,
-                    total_seconds,
-                )
-                return float(total_seconds)
-    except (SQLAlchemyError, AttributeError, TypeError, ValueError, RuntimeError) as e:
-        _LOGGER.debug(
-            "SQL method failed with exception for total occupied seconds, falling back to Python: %s",
-            e,
-            exc_info=True,
-        )
+    """Calculate total occupied seconds using robust Python interval merging logic.
 
+    This method handles all complexity (timeouts, overlapping intervals, mixed sensors)
+    by fetching raw intervals and processing them consistently.
+    """
     intervals = get_occupied_intervals(
         db,
         entry_id,

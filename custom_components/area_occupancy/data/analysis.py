@@ -171,6 +171,11 @@ class PriorAnalyzer:
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
 
+        # Track which supplemental sensors were used in global prior calculation
+        # This ensures time prior calculation uses consistent logic
+        self._used_media = False
+        self._used_appliance = False
+
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
 
@@ -184,6 +189,10 @@ class PriorAnalyzer:
             float: Prior probability of occupancy (0.0 to 1.0)
         """
         _LOGGER.debug("Calculating area prior")
+
+        # Reset sensor usage flags
+        self._used_media = False
+        self._used_appliance = False
 
         # Validate input
         if not entity_ids:
@@ -293,6 +302,10 @@ class PriorAnalyzer:
                         "No intervals found when including media/appliances, using motion prior"
                     )
                 else:
+                    # Update flags to indicate we used supplemental sensors
+                    self._used_media = include_media
+                    self._used_appliance = include_appliance
+
                     # Calculate total occupied seconds from all intervals
                     total_all_occupied = sum(
                         (end - start).total_seconds() for start, end in all_intervals
@@ -324,8 +337,9 @@ class PriorAnalyzer:
         # Save to GlobalPriors table with metadata
         try:
             # Determine which intervals were used
-            used_media = motion_prior < 0.10 and bool(self.media_sensor_ids)
-            used_appliance = motion_prior < 0.10 and bool(self.appliance_sensor_ids)
+            # Use instance flags instead of recalculating conditions
+            used_media = self._used_media
+            used_appliance = self._used_appliance
 
             # Get all intervals used for calculation (if we haven't already)
             if used_media or used_appliance:
@@ -421,13 +435,20 @@ class PriorAnalyzer:
 
         # Step 2: Get aggregated interval data using cached intervals
         # We use get_occupied_intervals_with_cache to ensure we use the EXACT SAME logic
-        # as global prior (including motion timeout and merged intervals).
-        # This offloads the heavy lifting to the cache if available.
+        # as global prior (including motion timeout, merged intervals and fallback logic).
+        # This ensures time priors are calculated from the same "ground truth" as global prior.
         intervals = self.get_occupied_intervals(
             lookback_days=DEFAULT_LOOKBACK_DAYS,
-            include_media=False,
-            include_appliance=False,
+            include_media=self._used_media,
+            include_appliance=self._used_appliance,
         )
+
+        if self._used_media or self._used_appliance:
+            _LOGGER.debug(
+                "Using supplemental sensors for time priors: media=%s, appliance=%s",
+                self._used_media,
+                self._used_appliance,
+            )
 
         # Step 3: Aggregate occupied seconds per slot (Python side)
         # Initialize buckets for (day_of_week, slot_idx) -> total_seconds
